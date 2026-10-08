@@ -16,9 +16,12 @@ public class AccessibilityForegroundReconcileGuardTest {
         String source = readSource(
                 "app/src/main/java/com/aion/chat/AionAccessibilityService.java");
 
-        assertFalse(source.contains("getWindows("));
-        assertFalse(source.contains(".getRoot("));
-        assertFalse(source.contains("ForegroundWindowResolver"));
+        // Explicit floating screenshots may inspect one window; frequent events must not.
+        String callback = source.substring(source.indexOf("public void onAccessibilityEvent("),
+                source.indexOf("private void forwardLiveNotification("));
+        assertFalse(callback.contains("getWindows("));
+        assertFalse(callback.contains(".getRoot("));
+        assertFalse(callback.contains("ForegroundWindowResolver"));
         assertTrue(source.contains("FOREGROUND_RECONCILE_DELAY_MS = 400L"));
         assertTrue(source.contains(
                 "mainHandler.postDelayed(foregroundReconcile, "

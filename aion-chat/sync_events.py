@@ -113,6 +113,8 @@ async def persist_sync_event(event: dict) -> int | None:
 
 async def broadcast_synced(broadcaster, event: dict, seq: int | None = None) -> dict:
     """Broadcast once, preserving the legacy type and adding a durable cursor."""
+    from expressive_voice import prepare_message
+    await prepare_message(event)
     if seq is None:
         try:
             seq = await persist_sync_event(event)

@@ -21,6 +21,23 @@ test('hidden compression page does not fetch; concurrent triggers coalesce',asyn
   f.c.visible=false;f.release();await first;assert.equal(f.timers.size,0);
 });
 test('inline scripts parse',()=>{for(const match of source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))new vm.Script(match[1]);});
+
+test('chatroom memory list still renders dates after legacy draft retirement',()=>{
+  const chat=fs.readFileSync(require('node:path').join(__dirname,'static/chatroom.js'),'utf8');
+  const nodes={memList:{innerHTML:''},memCountBadge:{textContent:''},memSearch:{value:''}};
+  const c=vm.createContext({document:{getElementById:id=>nodes[id]},
+    chatroomMemoryCache:[{id:'one',content:'Saved memory',memory_time_label:'2026-09-25',memory_kind:'daily'}],
+    chatroomMemoryKindFilter:'all',chatroomMemoryKindMenuId:null,esc:String,
+    restoreChatroomMemoryPosition(){}});
+  for(const name of ['crFormatMemoryOccurrence','chatroomMemoryKind','renderChatroomMemories']){
+    const start=chat.indexOf(`function ${name}(`);
+    assert.ok(start>=0,`missing shared helper: ${name}`);
+    vm.runInContext(chat.slice(start,chat.indexOf('\n}',start)+2),c);
+  }
+  c.renderChatroomMemories();
+  assert.match(nodes.memList.innerHTML,/Saved memory/);
+  assert.match(nodes.memList.innerHTML,/2026-09-25/);
+});
 test('job push wakes an idle visible page, hidden page closes connection',()=>{
   let polls=0,closed=0;const sockets=[];
   class Socket{constructor(){sockets.push(this);}close(){closed++;}}

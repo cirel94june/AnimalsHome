@@ -24,6 +24,7 @@ ACTION_IDS = (
     "rest",
     "private_chat",
     "role_chat",
+    "billiards_play",
     "home_dynamics",
     "memory_browse",
     "album_browse",
@@ -36,7 +37,7 @@ ACTION_IDS = (
     "seeky_interaction",
     "wish_pool",
 )
-DEFAULT_OFF_ACTIONS = {"album_browse", "board_check", "board_visit"}
+DEFAULT_OFF_ACTIONS = {"album_browse", "board_check", "board_visit", "billiards_play"}
 
 _AUTONOMY_WAKE_ACTOR = ContextVar("autonomy_wake_actor", default="")
 

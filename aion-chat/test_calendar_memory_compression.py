@@ -83,6 +83,30 @@ class CalendarCompressionCandidateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before, "2026-07-08")
         self.assertEqual(after, "2026-07-09")
 
+    async def test_five_am_makes_the_eighth_day_eligible_in_each_store(self):
+        import memory_compression
+
+        for day in (24, 25, 26):
+            await self._insert_main(f"day-{day}", local_ts(f"2026-09-{day} 12:00"))
+        async with self._connect() as db:
+            await db.execute(
+                "INSERT INTO chatroom_memories (id, content, created_at, source_start_ts, source_end_ts) "
+                "SELECT id, content, created_at, source_start_ts, source_end_ts FROM memories"
+            )
+            await db.commit()
+
+        with patch.object(memory_compression, "get_db", self._connect):
+            for target in ("main", "chatroom"):
+                with self.subTest(target=target):
+                    before = await memory_compression.compression_preview(
+                        target, "daily", now_ts=local_ts("2026-10-03 04:59")
+                    )
+                    ready = await memory_compression.compression_preview(
+                        target, "daily", now_ts=local_ts("2026-10-03 05:00")
+                    )
+                    self.assertEqual([p["label"] for p in before["periods"]], ["2026-09-24"])
+                    self.assertEqual([p["label"] for p in ready["periods"]], ["2026-09-24", "2026-09-25"])
+
     async def test_history_keeps_old_counts_filters_store_and_pages_successful_batches(self):
         import memory_compression
 
@@ -124,7 +148,9 @@ class CalendarCompressionCandidateTests(unittest.IsolatedAsyncioTestCase):
             )
             await db.commit()
         model = AsyncMock(return_value={
-            "periods": [{"period": "2026-07-08", "memories": [{"content": "一起做饭"}]}]
+            "periods": [{"period": "2026-07-08", "memories": [{
+                "content": "一起做饭", "source_memory_ids": ["M1"]
+            }]}]
         })
         with patch.object(memory_compression, "get_db", self._connect), patch.object(
             memory_compression, "MODELS", {"cheap": {"provider": "test"}}
@@ -139,7 +165,12 @@ class CalendarCompressionCandidateTests(unittest.IsolatedAsyncioTestCase):
                 "chatroom", "daily", "cheap", now_ts=local_ts("2026-07-16 05:00")
             )
             events = await memory_compression.list_compression_events(since=0)
+            async with self._connect() as db:
+                output = await (await db.execute(
+                    "SELECT source_memory_ids FROM chatroom_memories WHERE compression_batch_id!=''"
+                )).fetchone()
         self.assertTrue(result["ok"])
+        self.assertEqual(json.loads(output[0]), ["old"])
         model.assert_awaited_once()
         prompt = model.await_args.args[1]
         self.assertIn("远帆", prompt)
@@ -469,7 +500,7 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["output_count"], 1)
 
-    async def test_valid_run_archives_inputs_and_records_batch_lineage_without_model_ids(self):
+    async def test_valid_run_archives_inputs_and_records_precise_lineage(self):
         import memory_compression
 
         when = local_ts("2026-07-08 10:00")
@@ -485,6 +516,7 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
                                 "content": "2026-07-08，完成了值得保留的一件事。",
                                 "keywords": ["项目"],
                                 "importance": 0.55,
+                                "source_memory_ids": ["M1", "M1"],
                             }
                         ],
                     }
@@ -506,6 +538,8 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
         sent_prompt = model_call.await_args.args[1]
         self.assertNotIn('"id"', sent_prompt)
         self.assertNotIn("private:", sent_prompt)
+        self.assertNotIn("old-1", sent_prompt)
+        self.assertNotIn("old-2", sent_prompt)
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -534,7 +568,47 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(memory_compression, "get_db", self._connect):
             source_ids = await memory_compression.resolve_source_message_ids("main", output["id"])
-        self.assertEqual(source_ids, ["private:old-1", "private:old-2"])
+        self.assertEqual(source_ids, ["private:old-1"])
+
+    async def test_invalid_or_missing_lineage_keeps_original_memories_active(self):
+        import memory_compression
+
+        await self._insert('input-a', local_ts('2026-07-08 10:00'))
+        await self._insert('input-b', local_ts('2026-07-08 11:00'))
+        for parents in (None, [], ['M99'], ['input-a'], 'M1', [1]):
+            model = AsyncMock(return_value={'periods': [{'period': '2026-07-08', 'memories': [
+                {'content': '一起做饭', 'source_memory_ids': parents}
+            ]}]})
+            with patch.object(memory_compression, 'get_db', self._connect), patch.object(
+                memory_compression, 'MODELS', {'cheap': {'provider': 'test'}}
+            ), patch.object(memory_compression, '_call_compression_model', model):
+                result = await memory_compression.run_calendar_compression(
+                    'main', 'daily', 'cheap', now_ts=local_ts('2026-07-16 05:00'))
+            self.assertEqual(result['reason'], 'invalid_source_lineage')
+        async with self._connect() as db:
+            rows = await (await db.execute('SELECT archive_state FROM memories')).fetchall()
+        self.assertEqual(rows, [('active',), ('active',)])
+
+    async def test_short_refs_cannot_link_memories_from_another_period(self):
+        import memory_compression
+
+        await self._insert('day-one', local_ts('2026-07-07 10:00'))
+        await self._insert('day-two', local_ts('2026-07-08 10:00'))
+        model = AsyncMock(return_value={'periods': [
+            {'period': '2026-07-07', 'memories': [
+                {'content': '保留的经历', 'source_memory_ids': ['M2']}
+            ]},
+            {'period': '2026-07-08', 'memories': []},
+        ]})
+        with patch.object(memory_compression, 'get_db', self._connect), patch.object(
+            memory_compression, 'MODELS', {'cheap': {'provider': 'test'}}
+        ), patch.object(memory_compression, '_call_compression_model', model):
+            result = await memory_compression.run_calendar_compression(
+                'main', 'daily', 'cheap', now_ts=local_ts('2026-07-16 05:00'))
+        self.assertEqual(result['reason'], 'invalid_source_lineage')
+        async with self._connect() as db:
+            rows = await (await db.execute('SELECT archive_state FROM memories')).fetchall()
+        self.assertEqual(rows, [('active',), ('active',)])
 
     async def test_reflection_uses_same_call_and_event_is_not_duplicated(self):
         import memory_compression
@@ -543,8 +617,8 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
         await self._insert("reflect-input-2", local_ts("2026-07-08 11:00"))
         reflection = "那天的努力，我记住了。"
         model = AsyncMock(return_value={
-            "periods": [{"period": "2026-07-08", "memories": [{"content": "完成一个项目"}]}],
-            "durable_facts": [{"content": "喜欢一起做项目"}],
+            "periods": [{"period": "2026-07-08", "memories": [{"content": "完成一个项目", "source_memory_ids": ["M1"]}]}],
+            "durable_facts": [{"content": "喜欢一起做项目", "source_memory_ids": ["M2"]}],
             "reflection": reflection,
         })
         with patch.object(memory_compression, "get_db", self._connect), patch.object(
@@ -576,7 +650,13 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record["delta"], 0)
         async with self._connect() as db:
             rows = await (await db.execute("SELECT content FROM memories")).fetchall()
+            outputs = await (await db.execute(
+                "SELECT content,source_memory_ids FROM memories WHERE compression_batch_id!=''"
+            )).fetchall()
         self.assertNotIn(reflection, [row[0] for row in rows])
+        self.assertEqual({content: json.loads(parents) for content, parents in outputs}, {
+            '完成一个项目': ['reflect-input'], '喜欢一起做项目': ['reflect-input-2'],
+        })
 
     async def test_expanded_output_keeps_inputs_active_without_extra_calls_or_events(self):
         import memory_compression
@@ -643,7 +723,7 @@ class CalendarCompressionRunTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CompressionPromptTests(unittest.TestCase):
-    def test_levels_include_task_source_dates_and_budget_without_private_ids(self):
+    def test_levels_include_task_source_dates_budget_and_memory_ids(self):
         import memory_compression
 
         rows = {"private-row": {"content": "一起做饭，虽然烧糊了却笑得很开心。", "source_start_ts": local_ts("2025-06-18 12:00")}}
@@ -659,6 +739,7 @@ class CompressionPromptTests(unittest.TestCase):
                 payload = json.loads(prompt.rsplit("输入：", 1)[1])[0]
                 self.assertIn(task, prompt)
                 self.assertIn("喜欢调侃", prompt)
+                self.assertEqual(payload["memories"][0]["memory_id"], "M1")
                 self.assertNotIn("private-row", prompt)
                 self.assertEqual(payload["period"], label)
                 self.assertEqual(payload["start"], start + "T05:00")
@@ -668,6 +749,23 @@ class CompressionPromptTests(unittest.TestCase):
                 self.assertEqual(payload["memories"][0]["content"], rows["private-row"]["content"])
                 self.assertEqual(memory_compression._compression_budget(periods, rows),
                                  {"max_output_count": 1, "max_content_chars": len(rows["private-row"]["content"])})
+
+    def test_short_refs_are_unique_across_periods_and_reset_for_each_call(self):
+        import memory_compression
+
+        rows = {mem_id: {'content': '保留的经历', 'created_at': local_ts(day + ' 10:00')}
+                for mem_id, day in [('a', '2026-07-07'), ('b', '2026-07-07'), ('c', '2026-07-08')]}
+        periods = [{'label': day, 'period_start_ts': local_ts(day + ' 05:00'),
+                    'period_end_ts': local_ts(end + ' 05:00'), 'memory_ids': ids}
+                   for day, end, ids in [('2026-07-07', '2026-07-08', ['a', 'b']),
+                                         ('2026-07-08', '2026-07-09', ['c'])]]
+        prompt = memory_compression._period_prompt('daily', periods, rows)
+        payload = json.loads(prompt.rsplit('输入：', 1)[1])
+        self.assertEqual([[m['memory_id'] for m in p['memories']] for p in payload],
+                         [['M1', 'M2'], ['M3']])
+        next_prompt = memory_compression._period_prompt('daily', periods[1:], rows)
+        next_payload = json.loads(next_prompt.rsplit('输入：', 1)[1])
+        self.assertEqual(next_payload[0]['memories'][0]['memory_id'], 'M1')
 
 
 class ColdArchiveRecallSafetyTests(unittest.TestCase):

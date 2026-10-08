@@ -70,7 +70,8 @@
       <textarea id="ankniPhases" aria-label="模式时间表" spellcheck="false">2000,5
 3000,0
 4000,6</textarea>
-      <div class="ankni-actions"><button id="ankniOnce" type="button" data-ankni-control>播放一次</button><button id="ankniLoop" type="button" data-ankni-control>循环播放</button></div>
+      <p class="toy-control-note" id="ankniPhasesStatus" role="status">正在读取已保存编排…</p>
+      <div class="ankni-actions"><button id="ankniSave" type="button">保存编排</button><button id="ankniOnce" type="button" data-ankni-control>播放一次</button><button id="ankniLoop" type="button" data-ankni-control>循环播放</button></div>
     </details>
     <details class="toy-panel"><summary>连接参数</summary><div class="ankni-settings">
       <label><input id="ankniSwap" type="checkbox"> 交换震动 / 吮吸通道</label>
@@ -85,7 +86,7 @@
   <script src="/static/toy-ankni-protocol.js?v=20260924-rest"></script>
   <script src="/static/toy-ankni-controller.js?v=20260924-rest"></script>
   <script src="/static/toy-ankni-ai.js?v=20260924-rest"></script>
-  <script src="/static/toy-ankni.js?v=20260924-rest"></script>
+  <script src="/static/toy-ankni.js?v=20261004-saved-phases"></script>
   <script src="/static/toy-navigation.js?v=20260924-modes-selection"></script>
 </body>
 </html>

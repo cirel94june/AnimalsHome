@@ -59,6 +59,15 @@ async def update_capability(key: str, body: CapabilityToggle):
         item = set_capability_enabled(key, body.enabled)
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown capability")
+    if key == "post_sentinel":
+        import post_sentinel
+        try:
+            await post_sentinel.ensure_schema()
+            await post_sentinel.invalidate_pending()
+        except Exception:
+            # The new subsystem may be unavailable; the saved off switch still
+            # prevents both analysis and prompt injection.
+            pass
     await manager.broadcast({
         "type": "capability_config_changed",
         "data": item,
@@ -92,6 +101,22 @@ async def update_proactive_companionship(actor: str, body: CapabilityToggle):
 
 class ToySelection(BaseModel):
     profile: str
+
+
+class AnkniPhases(BaseModel):
+    phases: str = Field(strict=True, max_length=16384)
+
+
+@router.get('/api/toys/ankni/phases')
+async def get_ankni_phases():
+    from toy_profiles import custom_phases
+    return custom_phases()
+
+
+@router.put('/api/toys/ankni/phases')
+async def save_ankni_phases(body: AnkniPhases):
+    from toy_profiles import save_custom_phases
+    return save_custom_phases(body.phases)
 
 
 @router.get('/api/toys/selection')

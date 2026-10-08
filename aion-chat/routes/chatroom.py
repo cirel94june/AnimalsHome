@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from config import DEFAULT_MODEL, DATA_DIR, CODEX_UPLOADS_DIR, ALBUM_IMAGES_DIR, MODELS, SETTINGS, get_sentinel_config, resolve_model_key, resolve_model_transport_mode
 from database import get_db
 from ws import manager
+from reply_timing import model_started
 from generation_control import (cancellable, cancel_generation, generation_status, GenerationQueue, spawn_generation_task, current_generation)
 from cancelled_reply import save_cancelled_replies
 from active_window_state import record_chatroom_active
@@ -93,6 +94,7 @@ from lounge_visit_commands import (
 )
 from capabilities import is_capability_enabled
 from active_memory_search import (
+    continue_memory_search,
     MemorySearchRequest,
     extract_memory_search_requests,
     format_memory_search_context,
@@ -1794,11 +1796,6 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
         )
 
     wb = load_worldbook()
-    await _complete_chatroom_memory_search_status(
-        room_id,
-        str(payload.get("system_msg_id") or ""),
-        actor,
-    )
     user_name = wb.get("user_name", "用户")
     ai_name = wb.get("ai_name", "AI")
     sender_label = _name_for_identity(actor)
@@ -1835,25 +1832,33 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
         f"{sender_label}刚才为了回答{user_name}的这个原始问题而翻找了自己的记忆：\n"
         f"{original_question[:1000]}\n\n{memory_context}\n\n"
         f"请以{sender_label}自己的口吻直接、自然地回答{user_name}。不要写成检索报告；"
-        "如果证据不足或冲突就坦白说明。本轮不要再次输出 MEMORY_SEARCH 指令。"
+        "如果证据不足或冲突就坦白说明，需要继续核实时按后续检索指引查找。"
     )
     messages = prefix_msgs + recent + [{"role": "user", "content": memory_prompt}]
 
     full_text = ""
     tts_from_model = True
-    try:
+    async def generate_search_reply(search_messages):
+        nonlocal full_text
+        full_text = ''
         if actor == "aion":
-            async for chunk in stream_ai(messages, model_key, temperature=SETTINGS.get("temperature")):
+            async for chunk in stream_ai(search_messages, model_key, temperature=SETTINGS.get("temperature")):
                 if not chunk.startswith(CLI_STATUS_PREFIX):
                     full_text += chunk
         else:
-            async for chunk in _stream_connor_model(messages, model_key):
+            async for chunk in _stream_connor_model(search_messages, model_key):
                 if not chunk.startswith(CLI_STATUS_PREFIX):
                     full_text += chunk
+        return full_text
+
+    try:
+        full_text = await continue_memory_search(actor, messages, generate_search_reply, original_question)
     except Exception as exc:
         resolution = resolve_stream_failure(full_text, exc, "记忆搜索完成但回复生成失败")
         full_text = resolution.visible_text
         tts_from_model = resolution.had_partial_text
+
+    await _complete_chatroom_memory_search_status(room_id, str(payload.get("system_msg_id") or ""), actor)
 
     full_text, _ignored = extract_memory_search_requests(full_text, enabled=True)
     if not full_text.strip():
@@ -3716,6 +3721,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
     connor_label = _name_for_identity("connor")
     query_text = msgs[-1]["content"] if msgs else ""
 
+    await _q.put({"type": "preparing", "sender": "connor"})
     connor_messages, digest_out = await build_connor_1v1_context(
         room_id, msgs,
         context_limit=context_limit,
@@ -3747,6 +3753,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
     async def content_stream():
         nonlocal has_reply
         usage_meta.pop("provider_error", None)
+        _mark_first_text = model_started()
         async for chunk in _stream_connor_model(connor_messages, connor_model_key, usage_meta):
             if usage_meta.get("provider_error"):
                 raise RuntimeError(usage_meta["provider_error"])
@@ -3754,6 +3761,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
                 await _q.put({"type": "connor_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
                 continue
             has_reply = True
+            _mark_first_text(chunk)
             yield chunk
 
     transport_outcome = await _consume_chatroom_realtime_stream(
@@ -3920,6 +3928,7 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
 @_chatroom_reply_guard("aion")
 async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *, tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = ""):
     ai_label = _name_for_identity("aion")
+    await _q.put({"type": "preparing", "sender": "aion"})
     aion_history, digest_out = await build_aion_group_context(
         room_id, msgs, context_limit, query_text,
         include_image_attachments=not bool(ambient_context),
@@ -3950,12 +3959,14 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
     async def content_stream():
         usage_meta.pop("provider_error", None)
+        _mark_first_text = model_started()
         async for chunk in stream_ai(aion_history, model_key, usage_meta):
             if usage_meta.get("provider_error"):
                 raise RuntimeError(usage_meta["provider_error"])
             if chunk.startswith(CLI_STATUS_PREFIX):
                 await _q.put({"type": "aion_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
                 continue
+            _mark_first_text(chunk)
             yield chunk
 
     transport_outcome = await _consume_chatroom_realtime_stream(
@@ -4050,6 +4061,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 @_chatroom_reply_guard("connor")
 async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_model_key="Codex", tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = ""):
     connor_label = _name_for_identity("connor")
+    await _q.put({"type": "preparing", "sender": "connor"})
     connor_history, digest_out = await build_connor_group_context(
         room_id, msgs, context_limit, query_text,
         include_image_attachments=not bool(ambient_context),
@@ -4080,12 +4092,14 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
 
     async def content_stream():
         usage_meta.pop("provider_error", None)
+        _mark_first_text = model_started()
         async for chunk in _stream_connor_model(connor_history, connor_model_key, usage_meta):
             if usage_meta.get("provider_error"):
                 raise RuntimeError(usage_meta["provider_error"])
             if chunk.startswith(CLI_STATUS_PREFIX):
                 await _q.put({"type": "connor_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
                 continue
+            _mark_first_text(chunk)
             yield chunk
 
     transport_outcome = await _consume_chatroom_realtime_stream(

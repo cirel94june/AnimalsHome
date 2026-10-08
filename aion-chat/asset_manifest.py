@@ -13,6 +13,13 @@ from config import BASE_DIR, PUBLIC_DIR
 _LOCK = Lock()
 _CACHED_SIGNATURE: tuple[tuple[str, int, int], ...] | None = None
 _CACHED_MANIFEST: dict | None = None
+_BILLIARDS_ENABLED = False
+
+
+def enable_billiards_assets():
+    """Advertise optional assets only after their HTTP routes were installed."""
+    global _BILLIARDS_ENABLED
+    _BILLIARDS_ENABLED = True
 
 _DOCUMENT_ROUTES = {
     "/": "home.html",
@@ -27,6 +34,7 @@ _DOCUMENT_ROUTES = {
     "/toys/ankni": "toy-ankni.html",
     "/worldbook": "worldbook.html",
     "/memory": "memory.html",
+    "/user-profile": "user-profile.html",
     "/memory-compression": "memory-compression.html",
     "/schedule": "schedule.html",
     "/camera": "camera.html",
@@ -45,7 +53,7 @@ _DOCUMENT_ROUTES = {
     "/gift": "gift.html",
     "/fund": "fund.html",
     "/wallpaper": "wallpaper.html",
-    "/playground": "playground.html",
+    "/playground/explore": "playground.html",
     "/repair": "repair.html",
     "/chatroom": "chatroom.html",
     "/english-corner": "english-corner.html",
@@ -62,6 +70,13 @@ _DOCUMENT_ROUTES = {
 
 def _iter_client_assets():
     static_dir = BASE_DIR / "static"
+    lounge = BASE_DIR / "entertainment" / "lobby.html"
+    lounge = lounge if lounge.is_file() else static_dir / "playground.html"
+    if lounge.is_file():
+        yield "/playground", lounge, "document"
+    pool = BASE_DIR / "billiards" / "static"
+    if _BILLIARDS_ENABLED and (pool / "index.html").is_file():
+        yield "/billiards", pool / "index.html", "document"
     for route, filename in _DOCUMENT_ROUTES.items():
         path = static_dir / filename
         if path.is_file():
@@ -69,6 +84,19 @@ def _iter_client_assets():
     for path in static_dir.rglob("*"):
         if path.is_file() and path.suffix.lower() in {".js", ".css", ".json"}:
             yield "/static/" + path.relative_to(static_dir).as_posix(), path, "frontend"
+
+    for directory, prefix in ((BASE_DIR / "entertainment", "/entertainment-assets/"),
+                              (pool, "/billiards-assets/")):
+        if directory == pool and not _BILLIARDS_ENABLED:
+            continue
+        for path in directory.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(directory)
+            if "tests" in relative.parts or path.suffix.lower() in {".html", ".htm"}:
+                continue
+            category = "frontend" if path.suffix.lower() in {".js", ".css", ".json"} else "visual"
+            yield prefix + relative.as_posix(), path, category
 
     # Wallpaper videos and user-authored HTML story pages remain excluded.
     # App-owned navigable documents above are versioned explicitly by route.

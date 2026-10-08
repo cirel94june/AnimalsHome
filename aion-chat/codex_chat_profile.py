@@ -27,9 +27,8 @@ def build_chat_model_catalog(source: dict) -> dict:
 
 
 @lru_cache(maxsize=1)
-def _chat_catalog_text(chat_home: Path, node: str, script: str) -> str:
-    cache = chat_home / "models_cache.json"
-    if cache.is_file():
+def _chat_catalog_text(node: str, script: str, cache: Path | None, cache_mtime_ns: int) -> str:
+    if cache is not None:
         source = json.loads(cache.read_text(encoding="utf-8"))
     else:
         # First launch: use the CLI's bundled catalog without a model/API call.
@@ -41,8 +40,14 @@ def _chat_catalog_text(chat_home: Path, node: str, script: str) -> str:
     return json.dumps(build_chat_model_catalog(source), ensure_ascii=False)
 
 
-def prepare_chat_model_catalog(chat_home: Path, node: str, script: str) -> Path:
-    text = _chat_catalog_text(chat_home, node, script)
+def prepare_chat_model_catalog(
+    chat_home: Path, node: str, script: str, *, source_cache: Path | None = None,
+) -> Path:
+    caches = [path for path in (chat_home / "models_cache.json", source_cache)
+              if path is not None and path.is_file()]
+    cache = max(caches, key=lambda path: path.stat().st_mtime_ns) if caches else None
+    # A desktop model refresh must also invalidate the server's in-memory catalog.
+    text = _chat_catalog_text(node, script, cache, cache.stat().st_mtime_ns if cache else 0)
     chat_home.mkdir(parents=True, exist_ok=True)
     target = chat_home / "companion-models.json"
     if not target.is_file() or target.read_text(encoding="utf-8") != text:

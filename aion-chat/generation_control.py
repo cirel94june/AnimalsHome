@@ -14,6 +14,7 @@ from collections import OrderedDict
 
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
+from reply_timing import ReplyTiming
 
 
 _current = contextvars.ContextVar('chat_generation', default=None)
@@ -34,6 +35,7 @@ def _remember_stop(key):
 
 class Generation:
     def __init__(self, surface, target, generation_id, save_partial=None):
+        self.timing = ReplyTiming()
         self.surface, self.target, self.id = surface, target, generation_id
         self.key = (surface, target, generation_id)
         self.cancelled = self.key in _stopped and _stopped[self.key] > time.monotonic() - 600
@@ -185,6 +187,15 @@ class GenerationQueue(asyncio.Queue):
                     partial['content'] = item.get('content', '')
                 elif kind in ('stream_reset', 'aion_reset', 'connor_reset'):
                     partial['content'] = ''
+                phase = None
+                if kind in ('start', 'aion_start', 'connor_start'):
+                    phase = 'context_ready'
+                elif kind in ('chunk', 'aion_chunk', 'connor_chunk', 'replace', 'snapshot') and item.get('content'):
+                    phase = 'first_visible_text'
+                if phase:
+                    report = scope.timing.report(phase, msg_id, scope)
+                    if report:
+                        super().put_nowait(report)
             item = {**item, 'generation_id': scope.id}
         super().put_nowait(item)
 
@@ -242,6 +253,10 @@ def cancellable(surface, save_partial):
             if (surface, target, generation_id) in _active:
                 raise HTTPException(409, 'Generation already active')
             scope = Generation(surface, target, generation_id, save_partial)
+            scope.expressive_autoplay = function.__name__ in {
+                'send_message', 'edit_resend_message', 'regenerate_message',
+                'edit_resend_chatroom_message', 'regenerate_chatroom_message', 'reply_once',
+            }
             try:
                 return await scope.start(function(*args, **kwargs))
             except asyncio.CancelledError:

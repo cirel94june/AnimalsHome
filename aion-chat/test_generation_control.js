@@ -16,6 +16,22 @@ async function main() {
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(`${__dirname}/static/generation-control.js`, 'utf8'), context);
   const Controller = context.window.ChatGenerationControl;
+  const preparation = [];
+  const progress = new Controller({ surface: 'private', baseUrl: id => `/rooms/${id}`,
+    onPreparing: (sender, generation) => preparation.push([sender, generation.id]) });
+  const preparing = progress.begin('progress');
+  await progress.fetch(preparing, '/send', { method: 'POST' });
+  assert.equal(preparation.at(-1)?.[0], '', 'preparation must appear before model start');
+  progress.accepts({ type: 'preparing', sender: 'connor', generation_id: preparing.id }, preparing);
+  assert.equal(preparation.at(-1)[0], 'connor');
+  progress.accepts({ type: 'start', id: 'reply', generation_id: preparing.id }, preparing);
+  assert.equal(preparation.at(-1)[0], null, 'real start removes preparation');
+  const savedFetch = context.fetch;
+  context.fetch = async () => { throw new Error('offline'); };
+  await assert.rejects(progress.fetch(preparing, '/send', {}), /offline/);
+  assert.equal(preparation.at(-1)[0], null, 'HTTP failure removes preparation');
+  context.fetch = savedFetch;
+  requests.length = 0;
   let stopped = 0, finished = 0;
   const control = new Controller({ surface: 'chatroom', baseUrl: id => `/rooms/${id}`, onStop: () => stopped++, onFinish: () => finished++ });
   const old = control.begin('old-room');

@@ -39,6 +39,7 @@ ACTION_DEFS = {
     "private_chat": "主动联系用户说点此刻想说的话",
     "seeky_interaction": "和宠物鲸鱼 Seeky 互动",
     "role_chat": "和另一个家庭成员自然聊聊",
+    "billiards_play": "邀请另一位家庭成员打一局休闲台球（算法负责击球，可以边打边聊）",
     "home_dynamics": "查看近期家庭动态",
     "memory_browse": "按需翻看一段旧记忆",
     "album_browse": "翻看家庭相册（随机两张未看过的照片）",
@@ -244,6 +245,8 @@ def _idle_event_home_title(row, shown_diary_ids: set[str], shown_moment_ids: set
         return f"{_actor_label(row['actor'])}对Seeky{phrase}" if phrase else row["title"]
     if action == "home_dynamics_result":
         return None
+    if action in ("billiards_invite", "billiards_result"):
+        return row["title"]
     if action.endswith("_result") and result_type == "message":
         return None
     if action == "memory_browse_result":
@@ -598,6 +601,13 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
     if "album_browse" in enabled:
         if not await asyncio.to_thread(get_album_store().has_unseen_photos, actor):
             enabled.remove("album_browse")
+    if "billiards_play" in enabled:
+        try:
+            from billiards.companionship import available_for_autonomy
+            if not await available_for_autonomy(actor):
+                enabled.remove("billiards_play")
+        except Exception:
+            enabled.remove("billiards_play")
     if "wish_pool" in enabled and not await _has_active_user_wishes():
         enabled.remove("wish_pool")
     if "web_roam" in enabled and not manual and not _is_idle_web_roam_available():
@@ -2179,6 +2189,9 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
             result = await _run_seeky_interaction(actor)
         elif action == "role_chat":
             result = await _run_role_chat(actor, selected)
+        elif action == "billiards_play":
+            from billiards.companionship import invite
+            result = await invite(actor)
         elif action == "memory_browse":
             result = await _run_memory_browse(actor)
         elif action == "album_browse":
@@ -2224,6 +2237,7 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         "private_chat": f"{actor_name}说了一句话",
         "seeky_interaction": f"{actor_name}照顾了 Seeky",
         "role_chat": f"{actor_name}和另一位家庭成员聊了聊",
+        "billiards_play": f"{actor_name}邀请另一位家庭成员打台球",
         "home_dynamics": f"{actor_name}查看了家庭动态",
         "memory_browse": f"{actor_name}查看了记忆库",
         "album_browse": f"{actor_name}翻看了家庭相册",

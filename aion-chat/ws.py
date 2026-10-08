@@ -154,7 +154,9 @@ class ConnectionManager:
                 "active_at": active_at if active_at is not None else time.time(),
             }
         else:
-            self.tts_clients.pop(ws, None)
+            # Keep playback presence for optional voice clips even with full TTS off.
+            self.tts_clients[ws] = {"enabled": False, "voice": voice,
+                "can_play": bool(can_play), "active_at": active_at if active_at is not None else time.time()}
 
     def set_tts_fallback(self, enabled: bool, voice: str = ""):
         """从 HTTP 请求更新备用 TTS 状态（当 WS tts_state 未送达时的保底）"""
@@ -192,6 +194,7 @@ class ConnectionManager:
     async def send_tts_event(self, data: dict):
         data = generation_event(data)
         event_data = data.get("data") or {}
+        expressive = bool(event_data.get("expressive"))
         msg_id = event_data.get("msg_id", "")
         owner = self._tts_message_clients.get(msg_id)
         generation = current_generation()
@@ -203,7 +206,7 @@ class ConnectionManager:
         # the two speakers must not move the second reply to another phone player.
         candidates.sort(key=lambda item: item[0] is not owner)
         for ws, state in candidates:
-            if ws not in self.active or not state.get("enabled") or not state.get("can_play", True):
+            if ws not in self.active or (not expressive and not state.get("enabled")) or not state.get("can_play", True):
                 continue
             payload = json.loads(json.dumps(data, ensure_ascii=False))
             if isinstance(payload.get("data"), dict):
@@ -230,8 +233,10 @@ class ConnectionManager:
             self._tts_message_clients.pop(msg_id, None)
         log.debug("TTS event dropped because no playable client is active: %s", data.get("type"))
 
-    async def broadcast(self, data: dict, exclude: WebSocket = None):
+    async def broadcast(self, data: dict, exclude: WebSocket = None, *, expressive_autoplay: bool = False):
         data = generation_event(data)
+        from expressive_voice import prepare_message, start_message
+        await prepare_message(data)
         proactive_changed = False
         autonomy_changed = False
         try:
@@ -276,6 +281,12 @@ class ConnectionManager:
                 failed += 1
         log.info("broadcast type=%s sent=%d failed=%d total_clients=%d",
                  msg_type, sent, failed, len(self.active))
+        start_message(data, self, autoplay=expressive_autoplay)
+        try:
+            from post_sentinel import observe_message_event
+            observe_message_event(data)
+        except Exception as exc:
+            log.warning("Post-sentinel side hook failed: %s", type(exc).__name__)
         if proactive_changed:
             try:
                 from proactive_companionship import proactive_status_event

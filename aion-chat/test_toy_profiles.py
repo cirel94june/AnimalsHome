@@ -68,3 +68,28 @@ def test_ankni_validation_and_stop_priority(monkeypatch):
         assert await ankni_ai.process_commands('正文[ANKNI:LOOP:bad][ANKNI:STOP]', 'stop') == '正文'
         assert sent.call_args.args[0]['data']['command'] == 'STOP'
     asyncio.run(run())
+
+
+def test_custom_phases_survive_settings_reload(monkeypatch, tmp_path):
+    import config
+    import toy_profiles
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes.capabilities import router
+
+    monkeypatch.setattr(config, 'SETTINGS_PATH', tmp_path / 'settings.json')
+    settings = {'toy_profile': 'ankni', 'unrelated': 'keep'}
+    monkeypatch.setattr(toy_profiles, 'SETTINGS', settings)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    assert client.get('/api/toys/ankni/phases').json() == {'phases': None}
+    text = '2000,5\n3000,0\n4000,6'
+    assert client.put('/api/toys/ankni/phases', json={'phases': text}).status_code == 200
+    settings.clear()
+    settings.update(config.load_settings())
+    assert client.get('/api/toys/ankni/phases').json() == {'phases': text}
+    assert settings['toy_profile'] == 'ankni' and settings['unrelated'] == 'keep'
+    assert client.put('/api/toys/ankni/phases', json={'phases': ''}).status_code == 200
+    assert client.get('/api/toys/ankni/phases').json() == {'phases': ''}
+    assert client.put('/api/toys/ankni/phases', json={'phases': 123}).status_code == 422

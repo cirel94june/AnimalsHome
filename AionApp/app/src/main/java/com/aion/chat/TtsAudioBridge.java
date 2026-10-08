@@ -86,6 +86,7 @@ public final class TtsAudioBridge {
             stopProgress(playerId);
             try {
                 player.pause();
+                TtsPlaybackCoordinator.shared.release(player);
                 emitPosition(playerId, "timeupdate", player);
             } catch (RuntimeException exception) {
                 finish(playerId, player, "error");
@@ -98,13 +99,15 @@ public final class TtsAudioBridge {
         webView.post(() -> {
             MediaPlayer player = players.get(playerId);
             if (player == null || !preparedPlayers.contains(playerId)) return;
-            try {
-                player.start();
-                emit(playerId, "playing");
-                startProgress(playerId, player);
-            } catch (RuntimeException exception) {
-                finish(playerId, player, "error");
-            }
+            TtsPlaybackCoordinator.shared.request(player, () -> {
+                try {
+                    player.start();
+                    emit(playerId, "playing");
+                    startProgress(playerId, player);
+                } catch (RuntimeException exception) {
+                    finish(playerId, player, "error");
+                }
+            });
         });
     }
 
@@ -147,6 +150,15 @@ public final class TtsAudioBridge {
         releasePlayer(playerId);
         MediaPlayer player = new MediaPlayer();
         players.put(playerId, player);
+        if (autoPlay) {
+            TtsPlaybackCoordinator.shared.request(player,
+                    () -> preparePlayer(playerId, player, resolvedUrl, true));
+        } else {
+            preparePlayer(playerId, player, resolvedUrl, false);
+        }
+    }
+
+    private void preparePlayer(String playerId, MediaPlayer player, String resolvedUrl, boolean autoPlay) {
         try {
             player.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -242,7 +254,10 @@ public final class TtsAudioBridge {
         preparedPlayers.remove(playerId);
         MediaPlayer player = players.remove(playerId);
         releaseLoudness(playerId);
-        if (player != null) player.release();
+        if (player != null) {
+            player.release();
+            TtsPlaybackCoordinator.shared.release(player);
+        }
     }
 
     private void releaseAll() {

@@ -4,7 +4,7 @@ let currentMessages = [];
 let serverMessageIds = new Set();
 let models = [];
 let privateModelReady = Promise.resolve();
-const DEPRECATED_MODEL_PROVIDERS = new Set(["gemini_cli", "antigravity_cli"]);
+const DEPRECATED_MODEL_PROVIDERS = new Set(["gemini_cli"]);
 let sending = false;
 let streamingAiId = null;
 let _abortController = null;  // 用于中止 AI 生成
@@ -1071,10 +1071,11 @@ function _notifyVoiceCallPrivateTTSEnd() {
   }
 }
 
-function enqueueTTSChunk(msgId, seq, url, createdAt, targetClientId, text = "") {
+function enqueueTTSChunk(msgId, seq, url, createdAt, targetClientId, text = "", expressive = false, parentMsgId = "") {
   const isChatroomTTS = msgId.startsWith('cm_');
   const voiceCallActive = !!(window.VoiceCall && window.VoiceCall.isActive && window.VoiceCall.isActive());
-  if (!isChatroomTTS && !ttsEnabled && !voiceCallActive && !(typeof videoCall !== 'undefined' && videoCall.active)) return;
+  if (!expressive && !isChatroomTTS && !ttsEnabled && !voiceCallActive && !(typeof videoCall !== 'undefined' && videoCall.active)) return;
+  if (parentMsgId && ttsSuppressedMsgIds.has(parentMsgId)) return;
   // 忽略小剧场的 TTS（tm_ 前缀），避免重复播放
   if (msgId.startsWith('tm_')) return;
   if (!shouldAcceptTTSMsg(msgId, createdAt, targetClientId)) return;
@@ -1083,6 +1084,7 @@ function enqueueTTSChunk(msgId, seq, url, createdAt, targetClientId, text = "") 
     ttsPlayOrder.push(msgId);
   }
   ttsChunkQueues[msgId].chunks[seq] = { url, text: text || "" };
+  ttsChunkQueues[msgId].expressive = expressive;
   // 通话中时通知语音模块 AI 开始说话
   if ((voiceInCall || (typeof videoCall !== 'undefined' && videoCall.active)) && !ttsPlaying) {
     notifyVoiceAiSpeaking(true);
@@ -1093,7 +1095,7 @@ function enqueueTTSChunk(msgId, seq, url, createdAt, targetClientId, text = "") 
 async function playNextTTSChunk() {
   const hasChatroomTTS = ttsPlayOrder.some(id => id.startsWith('cm_'));
   const voiceCallActive = !!(window.VoiceCall && window.VoiceCall.isActive && window.VoiceCall.isActive());
-  if (!hasChatroomTTS && !ttsEnabled && !voiceCallActive && !(typeof videoCall !== 'undefined' && videoCall.active)) { ttsPlaying = false; return; }
+  if (!hasChatroomTTS && !ttsEnabled && !Object.values(ttsChunkQueues).some(q => q.expressive) && !voiceCallActive && !(typeof videoCall !== 'undefined' && videoCall.active)) { ttsPlaying = false; return; }
 
   // 找到当前应该播放的 msgId
   while (ttsPlayOrder.length > 0) {
@@ -1607,7 +1609,7 @@ function handleSync(msg) {
     }
   } else if (type === "tts_chunk") {
     // 服务端流式 TTS 分段音频到达
-    enqueueTTSChunk(data.msg_id, data.seq, data.url, data.created_at, data.target_client_id, data.text);
+    enqueueTTSChunk(data.msg_id, data.seq, data.url, data.created_at, data.target_client_id, data.text, data.expressive, data.parent_msg_id);
   } else if (type === "tts_done") {
     // 服务端通知该消息的所有 TTS 分段已推送完毕
     finishTTSForMsg(data.msg_id, data.created_at, data.target_client_id);
@@ -2668,6 +2670,7 @@ async function newConversation() {
 }
 
 async function selectConv(id) {
+  document.getElementById('privateReplyPreparation')?.remove();
   const loadId = ++privateConversationLoadId;
   currentConvId = id;
   localStorage.setItem('aion_last_conv', id);
@@ -2824,6 +2827,22 @@ const _chatControl = new ChatGenerationControl({
   surface: 'private',
   baseUrl: id => `/api/conversations/${encodeURIComponent(id)}`,
   onStart: () => _showStopBtn(),
+  onPreparing(sender, generation) {
+    const old = document.getElementById('privateReplyPreparation');
+    if (sender === null) {
+      if (old?.dataset.generationId === generation?.id) old.remove();
+      return;
+    }
+    if (currentConvId !== generation.target) return;
+    const node = old || document.createElement('div');
+    node.id = 'privateReplyPreparation';
+    node.className = 'reply-preparation';
+    node.dataset.generationId = generation.id;
+    node.setAttribute('role', 'status');
+    node.textContent = '正在准备回复…';
+    // Keep status outside the list: WebSocket acknowledgements rerender it.
+    $('messages').after(node);
+  },
   onStop(generation) {
     generation.messageIds.forEach(suppressTTSMsg);
     stopLiveTTSQueue();
@@ -4211,7 +4230,9 @@ function renderAttachments(atts) {
   const aiName = worldBook.ai_name || 'AI';
   const actorName = escHtml(String(aiName));
   atts.forEach(item => {
-    if (typeof item === 'object' && item.type === 'luckin_payment') {
+    if (typeof item === 'object' && item.type === 'expressive_voice') {
+      mediaHtml += window.ExpressiveVoice?.render(item) || '';
+    } else if (typeof item === 'object' && item.type === 'luckin_payment') {
       mediaHtml += buildLuckinPaymentCard(item);
     } else if (typeof item === 'object' && item.type === 'lounge_visit_report' && window.LoungeVisitUI) {
       const inbound = item.direction === 'inbound';
@@ -5308,7 +5329,7 @@ function onWhisperModeChange() {
 // ── 子页面 iframe 浮层逻辑 ──
 let currentSubPage = null;
 window.getCurrentConversationId = function() { return currentConvId || ''; };
-const _subPageNames = {'/':'主页','/settings':'设置','/memory':'记忆库','/diary':'日记本','/worldbook':'世界书','/schedule':'日程','/camera':'摄像头','/monitor-logs':'监控日志','/location':'定位','/heart-whispers':'心语','/wishes':'许愿池'};
+const _subPageNames = {'/':'主页','/settings':'设置','/memory':'记忆库','/diary':'日记本','/worldbook':'世界书','/schedule':'日程','/camera':'摄像头','/monitor-logs':'监控日志','/location':'定位','/heart-whispers':'心语','/wishes':'许愿池','/playground':'娱乐室','/playground/explore':'去外面逛逛','/billiards':'台球室'};
 function parseSubPageColor(value) {
   if (!value || value === 'transparent') return null;
   const hexMatch = value.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -5663,7 +5684,7 @@ function handleNativeBack() {
     if (path === '/album') {
       try { if (activeSubPageFrame?.contentWindow?.handleAlbumBack?.()) return 'handled'; } catch(e) {}
     }
-    if (path === '/lounge-board') {
+    if (path === '/lounge-board' || path.startsWith('/lounge-board/')) {
       try { if (activeSubPageFrame?.contentWindow?.handleLoungeBoardBack?.()) return 'handled'; } catch(e) {}
     }
     navigateToHome();
@@ -5679,7 +5700,7 @@ window.addEventListener('popstate', function(e) {
     const path = (() => {
       try { return new URL(currentSubPage || '', location.origin).pathname; } catch(e) { return currentSubPage || ''; }
     })();
-    if (path === '/lounge-board') {
+    if (path === '/lounge-board' || path.startsWith('/lounge-board/')) {
       try { if (activeSubPageFrame?.contentWindow?.handleLoungeBoardBack?.()) return; } catch(e) {}
     }
     if (/^\/(?:toys(?:\/|$)|whisper$)/.test(path)) returnFromToyControls();
@@ -5758,3 +5779,11 @@ window.AionPat?.bind({
   onSent: message => handleSync({ type: 'msg_created', data: message }),
 });
 startChatApp();
+
+let expressiveReplaySequence = 0;
+window.ExpressiveVoice?.configure((url, text) => {
+  const id = "ev_" + Date.now() + "_" + (++expressiveReplaySequence);
+  const now = Date.now() / 1000;
+  enqueueTTSChunk(id, 0, url, now, _clientId, text, true);
+  finishTTSForMsg(id, now, _clientId);
+}, { audio: ttsAudio, isPlaying: () => ttsPlaying, stop: stopLiveTTSQueue });

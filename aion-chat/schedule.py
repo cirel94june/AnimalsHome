@@ -453,7 +453,7 @@ class ScheduleManager:
         ai_msg = {"id": ai_msg_id, "conv_id": conv_id, "role": "assistant",
                   "content": ai_text, "created_at": now2, "attachments": music_atts,
                   "reasoning_content": reasoning_content}
-        await manager.broadcast({"type": "msg_created", "data": ai_msg})
+        await manager.broadcast({"type": "msg_created", "data": ai_msg}, expressive_autoplay=True)
 
         from routes.files import export_conversation
         await export_conversation(conv_id)
@@ -519,7 +519,7 @@ class ScheduleManager:
         ai_msg = {"id": ai_msg_id, "room_id": room_id, "sender": sender,
                   "content": ai_text, "created_at": now2, "attachments": music_atts,
                   "reasoning_content": reasoning_content}
-        await manager.broadcast({"type": "chatroom_msg_created", "data": ai_msg})
+        await manager.broadcast({"type": "chatroom_msg_created", "data": ai_msg}, expressive_autoplay=True)
 
     # ── 触发闹铃 ─────────────────────────────────
     async def _fire_alarm(self, item: dict):

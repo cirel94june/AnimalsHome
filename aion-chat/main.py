@@ -38,6 +38,9 @@ from voice import voice
 from schedule import schedule_mgr
 
 from routes import chat, cam as cam_routes, files, settings, memories
+from routes import memory_library
+from routes import user_profile
+import post_sentinel
 from routes import voice as voice_routes
 from routes import music as music_routes
 from routes import music_station as music_station_routes
@@ -68,6 +71,7 @@ from routes import connor_wallet as connor_wallet_routes
 from routes import health as health_routes
 from routes import band_commands as band_commands_routes
 from routes import phone_screen as phone_screen_routes
+from routes import floating_chat as floating_chat_routes
 from routes import phone_camera as phone_camera_routes
 from routes import search as search_routes
 from routes import autonomy as autonomy_routes
@@ -87,7 +91,7 @@ from lounge_context_bridge import get_bridge_token
 from routes.security_access import create_security_access_router
 from routes.security_access_report import create_security_access_report_router
 from activity import pc_tracker, pc_display_tracker
-from memory import auto_digest
+from memory import auto_digest, close_embedding_client
 from memory_compression import migrate_legacy_daily_capsules
 from memory_compression_scheduler import auto_calendar_compression_loop
 from chatroom import _connor_1v1_auto_digest_loop
@@ -149,6 +153,10 @@ async def _auto_digest_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:
+        await post_sentinel.start()
+    except Exception:
+        logging.getLogger(__name__).exception("Post-sentinel startup skipped")
     imported_music_requests = await init_music_station()
     if imported_music_requests:
         print(f"[music_station] 已补入 {imported_music_requests} 条历史点歌记录")
@@ -204,25 +212,45 @@ async def lifespan(app: FastAPI):
     wechat_mode_dispatcher.start()
     openclaw_weixin_runtime.start()
     security_access_service.start(manager.broadcast)
-    yield
-    await security_access_service.stop()
-    await openclaw_weixin_runtime.stop()
-    await wechat_mode_dispatcher.stop()
-    await ha_event_listener.stop()
-    idle_autonomy_mgr.stop()
-    await board_patrol_mgr.stop()
-    connor_persona_evolution_task.cancel()
-    persona_evolution_task.cancel()
-    cr_digest_task.cancel()
-    digest_task.cancel()
-    compression_task.cancel()
-    await asyncio.gather(compression_task, return_exceptions=True)
-    fund_scheduler.stop()
-    pc_display_tracker.stop()
-    pc_tracker.stop()
-    schedule_mgr.stop()
-    voice.stop()
-    cam.close_camera()
+    try:
+        from billiards.service import get_service as billiards_service
+        await billiards_service().start()
+    except Exception as exc:
+        print(f"[billiards] recovery skipped: {type(exc).__name__}")
+    try:
+        yield
+    finally:
+        await post_sentinel.stop()
+        try:
+            from billiards.service import get_service as billiards_service
+            await billiards_service().stop()
+        except Exception:
+            pass
+        try:
+            await security_access_service.stop()
+            await openclaw_weixin_runtime.stop()
+            await wechat_mode_dispatcher.stop()
+            await ha_event_listener.stop()
+            idle_autonomy_mgr.stop()
+            await board_patrol_mgr.stop()
+            connor_persona_evolution_task.cancel()
+            persona_evolution_task.cancel()
+            cr_digest_task.cancel()
+            digest_task.cancel()
+            compression_task.cancel()
+            await asyncio.gather(
+                connor_persona_evolution_task, persona_evolution_task,
+                cr_digest_task, digest_task, compression_task,
+                return_exceptions=True,
+            )
+            fund_scheduler.stop()
+            pc_display_tracker.stop()
+            pc_tracker.stop()
+            schedule_mgr.stop()
+            voice.stop()
+            cam.close_camera()
+        finally:
+            await close_embedding_client()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -265,6 +293,7 @@ app.add_middleware(SecurityAccessMiddleware, service=security_access_service)
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount("/entertainment-assets", StaticFiles(directory=str(BASE_DIR / "entertainment"), check_dir=False), name="entertainment-assets")
 # 更具体的相册挂载必须在 /uploads 之前；URL 兼容聊天附件，磁盘目录独立。
 app.mount("/uploads/album", StaticFiles(directory=str(ALBUM_IMAGES_DIR)), name="album-images")
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
@@ -290,6 +319,8 @@ app.include_router(create_chat_thumbnail_router({
 }, DATA_DIR / "chat_thumbnails"))
 app.include_router(settings.router)
 app.include_router(memories.router)
+app.include_router(memory_library.router)
+app.include_router(user_profile.router)
 app.include_router(voice_routes.router)
 app.include_router(music_routes.router)
 app.include_router(music_station_routes.router)
@@ -314,12 +345,21 @@ app.include_router(playground_routes.router)
 app.include_router(chatroom_routes.router)
 app.include_router(pat_router)
 app.include_router(doudizhu_routes.router)
+# Optional game: failures must not prevent the rest of the home from starting.
+try:
+    from billiards.routes import install as install_billiards
+    install_billiards(app)
+    from asset_manifest import enable_billiards_assets
+    enable_billiards_assets()
+except Exception as exc:
+    print(f"[billiards] module unavailable: {type(exc).__name__}")
 app.include_router(seeky_routes.router)
 app.include_router(wallet_routes.router)
 app.include_router(connor_wallet_routes.router)
 app.include_router(health_routes.router)
 app.include_router(band_commands_routes.router)
 app.include_router(phone_screen_routes.router)
+app.include_router(floating_chat_routes.router)
 app.include_router(phone_camera_routes.router)
 app.include_router(search_routes.router)
 app.include_router(autonomy_routes.router)
@@ -426,6 +466,11 @@ async def worldbook_page():
 async def memory_page():
     return FileResponse(BASE_DIR / "static" / "memory.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
+
+@app.get("/user-profile")
+async def user_profile_page():
+    return FileResponse(BASE_DIR / "static" / "user-profile.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
 @app.get("/memory-compression")
 async def memory_compression_page():
     return FileResponse(BASE_DIR / "static" / "memory-compression.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
@@ -496,6 +541,11 @@ async def wallpaper_page():
 
 @app.get("/playground")
 async def playground_page():
+    lobby = BASE_DIR / "entertainment" / "lobby.html"
+    return FileResponse(lobby if lobby.is_file() else BASE_DIR / "static" / "playground.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+@app.get("/playground/explore")
+async def playground_explore_page():
     return FileResponse(BASE_DIR / "static" / "playground.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 @app.get("/chatroom")

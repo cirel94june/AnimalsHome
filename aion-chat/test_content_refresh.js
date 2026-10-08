@@ -29,9 +29,9 @@ test('memory reconnection reads the current server list without applying old eve
   let handler, options, loads = 0;
   const ctx = vm.createContext({
     connectRetainedPageWS(fn, opts) { handler = fn; options = opts; },
-    loadMemories() { loads++; },
+    onRefresh() { loads++; },
   });
-  vm.runInContext(block(read('memory.html'), 'connectRetainedPageWS(msg =>', '(async function init()'), ctx);
+  vm.runInContext(block(read('memory-library.js'), 'connectRetainedPageWS(message =>', '  [window, window.visualViewport]'), ctx);
   assert.equal(typeof options?.reconcile, 'function');
   options.reconcile();
   handler({ type: 'memory_updated', data: { id: 'old', content: 'historical' } });

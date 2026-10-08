@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>用户画像</title>
+<link rel="stylesheet" href="/static/common.css">
+<link rel="stylesheet" href="/static/user-profile.css?v=20261007-4">
+<script src="/static/theme.js?v=theme-20260606"></script>
+</head>
+<body>
+<main class="sub-page profile-page">
+  <header class="top-bar">
+    <button class="back-btn" onclick="navigateSubPageBack()" aria-label="返回">⬅</button>
+    <h2 id="pageTitle">用户画像</h2>
+    <a href="/capabilities" class="profile-link">工具能力</a>
+  </header>
+  <div class="page-content">
+    <section class="profile-overview">
+      <div><h3>自动维护</h3><p>共享一份画像，随聊天更新。</p></div>
+      <label class="toggle-switch" title="后置哨兵总开关">
+        <input id="enabled" type="checkbox" aria-label="启用后置哨兵">
+        <span class="toggle-slider"></span>
+      </label>
+      <p class="profile-status" id="status" role="status">加载中…</p>
+      <p class="profile-meta" id="model"></p>
+      <p class="profile-meta" id="budget"></p>
+      <p class="profile-error" id="error" hidden role="alert"></p>
+      <details class="profile-preview"><summary>查看实际发给 AI 的画像</summary><pre id="promptPreview"></pre></details>
+    </section>
+    <section class="profile-state">
+      <div class="section-heading"><h3>当前状态</h3><button id="editState" class="edit-button" aria-label="编辑当前状态" title="编辑当前状态" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m16 3 5 5M4 20l4-1L21 6a2 2 0 0 0-3-3L5 16l-1 4Z"/></svg></button></div>
+      <div id="stateView" class="state-view"><p id="stateContent"></p><time id="stateTime" class="entry-time"></time></div>
+      <div id="stateEditor" class="state-editor" hidden>
+      <label class="field-label" for="stateText">状态内容</label>
+      <textarea id="stateText" rows="2" maxlength="70" placeholder="例如：准备出门遛狗；已经开始泡澡"></textarea>
+      <div class="state-fields">
+        <label>状态<select id="statePhase"><option value="planned">计划</option><option value="ongoing">进行中</option><option value="finished">已结束</option><option value="unknown">未确认</option></select></label>
+        <label>有效至<input id="stateExpiry" type="datetime-local"></label>
+      </div>
+      <div class="editor-actions"><button id="clearState" class="entry-remove" type="button">清空</button><button id="cancelState" class="quiet-button" type="button">取消</button><button id="saveState" class="save-button" type="button">保存</button></div>
+      </div>
+    </section>
+    <section class="profile-section">
+      <div class="section-heading"><h3>长期画像与近期重点</h3><button id="addEntry" class="quiet-button" type="button">＋ 添加内容</button></div>
+      <div id="entries"><p class="profile-empty">加载中…</p></div>
+    </section>
+  </div>
+  <footer class="profile-savebar">
+    <span id="saveHint" role="status">尚无修改</span>
+    <button id="refresh" class="quiet-button" type="button">刷新</button>
+    <button id="save" class="save-button" type="button" disabled>保存修改</button>
+  </footer>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/user-profile.js?v=20261007-4"></script>
+</body>
+</html>

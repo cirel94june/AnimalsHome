@@ -76,13 +76,13 @@ class MainMemoryKindToggleTests(unittest.TestCase):
 
 class MemoryKindToggleFrontendTests(unittest.TestCase):
     def test_memory_labels_open_selection_menus_instead_of_toggling_directly(self):
-        main_html = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
+        main_html = (ROOT / "static" / "memory-library.js").read_text(encoding="utf-8")
         chatroom_js = (ROOT / "static" / "chatroom.js").read_text(encoding="utf-8")
 
-        self.assertIn("openMemoryKindMenu('", main_html)
-        self.assertIn("selectMemoryKind('", main_html)
+        self.assertIn('select id="editKind"', main_html)
+        self.assertIn("memory_kind:el('editKind').value", main_html)
         self.assertNotIn("toggleMemoryKind('", main_html)
-        self.assertIn("/api/memories/${id}/kind", main_html)
+        self.assertIn("/api/memory-library/${store}", main_html)
         self.assertIn("openChatroomMemoryKindMenu('", chatroom_js)
         self.assertIn("selectChatroomMemoryKind('", chatroom_js)
         self.assertNotIn("toggleChatroomMemoryKind('", chatroom_js)
@@ -90,31 +90,30 @@ class MemoryKindToggleFrontendTests(unittest.TestCase):
 
     def test_main_memory_counts_use_server_kind_totals_not_loaded_page_length(self):
         route_source = (ROOT / "routes" / "memories.py").read_text(encoding="utf-8")
-        main_html = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
+        main_html = (ROOT / "static" / "memory-library.js").read_text(encoding="utf-8")
 
         self.assertIn('"kind_totals"', route_source)
         self.assertIn('"daily"', route_source)
         self.assertIn('"long_term"', route_source)
-        self.assertIn("let _memoryKindTotals", main_html)
-        self.assertIn("result.kind_totals", main_html)
-        self.assertIn("_memoryKindTotals[_memoryKindFilter]", main_html)
+        self.assertIn("total:result.total", main_html)
+        self.assertIn("`${state.total} 条`", main_html)
         self.assertNotIn("${filterText} ${kindFiltered.length} 条", main_html)
 
     def test_main_memory_kind_tab_requests_a_fresh_server_filtered_page(self):
-        main_html = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
+        main_html = (ROOT / "static" / "memory-library.js").read_text(encoding="utf-8")
         load_function = re.search(
-            r"async function loadMemories\(options = \{\}\) \{.*?\n\}",
+            r"async function loadList\(.*?\n  \}",
             main_html,
             re.S,
         ).group(0)
         filter_function = re.search(
-            r"function setMemoryKindFilter\(kind\) \{.*?\n\}",
+            r"el\('chips'\).onclick = .*?;\n",
             main_html,
             re.S,
         ).group(0)
 
-        self.assertIn('params.set("kind", _memoryKindFilter)', load_function)
-        self.assertIn("loadMemories({ reset: true })", filter_function)
+        self.assertIn("q.set(state.view === 'atoms' ? 'state' : 'kind', state.filter)", load_function)
+        self.assertIn("resetView()", filter_function)
         self.assertNotIn("renderMemories();", filter_function)
 
 

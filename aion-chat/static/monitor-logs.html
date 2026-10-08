@@ -44,6 +44,11 @@
     </div>
     <div class="log-list" id="logList"><div class="log-empty">暂无日志</div></div>
     <div class="chat-status-bar">
+      <span class="chat-status-label">👤 用户当前状态：</span>
+      <span class="chat-status-text" id="userStateText">暂无</span>
+      <a href="/user-profile" style="font-size:12px;color:var(--accent)">查看与编辑画像</a>
+    </div>
+    <div class="chat-status-bar">
       <span class="chat-status-label">📍 位置/天气摘要：</span>
       <span class="chat-status-text" id="chatStatusText">暂无</span>
     </div>
@@ -59,6 +64,9 @@
 let wakeTargetNames = { aion: "主 AI", connor: "第二 AI" };
 
 connectCommonWS(msg => {
+  if (msg.type === "user_profile_changed" || msg.type === "capability_config_changed") {
+    loadUserActivityState();
+  }
   if (msg.type === "chat_status") {
     $("chatStatusText").textContent = msg.data.status || "暂无";
   } else if (msg.type === "location_update" && msg.data) {
@@ -74,6 +82,17 @@ connectCommonWS(msg => {
     }
   }
 });
+
+async function loadUserActivityState() {
+  try {
+    const data = await api('GET', '/api/user-profile');
+    const state = data.current_state;
+    const phase = data.phases?.[state?.phase] || '未确认';
+    $('userStateText').textContent = !data.enabled ? '后置哨兵已关闭' : !state ? '暂无已确认状态' :
+      `${state.text}（${Date.now()/1000 >= state.expires_at ? '最后已知，已过期' : phase}；${new Date(state.event_at*1000).toLocaleString('zh-CN')}）`;
+  } catch (error) { $('userStateText').textContent = '暂时无法读取'; }
+}
+loadUserActivityState();
 
 (async function init() {
   await loadWakeTargetNames();

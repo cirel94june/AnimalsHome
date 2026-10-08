@@ -3,6 +3,74 @@
   const $ = id => doc.getElementById(id);
   const bridge = root.AionBle;
   const p = root.AnkniProtocol;
+  const phases = $('ankniPhases'), phasesStatus = $('ankniPhasesStatus');
+  const draftKey = 'ankni_custom_phases_draft';
+  let phasesReady = false, phasesDirty = false, phasesSaving = false, phasesTimer;
+  function rememberDraft(text) {
+    try { root.localStorage.setItem(draftKey, text); } catch(e) {}
+  }
+  async function savePhases() {
+    root.clearTimeout(phasesTimer);
+    if (!phasesReady || phasesSaving || !phasesDirty) return;
+    phasesSaving = true;
+    const text = phases.value;
+    phasesStatus.textContent = '正在保存…';
+    try {
+      const response = await root.fetch('/api/toys/ankni/phases', {
+        method:'PUT', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({phases:text}), keepalive:true,
+      });
+      if (!response.ok) throw new Error('保存失败');
+      if (phases.value === text) {
+        phasesDirty = false;
+        try { root.localStorage.removeItem(draftKey); } catch(e) {}
+        phasesStatus.textContent = '已保存';
+      }
+    } catch(e) {
+      phasesStatus.textContent = '保存失败，点击“保存编排”重试';
+    } finally {
+      phasesSaving = false;
+      if (phasesDirty && phases.value !== text) savePhases();
+    }
+  }
+  function editedPhases() {
+    phasesDirty = true;
+    rememberDraft(phases.value);
+    phasesStatus.textContent = '等待保存…';
+    root.clearTimeout(phasesTimer);
+    phasesTimer = root.setTimeout(savePhases, 400);
+  }
+  phases.oninput = editedPhases;
+  phases.onchange = savePhases;
+  $('ankniSave').onclick = () => { editedPhases(); savePhases(); };
+  root.addEventListener('pagehide', savePhases);
+  async function restorePhases() {
+    try {
+      const draft = root.localStorage.getItem(draftKey);
+      if (draft !== null) { phases.value = draft; phasesDirty = true; }
+    } catch(e) {}
+    try {
+      const response = await root.fetch('/api/toys/ankni/phases', {cache:'no-store'});
+      if (!response.ok) throw new Error('读取失败');
+      const saved = await response.json();
+      if (!phasesDirty) {
+        if (typeof saved.phases === 'string') {
+          phases.value = saved.phases;
+          phasesStatus.textContent = '已保存';
+        } else {
+          // Save the existing example on first use, without running it.
+          phasesDirty = true;
+          rememberDraft(phases.value);
+        }
+      }
+    } catch(e) {
+      phasesStatus.textContent = '读取失败，修改后可重新保存';
+    } finally {
+      phasesReady = true;
+      if (phasesDirty) savePhases();
+    }
+  }
+  restorePhases();
   let connecting = false, pending = null, nativeAction = '';
   function connected() { return Boolean(bridge?.isConnected() && bridge.getProfile() === 'ankni'); }
   function log(value) {

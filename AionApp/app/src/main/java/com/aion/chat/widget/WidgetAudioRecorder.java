@@ -9,7 +9,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
-final class WidgetAudioRecorder {
+public final class WidgetAudioRecorder {
     private static final int SAMPLE_RATE = 16000;
     private static final int CHANNEL = AudioFormat.CHANNEL_IN_MONO;
     private static final int ENCODING = AudioFormat.ENCODING_PCM_16BIT;
@@ -21,7 +21,7 @@ final class WidgetAudioRecorder {
     private volatile boolean recording;
     private long startedAt;
 
-    boolean start() {
+    public boolean start() {
         if (recording) return false;
         int minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING);
         int bufferSize = Math.max(minBuffer, 4096);
@@ -42,11 +42,11 @@ final class WidgetAudioRecorder {
         return true;
     }
 
-    boolean isRecording() {
+    public boolean isRecording() {
         return recording;
     }
 
-    File stopToWav(File output) throws IOException {
+    public File stopToWav(File output) throws IOException {
         long duration = System.currentTimeMillis() - startedAt;
         byte[] data = stopAndTakePcm();
         if (duration < MIN_DURATION_MS || data.length < SAMPLE_RATE / 2) {
@@ -57,7 +57,7 @@ final class WidgetAudioRecorder {
         return output;
     }
 
-    void cancel() {
+    public void cancel() {
         stopAndTakePcm();
     }
 

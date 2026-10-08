@@ -581,6 +581,14 @@
 
     document.getElementById('historyMore').addEventListener('click', () => loadHistory(false));
 
+    const memoryEntryParams = new URLSearchParams(location.search);
+    if (['main', 'chatroom'].includes(memoryEntryParams.get('target'))) {
+      document.getElementById('compressionTarget').value = memoryEntryParams.get('target');
+    }
+    const memoryReturn = memoryEntryParams.get('return');
+    if (memoryReturn && memoryReturn.startsWith('/memory?')) {
+      document.querySelector('.back-btn').href = memoryReturn;
+    }
     Promise.all([loadModels(), loadPreviews(), pollCompressionJobs(false), loadHistory()]).catch(error => {
       status(`页面初始化失败：${error.message}`, "error");
     });
