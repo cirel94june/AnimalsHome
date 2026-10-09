@@ -4,6 +4,7 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 """
 
 import json, time, asyncio, random, re, mimetypes
+import memory_hub_bridge
 from dataclasses import replace
 from functools import wraps
 from typing import Optional, List, Dict
@@ -3181,6 +3182,8 @@ async def _save_msg(
     msg = {"id": msg_id, "room_id": room_id, "sender": sender, "content": content,
            "created_at": now, "attachments": att_list, "reasoning_content": reasoning_content}
     await broadcast_synced(manager, {"type": "chatroom_msg_created", "data": msg})
+    if sender in ("aion", "connor"):
+        memory_hub_bridge.schedule_chatroom_capture(room_id, sender, content, now)
 
     if auto_tts and content.strip():
         voice = _chatroom_auto_tts_voice(sender)

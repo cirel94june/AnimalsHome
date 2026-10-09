@@ -338,6 +338,8 @@ get_bridge_token()
 app.include_router(lounge_context_bridge_routes.router)
 app.include_router(create_security_access_router(security_access_service))
 app.include_router(create_security_access_report_router(DATA_DIR / "security_access", BASE_DIR / "security-access-report.html"))
+from ops_status import router as ops_status_router
+app.include_router(ops_status_router)
 
 
 @app.get("/api/client-assets")

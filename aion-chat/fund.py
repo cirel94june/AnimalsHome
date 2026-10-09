@@ -11,7 +11,18 @@ import asyncio, json, time, threading, logging
 from datetime import datetime, date
 
 import aiosqlite
-import akshare as ak
+
+
+class _LazyAkshare:
+    """akshare（连带 pandas）常驻约 50MB；只在真的拉取基金数据时才加载，小内存服务器上不用基金功能就不占内存。"""
+
+    def __getattr__(self, name):
+        import akshare
+        return getattr(akshare, name)
+
+
+ak = _LazyAkshare()
+
 from chinese_calendar import is_workday
 
 from config import (

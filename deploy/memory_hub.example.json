@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "url": "http://127.0.0.1:8000/mcp",
+  "token": "",
+  "actors": {
+    "aion": "claude",
+    "connor": "lucien"
+  },
+  "platform": "aionshome",
+  "context_max_chars": 2500,
+  "context_timeout_seconds": 6,
+  "capture_enabled": true
+}

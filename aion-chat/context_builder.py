@@ -340,6 +340,7 @@ async def build_memory_blocks(
     always_include_recalled: bool = False,
     include_source_details: bool = True,
     max_recalled_memories: int = 8,
+    memory_hub_actor: str = "",
 ) -> dict:
     """
     执行 instant_digest + 记忆召回，返回注入用的文本块和调试信息。
@@ -353,6 +354,8 @@ async def build_memory_blocks(
       chatroom_source_fn: 可选的聊天室原文追溯函数 async (memories, keywords) -> str
       skip_digest: 跳过 instant_digest（快速模式）
       digest_result: 外部传入的 digest 结果（复用同一次调用）
+      memory_hub_actor: 非空时同时拉取该角色的 Memory Hub 跨端记忆并拼进 time_block。
+                        默认关闭：访客/外出等面向他人的场景不得注入私人跨端记忆。
       always_include_recalled: 已弃用的兼容参数；摘要记忆现在每轮都会按相关度注入
 
     返回 dict:
@@ -365,6 +368,14 @@ async def build_memory_blocks(
     board_memory = board_memory_context("aion" if use_main_memories else "connor", query_text)
     if board_memory:
         time_block += "\n\n" + board_memory
+    hub_task = None
+    if memory_hub_actor:
+        import memory_hub_bridge
+        hub_task = asyncio.create_task(memory_hub_bridge.context_block(memory_hub_actor, query_text))
+
+    async def _with_hub(block: str) -> str:
+        hub_block = await hub_task if hub_task else ""
+        return f"{block}\n\n{hub_block}" if hub_block else block
     # 健康数据摘要
     health_text = await build_health_summary()
     if health_text:
@@ -372,7 +383,7 @@ async def build_memory_blocks(
     memory_block = ""
 
     if skip_digest:
-        return {"time_block": time_block, "memory_block": "", "digest_result": {}}
+        return {"time_block": await _with_hub(time_block), "memory_block": "", "digest_result": {}}
 
     # 如果没有外部传入 digest_result，自己生成一次本地前置路由
     if digest_result is None and recent_messages:
@@ -507,7 +518,7 @@ async def build_memory_blocks(
     if relevant_board_memory:
         memory_block = (memory_block + "\n\n" if memory_block else "") + relevant_board_memory
     return {
-        "time_block": time_block,
+        "time_block": await _with_hub(time_block),
         "memory_block": memory_block,
         "digest_result": debug_digest,
     }

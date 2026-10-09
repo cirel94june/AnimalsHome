@@ -103,6 +103,7 @@ from schedule import (
     process_schedule_commands,
 )
 from mcp_client import mcp_manager
+import memory_hub_bridge
 from luckin import (
     LuckinOrderError,
     handle_luckin_commands,
@@ -1388,6 +1389,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     debug_recalled = []
     board_memory = board_memory_context("aion", body.content)
 
+    hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content))
     digest_result = await instant_digest(actual_recent)
     recall_keywords = digest_result.get("keywords", [])
     recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
@@ -1420,6 +1422,9 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         bg_block += health_text
     if board_memory:
         bg_block += "\n\n" + board_memory
+    hub_block = await hub_task
+    if hub_block:
+        bg_block += "\n\n" + hub_block
     if surfaced:
         unresolved_lines = [
             f"📌 {format_recalled_memories_for_prompt([m])[2:]}（还没做/还没去）"
@@ -1736,6 +1741,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             await manager.broadcast({"type": "msg_created", "data": ai_msg})
             await broadcast_app_supervision_command(supervision_command)
             await export_conversation(conv_id)
+            memory_hub_bridge.schedule_capture("aion", body.content, full_text)
 
             if toy_matches and allow_legacy_toy():
                 toy_data = {'type': 'toy_command', 'commands': toy_matches, 'msg_id': ai_msg_id, 'epoch': toy_selection_state()['epoch']}
@@ -2046,6 +2052,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         inject_offset += 2
     else:
         # ── 正常模式：本地路由 + 完整 RAG 流程 ──
+        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content))
         digest_result = await instant_digest(actual_recent)
         recall_keywords = digest_result.get("keywords", [])
         recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
@@ -2081,6 +2088,9 @@ async def send_message(conv_id: str, body: MsgCreate):
             bg_block += health_text
         if board_memory:
             bg_block += "\n\n" + board_memory
+        hub_block = await hub_task
+        if hub_block:
+            bg_block += "\n\n" + hub_block
         if surfaced:
             unresolved_lines = [
                 f"📌 {format_recalled_memories_for_prompt([m])[2:]}（还没做/还没去）"
@@ -2457,6 +2467,7 @@ async def send_message(conv_id: str, body: MsgCreate):
             await manager.broadcast({"type": "msg_created", "data": ai_msg})
             await broadcast_app_supervision_command(supervision_command)
             await export_conversation(conv_id)
+            memory_hub_bridge.schedule_capture("aion", body.content, full_text)
 
             # 推送 [TOY:x] 指令到前端
             if toy_matches and allow_legacy_toy():
@@ -3554,6 +3565,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         inject_offset += 2
     else:
         # ── 正常模式：本地路由 + 完整 RAG 流程 ──
+        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", lounge_request_text))
         digest_result = await instant_digest(actual_recent)
         recall_keywords = digest_result.get("keywords", [])
         recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
@@ -3569,6 +3581,9 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             bg_block += health_text
         if board_memory:
             bg_block += "\n\n" + board_memory
+        hub_block = await hub_task
+        if hub_block:
+            bg_block += "\n\n" + hub_block
         if surfaced:
             unresolved_lines = [
                 f"📌 {format_recalled_memories_for_prompt([m])[2:]}（还没做/还没去）"
@@ -3907,6 +3922,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             ai_msg = {"id": ai_msg_id, "conv_id": conv_id, "role": "assistant", "content": full_text, "created_at": now2, "attachments": reply_atts, "reasoning_content": usage_meta.get("reasoning_content", "").strip()}
             await manager.broadcast({"type": "msg_created", "data": ai_msg})
             await export_conversation(conv_id)
+            memory_hub_bridge.schedule_capture("aion", lounge_request_text, full_text)
 
             # 推送 [TOY:x] 指令到前端
             if toy_matches and allow_legacy_toy():
