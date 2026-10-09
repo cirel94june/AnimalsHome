@@ -97,6 +97,11 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
         <label class="switch"><input type="checkbox" id="enabled"><i></i></label></div>
     </div>
     <div class="card">
+      <h3>IB 细节</h3>
+      <div class="row"><label>桌面图标</label><span class="seg" id="icon-style"><button data-v="ib">IB 线条</button><button data-v="original">原插画</button></span></div>
+      <div class="row"><label>页面标题<div class="hint">英文衬线大标题 + 中文小字</div></label><span class="seg" id="title-style"><button data-v="ib">IB 式</button><button data-v="plain">原样</button></span></div>
+    </div>
+    <div class="card">
       <h3>全站色调</h3>
       <div class="hint">整套更换文字、强调色与气泡配色；之后的细调会叠加在所选色调上。</div>
       <div class="presets" id="presets"></div>
@@ -242,7 +247,8 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
   }
   function look(s) {  // 外观本身（不含方案槽），用于方案槽与美化码
     return { preset: s.preset, vars: JSON.parse(JSON.stringify(s.vars || {})), bg: s.bg || '', chat_bg: s.chat_bg || '',
-      reduce_motion: !!s.reduce_motion, custom_css: s.custom_css || '' };
+      reduce_motion: !!s.reduce_motion, custom_css: s.custom_css || '',
+      icon_style: s.icon_style || 'ib', title_style: s.title_style || 'ib' };
   }
   function presetVars() { return (IB.presets[skin.preset] || IB.presets.internal).vars; }
   function val(key) {
@@ -384,6 +390,8 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
     var ai = rgbaParts(val('ai_bg') || 'rgba(255,255,255,0.92)');
     $('#ai-color').value = ai.hex; $('#ai-alpha').value = ai.a; $('#ai-alpha-o').textContent = Math.round(ai.a * 100) + '%';
     seg('#title-font', skin.vars.title_font === 'serif' ? 'serif' : 'sans', function (v) { skin.vars.title_font = v; });
+    seg('#icon-style', skin.icon_style === 'original' ? 'original' : 'ib', function (v) { skin.icon_style = v; });
+    seg('#title-style', skin.title_style === 'plain' ? 'plain' : 'ib', function (v) { skin.title_style = v; toast('其他页面刷新后生效'); });
     var sh = skin.vars.bubble_shadow;
     seg('#bshadow', sh === SHADOWS.none ? 'none' : sh === SHADOWS.deep ? 'deep' : 'soft', function (v) { skin.vars.bubble_shadow = SHADOWS[v]; });
     $('#thumb-bg').style.backgroundImage = 'url("' + (skin.bg || '/static/ib/bg-internal.jpg') + '")';
@@ -445,6 +453,8 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
         skin.vars = data.vars && typeof data.vars === 'object' ? data.vars : {};
         skin.bg = data.bg || ''; skin.chat_bg = data.chat_bg || '';
         skin.reduce_motion = !!data.reduce_motion; skin.custom_css = data.custom_css || '';
+        skin.icon_style = data.icon_style === 'original' ? 'original' : 'ib';
+        skin.title_style = data.title_style === 'plain' ? 'plain' : 'ib';
         renderAll(); apply(true); toast('已导入');
       } catch (e) { toast('美化码格式不对'); }
     };

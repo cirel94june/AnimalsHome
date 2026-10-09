@@ -50,7 +50,7 @@ html[data-skin="ib"] {
   /* 字体 */
   --ib-font-scale: 1;
   --ib-sans: "Noto Sans SC", "PingFang SC", -apple-system, "Microsoft YaHei", system-ui, sans-serif;
-  --ib-serif: "Cormorant Garamond", "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  --ib-serif: "Cormorant Garamond", Georgia, "Noto Serif SC", "Songti SC", "STSong", serif;
   --ib-title-font: var(--ib-sans);
   --ib-text-shadow: none;
 }
@@ -58,7 +58,7 @@ html[data-skin="ib"] {
 /* ── 把 IB 变量映射到 AionsHome 原有变量（覆盖各页面的亮/暗主题定义） ── */
 html[data-skin="ib"] body,
 html[data-skin="ib"] body[data-theme] {
-  --bg: var(--ib-base);
+  --bg: rgba(255, 255, 255, calc(var(--ib-card-a) * 0.7));
   --surface: rgba(255, 255, 255, var(--ib-card-a));
   --surface2: rgba(255, 255, 255, calc(var(--ib-card-a) * 0.75));
   --surface3: rgba(200, 218, 242, 0.32);
@@ -287,18 +287,174 @@ html[data-skin="ib"] .clock-widget .clock-time {
   font-family: var(--ib-title-font);
   font-weight: 300;
 }
-html[data-skin="ib"] .dock {
-  background: rgba(255, 255, 255, var(--ib-dock-a));
-  border: 1px solid var(--ib-glass-line);
-  box-shadow: var(--ib-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(calc(var(--ib-blur) + 6px)) saturate(1.6);
-  -webkit-backdrop-filter: blur(calc(var(--ib-blur) + 6px)) saturate(1.6);
-}
 html[data-skin="ib"] .app-icon span,
 html[data-skin="ib"] .app-label,
 html[data-skin="ib"] .app-name {
   color: var(--ib-tx);
   text-shadow: 0 1px 6px rgba(255, 255, 255, 0.8);
+}
+
+
+/* ══ 字体：IB 内嵌的三款西文字体（SIL OFL 1.1，见 fonts/OFL.txt）；中文沿用系统黑体 ══ */
+@font-face { font-family: "Cormorant Garamond"; font-style: normal; font-weight: 400; font-display: swap; src: url("/static/ib/fonts/cormorant-garamond-400.woff2") format("woff2"); }
+@font-face { font-family: "Cormorant Garamond"; font-style: normal; font-weight: 600; font-display: swap; src: url("/static/ib/fonts/cormorant-garamond-600.woff2") format("woff2"); }
+@font-face { font-family: "Raleway"; font-style: normal; font-weight: 300; font-display: swap; src: url("/static/ib/fonts/raleway-300.woff2") format("woff2"); }
+html[data-skin="ib"] {
+  --ib-disp: "Raleway", "Noto Sans SC", "PingFang SC", sans-serif;
+  --ib-sys: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Noto Sans SC", "Segoe UI", Roboto, sans-serif;
+}
+
+/* ══ 桌面图标：IB 白釉圆角底 + 白色线条图形 ══ */
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon .icon-img {
+  width: 57px;
+  height: 57px;
+  border-radius: 18px;
+  background: linear-gradient(172deg, #ffffff, #f4f8fd);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 6px 14px rgba(86, 118, 168, 0.16), 0 0 12px rgba(150, 195, 245, 0.3),
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.95), inset 0 -2px 3px rgba(122, 152, 204, 0.2);
+}
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon .icon-img img {
+  padding: 12px;
+  object-fit: contain;
+}
+html[data-skin="ib"] .app-icon .icon-label {
+  font-family: var(--ib-sys);
+  font-weight: 500;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--ib-tx2);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.55);
+}
+html[data-skin="ib"] .dock::before {
+  background: rgba(255, 255, 255, var(--ib-dock-a));
+  border-color: var(--ib-glass-line);
+  box-shadow: var(--ib-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+html[data-skin="ib"] .clock-widget .clock-time {
+  font-family: var(--ib-disp);
+  font-weight: 300;
+  letter-spacing: 0;
+}
+html[data-skin="ib"] .clock-widget .clock-date {
+  font-family: var(--ib-sys);
+  font-weight: 500;
+  color: var(--ib-tx2);
+}
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="activity"] .icon-img img { content: url("/static/ib/icons/activity.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="alarm"] .icon-img img { content: url("/static/ib/icons/alarm.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="album"] .icon-img img { content: url("/static/ib/icons/album.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="app-supervision"] .icon-img img { content: url("/static/ib/icons/app-supervision.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="camera"] .icon-img img { content: url("/static/ib/icons/camera.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="capabilities"] .icon-img img { content: url("/static/ib/icons/capabilities.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="chat"] .icon-img img { content: url("/static/ib/icons/chat.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="chatroom"] .icon-img img { content: url("/static/ib/icons/chatroom.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="dateTheater"] .icon-img img { content: url("/static/ib/icons/dateTheater.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="doudizhu"] .icon-img img { content: url("/static/ib/icons/doudizhu.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="english-corner"] .icon-img img { content: url("/static/ib/icons/english-corner.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="family-dynamics"] .icon-img img { content: url("/static/ib/icons/family-dynamics.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="fund"] .icon-img img { content: url("/static/ib/icons/fund.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="ghost-forest"] .icon-img img { content: url("/static/ib/icons/ghost-forest.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="gift"] .icon-img img { content: url("/static/ib/icons/gift.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="health"] .icon-img img { content: url("/static/ib/icons/health.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="hug"] .icon-img img { content: url("/static/ib/icons/hug.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="location"] .icon-img img { content: url("/static/ib/icons/location.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="logs"] .icon-img img { content: url("/static/ib/icons/logs.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="lounge-friends"][data-url="/lounge-board"] .icon-img img { content: url("/static/ib/icons/lounge-board.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="lounge-friends"]:not([data-url="/lounge-board"]) .icon-img img { content: url("/static/ib/icons/lounge-friends.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="memory"] .icon-img img { content: url("/static/ib/icons/memory.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="moments"] .icon-img img { content: url("/static/ib/icons/moments.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="music-station"] .icon-img img { content: url("/static/ib/icons/music-station.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="playground"] .icon-img img { content: url("/static/ib/icons/playground.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="reading"] .icon-img img { content: url("/static/ib/icons/reading.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="repair"] .icon-img img { content: url("/static/ib/icons/repair.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="seeky"] .icon-img img { content: url("/static/ib/icons/seeky.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="settings"] .icon-img img { content: url("/static/ib/icons/settings.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="taobao"] .icon-img img { content: url("/static/ib/icons/taobao.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="theater"] .icon-img img { content: url("/static/ib/icons/theater.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="visual"] .icon-img img { content: url("/static/ib/icons/visual.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="whisper"] .icon-img img { content: url("/static/ib/icons/whisper.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="wishes"] .icon-img img { content: url("/static/ib/icons/wishes.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="worldbook"] .icon-img img { content: url("/static/ib/icons/worldbook.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="xhs-lite"] .icon-img img { content: url("/static/ib/icons/xhs-lite.svg"); }
+
+/* ══ IB 式页头 ══ */
+html[data-skin="ib"] .top-bar > h2[data-ib-title] {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-weight: 400;
+}
+html[data-skin="ib"] .ib-ph-en {
+  font-family: var(--ib-serif);
+  font-weight: 600;
+  font-size: 23px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--ib-topbar-tx);
+}
+html[data-skin="ib"] .ib-ph-cn {
+  font-family: var(--ib-sys);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: var(--ib-tx3);
+  white-space: nowrap;
+}
+html[data-skin="ib"] .ib-ph-only {
+  font-family: var(--ib-sys);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+html[data-skin="ib"] .top-bar > .back-btn[data-ib-back] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--ib-glass-line);
+  color: var(--ib-tx2);
+}
+
+/* ══ 子页面按钮与标签统一成 IB 白玻璃（聊天、聊天室、桌面不在此列） ══ */
+html[data-skin="ib"] .sub-page :is(button, a)[class*="btn"]:not(.back-btn):not(.send-btn):not(.toggle-switch),
+html[data-skin="ib"] .sub-page .btn-cancel,
+html[data-skin="ib"] .sub-page button:not([class]) {
+  background: rgba(255, 255, 255, 0.66) !important;
+  color: var(--ib-acc) !important;
+  border: 1px solid var(--ib-glass-line) !important;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(90, 120, 170, 0.12);
+  text-shadow: none;
+}
+html[data-skin="ib"] .sub-page :is(button, a)[class*="btn"]:is([class*="del"], [class*="danger"], [class*="discard"], [class*="reset"], [class*="remove"], [class*="clear"]) {
+  color: var(--ib-danger) !important;
+}
+html[data-skin="ib"] .sub-page :is(.btn-save, .btn-primary, [class*="apply-btn"], [class*="submit"]) {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)) !important;
+  color: #fff !important;
+  border: none !important;
+}
+html[data-skin="ib"] .sub-page [class*="-tab"]:is(button, a, div, span):not([class*="tabs"]) {
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ib-tx2);
+  border: 1px solid var(--ib-glass-line);
+  border-radius: 999px;
+}
+html[data-skin="ib"] .sub-page [class*="-tab"]:is(button, a, div, span):is(.active, .on, .selected, [aria-selected="true"]) {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to));
+  color: #fff;
+  border-color: transparent;
+}
+html[data-skin="ib"] .sub-page :is(.publish-fab, [class*="add-btn"]) {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)) !important;
+  color: #fff !important;
+  border: none !important;
 }
 
 /* ── 滚动条 ── */

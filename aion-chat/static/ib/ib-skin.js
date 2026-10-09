@@ -45,6 +45,43 @@
       scrim: 'linear-gradient(180deg,rgba(246,243,255,0.4),rgba(236,231,252,0.6))' } }
   };
 
+  // IB 式页头：衬线英文大标题 + 中文小字
+  var TITLE_EN = {
+    '/moments': 'Circle', '/memory': 'Memory', '/settings': 'Settings', '/worldbook': 'World',
+    '/schedule': 'Schedule', '/diary': 'Diary', '/album': 'Album', '/music-station': 'Music',
+    '/wishes': 'Wishes', '/theater': 'Theater', '/date-theater': 'Date', '/reading': 'Reading',
+    '/health': 'Health', '/location': 'Location', '/camera': 'Camera', '/monitor-logs': 'Logs',
+    '/activity-logs': 'Activity', '/family-dynamics': 'Family', '/gift': 'Gifts',
+    '/capabilities': 'Tools', '/app-supervision': 'Guard', '/memory-compression': 'Archive',
+    '/heart-whispers': 'Whispers', '/english-corner': 'English', '/lounge-friends': 'Friends',
+    '/taobao': 'Shop', '/xhs-lite': 'Notes', '/playground': 'Playground', '/repair': 'Repair',
+    '/fund': 'Fund', '/wallpaper': 'Wallpaper', '/hug': 'Hug', '/toys': 'Whisper', '/tts-test': 'Voice'
+  };
+  var LEADING_EMOJI = /^[\s\u200d\ufe0f\u2190-\u21ff\u2300-\u27bf\u2b00-\u2bff\ud83c-\udbff\udc00-\udfff]+/;
+  var CHEVRON = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>';
+
+  function decorateHeaders(skin) {
+    if (skin.enabled === false || skin.title_style === 'plain') return;
+    var en = TITLE_EN[location.pathname.replace(/\/+$/, '') || '/'];
+    Array.prototype.forEach.call(document.querySelectorAll('.top-bar > h2:not([data-ib-title])'), function (h2) {
+      if (h2.children.length) return;  // 页面自己有结构的标题不动
+      var cn = (h2.textContent || '').replace(LEADING_EMOJI, '').trim();
+      if (!cn) return;
+      h2.setAttribute('data-ib-title', '1');
+      h2.textContent = '';
+      if (en) {
+        var e = document.createElement('span'); e.className = 'ib-ph-en'; e.textContent = en; h2.appendChild(e);
+      }
+      var c = document.createElement('span'); c.className = en ? 'ib-ph-cn' : 'ib-ph-only'; c.textContent = cn; h2.appendChild(c);
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.top-bar > .back-btn:not([data-ib-back])'), function (btn) {
+      if (!/^\s*[⬅←‹<]\s*$/.test(btn.textContent || '')) return;
+      btn.setAttribute('data-ib-back', '1');
+      if (!btn.getAttribute('aria-label')) btn.setAttribute('aria-label', '返回');
+      btn.innerHTML = CHEVRON;
+    });
+  }
+
   function clean(value) {
     // 防止设置里混入能跳出声明的字符
     return String(value == null ? '' : value).replace(/[;{}<>\\]/g, '').trim();
@@ -104,8 +141,10 @@
     root.dataset.theme = 'light';
     try { localStorage.setItem(THEME_KEY, 'light'); } catch (e) {}
     if (skin.reduce_motion) root.dataset.ibReduce = '1'; else delete root.dataset.ibReduce;
+    if (skin.icon_style === 'original') root.dataset.ibIcons = 'original'; else delete root.dataset.ibIcons;
     styleEl().textContent = buildCss(skin);
     setBodyTheme();
+    if (document.readyState !== 'loading') decorateHeaders(skin);
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', (skin.vars && skin.vars.base) || '#dfe9f6');
   }
@@ -120,7 +159,7 @@
 
   var current = readCache() || { enabled: true };
   apply(current);
-  document.addEventListener('DOMContentLoaded', setBodyTheme, { once: true });
+  document.addEventListener('DOMContentLoaded', function () { setBodyTheme(); decorateHeaders(current); }, { once: true });
   // 其他脚本（如 common.js）改了主题时拉回亮色
   window.addEventListener('aion-theme-applied', function (event) {
     if (root.dataset.skin === 'ib' && event.detail && event.detail.theme !== 'light' && window.applyAionTheme) {
