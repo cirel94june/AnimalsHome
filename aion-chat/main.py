@@ -343,6 +343,10 @@ app.include_router(create_security_access_report_router(DATA_DIR / "security_acc
 from ops_status import router as ops_status_router
 app.include_router(ops_status_router)
 app.include_router(skin_router)
+from actors import router as actors_router
+from desk_notes import router as desk_notes_router
+app.include_router(actors_router)
+app.include_router(desk_notes_router)
 
 
 @app.get("/api/client-assets")

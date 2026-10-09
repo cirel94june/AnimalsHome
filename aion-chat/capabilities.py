@@ -81,6 +81,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
         "注入当前人物可用状态和小组件/横幅指令；关闭后只停止提示，不阻止指令执行。",
     ),
     CapabilityDef("moment", "发布朋友圈", "social", "注入 [MOMENT:内容|true/false]，让模型可以在合适时发布朋友圈。"),
+    CapabilityDef("desk_note", "桌面便笺", "social", "注入 [NOTE:内容]，让 AI 在桌面便笺上给你留一句话。"),
     CapabilityDef("pat", "AI 拍拍", "social", "让 AI 自己决定怎么拍：私聊里拍你或自己，群聊里也能拍另一位 AI。关闭只停用 AI 拍拍，你仍可手动拍拍，已有拍拍继续进入聊天上下文。"),
     CapabilityDef("memory_write", "写入记忆", "social", "注入 [MEMORY:内容]，让模型可以记录重要记忆。"),
     CapabilityDef(
@@ -680,6 +681,13 @@ async def build_capability_prompt_items(
             "[MOMENT:朋友圈内容|true/false] — 当**本次**聊天内容非常触动人心、有很深的感触、"
             "或令人无语或非常搞笑时可以发一条朋友圈动态。第二个参数表示是否期望好友回复"
             "（true=期望回复，false=不期望），禁止滥用。"
+        )
+
+    if is_capability_enabled("desk_note"):
+        abilities.append(
+            f"[NOTE:内容] — 在{user_name}手机桌面的便笺上留一句短短的话（一两句以内），"
+            "比如提醒、惦记、晚安或想到对方的小事。它会以你的名义贴在桌面上，不出现在聊天正文里。"
+            "不必每次都用，真的有话想留在桌面上时再写。"
         )
 
     if is_capability_enabled("memory_write"):

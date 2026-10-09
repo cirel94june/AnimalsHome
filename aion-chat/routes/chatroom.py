@@ -5,6 +5,7 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 
 import json, time, asyncio, random, re, mimetypes
 import memory_hub_bridge
+from desk_notes import process_note_commands
 from dataclasses import replace
 from functools import wraps
 from typing import Optional, List, Dict
@@ -851,6 +852,7 @@ async def _process_chatroom_commands(
         full_text, source_type="chatroom", source_id=room_id,
         sender=who_identity, source_msg_id=msg_id, on_saved=_save_pat_event,
     )
+    full_text = await process_note_commands(full_text, who_identity)
     full_text = await process_band_vibration(
         full_text,
         source_type="chatroom",

@@ -37,8 +37,8 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "url": "",
     "token": "",
     "headers": {},
-    # AionsHome 内部角色 → Memory Hub 的 source_ai
-    "actors": {"aion": "claude", "connor": "lucien"},
+    # AionsHome 内部角色 → Memory Hub 的 source_ai；留空时用角色登记表（actors.py）里的设置
+    "actors": {},
     "platform": "aionshome",
     "context_max_chars": 2500,
     "context_timeout_seconds": 6.0,
@@ -80,7 +80,13 @@ def load_config() -> dict[str, Any]:
 def source_ai_for(actor: str, cfg: dict[str, Any] | None = None) -> str:
     cfg = cfg or load_config()
     actors = cfg.get("actors") or {}
-    return str(actors.get(actor) or "").strip()
+    if actors:
+        return str(actors.get(actor) or "").strip()
+    try:
+        from actors import memory_hub_id
+        return memory_hub_id(actor)
+    except Exception:
+        return {"aion": "claude", "connor": "lucien"}.get(actor, "")
 
 
 def _is_active(cfg: dict[str, Any]) -> bool:

@@ -56,7 +56,7 @@
     '/capabilities': 'Tools', '/app-supervision': 'Guard', '/memory-compression': 'Archive',
     '/heart-whispers': 'Whispers', '/english-corner': 'English', '/lounge-friends': 'Friends',
     '/taobao': 'Shop', '/xhs-lite': 'Notes', '/playground': 'Playground', '/repair': 'Repair',
-    '/fund': 'Fund', '/wallpaper': 'Wallpaper', '/hug': 'Hug', '/toys': 'Whisper', '/tts-test': 'Voice'
+    '/fund': 'Fund', '/ai-cards': 'Cards', '/wallpaper': 'Wallpaper', '/hug': 'Hug', '/toys': 'Whisper', '/tts-test': 'Voice'
   };
   var LEADING_EMOJI = /^[\s\u200d\ufe0f\u2190-\u21ff\u2300-\u27bf\u2b00-\u2bff\ud83c-\udbff\udc00-\udfff]+/;
   var CHEVRON = '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>';

@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>AI 名片</title>
+<link rel="stylesheet" href="/static/ib/desk.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); overflow: hidden; -webkit-tap-highlight-color: transparent; }
+.page { height: 100dvh; display: flex; flex-direction: column; }
+.top-bar { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; flex: none; }
+.top-bar h2 { font-weight: 400; }
+.deck { flex: 1; min-height: 0; display: flex; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 14px 28px 10px; scrollbar-width: none; }
+.deck::-webkit-scrollbar { display: none; }
+.card {
+  flex: 0 0 calc(100% - 8px);
+  max-width: 420px;
+  scroll-snap-align: center;
+  display: flex;
+  flex-direction: column;
+  border-radius: 28px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 14px 40px rgba(70, 100, 150, 0.16);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+}
+.cover { position: relative; height: 34%; min-height: 150px; flex: none; background: linear-gradient(160deg, color-mix(in srgb, var(--c) 55%, #fff), color-mix(in srgb, var(--c) 18%, #fff)); }
+.cover::after { content: ""; position: absolute; inset: auto 0 0 0; height: 60%; background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.5)); }
+.cover .no { position: absolute; top: 14px; left: 18px; z-index: 1; font-family: var(--ib-disp); font-weight: 300; font-size: 10px; letter-spacing: 0.34em; color: rgba(255, 255, 255, 0.95); text-transform: uppercase; }
+.ava { position: relative; z-index: 2; width: 104px; height: 104px; margin: -60px auto 0; border-radius: 50%; overflow: hidden; border: 3px solid rgba(255, 255, 255, 0.95); box-shadow: 0 10px 26px rgba(50, 80, 130, 0.25); background: #eef3fa; flex: none; }
+.ava img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ava.empty { display: flex; align-items: center; justify-content: center; color: var(--ib-tx3); font-family: var(--ib-serif); font-size: 40px; }
+.body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 22px 18px; text-align: center; }
+.name { font-family: var(--ib-serif); font-weight: 600; font-size: 30px; line-height: 1.15; }
+.sign { margin-top: 8px; font-size: 13.5px; line-height: 1.7; color: var(--ib-tx2); font-style: italic; min-height: 1.7em; }
+.stats { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
+.stat { flex: 1; max-width: 140px; padding: 10px 6px; border-radius: 16px; background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.75); }
+.stat b { display: block; font-family: var(--ib-serif); font-weight: 600; font-size: 24px; line-height: 1.1; color: var(--c); }
+.stat span { font-family: var(--ib-disp); font-weight: 300; font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ib-tx3); }
+.meta { margin-top: 14px; font-size: 12px; color: var(--ib-tx3); line-height: 1.8; }
+.btns { display: flex; gap: 10px; margin-top: 18px; }
+.btns button, .btns a { flex: 1; padding: 11px 0; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.62); color: var(--ib-acc); font-size: 14px; text-decoration: none; }
+.btns .primary { background: linear-gradient(135deg, color-mix(in srgb, var(--c) 70%, #fff), var(--c)); color: #fff; border: none; }
+.btns .muted { color: var(--ib-tx3); }
+.card.off .cover { filter: grayscale(0.85); opacity: 0.6; }
+.card.off .name { color: var(--ib-tx3); }
+.pager { flex: none; display: flex; justify-content: center; gap: 6px; padding: 4px 0 calc(16px + env(safe-area-inset-bottom)); }
+.pager i { width: 6px; height: 6px; border-radius: 50%; background: rgba(120, 150, 200, 0.3); transition: all 0.2s; }
+.pager i.on { width: 16px; border-radius: 3px; background: var(--ib-acc); }
+.ib-sheet .row2 { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+.ib-sheet .row2 img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid #fff; }
+.ib-sheet input[type="color"] { width: 44px; height: 32px; border: 1px solid var(--ib-line); border-radius: 8px; background: none; padding: 2px; }
+.ib-sheet .wrow input[type="checkbox"] { flex: none; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top-bar"><button class="back-btn" onclick="location.href='/'">⬅</button><h2>AI 名片</h2></div>
+  <div class="deck" id="deck"></div>
+  <div class="pager" id="pager"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var data = { user: { name: '你' }, actors: [] };
+  var deck = document.getElementById('deck');
+  var pager = document.getElementById('pager');
+  var CHAT = { aion: '/chat', connor: '/chatroom' };
+
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function daysSince(date) {
+    if (!date) return null;
+    var d = new Date(date + 'T00:00:00'); if (isNaN(d)) return null;
+    var t = new Date(); t.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((t - d) / 86400000));
+  }
+  function nextAnniv(date) {
+    if (!date) return null;
+    var d = new Date(date + 'T00:00:00'); if (isNaN(d)) return null;
+    var t = new Date(); t.setHours(0, 0, 0, 0);
+    var n = new Date(d); n.setFullYear(t.getFullYear()); if (n < t) n.setFullYear(t.getFullYear() + 1);
+    return Math.round((n - t) / 86400000);
+  }
+
+  function render() {
+    var keep = deck.scrollLeft;
+    deck.innerHTML = '';
+    data.actors.forEach(function (a) {
+      var days = daysSince(a.meet_since), left = nextAnniv(a.meet_since);
+      var card = document.createElement('section');
+      card.className = 'card' + (a.enabled ? '' : ' off');
+      card.style.setProperty('--c', a.color || '#5c86c8');
+      var chat = CHAT[a.id];
+      card.innerHTML =
+        '<div class="cover"><span class="no">No. ' + a.seat + (a.builtin ? (a.id === 'aion' ? ' · 主 AI' : ' · 第二位') : '') + '</span></div>' +
+        (a.avatar ? '<div class="ava"><img src="' + esc(a.avatar) + '" alt=""></div>' : '<div class="ava empty">' + esc((a.name || '?').slice(0, 1)) + '</div>') +
+        '<div class="body">' +
+        '<div class="name">' + esc(a.name) + '</div>' +
+        '<div class="sign">' + (a.enabled ? esc(a.sign || '') : '这个位置还空着，以后有新的 TA 可以住进来') + '</div>' +
+        (a.enabled ? '<div class="stats"><div class="stat"><b>' + (days === null ? '—' : days) + '</b><span>days together</span></div>' +
+          '<div class="stat"><b>' + (left === null ? '—' : left) + '</b><span>to anniversary</span></div></div>' +
+          '<div class="meta">' + (a.memory_hub ? 'Memory Hub · ' + esc(a.memory_hub) : '未接入 Memory Hub') + '</div>' : '') +
+        '<div class="btns">' +
+        (a.enabled
+          ? '<button type="button" data-edit="' + a.id + '">编辑</button>' + (chat ? '<a class="primary" href="' + chat + '">去聊天</a>' : '<button type="button" class="muted" disabled>聊天即将开放</button>')
+          : '<button type="button" class="primary" data-enable="' + a.id + '">启用这个位置</button>') +
+        '</div></div>';
+      deck.appendChild(card);
+    });
+    pager.innerHTML = data.actors.map(function () { return '<i></i>'; }).join('');
+    deck.scrollLeft = keep;
+    syncPager();
+  }
+
+  function syncPager() {
+    var cards = deck.children; if (!cards.length) return;
+    var w = cards[0].getBoundingClientRect().width + 14;
+    var i = Math.round(deck.scrollLeft / w);
+    Array.prototype.forEach.call(pager.children, function (dot, j) { dot.classList.toggle('on', j === i); });
+  }
+  deck.addEventListener('scroll', syncPager, { passive: true });
+
+  function save(id, patch) {
+    return fetch('/api/actors/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
+      .then(function (updated) { data.actors = data.actors.map(function (a) { return a.id === id ? updated : a; }); render(); });
+  }
+
+  function openEdit(a) {
+    var mask = document.createElement('div'); mask.className = 'ib-sheet-mask';
+    var box = document.createElement('div'); box.className = 'ib-sheet';
+    var nameField = a.builtin
+      ? '<div class="hint">名字在' + (a.id === 'aion' ? '「世界书」' : '「聊天室设置」') + '里改，这里会自动同步。</div>'
+      : '<label class="field">名字<input type="text" id="f-name" maxlength="24"></label>';
+    box.innerHTML = '<h3>' + esc(a.name) + '<small>No. ' + a.seat + '</small></h3>' +
+      '<div class="sec"><b>头像</b><div class="row2"><img id="f-ava" src="' + esc(a.avatar || '/public/AIIcon.png') + '" alt="">' +
+      '<div class="acts" style="margin:0;flex:1"><button type="button" id="f-up">换头像</button></div></div><input type="file" id="f-file" accept="image/*" hidden></div>' +
+      '<div class="sec">' + nameField +
+      '<label class="field">签名<input type="text" id="f-sign" maxlength="80" placeholder="一句话介绍 TA"></label>' +
+      '<label class="field">相遇的日子<input type="date" id="f-meet"></label>' +
+      '<label class="field">Memory Hub 身份（source_ai）<input type="text" id="f-hub" maxlength="40" placeholder="例如 claude / lucien / jasper"></label>' +
+      '<div class="wrow" style="margin-top:10px"><span>名片颜色</span><input type="color" id="f-color"></div>' +
+      (a.id !== 'aion' ? '<div class="wrow"><span>启用这个位置</span><input type="checkbox" id="f-on"></div>' : '') +
+      '</div><div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>';
+    mask.appendChild(box); document.body.appendChild(mask);
+    mask.addEventListener('click', function (e) { if (e.target === mask) mask.remove(); });
+    var $ = function (s) { return box.querySelector(s); };
+    if ($('#f-name')) $('#f-name').value = a.name.indexOf('空位') === 0 ? '' : a.name;
+    $('#f-sign').value = a.sign || ''; $('#f-meet').value = a.meet_since || ''; $('#f-hub').value = a.memory_hub || '';
+    $('#f-color').value = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : '#5c86c8';
+    if ($('#f-on')) $('#f-on').checked = !!a.enabled;
+    var avatar = a.avatar || '';
+    $('#f-up').onclick = function () { $('#f-file').click(); };
+    $('#f-file').onchange = function () {
+      var f = this.files && this.files[0]; if (!f) return;
+      var fd = new FormData(); fd.append('file', f);
+      fetch('/api/actors/' + a.id + '/avatar', { method: 'POST', body: fd })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
+        .then(function (j) { avatar = j.url; $('#f-ava').src = j.url; })
+        .catch(function (e) { alert('上传失败：' + e.message); });
+    };
+    $('[data-x="cancel"]').onclick = function () { mask.remove(); };
+    $('[data-x="save"]').onclick = function () {
+      var patch = { sign: $('#f-sign').value, meet_since: $('#f-meet').value, memory_hub: $('#f-hub').value, color: $('#f-color').value, avatar: avatar };
+      if ($('#f-name')) patch.name = $('#f-name').value;
+      if ($('#f-on')) patch.enabled = $('#f-on').checked;
+      save(a.id, patch).then(function () { mask.remove(); }).catch(function (e) { alert('保存失败：' + e.message); });
+    };
+  }
+
+  deck.addEventListener('click', function (e) {
+    var ed = e.target.closest('[data-edit]');
+    if (ed) { openEdit(data.actors.filter(function (a) { return a.id === ed.dataset.edit; })[0]); return; }
+    var en = e.target.closest('[data-enable]');
+    if (en) { var a = data.actors.filter(function (x) { return x.id === en.dataset.enable; })[0]; openEdit(Object.assign({}, a, { enabled: true })); }
+  });
+
+  fetch('/api/actors', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    .then(function (d) { data = d; render(); })
+    .catch(function () { deck.innerHTML = '<p style="margin:auto;color:#7d92b5">读取失败，请刷新</p>'; });
+})();
+</script>
+</body>
+</html>

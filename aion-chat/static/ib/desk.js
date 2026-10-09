@@ -12,13 +12,14 @@
     notes: { name: '便笺' },
     sched: { name: '日程' }
   };
-  var DEFAULT_DESK = { widgets: ['meet', 'notes'], meet_since: '', meet_with: '', note: { text: '', at: 0 } };
+  var DEFAULT_DESK = { widgets: ['meet', 'notes'], meet_actor: '' };
   var WEEK = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   var MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
   var skin = {};
   var desk = clone(DEFAULT_DESK);
-  var names = { user: '你', ai: 'AI' };
+  var people = { user: { name: '你', avatar: '/public/UserIcon.png' }, actors: [] };
+  var notes = null;
   var schedules = null;
   var root = null;
 
@@ -30,7 +31,6 @@
   function normalizeDesk(d) {
     d = Object.assign(clone(DEFAULT_DESK), d && typeof d === 'object' ? d : {});
     d.widgets = (Array.isArray(d.widgets) ? d.widgets : DEFAULT_DESK.widgets).filter(function (k) { return SMALL[k]; });
-    if (!d.note || typeof d.note !== 'object') d.note = { text: '', at: 0 };
     return d;
   }
 
@@ -43,6 +43,18 @@
       .catch(function () {});
   }
 
+  // ── 角色 ──
+  function activeActors() { return people.actors.filter(function (a) { return a.enabled; }); }
+  function actorById(id) {
+    if (id === 'user') return { id: 'user', name: people.user.name, avatar: people.user.avatar };
+    return people.actors.filter(function (a) { return a.id === id; })[0] || null;
+  }
+  function meetActor() {
+    var list = activeActors();
+    return list.filter(function (a) { return a.id === desk.meet_actor; })[0] || list[0] || null;
+  }
+  function avatarOf(a) { return (a && a.avatar) || '/public/AIIcon.png'; }
+
   // ── Hero ──
   function heroHtml() {
     return '<div class="ib-hero-main">' +
@@ -50,7 +62,7 @@
       '<div class="ib-time"><span class="t-shadow" data-k="time2"></span><span class="t-face" data-k="time"></span></div>' +
       '</div>' +
       '<div class="ib-hero-side">' +
-      '<div class="ib-duo"><img class="me" src="/public/UserIcon.png" alt=""><img class="ai" src="/public/AIIcon.png" alt=""></div>' +
+      '<div class="ib-duo" data-act="cards"><img class="me" src="' + esc(people.user.avatar) + '" alt=""><img class="ai" src="' + esc(avatarOf(meetActor())) + '" alt=""></div>' +
       '<button class="ib-icon-btn" type="button" data-act="search" aria-label="搜索聊天记录">' +
       '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg></button>' +
       '</div>';
@@ -64,10 +76,11 @@
     var w = root.querySelector('[data-k="week"]'); if (w) w.textContent = WEEK[now.getDay()];
   }
 
-  // ── 相遇卡 ──
+  // ── 相遇卡（点按切换 AI） ──
   function meetHtml() {
-    var partner = desk.meet_with || names.ai;
-    var since = desk.meet_since ? new Date(desk.meet_since + 'T00:00:00') : null;
+    var a = meetActor();
+    var list = activeActors();
+    var since = a && a.meet_since ? new Date(a.meet_since + 'T00:00:00') : null;
     var days = null, left = null;
     if (since && !isNaN(since)) {
       var t0 = new Date(); t0.setHours(0, 0, 0, 0);
@@ -76,20 +89,28 @@
       if (next < t0) next.setFullYear(t0.getFullYear() + 1);
       left = Math.round((next - t0) / 86400000);
     }
+    var dots = list.length > 1 ? '<div class="dots">' + list.map(function (x) {
+      return '<i' + (a && x.id === a.id ? ' class="on" style="background:' + esc(x.color) + '"' : '') + '></i>';
+    }).join('') + '</div>' : '';
     return '<span class="wgt-lab">Together</span>' +
-      '<div class="names">' + esc(names.user) + '<i>&amp;</i>' + esc(partner) + '</div>' +
+      '<div class="names">' + esc(people.user.name) + '<i>&amp;</i>' + esc(a ? a.name : 'AI') + '</div>' +
       '<div class="tf">together for</div>' +
-      '<div class="days"><b>' + (days === null ? '—' : days) + '</b><span>' + (days === 1 ? 'Day' : 'Days') + '</span></div>' +
-      '<div class="cd">' + (days === null ? '长按设置相遇的日子' : (left === 0 ? 'anniversary is today' : left + ' days to go')) + '</div>';
+      '<div class="days"><b' + (a ? ' style="color:' + esc(a.color) + '"' : '') + '>' + (days === null ? '—' : days) + '</b><span>' + (days === 1 ? 'Day' : 'Days') + '</span></div>' +
+      '<div class="cd">' + (days === null ? '去 AI 名片里设置相遇的日子' : (left === 0 ? 'anniversary is today' : left + ' days to go')) + '</div>' + dots;
   }
 
-  // ── 便笺 ──
+  // ── 便笺（你和每个 AI 都能留） ──
+  function fmtAt(ts) {
+    var at = new Date(ts * 1000);
+    return (at.getMonth() + 1) + '.' + at.getDate() + ' ' + pad(at.getHours()) + ':' + pad(at.getMinutes());
+  }
   function notesHtml() {
-    var text = (desk.note && desk.note.text) || '';
-    var at = desk.note && desk.note.at ? new Date(desk.note.at) : null;
+    var n = notes && notes[0];
+    var who = n ? actorById(n.author) : null;
+    var by = n ? '<span class="by"><img src="' + esc(n.author === 'user' ? people.user.avatar : avatarOf(who)) + '" alt="">' + esc(who ? who.name : n.author) + '</span>' : '';
     return '<span class="wgt-lab">Notes</span><div class="note">' +
-      '<div class="body' + (text ? '' : ' empty') + '">' + (text ? esc(text) : '点这里写点什么…') + '</div>' +
-      '<div class="date">' + (at ? (at.getMonth() + 1) + '.' + at.getDate() + ' ' + pad(at.getHours()) + ':' + pad(at.getMinutes()) : '') + '</div></div>';
+      '<div class="body' + (n ? '' : ' empty') + '">' + (n ? esc(n.text) : (notes === null ? '读取中…' : '点这里写点什么…')) + '</div>' +
+      '<div class="date">' + by + (n ? fmtAt(n.at) : '') + '</div></div>';
   }
 
   // ── 日程 ──
@@ -123,7 +144,7 @@
     root.appendChild(hero);
     desk.widgets.forEach(function (key) {
       var w;
-      if (key === 'meet') { w = el('div', 'wgt ib-meet', meetHtml()); w.dataset.act = 'settings'; }
+      if (key === 'meet') { w = el('div', 'wgt ib-meet', meetHtml()); w.dataset.act = 'meet-next'; }
       if (key === 'notes') { w = el('div', 'wgt ib-notes', notesHtml()); w.dataset.act = 'note'; }
       if (key === 'sched') { w = el('div', 'wgt ib-sched', schedHtml()); w.dataset.act = 'schedule'; }
       if (w) root.appendChild(w);
@@ -145,16 +166,32 @@
   }
 
   function openNote() {
-    var box = sheet('<h3>Notes<small>便笺</small></h3><textarea id="ib-note-text" placeholder="写点什么…"></textarea>' +
-      '<div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>');
+    var list = (notes || []).slice(0, 12).map(function (n) {
+      var who = actorById(n.author);
+      return '<div class="nrow"><img src="' + esc(n.author === 'user' ? people.user.avatar : avatarOf(who)) + '" alt="">' +
+        '<div class="nmain"><div class="nmeta"><b>' + esc(who ? who.name : n.author) + '</b><span>' + fmtAt(n.at) + '</span>' +
+        '<button type="button" data-del="' + esc(n.id) + '" aria-label="删除">×</button></div><div class="ntext">' + esc(n.text) + '</div></div></div>';
+    }).join('');
+    var box = sheet('<h3>Notes<small>桌面便笺</small></h3>' +
+      '<div class="hint">你和 AI 都可以在这里留言；AI 聊天时想到你，会自己贴一张。</div>' +
+      '<textarea id="ib-note-text" placeholder="写一张新的便笺…" style="min-height:90px"></textarea>' +
+      '<div class="acts"><button type="button" data-x="cancel">关闭</button><button type="button" class="primary" data-x="save">贴上去</button></div>' +
+      '<div class="sec"><b>最近的便笺</b><div class="nlist">' + (list || '<div class="hint">还没有便笺</div>') + '</div></div>');
     var ta = box.querySelector('textarea');
-    ta.value = (desk.note && desk.note.text) || '';
-    setTimeout(function () { ta.focus(); }, 50);
     box.querySelector('[data-x="cancel"]').onclick = function () { box.parentNode.remove(); };
     box.querySelector('[data-x="save"]').onclick = function () {
-      desk.note = { text: ta.value.slice(0, 2000), at: Date.now() };
-      saveDesk(); render(); box.parentNode.remove();
+      var text = ta.value.trim();
+      if (!text) { ta.focus(); return; }
+      fetch('/api/desk/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text }) })
+        .then(function () { box.parentNode.remove(); loadNotes(); });
     };
+    box.querySelectorAll('[data-del]').forEach(function (b) {
+      b.onclick = function () {
+        if (!confirm('删掉这张便笺？')) return;
+        fetch('/api/desk/notes/' + encodeURIComponent(b.dataset.del), { method: 'DELETE' })
+          .then(function () { box.parentNode.remove(); loadNotes(); });
+      };
+    });
   }
 
   function openSettings() {
@@ -162,9 +199,8 @@
     Object.keys(SMALL).forEach(function (k) { if (order.indexOf(k) === -1) order.push(k); });
     var box = sheet('<h3>Desk<small>桌面设置</small></h3>' +
       '<div class="sec"><b>挂件</b><div class="hint">勾选要显示的挂件，用 ↑↓ 调顺序；两个一行。</div><div id="ib-wlist"></div></div>' +
-      '<div class="sec"><b>相遇卡</b>' +
-      '<label class="field">相遇的日子<input type="date" id="ib-meet-since"></label>' +
-      '<label class="field">和谁（留空则用 AI 的名字）<input type="text" id="ib-meet-with" maxlength="24"></label></div>' +
+      '<div class="sec"><b>AI</b><div class="hint">头像、签名、相遇的日子都在 AI 名片里设置；相遇卡点一下就能切换到下一位。</div>' +
+      '<div class="acts" style="margin-top:6px"><a class="btn" href="/ai-cards">打开 AI 名片</a></div></div>' +
       '<div class="sec"><b>外观</b><div class="acts" style="margin-top:6px"><a class="btn" href="/skin">打开美化工作台</a></div></div>' +
       '<div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>');
     var on = {};
@@ -182,13 +218,9 @@
       });
     }
     drawList();
-    box.querySelector('#ib-meet-since').value = desk.meet_since || '';
-    box.querySelector('#ib-meet-with').value = desk.meet_with || '';
     box.querySelector('[data-x="cancel"]').onclick = function () { box.parentNode.remove(); };
     box.querySelector('[data-x="save"]').onclick = function () {
       desk.widgets = order.filter(function (k) { return on[k]; });
-      desk.meet_since = box.querySelector('#ib-meet-since').value;
-      desk.meet_with = box.querySelector('#ib-meet-with').value.trim();
       saveDesk(); render(); box.parentNode.remove();
       if (desk.widgets.indexOf('sched') !== -1 && schedules === null) loadSchedules();
     };
@@ -221,7 +253,23 @@
       else if (act === 'note') openNote();
       else if (act === 'schedule') location.href = '/schedule';
       else if (act === 'settings') openSettings();
+      else if (act === 'cards') location.href = '/ai-cards';
+      else if (act === 'meet-next') {
+        var list = activeActors();
+        if (list.length < 2) { location.href = '/ai-cards'; return; }
+        var cur = meetActor();
+        var i = list.indexOf(cur);
+        desk.meet_actor = list[(i + 1) % list.length].id;
+        saveDesk(); render();
+      }
     });
+  }
+
+  function loadNotes() {
+    fetch('/api/desk/notes', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (rows) { notes = Array.isArray(rows) ? rows : []; render(); })
+      .catch(function () { notes = []; render(); });
   }
 
   function loadSchedules() {
@@ -245,13 +293,13 @@
     bind();
     setInterval(tick, 10000);
 
-    fetch('/api/worldbook', { cache: 'no-store' })
-      .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (wb) {
-        names.user = (wb && wb.user_name) || names.user;
-        names.ai = (wb && wb.ai_name) || names.ai;
-        render();
-      }).catch(function () {});
+    fetch('/api/actors', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) { if (data) { people = data; render(); } })
+      .catch(function () {});
+    loadNotes();
+    setInterval(loadNotes, 60000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) loadNotes(); });
     fetch('/api/skin', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) { if (s) { skin = s; desk = normalizeDesk(s.desk); render(); } })

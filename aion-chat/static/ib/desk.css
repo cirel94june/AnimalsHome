@@ -248,3 +248,24 @@ html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: no
 /* Dock 里的图标不显示文字，去掉为文字预留的高度 */
 html[data-skin="ib"] .dock .app-icon { height: auto; }
 html[data-skin="ib"] .dock { padding: 12px 24px; margin-bottom: calc(18px + env(safe-area-inset-bottom)); }
+
+/* 相遇卡切换点 */
+.ib-meet .dots { display: flex; justify-content: center; gap: 5px; margin-top: 6px; }
+.ib-meet .dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(120, 150, 200, 0.3); }
+.ib-meet .dots i.on { width: 12px; border-radius: 3px; }
+.ib-duo { cursor: pointer; }
+
+/* 便笺署名 */
+.ib-notes .date { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ib-notes .by { display: inline-flex; align-items: center; gap: 4px; min-width: 0; font-family: var(--ib-sys); letter-spacing: 0; font-size: 10px; color: var(--ib-tx2); white-space: nowrap; overflow: hidden; }
+.ib-notes .by img { width: 16px; height: 16px; border-radius: 50%; object-fit: cover; flex: none; }
+
+/* 便笺列表 */
+.ib-sheet .nlist { display: flex; flex-direction: column; gap: 8px; }
+.ib-sheet .nrow { display: flex; gap: 10px; padding: 10px 12px; border-radius: 14px; background: rgba(255, 255, 255, 0.6); border: 1px solid var(--ib-glass-line); }
+.ib-sheet .nrow img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex: none; }
+.ib-sheet .nmain { flex: 1; min-width: 0; }
+.ib-sheet .nmeta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--ib-tx3); }
+.ib-sheet .nmeta b { color: var(--ib-tx); font-weight: 600; font-size: 13px; }
+.ib-sheet .nmeta button { margin-left: auto; border: none; background: none; color: var(--ib-tx3); font-size: 18px; line-height: 1; padding: 0 2px; }
+.ib-sheet .ntext { margin-top: 2px; font-size: 14px; line-height: 1.7; color: var(--ib-tx2); white-space: pre-wrap; word-break: break-word; }

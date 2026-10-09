@@ -104,6 +104,7 @@ from schedule import (
 )
 from mcp_client import mcp_manager
 import memory_hub_bridge
+from desk_notes import process_note_commands
 from luckin import (
     LuckinOrderError,
     handle_luckin_commands,
@@ -1544,6 +1545,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 full_text, source_type="private", source_id=conv_id,
                 sender="aion", source_msg_id=ai_msg_id,
             )
+            full_text = await process_note_commands(full_text, "aion")
             full_text = await process_band_vibration(
                 full_text,
                 source_type="private",
@@ -2219,6 +2221,7 @@ async def send_message(conv_id: str, body: MsgCreate):
                 full_text, source_type="private", source_id=conv_id,
                 sender="aion", source_msg_id=ai_msg_id,
             )
+            full_text = await process_note_commands(full_text, "aion")
             full_text = await process_band_vibration(
                 full_text,
                 source_type="private",
@@ -3722,6 +3725,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                 full_text, source_type="private", source_id=conv_id,
                 sender="aion", source_msg_id=ai_msg_id,
             )
+            full_text = await process_note_commands(full_text, "aion")
             full_text = await process_band_vibration(
                 full_text,
                 source_type="private",
