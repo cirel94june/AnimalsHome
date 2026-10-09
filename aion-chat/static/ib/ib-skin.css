@@ -1,0 +1,316 @@
+/*
+ * IB 亮色皮肤（Internal）· 叠加在 AionsHome 原有样式之上
+ *
+ * 只在 html[data-skin="ib"] 时生效；关掉皮肤即回到原版外观。
+ * 设计取自 Internal Beyond（© 2025–2026 Sui，CC BY-NC-SA 4.0 / PolyForm NC 1.0.0），
+ * 仅供个人非商业使用，详见 static/ib/NOTICE.md。
+ *
+ * 美化工作台改的都是下面这组 --ib-* 变量（ib-skin.js 会把用户设置写进
+ * 一段更靠后的 <style>，同优先级后者生效）。
+ */
+
+html[data-skin="ib"] {
+  color-scheme: light;
+  /* 文字与强调色 */
+  --ib-tx: #0a1e42;
+  --ib-tx2: #3d5788;
+  --ib-tx3: #7d92b5;
+  --ib-acc: #2a6bb0;
+  --ib-acc2: #5c86c8;
+  --ib-danger: #c05555;
+  /* 背景 */
+  --ib-base: #dfe9f6;
+  --ib-bg-url: url("/static/ib/bg-internal.jpg");
+  --ib-chat-bg-url: var(--ib-bg-url);
+  --ib-scrim: linear-gradient(180deg, rgba(245, 250, 255, 0.22), rgba(240, 247, 255, 0.5));
+  /* 玻璃 */
+  --ib-glass-a: 0.4;
+  --ib-glass: rgba(255, 255, 255, var(--ib-glass-a));
+  --ib-glass-line: rgba(255, 255, 255, 0.74);
+  --ib-blur: 18px;
+  --ib-shadow: 0 10px 36px rgba(90, 120, 170, 0.14);
+  --ib-line: rgba(140, 170, 220, 0.32);
+  --ib-soft: rgba(255, 255, 255, 0.32);
+  /* 分区：顶栏 / 卡片 / 输入栏 / 桌面 Dock */
+  --ib-topbar-a: 0.55;
+  --ib-topbar-tx: var(--ib-tx);
+  --ib-card-a: 0.5;
+  --ib-card-tx: var(--ib-tx);
+  --ib-input-a: 0.62;
+  --ib-dock-a: 0.32;
+  /* 气泡 */
+  --ib-user-from: #7fa6dd;
+  --ib-user-to: #5c86c8;
+  --ib-user-tx: #ffffff;
+  --ib-ai-bg: rgba(255, 255, 255, 0.92);
+  --ib-ai-tx: #243450;
+  --ib-bubble-r: 16px;
+  --ib-bubble-tail: 5px;
+  --ib-bubble-shadow: 0 3px 10px rgba(30, 50, 90, 0.18);
+  /* 字体 */
+  --ib-font-scale: 1;
+  --ib-sans: "Noto Sans SC", "PingFang SC", -apple-system, "Microsoft YaHei", system-ui, sans-serif;
+  --ib-serif: "Cormorant Garamond", "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  --ib-title-font: var(--ib-sans);
+  --ib-text-shadow: none;
+}
+
+/* ── 把 IB 变量映射到 AionsHome 原有变量（覆盖各页面的亮/暗主题定义） ── */
+html[data-skin="ib"] body,
+html[data-skin="ib"] body[data-theme] {
+  --bg: var(--ib-base);
+  --surface: rgba(255, 255, 255, var(--ib-card-a));
+  --surface2: rgba(255, 255, 255, calc(var(--ib-card-a) * 0.75));
+  --surface3: rgba(200, 218, 242, 0.32);
+  --border: var(--ib-line);
+  --border-strong: rgba(120, 155, 210, 0.5);
+  --text: var(--ib-tx);
+  --text2: var(--ib-tx2);
+  --text3: var(--ib-tx3);
+  --text-secondary: var(--ib-tx2);
+  --accent: var(--ib-acc);
+  --accent2: var(--ib-acc2);
+  --accent3: #8fb3e6;
+  --danger: var(--ib-danger);
+  --user-bg: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to));
+  --ai-bg: var(--ib-ai-bg);
+  --aion-bg: var(--ib-ai-bg);
+  --connor-bg: var(--ib-ai-bg);
+  --glow: 0 0 24px rgba(92, 134, 200, 0.28);
+  --soft-shadow: var(--ib-shadow);
+  --aion-safe-bg: transparent;
+  color-scheme: light;
+  color: var(--ib-tx);
+  font-family: var(--ib-sans);
+  text-shadow: var(--ib-text-shadow);
+  background: var(--ib-scrim), var(--ib-bg-url) center / cover fixed no-repeat, var(--ib-base);
+}
+
+/* 聊天页与聊天室用 body::before 画背景，换成 IB 背景 */
+html[data-skin="ib"] body::before,
+html[data-skin="ib"] body[data-theme]::before {
+  background: var(--ib-scrim), var(--ib-chat-bg-url) center / cover no-repeat, var(--ib-base);
+}
+html[data-skin="ib"] .chat-area::before,
+html[data-skin="ib"] body[data-theme] .chat-area::before {
+  background: var(--ib-scrim), var(--ib-chat-bg-url) center / cover no-repeat, var(--ib-base);
+  opacity: 1;
+}
+html[data-skin="ib"] body::after,
+html[data-skin="ib"] body[data-theme]::after {
+  background: none;
+  opacity: 0;
+}
+
+/* ── 顶栏 ── */
+html[data-skin="ib"] .top-bar,
+html[data-skin="ib"] .chat-header,
+html[data-skin="ib"] .reader-topbar,
+html[data-skin="ib"] .chat-topbar,
+html[data-skin="ib"] .room-header {
+  background: rgba(255, 255, 255, var(--ib-topbar-a));
+  color: var(--ib-topbar-tx);
+  border-bottom: 1px solid var(--ib-glass-line);
+  box-shadow: 0 6px 24px rgba(90, 120, 170, 0.1);
+  backdrop-filter: blur(var(--ib-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--ib-blur)) saturate(1.4);
+}
+html[data-skin="ib"] .top-bar h2,
+html[data-skin="ib"] .chat-header .title,
+html[data-skin="ib"] .top-bar .title {
+  font-family: var(--ib-title-font);
+  color: var(--ib-topbar-tx);
+  letter-spacing: 0.02em;
+}
+html[data-skin="ib"] .top-bar button,
+html[data-skin="ib"] .chat-header button {
+  color: var(--ib-topbar-tx);
+}
+
+/* ── 子页面主体透出背景 ── */
+html[data-skin="ib"] .sub-page,
+html[data-skin="ib"] .page-content,
+html[data-skin="ib"] .list-container {
+  background: transparent;
+}
+
+/* ── 卡片 / 面板（液态玻璃） ── */
+html[data-skin="ib"] .moment-card,
+html[data-skin="ib"] .card,
+html[data-skin="ib"] .list-item,
+html[data-skin="ib"] .setting-card,
+html[data-skin="ib"] .settings-section,
+html[data-skin="ib"] .section,
+html[data-skin="ib"] .panel,
+html[data-skin="ib"] .modal,
+html[data-skin="ib"] .sidebar,
+html[data-skin="ib"] .settings-panel,
+html[data-skin="ib"] .memory-panel,
+html[data-skin="ib"] .plus-menu,
+html[data-skin="ib"] .diary-card,
+html[data-skin="ib"] .memory-item,
+html[data-skin="ib"] .mem-card {
+  background: rgba(255, 255, 255, var(--ib-card-a));
+  color: var(--ib-card-tx);
+  border: 1px solid var(--ib-glass-line);
+  border-radius: 18px;
+  box-shadow: var(--ib-shadow);
+  backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
+}
+html[data-skin="ib"] .chat-area,
+html[data-skin="ib"] body[data-theme] .chat-area {
+  background: rgba(255, 255, 255, calc(var(--ib-glass-a) * 0.35));
+}
+
+/* ── 表单 ── */
+html[data-skin="ib"] input[type="text"],
+html[data-skin="ib"] input[type="number"],
+html[data-skin="ib"] input:not([type]),
+html[data-skin="ib"] select,
+html[data-skin="ib"] textarea,
+html[data-skin="ib"] .form-input {
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--ib-tx);
+  border: 1px solid var(--ib-line);
+  border-radius: 12px;
+}
+html[data-skin="ib"] input:focus,
+html[data-skin="ib"] textarea:focus,
+html[data-skin="ib"] select:focus {
+  border-color: var(--ib-acc);
+  outline: none;
+}
+html[data-skin="ib"] .btn-save,
+html[data-skin="ib"] .send-btn,
+html[data-skin="ib"] .composer .send-btn {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to));
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 14px rgba(60, 100, 170, 0.25);
+}
+
+/* ── 私聊气泡 ── */
+html[data-skin="ib"] .msg-bubble {
+  border-radius: var(--ib-bubble-r);
+  font-size: calc(13.5px * var(--ib-font-scale));
+  box-shadow: var(--ib-bubble-shadow);
+  border: none;
+}
+html[data-skin="ib"] .msg-row.user .msg-bubble {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to));
+  color: var(--ib-user-tx);
+  border: none;
+  border-bottom-right-radius: var(--ib-bubble-tail);
+  box-shadow: var(--ib-bubble-shadow);
+}
+html[data-skin="ib"] .msg-row.assistant .msg-bubble {
+  background: var(--ib-ai-bg);
+  color: var(--ib-ai-tx);
+  border: none;
+  border-bottom-left-radius: var(--ib-bubble-tail);
+  box-shadow: var(--ib-bubble-shadow);
+}
+html[data-skin="ib"] .msg-row.user .msg-bubble a { color: inherit; text-decoration: underline; }
+/* AionsHome 的 AI 回复默认是无气泡正文，IB 外观下给它白色气泡；心声保持气泡外的淡色小字 */
+html[data-skin="ib"] .msg-row.assistant .private-ai-message-content {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 8px 12px;
+  background: var(--ib-ai-bg);
+  color: var(--ib-ai-tx);
+  border-radius: var(--ib-bubble-r);
+  border-bottom-left-radius: var(--ib-bubble-tail);
+  box-shadow: var(--ib-bubble-shadow);
+  font-size: calc(13.5px * var(--ib-font-scale));
+  line-height: 1.55;
+}
+html[data-skin="ib"] .msg-row.assistant .private-ai-message-content p:last-child { margin-bottom: 0; }
+html[data-skin="ib"] .inner-monologue-line,
+html[data-skin="ib"] .inner-monologue { color: var(--ib-tx3); font-style: italic; }
+html[data-skin="ib"] .msg-role,
+html[data-skin="ib"] .msg-row .msg-role-name { color: var(--ib-tx3); }
+
+/* ── 聊天室气泡 ── */
+html[data-skin="ib"] .message-row .bubble {
+  border-radius: var(--ib-bubble-r);
+  font-size: calc(13.5px * var(--ib-font-scale));
+  box-shadow: var(--ib-bubble-shadow);
+  border: none;
+}
+html[data-skin="ib"] .message-row.user .msg-content .bubble {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to));
+  color: var(--ib-user-tx);
+  border-bottom-right-radius: var(--ib-bubble-tail);
+}
+html[data-skin="ib"] .message-row.aion .msg-content .bubble,
+html[data-skin="ib"] .message-row.connor .msg-content .bubble {
+  background: var(--ib-ai-bg);
+  color: var(--ib-ai-tx);
+  border-bottom-left-radius: var(--ib-bubble-tail);
+}
+
+/* ── 输入栏 ── */
+html[data-skin="ib"] .input-area,
+html[data-skin="ib"] .composer {
+  background: rgba(255, 255, 255, var(--ib-input-a));
+  border-top: 1px solid var(--ib-glass-line);
+  backdrop-filter: blur(var(--ib-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--ib-blur)) saturate(1.4);
+}
+html[data-skin="ib"] .input-row textarea,
+html[data-skin="ib"] .composer textarea {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--ib-line);
+  border-radius: 18px;
+  font-size: calc(15px * var(--ib-font-scale));
+}
+
+/* ── 朋友圈 ── */
+html[data-skin="ib"] .moment-content { font-size: calc(14.5px * var(--ib-font-scale)); color: var(--ib-card-tx); }
+html[data-skin="ib"] .moment-author { color: var(--ib-acc); }
+
+/* ── 桌面 ── */
+html[data-skin="ib"] body .phone-screen,
+html[data-skin="ib"] body[data-theme] .phone-screen {
+  background: var(--ib-scrim), var(--ib-bg-url) center / cover no-repeat, var(--ib-base);
+}
+html[data-skin="ib"] body[data-theme] .phone-screen::after { background: none; }
+html[data-skin="ib"] .clock-widget,
+html[data-skin="ib"] body[data-theme] .clock-widget {
+  color: var(--ib-tx);
+  text-shadow: 0 1px 10px rgba(255, 255, 255, 0.6);
+}
+html[data-skin="ib"] .clock-widget .clock-time {
+  font-family: var(--ib-title-font);
+  font-weight: 300;
+}
+html[data-skin="ib"] .dock {
+  background: rgba(255, 255, 255, var(--ib-dock-a));
+  border: 1px solid var(--ib-glass-line);
+  box-shadow: var(--ib-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(calc(var(--ib-blur) + 6px)) saturate(1.6);
+  -webkit-backdrop-filter: blur(calc(var(--ib-blur) + 6px)) saturate(1.6);
+}
+html[data-skin="ib"] .app-icon span,
+html[data-skin="ib"] .app-label,
+html[data-skin="ib"] .app-name {
+  color: var(--ib-tx);
+  text-shadow: 0 1px 6px rgba(255, 255, 255, 0.8);
+}
+
+/* ── 滚动条 ── */
+html[data-skin="ib"] ::-webkit-scrollbar-thumb { background-color: rgba(90, 120, 170, 0.22); }
+
+/* ── 减少动效（低配手机） ── */
+html[data-skin="ib"][data-ib-reduce] *,
+html[data-skin="ib"][data-ib-reduce] *::before,
+html[data-skin="ib"][data-ib-reduce] *::after {
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001s !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

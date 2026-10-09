@@ -102,8 +102,13 @@ def get_client_asset_manifest() -> dict:
         files = {}
         version_seed = []
         for url_path, file_path, category in items:
-            digest = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            size = file_path.stat().st_size
+            content = file_path.read_bytes()
+            if category == "document":
+                # 页面返回前会被插入皮肤脚本（skin.SkinInjectMiddleware），哈希按实际返回内容计算
+                from skin import inject_html
+                content = inject_html(content)
+            digest = hashlib.sha256(content).hexdigest()
+            size = len(content)
             files[url_path] = {
                 "sha256": digest,
                 "size": size,

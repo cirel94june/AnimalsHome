@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>美化工作台</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); -webkit-tap-highlight-color: transparent; }
+.wb { max-width: 560px; margin: 0 auto; padding: 0 16px calc(32px + env(safe-area-inset-bottom)); }
+.wb-top { position: sticky; top: 0; z-index: 10; margin: 0 -16px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; display: flex; align-items: center; gap: 10px; }
+.wb-top a { color: inherit; text-decoration: none; font-size: 20px; padding: 2px 6px; }
+.wb-title { flex: 1; }
+.wb-title b { display: block; font-family: var(--ib-serif); font-size: 22px; font-weight: 600; letter-spacing: .02em; line-height: 1.1; }
+.wb-title span { font-size: 12px; color: var(--ib-tx3); }
+.wb-state { font-size: 12px; color: var(--ib-tx3); min-width: 4em; text-align: right; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; padding: 12px 0 4px; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { flex: none; border: 1px solid var(--ib-glass-line); background: rgba(255,255,255,.42); color: var(--ib-tx2); padding: 7px 14px; border-radius: 999px; font-size: 14px; cursor: pointer; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.tab.on { background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)); color: #fff; border-color: transparent; }
+.pane { display: none; }
+.pane.on { display: block; }
+.card { margin-top: 12px; padding: 14px 16px; }
+.card h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.hint { font-size: 12px; color: var(--ib-tx3); line-height: 1.6; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px dashed var(--ib-line); }
+.row:first-of-type { border-top: none; }
+.row label { font-size: 14px; flex: 1; }
+.row output { font-size: 12px; color: var(--ib-tx3); min-width: 3.4em; text-align: right; font-variant-numeric: tabular-nums; }
+.row input[type=range] { width: 46%; accent-color: var(--ib-acc); }
+.row input[type=color] { width: 44px; height: 30px; border: 1px solid var(--ib-line); border-radius: 8px; background: none; padding: 2px; }
+.colors { display: flex; gap: 8px; }
+.btn { border: 1px solid var(--ib-line); background: rgba(255,255,255,.66); color: var(--ib-tx); border-radius: 12px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+.btn.primary { background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)); color: #fff; border: none; }
+.btn.small { padding: 5px 10px; font-size: 12px; border-radius: 10px; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.row label.switch { flex: none; }
+.switch { position: relative; display: inline-block; width: 46px; height: 28px; flex: none; cursor: pointer; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch i { position: absolute; inset: 0; border-radius: 999px; background: rgba(140,170,220,.35); transition: background .2s; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(30,50,90,.25); transition: transform .2s; }
+.switch input:checked + i { background: var(--ib-acc); }
+.switch input:checked + i::after { transform: translateX(18px); }
+.seg { display: inline-flex; border: 1px solid var(--ib-line); border-radius: 10px; overflow: hidden; }
+.seg button { border: none; background: rgba(255,255,255,.5); color: var(--ib-tx2); padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.seg button.on { background: var(--ib-acc); color: #fff; }
+.presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin-top: 10px; }
+.preset { border: 2px solid transparent; border-radius: 16px; padding: 10px; cursor: pointer; background: rgba(255,255,255,.55); text-align: left; color: var(--ib-tx); }
+.preset.on { border-color: var(--ib-acc); }
+.preset .sw { height: 34px; border-radius: 10px; margin-bottom: 6px; display: flex; align-items: flex-end; justify-content: flex-end; padding: 4px; }
+.preset .sw span { width: 26px; height: 14px; border-radius: 8px 8px 2px 8px; }
+.preset b { font-size: 13px; font-weight: 500; }
+.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.slot { border: 1px solid var(--ib-glass-line); border-radius: 14px; padding: 10px; background: rgba(255,255,255,.45); }
+.slot b { display: block; font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+.slot small { display: block; font-size: 11px; color: var(--ib-tx3); margin-bottom: 8px; min-height: 1.4em; }
+.bgs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.bgbox { border-radius: 14px; overflow: hidden; border: 1px solid var(--ib-glass-line); background: rgba(255,255,255,.4); }
+.bgbox .thumb { height: 110px; background: var(--ib-base) center / cover no-repeat; }
+.bgbox .meta { padding: 8px 10px; }
+.bgbox .meta b { font-size: 13px; font-weight: 500; display: block; margin-bottom: 6px; }
+.preview { margin-top: 12px; padding: 14px; border-radius: 18px; background: var(--ib-scrim), var(--ib-chat-bg-url) center / cover no-repeat, var(--ib-base); border: 1px solid var(--ib-glass-line); }
+.pv-row { display: flex; margin: 6px 0; }
+.pv-row.me { justify-content: flex-end; }
+.pv-b { max-width: 76%; padding: 8px 12px; font-size: calc(13.5px * var(--ib-font-scale)); line-height: 1.5; border-radius: var(--ib-bubble-r); box-shadow: var(--ib-bubble-shadow); }
+.pv-row.me .pv-b { background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)); color: var(--ib-user-tx); border-bottom-right-radius: var(--ib-bubble-tail); }
+.pv-row.ta .pv-b { background: var(--ib-ai-bg); color: var(--ib-ai-tx); border-bottom-left-radius: var(--ib-bubble-tail); }
+.pv-input { margin-top: 10px; padding: 8px; border-radius: 16px; background: rgba(255,255,255,var(--ib-input-a)); border: 1px solid var(--ib-glass-line); font-size: 13px; color: var(--ib-tx3); }
+textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); opacity: 0; background: rgba(10,30,66,.86); color: #fff; padding: 9px 16px; border-radius: 999px; font-size: 13px; transition: all .25s; pointer-events: none; z-index: 50; }
+.toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="wb">
+  <div class="wb-top top-bar">
+    <a href="/" aria-label="返回">←</a>
+    <div class="wb-title"><b>Visual</b><span>美化工作台 · 改动即时生效，自动保存</span></div>
+    <div class="wb-state" id="state"></div>
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button class="tab on" data-pane="scheme">方案</button>
+    <button class="tab" data-pane="base">基础</button>
+    <button class="tab" data-pane="text">文字</button>
+    <button class="tab" data-pane="bubble">气泡</button>
+    <button class="tab" data-pane="zone">分区</button>
+    <button class="tab" data-pane="code">美化码</button>
+  </div>
+
+  <!-- 方案 -->
+  <section class="pane on" id="pane-scheme">
+    <div class="card">
+      <div class="row"><label>使用 IB 亮色外观<div class="hint">关掉即回到 AionsHome 原版外观</div></label>
+        <label class="switch"><input type="checkbox" id="enabled"><i></i></label></div>
+    </div>
+    <div class="card">
+      <h3>全站色调</h3>
+      <div class="hint">整套更换文字、强调色与气泡配色；之后的细调会叠加在所选色调上。</div>
+      <div class="presets" id="presets"></div>
+    </div>
+    <div class="card">
+      <h3>方案槽</h3>
+      <div class="hint">把现在的整套外观存进槽位，随时一键切回。</div>
+      <div class="slots" id="slots"></div>
+    </div>
+    <div class="card">
+      <h3>恢复默认</h3>
+      <div class="hint">回到 IB 雾蓝默认外观（方案槽保留，可随时撤销）。</div>
+      <div class="btns"><button class="btn" id="reset">恢复默认</button></div>
+    </div>
+  </section>
+
+  <!-- 基础 -->
+  <section class="pane" id="pane-base">
+    <div class="card">
+      <h3>背景</h3>
+      <div class="bgs">
+        <div class="bgbox"><div class="thumb" id="thumb-bg"></div><div class="meta"><b>全站背景</b>
+          <button class="btn small" data-upload="bg">换图</button> <button class="btn small" data-clear="bg">默认</button></div></div>
+        <div class="bgbox"><div class="thumb" id="thumb-chat"></div><div class="meta"><b>聊天背景</b>
+          <button class="btn small" data-upload="chat_bg">换图</button> <button class="btn small" data-clear="chat_bg">跟随全站</button></div></div>
+      </div>
+      <input type="file" id="file" accept="image/*" hidden>
+    </div>
+    <div class="card">
+      <div class="row"><label>背景遮罩浓度</label><input type="range" id="scrim" min="0" max="0.8" step="0.02"><output id="scrim-o"></output></div>
+      <div class="row"><label>玻璃模糊</label><input type="range" data-var="blur" min="0" max="32" step="1"><output></output></div>
+      <div class="row"><label>减少动效<div class="hint">手机卡顿时打开：关掉动画与毛玻璃</div></label>
+        <label class="switch"><input type="checkbox" id="reduce"><i></i></label></div>
+    </div>
+  </section>
+
+  <!-- 文字 -->
+  <section class="pane" id="pane-text">
+    <div class="card">
+      <div class="row"><label>字号</label><input type="range" data-var="font_scale" min="0.85" max="1.3" step="0.01"><output></output></div>
+      <div class="row"><label>主文字</label><input type="color" data-var="tx"></div>
+      <div class="row"><label>次要文字</label><input type="color" data-var="tx2"></div>
+      <div class="row"><label>提示文字</label><input type="color" data-var="tx3"></div>
+      <div class="row"><label>强调色</label><input type="color" data-var="acc"></div>
+      <div class="row"><label>标题字体</label><span class="seg" id="title-font"><button data-v="sans">无衬线</button><button data-v="serif">衬线</button></span></div>
+      <div class="row"><label>文字投影</label><label class="switch"><input type="checkbox" id="tshadow"><i></i></label></div>
+    </div>
+  </section>
+
+  <!-- 气泡 -->
+  <section class="pane" id="pane-bubble">
+    <div class="preview">
+      <div class="pv-row ta"><div class="pv-b">今天也想你了。在忙什么？</div></div>
+      <div class="pv-row me"><div class="pv-b">在试新的气泡颜色，你觉得这个好看吗</div></div>
+      <div class="pv-row ta"><div class="pv-b">好看，像下过雪的早晨。</div></div>
+      <div class="pv-input">说点什么…</div>
+    </div>
+    <div class="card">
+      <h3>我的气泡</h3>
+      <div class="row"><label>渐变</label><span class="colors"><input type="color" data-var="user_from"><input type="color" data-var="user_to"></span></div>
+      <div class="row"><label>文字</label><input type="color" data-var="user_tx"></div>
+    </div>
+    <div class="card">
+      <h3>TA 的气泡</h3>
+      <div class="row"><label>底色</label><input type="color" id="ai-color"></div>
+      <div class="row"><label>不透明度</label><input type="range" id="ai-alpha" min="0.3" max="1" step="0.02"><output id="ai-alpha-o"></output></div>
+      <div class="row"><label>文字</label><input type="color" data-var="ai_tx"></div>
+    </div>
+    <div class="card">
+      <h3>形状</h3>
+      <div class="row"><label>圆角</label><input type="range" data-var="bubble_r" min="4" max="26" step="1"><output></output></div>
+      <div class="row"><label>尾角</label><input type="range" data-var="bubble_tail" min="0" max="26" step="1"><output></output></div>
+      <div class="row"><label>投影</label><span class="seg" id="bshadow"><button data-v="none">无</button><button data-v="soft">轻</button><button data-v="deep">深</button></span></div>
+    </div>
+  </section>
+
+  <!-- 分区 -->
+  <section class="pane" id="pane-zone">
+    <div class="card">
+      <h3>分区玻璃</h3>
+      <div class="hint">数值越大越不透明。</div>
+      <div class="row"><label>顶栏</label><input type="range" data-var="topbar_a" min="0" max="1" step="0.02"><output></output></div>
+      <div class="row"><label>卡片 / 面板</label><input type="range" data-var="card_a" min="0" max="1" step="0.02"><output></output></div>
+      <div class="row"><label>输入栏</label><input type="range" data-var="input_a" min="0" max="1" step="0.02"><output></output></div>
+      <div class="row"><label>桌面 Dock</label><input type="range" data-var="dock_a" min="0" max="1" step="0.02"><output></output></div>
+    </div>
+    <div class="card">
+      <h3>分区文字色</h3>
+      <div class="row"><label>顶栏文字</label><input type="color" data-var="topbar_tx"></div>
+      <div class="row"><label>卡片文字</label><input type="color" data-var="card_tx"></div>
+    </div>
+  </section>
+
+  <!-- 美化码 -->
+  <section class="pane" id="pane-code">
+    <div class="card">
+      <h3>导出美化码</h3>
+      <div class="hint">把现在的整套外观打成一段文字，可以存起来或分享。自己上传的背景图只在本机服务上有效。</div>
+      <textarea class="code" id="export" readonly></textarea>
+      <div class="btns"><button class="btn primary" id="copy">复制</button></div>
+    </div>
+    <div class="card">
+      <h3>导入美化码</h3>
+      <textarea class="code" id="import" placeholder="粘贴以 IB-LOOK: 开头的美化码"></textarea>
+      <div class="btns"><button class="btn primary" id="do-import">导入并应用</button><button class="btn" id="undo">撤销上一次</button></div>
+    </div>
+    <div class="card">
+      <h3>自定义 CSS（进阶）</h3>
+      <div class="hint">会追加在全站最后生效，可以写 <code>html[data-skin="ib"] .xxx { … }</code>。写坏了清空即可恢复。</div>
+      <textarea class="code" id="custom-css" spellcheck="false"></textarea>
+      <div class="btns"><button class="btn primary" id="apply-css">应用</button></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  'use strict';
+  var IB = window.IBSkin;
+  var $ = function (s) { return document.querySelector(s); };
+  var $$ = function (s) { return Array.prototype.slice.call(document.querySelectorAll(s)); };
+  var DEFAULTS = {
+    tx: '#0a1e42', tx2: '#3d5788', tx3: '#7d92b5', acc: '#2a6bb0',
+    blur: 18, font_scale: 1, topbar_a: 0.55, card_a: 0.5, input_a: 0.62, dock_a: 0.32,
+    topbar_tx: '#0a1e42', card_tx: '#0a1e42',
+    user_from: '#7fa6dd', user_to: '#5c86c8', user_tx: '#ffffff', ai_tx: '#243450',
+    bubble_r: 16, bubble_tail: 5
+  };
+  var SHADOWS = { none: 'none', soft: '0 3px 10px rgba(30,50,90,0.18)', deep: '0 8px 22px rgba(30,50,90,0.3)' };
+  var UNDO_KEY = 'ib_skin_undo_v1';
+  var skin = normalize(IB ? IB.current() : {});
+  var saveTimer = null;
+
+  function normalize(s) {
+    s = s && typeof s === 'object' ? s : {};
+    s.vars = s.vars || {};
+    s.slots = Array.isArray(s.slots) ? s.slots : [];
+    while (s.slots.length < 4) s.slots.push(null);
+    if (s.enabled === undefined) s.enabled = true;
+    if (!s.preset) s.preset = 'internal';
+    return s;
+  }
+  function look(s) {  // 外观本身（不含方案槽），用于方案槽与美化码
+    return { preset: s.preset, vars: JSON.parse(JSON.stringify(s.vars || {})), bg: s.bg || '', chat_bg: s.chat_bg || '',
+      reduce_motion: !!s.reduce_motion, custom_css: s.custom_css || '' };
+  }
+  function presetVars() { return (IB.presets[skin.preset] || IB.presets.internal).vars; }
+  function val(key) {
+    if (skin.vars[key] !== undefined && skin.vars[key] !== '') return skin.vars[key];
+    var p = presetVars();
+    if (p[key] !== undefined) return p[key];
+    if (key === 'topbar_tx' || key === 'card_tx') return val('tx');
+    return DEFAULTS[key];
+  }
+  function toast(text) {
+    var el = $('#toast'); el.textContent = text; el.classList.add('on');
+    clearTimeout(el._t); el._t = setTimeout(function () { el.classList.remove('on'); }, 1600);
+  }
+  function hexToRgb(hex) {
+    var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m) return null;
+    var n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function rgbaParts(value) {
+    var m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\)/.exec(String(value || ''));
+    if (m) return { hex: '#' + [m[1], m[2], m[3]].map(function (x) { return (+x).toString(16).padStart(2, '0'); }).join(''), a: m[4] === undefined ? 1 : +m[4] };
+    if (hexToRgb(value)) return { hex: value, a: 1 };
+    return { hex: '#ffffff', a: 0.92 };
+  }
+
+  function apply(save) {
+    IB.preview(skin);
+    // 工作台自身始终保持 IB 外观，方便关掉皮肤后再打开
+    if (skin.enabled === false) {
+      document.documentElement.dataset.skin = 'ib';
+      var link = document.getElementById('ib-skin-css');
+      if (link) link.disabled = false;
+    }
+    if (save) {
+      $('#state').textContent = '保存中…';
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(persist, 500);
+    }
+    renderExport();
+  }
+  function persist() {
+    fetch('/api/skin', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(skin) })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (saved) { skin = normalize(saved); IB.commit(skin); $('#state').textContent = '已保存'; })
+      .catch(function () { $('#state').textContent = '保存失败'; toast('保存失败，请检查服务是否在线'); });
+  }
+  function pushUndo() {
+    try { localStorage.setItem(UNDO_KEY, JSON.stringify(look(skin))); } catch (e) {}
+  }
+
+  // ── 方案 ──
+  function renderPresets() {
+    var box = $('#presets'); box.innerHTML = '';
+    Object.keys(IB.presets).forEach(function (key) {
+      var p = IB.presets[key], v = p.vars;
+      var btn = document.createElement('button');
+      btn.className = 'preset' + (skin.preset === key ? ' on' : '');
+      var base = v.base || '#dfe9f6', from = v.user_from || DEFAULTS.user_from, to = v.user_to || DEFAULTS.user_to;
+      btn.innerHTML = '<div class="sw" style="background:' + base + '"><span style="background:linear-gradient(135deg,' + from + ',' + to + ')"></span></div><b></b>';
+      btn.querySelector('b').textContent = p.name;
+      btn.onclick = function () {
+        pushUndo();
+        skin.preset = key;
+        skin.vars = {};
+        renderAll(); apply(true); toast('已切换到「' + p.name + '」');
+      };
+      box.appendChild(btn);
+    });
+  }
+  function renderSlots() {
+    var box = $('#slots'); box.innerHTML = '';
+    skin.slots.forEach(function (slot, i) {
+      var el = document.createElement('div');
+      el.className = 'slot';
+      el.innerHTML = '<b></b><small></small><div class="btns" style="margin-top:0"></div>';
+      el.querySelector('b').textContent = (slot && slot.name) || ('方案 ' + (i + 1));
+      el.querySelector('small').textContent = slot ? new Date(slot.saved_at).toLocaleDateString() + ' 存入' : '空';
+      var btns = el.querySelector('.btns');
+      var save = document.createElement('button'); save.className = 'btn small'; save.textContent = '存入';
+      save.onclick = function () {
+        var name = prompt('给这个方案起个名字', (slot && slot.name) || ('方案 ' + (i + 1)));
+        if (name === null) return;
+        skin.slots[i] = { name: name.trim() || ('方案 ' + (i + 1)), saved_at: Date.now(), look: look(skin) };
+        renderSlots(); apply(true); toast('已存入');
+      };
+      btns.appendChild(save);
+      if (slot) {
+        var load = document.createElement('button'); load.className = 'btn small primary'; load.textContent = '切换';
+        load.onclick = function () { pushUndo(); Object.assign(skin, JSON.parse(JSON.stringify(slot.look))); renderAll(); apply(true); toast('已切换到「' + slot.name + '」'); };
+        btns.appendChild(load);
+      }
+      box.appendChild(el);
+    });
+  }
+
+  // ── 通用控件绑定 ──
+  function fmt(input, v) {
+    if (input.dataset.var === 'font_scale') return Math.round(v * 100) + '%';
+    if (/_a$/.test(input.dataset.var || '')) return Math.round(v * 100) + '%';
+    if (input.type === 'range' && +input.max > 1.5) return v + 'px';
+    return v;
+  }
+  function bindVars() {
+    $$('[data-var]').forEach(function (input) {
+      var key = input.dataset.var;
+      input.oninput = function () {
+        skin.vars[key] = input.type === 'range' ? +input.value : input.value;
+        var out = input.nextElementSibling;
+        if (out && out.tagName === 'OUTPUT') out.textContent = fmt(input, input.value);
+        apply(true);
+      };
+    });
+  }
+  function scrimFor(a) {
+    var b = Math.min(0.95, a + 0.28);
+    return 'linear-gradient(180deg,rgba(245,250,255,' + a.toFixed(2) + '),rgba(240,247,255,' + b.toFixed(2) + '))';
+  }
+  function scrimAlpha() {
+    var m = /rgba\([^)]*?,\s*([\d.]+)\)/.exec(String(val('scrim') || ''));
+    return m ? +m[1] : 0.22;
+  }
+  function seg(sel, current, onPick) {
+    $$(sel + ' button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.v === current);
+      b.onclick = function () { onPick(b.dataset.v); $$(sel + ' button').forEach(function (x) { x.classList.toggle('on', x === b); }); apply(true); };
+    });
+  }
+  function renderControls() {
+    $$('[data-var]').forEach(function (input) {
+      var v = val(input.dataset.var);
+      if (input.type === 'color') input.value = rgbaParts(v).hex;
+      else { input.value = parseFloat(v); var out = input.nextElementSibling; if (out && out.tagName === 'OUTPUT') out.textContent = fmt(input, parseFloat(v)); }
+    });
+    $('#enabled').checked = skin.enabled !== false;
+    $('#reduce').checked = !!skin.reduce_motion;
+    $('#tshadow').checked = !!(skin.vars.text_shadow && skin.vars.text_shadow !== 'none');
+    var sa = scrimAlpha(); $('#scrim').value = sa; $('#scrim-o').textContent = Math.round(sa * 100) + '%';
+    var ai = rgbaParts(val('ai_bg') || 'rgba(255,255,255,0.92)');
+    $('#ai-color').value = ai.hex; $('#ai-alpha').value = ai.a; $('#ai-alpha-o').textContent = Math.round(ai.a * 100) + '%';
+    seg('#title-font', skin.vars.title_font === 'serif' ? 'serif' : 'sans', function (v) { skin.vars.title_font = v; });
+    var sh = skin.vars.bubble_shadow;
+    seg('#bshadow', sh === SHADOWS.none ? 'none' : sh === SHADOWS.deep ? 'deep' : 'soft', function (v) { skin.vars.bubble_shadow = SHADOWS[v]; });
+    $('#thumb-bg').style.backgroundImage = 'url("' + (skin.bg || '/static/ib/bg-internal.jpg') + '")';
+    $('#thumb-chat').style.backgroundImage = 'url("' + (skin.chat_bg || skin.bg || '/static/ib/bg-internal.jpg') + '")';
+    $('#custom-css').value = skin.custom_css || '';
+  }
+  function renderExport() {
+    try { $('#export').value = 'IB-LOOK:' + btoa(unescape(encodeURIComponent(JSON.stringify(look(skin))))); } catch (e) {}
+  }
+  function renderAll() { renderPresets(); renderSlots(); renderControls(); renderExport(); }
+
+  function bindStatic() {
+    $$('.tab').forEach(function (t) {
+      t.onclick = function () {
+        $$('.tab').forEach(function (x) { x.classList.toggle('on', x === t); });
+        $$('.pane').forEach(function (p) { p.classList.toggle('on', p.id === 'pane-' + t.dataset.pane); });
+      };
+    });
+    $('#enabled').onchange = function () { skin.enabled = this.checked; apply(true); toast(this.checked ? '已使用 IB 亮色外观' : '已回到原版外观'); };
+    $('#reduce').onchange = function () { skin.reduce_motion = this.checked; apply(true); };
+    $('#tshadow').onchange = function () { skin.vars.text_shadow = this.checked ? '0 1px 2px rgba(84,116,166,0.22)' : 'none'; apply(true); };
+    $('#scrim').oninput = function () { var a = +this.value; skin.vars.scrim = scrimFor(a); $('#scrim-o').textContent = Math.round(a * 100) + '%'; apply(true); };
+    function aiBg() { var rgb = hexToRgb($('#ai-color').value) || [255, 255, 255]; var a = +$('#ai-alpha').value; skin.vars.ai_bg = 'rgba(' + rgb.join(',') + ',' + a + ')'; $('#ai-alpha-o').textContent = Math.round(a * 100) + '%'; apply(true); }
+    $('#ai-color').oninput = aiBg; $('#ai-alpha').oninput = aiBg;
+    $('#reset').onclick = function () {
+      pushUndo();
+      var slots = skin.slots;
+      skin = normalize({ enabled: true, preset: 'internal', vars: {}, slots: slots });
+      renderAll(); apply(true); toast('已恢复默认，可在「美化码」里撤销');
+    };
+
+    var target = null;
+    $$('[data-upload]').forEach(function (b) { b.onclick = function () { target = b.dataset.upload; $('#file').click(); }; });
+    $$('[data-clear]').forEach(function (b) { b.onclick = function () { pushUndo(); skin[b.dataset.clear] = ''; renderControls(); apply(true); }; });
+    $('#file').onchange = function () {
+      var f = this.files && this.files[0]; this.value = '';
+      if (!f || !target) return;
+      var fd = new FormData(); fd.append('file', f);
+      toast('上传中…');
+      fetch('/api/skin/background', { method: 'POST', body: fd })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
+        .then(function (j) { pushUndo(); skin[target] = j.url; renderControls(); apply(true); toast('背景已更换'); })
+        .catch(function (e) { toast('上传失败：' + e.message); });
+    };
+
+    $('#copy').onclick = function () {
+      var t = $('#export');
+      (navigator.clipboard ? navigator.clipboard.writeText(t.value) : Promise.reject()).then(function () { toast('已复制'); })
+        .catch(function () { t.select(); document.execCommand('copy'); toast('已复制'); });
+    };
+    $('#do-import').onclick = function () {
+      var text = $('#import').value.trim();
+      try {
+        if (text.indexOf('IB-LOOK:') !== 0) throw new Error();
+        var data = JSON.parse(decodeURIComponent(escape(atob(text.slice(8)))));
+        if (!data || typeof data !== 'object') throw new Error();
+        pushUndo();
+        skin.preset = IB.presets[data.preset] ? data.preset : 'internal';
+        skin.vars = data.vars && typeof data.vars === 'object' ? data.vars : {};
+        skin.bg = data.bg || ''; skin.chat_bg = data.chat_bg || '';
+        skin.reduce_motion = !!data.reduce_motion; skin.custom_css = data.custom_css || '';
+        renderAll(); apply(true); toast('已导入');
+      } catch (e) { toast('美化码格式不对'); }
+    };
+    $('#undo').onclick = function () {
+      var prev = null;
+      try { prev = JSON.parse(localStorage.getItem(UNDO_KEY) || 'null'); } catch (e) {}
+      if (!prev) { toast('没有可以撤销的改动'); return; }
+      var now = look(skin);
+      Object.assign(skin, prev);
+      try { localStorage.setItem(UNDO_KEY, JSON.stringify(now)); } catch (e) {}
+      renderAll(); apply(true); toast('已撤销（再点一次可恢复）');
+    };
+    $('#apply-css').onclick = function () { pushUndo(); skin.custom_css = $('#custom-css').value; apply(true); toast('已应用'); };
+  }
+
+  if (!IB) { document.body.textContent = '皮肤脚本没有加载，请刷新重试'; return; }
+  bindStatic(); bindVars(); renderAll();
+  fetch('/api/skin', { cache: 'no-store' }).then(function (r) { return r.json(); })
+    .then(function (s) { skin = normalize(s); IB.commit(skin); renderAll(); }).catch(function () {});
+})();
+</script>
+</body>
+</html>

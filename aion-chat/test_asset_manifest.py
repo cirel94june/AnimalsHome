@@ -35,7 +35,9 @@ def test_english_corner_document_route_is_content_addressed():
 
     assert entry["category"] == "document"
     assert entry["content_type"] == "text/html"
-    assert entry["sha256"] == hashlib.sha256(document.read_bytes()).hexdigest()
+    # 页面返回前会插入皮肤脚本，哈希按实际返回内容计算
+    from skin import inject_html
+    assert entry["sha256"] == hashlib.sha256(inject_html(document.read_bytes())).hexdigest()
 
 
 def test_nested_markdown_vendor_is_in_the_verified_frontend_cache():

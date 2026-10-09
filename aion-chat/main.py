@@ -259,6 +259,8 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
                 response.headers["Cache-Control"] = cache_control + ", no-transform"
         return response
 
+from skin import SkinInjectMiddleware, router as skin_router
+app.add_middleware(SkinInjectMiddleware)  # 最内层：在 GZip 压缩之前插入皮肤
 app.add_middleware(NoCacheStaticMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 app.add_middleware(SecurityAccessMiddleware, service=security_access_service)
@@ -340,6 +342,7 @@ app.include_router(create_security_access_router(security_access_service))
 app.include_router(create_security_access_report_router(DATA_DIR / "security_access", BASE_DIR / "security-access-report.html"))
 from ops_status import router as ops_status_router
 app.include_router(ops_status_router)
+app.include_router(skin_router)
 
 
 @app.get("/api/client-assets")
