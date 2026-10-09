@@ -1,0 +1,250 @@
+/* IB 桌面挂件（只在 IB 外观下挂到 AionsHome 桌面上） */
+
+html[data-skin="ib"] #clockWidget { display: none; }
+html[data-skin="ib"] .home-quick-row .global-search-trigger { display: none; }
+html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: none; }
+
+#ib-desk {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 10px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 4px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+#ib-desk .wgt {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, var(--ib-glass-a, 0.4));
+  border: 1px solid var(--ib-glass-line, rgba(255, 255, 255, 0.74));
+  box-shadow: 0 8px 26px rgba(90, 120, 170, 0.12);
+  backdrop-filter: blur(22px) saturate(1.45);
+  -webkit-backdrop-filter: blur(22px) saturate(1.45);
+}
+#ib-desk .wgt::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 46%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent);
+  pointer-events: none;
+}
+#ib-desk .wgt.full { grid-column: 1 / -1; }
+#ib-desk .wgt-lab {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  z-index: 2;
+  font-family: var(--ib-disp);
+  font-weight: 300;
+  font-size: 8.5px;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ib-tx3);
+}
+#ib-desk.editing .wgt { animation: ibDeskWig 0.22s ease-in-out infinite alternate; }
+@keyframes ibDeskWig { from { transform: rotate(-0.6deg); } to { transform: rotate(0.6deg); } }
+
+/* ── Hero：日期 + 大时刻 + 头像 ── */
+.ib-hero { padding: 16px 18px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ib-hero-main { min-width: 0; position: relative; z-index: 2; }
+.ib-hero-date {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--ib-disp);
+  font-weight: 300;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--ib-tx2);
+  white-space: nowrap;
+}
+.ib-hero-date i { width: 1px; height: 0.95em; background: currentColor; opacity: 0.45; }
+.ib-time {
+  position: relative;
+  margin-top: 6px;
+  font-family: var(--ib-sys);
+  font-weight: 700;
+  font-size: clamp(56px, 17vw, 84px);
+  line-height: 0.96;
+  letter-spacing: -0.032em;
+  font-variant-numeric: tabular-nums;
+}
+.ib-time .t-face {
+  position: relative;
+  z-index: 1;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(248, 252, 255, 0.9) 44%, rgba(210, 229, 250, 0.58) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+.ib-time .t-shadow {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  color: transparent;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55), 0 1.5px 3px rgba(24, 46, 88, 0.42), 0 6px 11px rgba(30, 58, 105, 0.16);
+  pointer-events: none;
+}
+.ib-hero-side { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+.ib-duo { position: relative; width: 82px; height: 50px; }
+.ib-duo img {
+  position: absolute;
+  top: 0;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 6px 16px rgba(60, 90, 140, 0.22);
+  background: #e9f0f9;
+}
+.ib-duo img.me { left: 0; z-index: 2; }
+.ib-duo img.ai { right: 0; }
+.ib-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--ib-glass-line);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--ib-acc);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+.ib-icon-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── 相遇卡 ── */
+.ib-meet { padding: 26px 10px 12px; text-align: center; cursor: pointer; }
+.ib-meet .names {
+  font-family: var(--ib-serif);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ib-tx);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ib-meet .names i { font-style: italic; font-weight: 400; color: var(--ib-tx3); margin: 0 5px; }
+.ib-meet .tf { margin-top: 4px; font-family: var(--ib-disp); font-weight: 300; font-size: 9px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--ib-tx3); }
+.ib-meet .days { margin-top: 2px; display: flex; align-items: baseline; justify-content: center; gap: 5px; }
+.ib-meet .days b { font-family: var(--ib-serif); font-weight: 600; font-size: 40px; line-height: 1.05; color: var(--ib-acc); font-variant-numeric: lining-nums tabular-nums; }
+.ib-meet .days span { font-family: var(--ib-disp); font-weight: 300; font-size: 11px; letter-spacing: 0.14em; color: var(--ib-tx2); }
+.ib-meet .cd { margin-top: 2px; font-family: var(--ib-disp); font-weight: 300; font-size: 9.5px; letter-spacing: 0.1em; color: var(--ib-tx3); }
+
+/* ── 便笺 ── */
+.ib-notes { padding: 28px 12px 10px; display: flex; flex-direction: column; cursor: pointer; }
+.ib-notes .note {
+  flex: 1;
+  padding: 10px 12px 8px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.14));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 8px 20px rgba(60, 90, 140, 0.12);
+}
+.ib-notes .body {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: #2f4a74;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 3.7em;
+}
+.ib-notes .body.empty { color: var(--ib-tx3); }
+.ib-notes .date { margin-top: 4px; text-align: right; font-family: var(--ib-disp); font-weight: 300; font-size: 9.5px; letter-spacing: 0.12em; color: #7e93b6; }
+
+/* ── 日程 ── */
+.ib-sched { padding: 26px 12px 10px; cursor: pointer; }
+.ib-sched .head { display: flex; align-items: center; gap: 9px; }
+.ib-sched .datebox {
+  flex: none;
+  width: 40px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--ib-line);
+  background: rgba(255, 255, 255, 0.32);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.ib-sched .datebox b { font-family: var(--ib-serif); font-weight: 600; font-size: 20px; line-height: 1; color: var(--ib-acc); }
+.ib-sched .datebox small { margin-top: 2px; font-family: var(--ib-disp); font-weight: 300; font-size: 7.5px; letter-spacing: 0.22em; color: var(--ib-tx3); text-transform: uppercase; }
+.ib-sched h4 { font-family: var(--ib-serif); font-weight: 600; font-size: 15px; color: var(--ib-tx); letter-spacing: 0.04em; }
+.ib-sched h4 .cn { font-family: var(--ib-sys); font-size: 9.5px; font-weight: 400; color: var(--ib-tx3); letter-spacing: 0.2em; margin-left: 6px; }
+.ib-sched .list { margin-top: 8px; border-top: 1px dashed var(--ib-line); padding-top: 6px; }
+.ib-sched .ev { display: flex; gap: 7px; align-items: baseline; font-size: 11.5px; line-height: 1.75; color: var(--ib-tx2); white-space: nowrap; overflow: hidden; }
+.ib-sched .ev time { flex: none; font-family: var(--ib-disp); font-size: 10px; color: var(--ib-acc); font-variant-numeric: tabular-nums; }
+.ib-sched .ev span { overflow: hidden; text-overflow: ellipsis; }
+.ib-sched .none { font-size: 11.5px; color: var(--ib-tx3); line-height: 1.75; }
+
+/* ── 设置面板 / 便笺编辑（底部弹出） ── */
+.ib-sheet-mask { position: fixed; inset: 0; z-index: 3000; background: rgba(20, 35, 70, 0.22); display: flex; align-items: flex-end; justify-content: center; }
+.ib-sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: 86dvh;
+  overflow-y: auto;
+  padding: 18px 18px calc(18px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: linear-gradient(168deg, rgba(253, 254, 255, 0.95), rgba(238, 245, 252, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 -10px 40px rgba(40, 70, 120, 0.18);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  color: var(--ib-tx);
+  font-family: var(--ib-sys);
+}
+.ib-sheet h3 { font-family: var(--ib-serif); font-weight: 600; font-size: 22px; }
+.ib-sheet h3 small { font-family: var(--ib-sys); font-size: 11px; font-weight: 500; color: var(--ib-tx3); letter-spacing: 0.12em; margin-left: 8px; }
+.ib-sheet .sec { margin-top: 16px; }
+.ib-sheet .sec > b { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.ib-sheet .hint { font-size: 11.5px; color: var(--ib-tx3); line-height: 1.6; }
+.ib-sheet .wrow { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin-top: 6px; border-radius: 14px; background: rgba(255, 255, 255, 0.6); border: 1px solid var(--ib-glass-line); font-size: 14px; }
+.ib-sheet .wrow span { flex: 1; }
+.ib-sheet .wrow button { border: 1px solid var(--ib-line); background: rgba(255, 255, 255, 0.7); color: var(--ib-tx2); border-radius: 10px; width: 30px; height: 28px; padding: 0; font-size: 13px; }
+.ib-sheet .wrow input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--ib-acc); }
+.ib-sheet label.field { display: block; margin-top: 8px; font-size: 12.5px; color: var(--ib-tx2); }
+.ib-sheet input[type="date"], .ib-sheet input[type="text"], .ib-sheet textarea {
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--ib-line);
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--ib-tx);
+  font: inherit;
+  font-size: 14px;
+}
+.ib-sheet textarea { min-height: 160px; line-height: 1.8; resize: vertical; }
+.ib-sheet .acts { display: flex; gap: 10px; margin-top: 18px; }
+.ib-sheet .acts button, .ib-sheet a.btn {
+  flex: 1;
+  padding: 11px 0;
+  border-radius: 14px;
+  border: 1px solid var(--ib-glass-line);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ib-acc);
+  font-size: 14px;
+  text-align: center;
+  text-decoration: none;
+}
+.ib-sheet .acts button.primary { background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)); color: #fff; border: none; }
+
+/* Dock 里的图标不显示文字，去掉为文字预留的高度 */
+html[data-skin="ib"] .dock .app-icon { height: auto; }
+html[data-skin="ib"] .dock { padding: 12px 24px; margin-bottom: calc(18px + env(safe-area-inset-bottom)); }

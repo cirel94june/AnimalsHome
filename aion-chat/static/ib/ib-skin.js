@@ -8,6 +8,7 @@
   var CACHE_KEY = 'ib_skin_cache_v1';
   var THEME_KEY = 'aion_chat_theme';
   var root = document.documentElement;
+  var VERSION = (document.currentScript && document.currentScript.src.split('?v=')[1]) || '';
 
   // 可调变量：设置里的键 → CSS 变量
   var VARS = {
@@ -82,6 +83,18 @@
     });
   }
 
+  // IB 桌面挂件只挂在桌面（/）上
+  function loadDesk() {
+    if (location.pathname !== '/' || document.getElementById('ib-desk-js')) return;
+    var v = VERSION;
+    var css = document.createElement('link');
+    css.rel = 'stylesheet'; css.href = '/static/ib/desk.css?v=' + v;
+    document.head.appendChild(css);
+    var js = document.createElement('script');
+    js.id = 'ib-desk-js'; js.src = '/static/ib/desk.js?v=' + v;
+    document.head.appendChild(js);
+  }
+
   function clean(value) {
     // 防止设置里混入能跳出声明的字符
     return String(value == null ? '' : value).replace(/[;{}<>\\]/g, '').trim();
@@ -138,6 +151,7 @@
     }
     if (link) link.disabled = false;
     root.dataset.skin = 'ib';
+    loadDesk();
     root.dataset.theme = 'light';
     try { localStorage.setItem(THEME_KEY, 'light'); } catch (e) {}
     if (skin.reduce_motion) root.dataset.ibReduce = '1'; else delete root.dataset.ibReduce;
