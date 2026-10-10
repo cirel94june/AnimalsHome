@@ -15,7 +15,7 @@ public class HomecomingLauncherContractTest {
         String xml = read("src/main/res/layout/activity_launcher.xml");
         assertTrue(xml.contains("@+id/btnHomecoming"));
         assertTrue(xml.contains("归巢模式"));
-        assertTrue(xml.contains("家庭服务器不可用时使用"));
+        assertTrue(xml.contains("服务器不可用时使用"));
         assertFalse(xml.contains("手机本地灾备"));
     }
 
@@ -30,13 +30,12 @@ public class HomecomingLauncherContractTest {
     }
 
     @Test
-    public void normalThreeButtonsKeepExistingLaunchWebViewPath() throws Exception {
+    public void connectButtonUsesTypedAddressAndNormalLaunchPath() throws Exception {
         String source = read("src/main/java/com/aion/chat/LauncherActivity.java");
-        assertTrue(listenerBlock(source, "btnHome").contains("launchWebView(URL_HOME)"));
-        assertTrue(listenerBlock(source, "btnCloudflare")
-                .contains("launchWebView(URL_CLOUDFLARE)"));
-        assertTrue(listenerBlock(source, "btnOutdoor")
-                .contains("launchWebView(URL_OUTDOOR)"));
+        String block = listenerBlock(source, "btnConnect");
+        assertTrue(block.contains("normalizeServerInput"));
+        assertTrue(block.contains("launchWebView(url)"));
+        assertFalse(source.contains("192.168.1.100"));  // 不再写死原作者的地址
     }
 
     @Test
@@ -53,9 +52,7 @@ public class HomecomingLauncherContractTest {
         String source = read("src/main/java/com/aion/chat/LauncherActivity.java");
         assertTrue(source.contains("pendingInSequence()"));
         assertTrue(source.contains("EXTRA_OPEN_RETURN"));
-        assertFalse(listenerBlock(source, "btnHome").contains("pendingInSequence"));
-        assertFalse(listenerBlock(source, "btnCloudflare").contains("pendingInSequence"));
-        assertFalse(listenerBlock(source, "btnOutdoor").contains("pendingInSequence"));
+        assertFalse(listenerBlock(source, "btnConnect").contains("pendingInSequence"));
     }
 
     private static String listenerBlock(String source, String variable) {

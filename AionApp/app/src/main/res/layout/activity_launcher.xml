@@ -20,57 +20,31 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="选择连接方式"
+        android:text="连接你的 AionsHome 服务器"
         android:textSize="15sp"
         android:textColor="#aaaaaa"
-        android:layout_marginBottom="40dp" />
+        android:layout_marginBottom="32dp" />
 
-    <!-- 家庭 WiFi -->
-    <Button
-        android:id="@+id/btnHome"
+    <!-- 服务器地址（部署完成时会给出，例如 https://名字.xxx.ts.net） -->
+    <EditText
+        android:id="@+id/etServerUrl"
         android:layout_width="280dp"
         android:layout_height="wrap_content"
-        android:text="🏠  家庭 WiFi"
-        android:textSize="16sp"
+        android:hint="https://你的服务器地址"
+        android:inputType="textUri"
+        android:singleLine="true"
+        android:imeOptions="actionGo"
+        android:textSize="15sp"
         android:textColor="#ffffff"
-        android:backgroundTint="#2d5a3d"
-        android:padding="16dp"
-        android:layout_marginBottom="4dp" />
+        android:textColorHint="#666666"
+        android:backgroundTint="#ff8359"
+        android:layout_marginBottom="12dp" />
 
-    <TextView
-        android:id="@+id/tvHomeUrl"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textSize="12sp"
-        android:textColor="#666666"
-        android:layout_marginBottom="24dp" />
-
-    <!-- 户外 Cloudflare -->
     <Button
-        android:id="@+id/btnCloudflare"
+        android:id="@+id/btnConnect"
         android:layout_width="280dp"
         android:layout_height="wrap_content"
-        android:text="⚡  户外 Cloudflare"
-        android:textSize="16sp"
-        android:textColor="#ffffff"
-        android:backgroundTint="#5f4a1d"
-        android:padding="16dp"
-        android:layout_marginBottom="4dp" />
-
-    <TextView
-        android:id="@+id/tvCloudflareUrl"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textSize="12sp"
-        android:textColor="#666666"
-        android:layout_marginBottom="24dp" />
-
-    <!-- 户外 Tailscale -->
-    <Button
-        android:id="@+id/btnOutdoor"
-        android:layout_width="280dp"
-        android:layout_height="wrap_content"
-        android:text="🌐  户外 Tailscale"
+        android:text="🌐  连接"
         android:textSize="16sp"
         android:textColor="#ffffff"
         android:backgroundTint="#2d4a6e"
@@ -78,12 +52,14 @@
         android:layout_marginBottom="4dp" />
 
     <TextView
-        android:id="@+id/tvOutdoorUrl"
-        android:layout_width="wrap_content"
+        android:id="@+id/tvServerHint"
+        android:layout_width="280dp"
         android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="手机需要先打开 Tailscale 并登录"
         android:textSize="12sp"
-        android:textColor="#666666"
-        android:layout_marginBottom="24dp" />
+        android:textColor="#777777"
+        android:layout_marginBottom="28dp" />
 
     <Button
         android:id="@+id/btnHomecoming"
@@ -100,7 +76,7 @@
         android:id="@+id/tvHomecomingHint"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="家庭服务器不可用时使用"
+        android:text="服务器不可用时使用"
         android:textSize="12sp"
         android:textColor="#777777"
         android:layout_marginBottom="24dp" />
@@ -110,7 +86,7 @@
         android:id="@+id/cbRemember"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="记住选择，下次自动连接"
+        android:text="记住地址，下次自动连接"
         android:textSize="13sp"
         android:textColor="#888888"
         android:buttonTint="#ff8359" />
@@ -118,7 +94,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="手势返回到首页可切换地址\n局域网 / Cloudflare / Tailscale 三线可选"
+        android:text="手势返回到首页可修改地址"
         android:textSize="11sp"
         android:textColor="#555555"
         android:layout_marginTop="16dp" />

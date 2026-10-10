@@ -8,6 +8,22 @@ import static org.junit.Assert.assertTrue;
 
 public class ConnectionEndpointTest {
     @Test
+    public void normalizesTypedServerAddress() {
+        assertEquals("https://box.tail1234.ts.net/",
+                ConnectionEndpoint.normalizeServerInput("  box.tail1234.ts.net "));
+        assertEquals("https://box.tail1234.ts.net/",
+                ConnectionEndpoint.normalizeServerInput("HTTPS://box.tail1234.ts.net"));
+        assertEquals("http://100.64.0.1:8080/chat",
+                ConnectionEndpoint.normalizeServerInput("http://100.64.0.1:8080/chat"));
+        assertEquals("wss://box.tail1234.ts.net/ws",
+                ConnectionEndpoint.toWebSocketUrl(ConnectionEndpoint.normalizeServerInput("box.tail1234.ts.net")));
+        assertEquals(null, ConnectionEndpoint.normalizeServerInput(""));
+        assertEquals(null, ConnectionEndpoint.normalizeServerInput("ftp://box"));
+        assertEquals(null, ConnectionEndpoint.normalizeServerInput("https://"));
+        assertEquals(null, ConnectionEndpoint.normalizeServerInput(null));
+    }
+
+    @Test
     public void migratesLegacyCloudflareHost() {
         assertEquals(ConnectionEndpoint.CLOUDFLARE_PAGE_URL,
                 ConnectionEndpoint.normalizePageUrl("https://legacy-ws.example.com/chat"));

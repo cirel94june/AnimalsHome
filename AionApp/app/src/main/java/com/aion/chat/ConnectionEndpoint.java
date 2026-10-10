@@ -27,6 +27,29 @@ final class ConnectionEndpoint {
         return value;
     }
 
+    /**
+     * 启动页输入的服务器地址 → 页面地址。没写协议时补 https；只有主机名时打开首页 "/"。
+     * 不是合法的 http(s) 地址时返回 null。
+     */
+    static String normalizeServerInput(String rawUrl) {
+        if (rawUrl == null) return null;
+        String value = rawUrl.trim();
+        if (value.isEmpty()) return null;
+        if (!value.contains("://")) value = "https://" + value;
+        try {
+            URI uri = new URI(value);
+            String scheme = uri.getScheme();
+            if (scheme == null || uri.getHost() == null || uri.getHost().isEmpty()) return null;
+            if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)) return null;
+            String path = uri.getPath();
+            if (path == null || path.isEmpty()) path = "/";
+            return new URI(scheme.toLowerCase(java.util.Locale.ROOT), null, uri.getHost(), uri.getPort(),
+                    path, uri.getQuery(), null).toString();
+        } catch (URISyntaxException ignored) {
+            return null;
+        }
+    }
+
     static String toWebSocketUrl(String rawUrl) {
         String value = normalizePageUrl(rawUrl);
         if (value == null) return null;

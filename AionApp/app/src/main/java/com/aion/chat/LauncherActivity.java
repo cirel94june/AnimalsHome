@@ -4,8 +4,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -16,7 +18,7 @@ import com.aion.chat.homecoming.HomecomingModeStore;
 import com.aion.chat.homecoming.HomecomingReturnPackageRepository;
 
 /**
- * 启动页 — 选择连接地址（家庭WiFi / Cloudflare / 户外Tailscale）
+ * 启动页 — 填写服务器地址后连接；服务器不可用时可进归巢模式
  */
 public class LauncherActivity extends AppCompatActivity {
     private HomecomingBackupScheduler homecomingBackupScheduler;
@@ -26,10 +28,7 @@ public class LauncherActivity extends AppCompatActivity {
     private static final String KEY_URL     = "saved_url";
     private static final String KEY_AUTO    = "auto_connect";
 
-    // ★ 在这里修改你的连接地址
-    private static final String URL_HOME       = "http://192.168.1.100:8080/chat";
-    private static final String URL_CLOUDFLARE = ConnectionEndpoint.CLOUDFLARE_PAGE_URL;
-    private static final String URL_OUTDOOR    = "http://100.64.0.1:8080/chat";
+    // 服务器地址由用户在启动页填写（部署完成时会给出），不再写死
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,34 +53,31 @@ public class LauncherActivity extends AppCompatActivity {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         prepareHomecomingBackup();
 
-        // 如果上次勾选了"记住选择"，直接跳转
-        if (prefs.getBoolean(KEY_AUTO, false)) {
-            String savedUrl = ConnectionEndpoint.normalizePageUrl(
-                    prefs.getString(KEY_URL, URL_HOME));
+        String savedUrl = ConnectionEndpoint.normalizeServerInput(prefs.getString(KEY_URL, ""));
+
+        // 如果上次勾选了"记住地址"，直接跳转
+        if (prefs.getBoolean(KEY_AUTO, false) && savedUrl != null) {
             prefs.edit().putString(KEY_URL, savedUrl).apply();
             refreshHomecomingBackup(savedUrl, false);
             launchWebView(savedUrl);
             return;
         }
-        refreshHomecomingBackup(
-                ConnectionEndpoint.normalizePageUrl(prefs.getString(KEY_URL, URL_HOME)),
-                false);
+        if (savedUrl != null) {
+            refreshHomecomingBackup(savedUrl, false);
+        }
 
         setContentView(R.layout.activity_launcher);
 
-        TextView tvHome       = findViewById(R.id.tvHomeUrl);
-        TextView tvCloudflare = findViewById(R.id.tvCloudflareUrl);
-        TextView tvOutdoor    = findViewById(R.id.tvOutdoorUrl);
+        EditText etServerUrl  = findViewById(R.id.etServerUrl);
         TextView tvHomecomingHint = findViewById(R.id.tvHomecomingHint);
-        Button   btnHome      = findViewById(R.id.btnHome);
-        Button   btnCloudflare= findViewById(R.id.btnCloudflare);
-        Button   btnOutdoor   = findViewById(R.id.btnOutdoor);
+        Button   btnConnect   = findViewById(R.id.btnConnect);
         Button   btnHomecoming= findViewById(R.id.btnHomecoming);
         CheckBox cbRemember   = findViewById(R.id.cbRemember);
 
-        tvHome.setText(URL_HOME);
-        tvCloudflare.setText(URL_CLOUDFLARE);
-        tvOutdoor.setText(URL_OUTDOOR);
+        if (savedUrl != null) {
+            etServerUrl.setText(savedUrl);
+        }
+        cbRemember.setChecked(prefs.getBoolean(KEY_AUTO, false));
         boolean pendingReturn = false;
         try {
             pendingReturn = !new HomecomingReturnPackageRepository(this)
@@ -95,22 +91,22 @@ public class LauncherActivity extends AppCompatActivity {
             tvHomecomingHint.setText("有归巢数据等待手动回传");
         }
 
-        btnHome.setOnClickListener(v -> {
-            saveIfNeeded(prefs, cbRemember.isChecked(), URL_HOME);
-            refreshHomecomingBackup(URL_HOME, true);
-            launchWebView(URL_HOME);
+        btnConnect.setOnClickListener(v -> {
+            String url = ConnectionEndpoint.normalizeServerInput(etServerUrl.getText().toString());
+            if (url == null) {
+                etServerUrl.setError("地址不对，例如 https://名字.xxx.ts.net");
+                return;
+            }
+            saveIfNeeded(prefs, cbRemember.isChecked(), url);
+            refreshHomecomingBackup(url, true);
+            launchWebView(url);
         });
-
-        btnCloudflare.setOnClickListener(v -> {
-            saveIfNeeded(prefs, cbRemember.isChecked(), URL_CLOUDFLARE);
-            refreshHomecomingBackup(URL_CLOUDFLARE, true);
-            launchWebView(URL_CLOUDFLARE);
-        });
-
-        btnOutdoor.setOnClickListener(v -> {
-            saveIfNeeded(prefs, cbRemember.isChecked(), URL_OUTDOOR);
-            refreshHomecomingBackup(URL_OUTDOOR, true);
-            launchWebView(URL_OUTDOOR);
+        etServerUrl.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_GO) {
+                btnConnect.performClick();
+                return true;
+            }
+            return false;
         });
 
         btnHomecoming.setOnClickListener(v -> {
