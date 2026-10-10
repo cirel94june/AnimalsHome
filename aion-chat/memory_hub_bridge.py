@@ -254,8 +254,6 @@ async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str
     if not source_ai:
         return "ok", ""  # 角色已不再接 Memory Hub，丢弃
     platform = str(cfg.get("platform") or "aionshome")
-    if row["chat_type"] != "private":
-        platform = f"{platform}-{row['chat_type']}"
     arguments = {
         "action": "log",
         "source_ai": source_ai,
@@ -263,6 +261,10 @@ async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str
         "ai_response": row["ai_response"][:8000],
         "platform": platform,
     }
+    if row["chat_type"] != "private":
+        arguments["platform"] = f"{platform}-{row['chat_type']}"
+        # Hub 不传 chat_type 时按私聊记，群聊内容会进私人层
+        arguments["chat_type"] = "private_group"
     sent: list = []
     try:
         await asyncio.wait_for(

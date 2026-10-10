@@ -39,9 +39,12 @@ def fake_hub():
 
     @hub.tool()
     def capture(action: str = "log", source_ai: str = "claude", user_message: str = "",
-                ai_response: str = "", platform: str = "mcp") -> str:
-        CALLS.append(("capture", {"action": action, "source_ai": source_ai, "user_message": user_message,
-                                  "ai_response": ai_response, "platform": platform}))
+                ai_response: str = "", platform: str = "mcp", chat_type: str = "") -> str:
+        args = {"action": action, "source_ai": source_ai, "user_message": user_message,
+                "ai_response": ai_response, "platform": platform}
+        if chat_type:
+            args["chat_type"] = chat_type
+        CALLS.append(("capture", args))
         if user_message == "很慢":
             time.sleep(2)
         return json.dumps({"status": "ok"})
@@ -99,7 +102,14 @@ def test_capture_turn_logs_with_platform_and_identity(fake_hub, isolated_config)
     ok = asyncio.run(bridge.capture_turn("aion", "我到家了", "欢迎回来", chat_type="group"))
     assert ok
     assert CALLS[-1] == ("capture", {"action": "log", "source_ai": "claude", "user_message": "我到家了",
-                                     "ai_response": "欢迎回来", "platform": "aionshome-group"})
+                                     "ai_response": "欢迎回来", "platform": "aionshome-group",
+                                     "chat_type": "private_group"})
+
+
+def test_private_capture_does_not_send_chat_type(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub)
+    assert asyncio.run(bridge.capture_turn("aion", "我到家了", "欢迎回来"))
+    assert "chat_type" not in CALLS[-1][1] and CALLS[-1][1]["platform"] == "aionshome"
 
 
 def test_schedule_capture_strips_tool_commands(fake_hub, isolated_config):
@@ -169,7 +179,8 @@ def test_capture_survives_hub_outage_and_is_resent_later(fake_hub, isolated_conf
 
 
 def test_capture_that_may_have_arrived_is_not_resent(fake_hub, isolated_config):
-    _write(isolated_config, enabled=True, url=fake_hub, capture_timeout_seconds=0.5)
+    # 超时要长于握手（Windows 上本机握手可能超过 0.5s）、短于服务端的 2s 卡顿
+    _write(isolated_config, enabled=True, url=fake_hub, capture_timeout_seconds=1.5)
     assert asyncio.run(bridge.capture_turn("aion", "很慢", "嗯")) is False
     assert _rows() == [("很慢", "uncertain", 0)]
     bridge._cooldown_until["write"] = 0.0
