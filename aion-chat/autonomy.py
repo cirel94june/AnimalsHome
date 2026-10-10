@@ -216,7 +216,16 @@ def _actor_label(actor: str) -> str:
         return connor_name
     if actor == "user":
         return user_name
+    if _is_seat(actor):
+        from actors import display_name
+        return display_name(actor)
     return actor or "未知"
+
+
+def _is_seat(actor: str) -> bool:
+    """座位 3～6（seat_1v1 私聊、自己的模型和人设）。"""
+    from seat_chat import SEAT_ACTORS
+    return actor in SEAT_ACTORS
 
 
 def _idle_event_home_title(row, shown_diary_ids: set[str], shown_moment_ids: set[str]) -> str | None:
@@ -393,6 +402,12 @@ async def _collect(aiter) -> str:
 
 
 async def _call_actor(actor: str, messages: list[dict]) -> str:
+    if _is_seat(actor):
+        from seat_chat import seat_model
+        model = seat_model(actor)
+        if not model:
+            raise RuntimeError(f"{_actor_label(actor)} 还没有选模型")
+        return await _collect(stream_ai(messages, model, {}))
     if actor == "connor":
         from routes.chatroom import _stream_connor_model
         return await _collect(_stream_connor_model(messages, _connor_model()))
@@ -421,6 +436,9 @@ async def _actor_context(actor: str, limit: int = 30, *, include_history: bool =
         ))
         return messages
 
+    if _is_seat(actor):
+        return await _seat_actor_context(actor, limit, include_history=include_history)
+
     try:
         from chatroom import _read_connor_persona
         persona = _read_connor_persona()
@@ -442,6 +460,24 @@ async def _actor_context(actor: str, limit: int = 30, *, include_history: bool =
         include_image_attachments=False,
     ))
     return messages
+
+
+async def _seat_actor_context(actor: str, limit: int, *, include_history: bool) -> list[dict]:
+    """座位 3～6：自己的人设 + 关于用户 + 自己私聊房间的最近记录。"""
+    from memory_hub_jobs import _persona_messages
+    from seat_chat import _history
+
+    wb = load_worldbook()
+    messages = _persona_messages(actor)
+    if wb.get("user_persona"):
+        user_name = _actor_label("user")
+        messages.append({"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"})
+        messages.append({"role": "assistant", "content": "收到。"})
+    if not include_history:
+        return messages
+    from routes.chatroom import _get_or_create_seat_room, _load_room_and_messages
+    _, msgs = await _load_room_and_messages(await _get_or_create_seat_room(actor), limit=limit)
+    return messages + _history(actor, msgs, limit)
 
 
 async def _ask_actor_json(actor: str, instruction: str, *, limit: int = 30) -> dict:
@@ -904,6 +940,12 @@ async def _save_private_message(
             content,
             attachments,
             auto_tts=auto_tts,
+        )
+    if _is_seat(actor):
+        from routes.chatroom import _get_or_create_seat_room
+        return await _save_autonomy_chatroom_message(
+            await _get_or_create_seat_room(actor), actor, content,
+            attachments=attachments or [], auto_tts=False,
         )
     if force_private:
         from routes.chatroom import _get_or_create_connor_private_room

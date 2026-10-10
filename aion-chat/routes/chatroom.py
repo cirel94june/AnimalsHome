@@ -751,6 +751,21 @@ async def _get_or_create_connor_private_room() -> str:
     return room_id
 
 
+async def _get_or_create_seat_room(actor: str) -> str:
+    """座位 3～6 的私聊房间（每位一个），自主活动等后台消息发到这里。"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT id FROM chatroom_rooms WHERE type=? AND actor=? ORDER BY updated_at DESC LIMIT 1",
+            (seat_chat.SEAT_ROOM_TYPE, actor),
+        )
+        row = await cur.fetchone()
+    if row:
+        return row["id"]
+    room = await create_room(RoomCreate(title="", type=seat_chat.SEAT_ROOM_TYPE, actor=actor))
+    return room["id"]
+
+
 async def _send_connor_private_whisper(content: str):
     content = content.strip()
     if not content:

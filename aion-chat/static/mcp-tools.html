@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>MCP 工具</title>
+<link rel="stylesheet" href="/static/ib/desk.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); min-height: 100dvh; -webkit-tap-highlight-color: transparent; }
+.page { max-width: 640px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)); }
+.top-bar { display: flex; align-items: center; gap: 10px; padding: 0 0 10px; }
+.top-bar h2 { font-weight: 400; flex: 1; min-width: 0; }
+.add-btn { flex: none; border: 1px solid rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.6); color: var(--ib-acc); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; }
+.intro { font-size: 12.5px; color: var(--ib-tx2); line-height: 1.7; margin: 4px 2px 14px; }
+.tool { border-radius: 20px; padding: 14px 16px; margin-bottom: 12px; background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 8px 24px rgba(70, 100, 150, 0.1); }
+.tool.off { opacity: 0.6; }
+.tool h3 { font-size: 16px; font-weight: 600; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tag { font-size: 11px; font-weight: 400; padding: 2px 8px; border-radius: 999px; background: rgba(92, 134, 200, 0.12); color: var(--ib-acc); }
+.tag.muted { background: rgba(0, 0, 0, 0.05); color: var(--ib-tx3); }
+.url { margin-top: 4px; font-size: 12px; color: var(--ib-tx3); word-break: break-all; }
+.desc { margin-top: 8px; font-size: 13.5px; line-height: 1.65; color: var(--ib-tx2); white-space: pre-wrap; }
+.btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.btns button { flex: 1; min-width: 88px; padding: 9px 0; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.65); color: var(--ib-acc); font-size: 13.5px; }
+.btns .primary { background: var(--ib-acc); color: #fff; border: none; }
+.result { margin-top: 8px; font-size: 12.5px; line-height: 1.6; color: var(--ib-tx2); word-break: break-all; }
+.empty { text-align: center; color: var(--ib-tx3); font-size: 13.5px; padding: 40px 0; }
+.ib-sheet textarea { min-height: 70px; resize: vertical; }
+.ib-sheet .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 13.5px; }
+.ib-sheet .checks label { display: inline-flex; align-items: center; gap: 4px; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 14px; background: rgba(10, 30, 66, 0.85); color: #fff; font-size: 13.5px; z-index: 100; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top-bar"><button class="back-btn" onclick="location.href='/'">⬅</button><h2>MCP 工具</h2>
+    <button type="button" class="add-btn" id="add-btn">＋ 接一个 MCP</button></div>
+  <p class="intro">在这里接你想让 AI 去的地方：论坛、游戏、旅行、浏览器、GitHub……
+    打开「有空时可以自己去」，AI 空闲时会自己挑地方逛，回来在你们的私聊里讲见闻。
+    去的 AI 需要在相遇卡里选一条 API 线路（能调用工具的那种）。</p>
+  <div id="list"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var data = { tools: [], actors: [] };
+  var list = document.getElementById('list');
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(function () { d.remove(); }, 3200); }
+  function api(path, opts) {
+    return fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {}))
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); });
+  }
+  function actorName(id) { var a = data.actors.filter(function (x) { return x.id === id; })[0]; return a ? a.name : id; }
+
+  function load() { return api('/api/mcp-tools').then(function (j) { data = j; render(); }); }
+
+  function render() {
+    if (!data.tools.length) { list.innerHTML = '<div class="empty">还没有接 MCP。点右上角「接一个 MCP」。</div>'; return; }
+    list.innerHTML = data.tools.map(function (t, i) {
+      var who = t.actors.length ? t.actors.map(actorName).join('、') : '所有 AI';
+      return '<section class="tool' + (t.enabled ? '' : ' off') + '"><h3>' + esc(t.name) +
+        (t.enabled ? '' : '<span class="tag muted">已停用</span>') +
+        (t.autonomy ? '<span class="tag">有空时可以自己去</span>' : '') +
+        '<span class="tag muted">' + esc(who) + '</span></h3>' +
+        '<div class="url">' + esc(t.url) + (t.header_names.length ? ' · 请求头：' + esc(t.header_names.join('、')) : '') + '</div>' +
+        (t.description ? '<div class="desc">' + esc(t.description) + '</div>' : '') +
+        '<div class="btns"><button data-edit="' + i + '">编辑</button><button data-test="' + i + '">测试连接</button>' +
+        '<button class="primary" data-go="' + i + '">让 TA 去一趟</button></div><div class="result" id="r' + i + '"></div></section>';
+    }).join('');
+  }
+
+  function sheet(html) {
+    var mask = document.createElement('div'); mask.className = 'ib-sheet-mask';
+    var box = document.createElement('div'); box.className = 'ib-sheet'; box.innerHTML = html;
+    mask.appendChild(box); document.body.appendChild(mask);
+    mask.addEventListener('click', function (e) { if (e.target === mask) mask.remove(); });
+    box.querySelector('[data-x="cancel"]').onclick = function () { mask.remove(); };
+    return { box: box, close: function () { mask.remove(); }, $: function (s) { return box.querySelector(s); } };
+  }
+
+  function openEdit(t) {
+    var isNew = !t;
+    t = t || { name: '', url: '', type: 'http', description: '', enabled: true, autonomy: true, actors: [], header_names: [] };
+    var s = sheet('<h3>' + (isNew ? '接一个 MCP' : esc(t.name)) + '</h3><div class="sec">' +
+      '<label class="field">名字<input type="text" id="f-name" maxlength="40" placeholder="例如 小论坛"></label>' +
+      '<label class="field">地址<input type="text" id="f-url" maxlength="500" placeholder="https://…/mcp"></label>' +
+      '<label class="field">类型<select id="f-type"><option value="http">http（大多数是这个）</option><option value="sse">sse（旧版）</option></select></label>' +
+      '<label class="field">请求头（需要 token 才填，一行一个「名字: 值」）<textarea id="f-headers" placeholder="Authorization: Bearer xxx"></textarea></label>' +
+      (t.header_names.length ? '<div class="hint">已保存：' + esc(t.header_names.join('、')) + '（不显示内容）。留空不改。</div>' : '') +
+      '<label class="field">给 AI 的介绍（这是什么地方、能做什么、有什么讲究）<textarea id="f-desc" maxlength="500"></textarea></label>' +
+      '<div class="wrow"><span>启用</span><input type="checkbox" id="f-on" style="margin-left:auto"></div>' +
+      '<div class="wrow"><span>有空时可以自己去</span><input type="checkbox" id="f-auto" style="margin-left:auto"></div>' +
+      '<label class="field">哪些 AI 可以去（都不勾 = 所有 AI）</label><div class="checks" id="f-actors"></div>' +
+      '</div><div class="acts">' + (isNew ? '' : '<button type="button" data-x="del">删除</button>') +
+      '<button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>');
+    s.$('#f-name').value = t.name; s.$('#f-url').value = t.url; s.$('#f-type').value = t.type;
+    s.$('#f-desc').value = t.description; s.$('#f-on').checked = t.enabled; s.$('#f-auto').checked = t.autonomy;
+    s.$('#f-actors').innerHTML = data.actors.map(function (a) {
+      return '<label><input type="checkbox" value="' + esc(a.id) + '"' + (t.actors.indexOf(a.id) >= 0 ? ' checked' : '') + '>' + esc(a.name) + '</label>';
+    }).join('');
+    if (!isNew) s.$('[data-x="del"]').onclick = function () {
+      if (!confirm('删除「' + t.name + '」？')) return;
+      api('/api/mcp-tools/' + encodeURIComponent(t.name), { method: 'DELETE' }).then(function () { s.close(); load(); })
+        .catch(function (e) { alert('删除失败：' + e.message); });
+    };
+    s.$('[data-x="save"]').onclick = function () {
+      var headers = s.$('#f-headers').value.trim();
+      var body = {
+        name: s.$('#f-name').value.trim(), url: s.$('#f-url').value.trim(), type: s.$('#f-type').value,
+        description: s.$('#f-desc').value.trim(), enabled: s.$('#f-on').checked, autonomy: s.$('#f-auto').checked,
+        actors: Array.prototype.map.call(s.box.querySelectorAll('#f-actors input:checked'), function (c) { return c.value; }),
+        headers: headers || (isNew ? '' : null),
+      };
+      api(isNew ? '/api/mcp-tools' : '/api/mcp-tools/' + encodeURIComponent(t.name), { method: isNew ? 'POST' : 'PUT', body: JSON.stringify(body) })
+        .then(function () { s.close(); load(); }).catch(function (e) { alert('保存失败：' + e.message); });
+    };
+  }
+
+  function openGo(t) {
+    var allowed = data.actors.filter(function (a) { return !t.actors.length || t.actors.indexOf(a.id) >= 0; });
+    var s = sheet('<h3>让谁去「' + esc(t.name) + '」？</h3><div class="sec">' +
+      '<label class="field">AI<select id="g-actor">' + allowed.map(function (a) {
+        return '<option value="' + esc(a.id) + '"' + (a.tool_model ? '' : ' disabled') + '>' + esc(a.name) + (a.tool_model ? '' : '（没有能调用工具的模型）') + '</option>';
+      }).join('') + '</select></label>' +
+      '<label class="field">想让 TA 做点什么（可以不填，让 TA 自己决定）<input type="text" id="g-purpose" maxlength="200"></label>' +
+      '<div class="hint">逛完后 TA 会在你们的私聊里讲见闻，一般要一两分钟。</div>' +
+      '</div><div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="go">出发</button></div>');
+    var first = allowed.filter(function (a) { return a.tool_model; })[0];
+    if (first) s.$('#g-actor').value = first.id;
+    s.$('[data-x="go"]').onclick = function () {
+      var actor = s.$('#g-actor').value;
+      if (!actor) return;
+      api('/api/mcp-tools/' + encodeURIComponent(t.name) + '/outing', { method: 'POST', body: JSON.stringify({ actor: actor, purpose: s.$('#g-purpose').value.trim() }) })
+        .then(function () { s.close(); toast(actorName(actor) + ' 出门了，回来会在你们的私聊里说'); })
+        .catch(function (e) { alert(e.message); });
+    };
+  }
+
+  document.getElementById('add-btn').onclick = function () { openEdit(null); };
+  list.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.edit) openEdit(data.tools[+b.dataset.edit]);
+    else if (b.dataset.go) openGo(data.tools[+b.dataset.go]);
+    else if (b.dataset.test) {
+      var i = +b.dataset.test, out = document.getElementById('r' + i);
+      out.textContent = '连接中…';
+      api('/api/mcp-tools/' + encodeURIComponent(data.tools[i].name) + '/test', { method: 'POST' })
+        .then(function (j) { out.textContent = j.ok ? '连上了，有 ' + j.tools.length + ' 个工具：' + j.tools.join('、') : '连不上：' + j.error; })
+        .catch(function (e) { out.textContent = '连不上：' + e.message; });
+    }
+  });
+  load().catch(function (e) { list.innerHTML = '<div class="empty">加载失败：' + esc(e.message) + '</div>'; });
+})();
+</script>
+</body>
+</html>
