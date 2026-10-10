@@ -98,6 +98,7 @@ def list_actors(include_disabled: bool = True) -> list[dict[str, Any]]:
             item["name"] = _connor_name() or item["name"] or "第二AI"
         elif not item["name"]:
             item["name"] = f"空位 {index + 1}"
+        item["api"] = api_summary(actor_id)
         if include_disabled or item["enabled"]:
             result.append(item)
     return result
@@ -115,6 +116,78 @@ def memory_hub_id(actor_id: str) -> str:
 def display_name(actor_id: str) -> str:
     actor = get_actor(actor_id)
     return actor["name"] if actor else actor_id
+
+
+# ── 每位 AI 自己的 API（自己填地址 + Key + 模型）──
+# 存成设置里的一条自定义线路（id = seat_<座位>），这样聊天、聊天室、交接卡、做梦都能直接用；
+# Key 只存在服务器的设置里，接口只回答「有没有填」，不把 Key 发给浏览器。
+
+def _seat_route_id(actor_id: str) -> str:
+    return f"seat_{actor_id}"
+
+
+def _seat_route(actor_id: str) -> dict[str, Any] | None:
+    from config import SETTINGS, normalize_custom_model_routes
+    rid = _seat_route_id(actor_id)
+    return next((r for r in normalize_custom_model_routes(SETTINGS.get("custom_model_routes"))
+                 if r["id"] == rid), None)
+
+
+def api_summary(actor_id: str) -> dict[str, Any] | None:
+    route = _seat_route(actor_id)
+    if not route or not route.get("models"):
+        return None
+    m = route["models"][0]
+    return {"base_url": route["base_url"], "model": m["model"], "key": m["key"], "has_key": bool(route.get("api_key"))}
+
+
+def _write_routes(routes: list[dict]) -> None:
+    from config import SETTINGS, normalize_custom_model_routes, refresh_custom_models, save_settings
+    SETTINGS["custom_model_routes"] = normalize_custom_model_routes(routes)
+    save_settings(SETTINGS)
+    refresh_custom_models()
+
+
+def save_seat_api(actor_id: str, name: str, api: dict[str, Any]) -> str:
+    """保存这位 AI 自己的 API，返回对应的模型键。Key 留空表示沿用已保存的。"""
+    from config import BUILTIN_MODELS, MODELS, SETTINGS
+    base_url = str(api.get("base_url") or "").strip().rstrip("/")
+    model = str(api.get("model") or "").strip()
+    api_key = str(api.get("api_key") or "").strip()
+    if not re.fullmatch(r"https?://[^\s/]+(/\S*)?", base_url):
+        raise HTTPException(400, "API 地址要以 http:// 或 https:// 开头")
+    if not model or len(model) > 120:
+        raise HTTPException(400, "请填写模型名")
+    existing = _seat_route(actor_id)
+    if not api_key and existing:
+        api_key = existing.get("api_key", "")
+    key = f"{name}专属·{model}"[:100]
+    if key in BUILTIN_MODELS:
+        key = f"{actor_id}·{key}"
+    rid = _seat_route_id(actor_id)
+    others = [r for r in (SETTINGS.get("custom_model_routes") or []) if not (isinstance(r, dict) and r.get("id") == rid)]
+    _write_routes(others + [{"id": rid, "name": f"{name} 专属线路", "base_url": base_url, "api_key": api_key,
+                             "models": [{"key": key, "model": model}]}])
+    if (MODELS.get(key) or {}).get("route_id") != rid:
+        raise HTTPException(400, "这个模型名和已有线路重名了，换一个写法试试")
+    return key
+
+
+def remove_seat_api(actor_id: str) -> None:
+    from config import SETTINGS
+    rid = _seat_route_id(actor_id)
+    _write_routes([r for r in (SETTINGS.get("custom_model_routes") or [])
+                   if not (isinstance(r, dict) and r.get("id") == rid)])
+
+
+def _sync_chatroom_model(actor_id: str, model: str) -> None:
+    """前两位在聊天室里也用 TA 自己的模型。"""
+    if actor_id not in ("aion", "connor") or not model:
+        return
+    from chatroom import load_chatroom_config, save_chatroom_config
+    cfg = load_chatroom_config()
+    cfg["aion_model" if actor_id == "aion" else "connor_model"] = model
+    save_chatroom_config(cfg)
 
 
 @router.get("/api/actors")
@@ -163,10 +236,26 @@ async def api_update_actor(actor_id: str, request: Request):
             updates[key] = str(value or "").strip()[:200]
     if actor_id in ("aion", "connor"):
         updates.pop("name", None)  # 前两位改名请在世界书 / 聊天室设置里改，保持单一来源
+    if "api" in body:
+        api = body["api"]
+        if api is None:
+            # 不再用自己填的 API：删掉专属线路；如果正用着它，模型一起清空
+            own = api_summary(actor_id)
+            remove_seat_api(actor_id)
+            current = updates.get("model", (get_actor(actor_id) or {}).get("model", ""))
+            if own and current == own["key"]:
+                updates["model"] = ""
+        elif isinstance(api, dict):
+            name = str(updates.get("name") or (get_actor(actor_id) or {}).get("name") or actor_id)
+            updates["model"] = save_seat_api(actor_id, name, api)
+        else:
+            raise HTTPException(400, "api 格式不正确")
     data = _load_raw()
     seats = data.setdefault("seats", {})
     seats.setdefault(actor_id, {}).update(updates)
     _save_raw(data)
+    if updates.get("model"):
+        _sync_chatroom_model(actor_id, updates["model"])
     return get_actor(actor_id)
 
 

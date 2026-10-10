@@ -146,8 +146,18 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       '<label class="field">签名<input type="text" id="f-sign" maxlength="80" placeholder="一句话介绍 TA"></label>' +
       '<label class="field">相遇的日子<input type="date" id="f-meet"></label>' +
       '<label class="field">Memory Hub 身份（source_ai）<input type="text" id="f-hub" maxlength="40" placeholder="例如 claude / lucien / jasper"></label>' +
-      '<label class="field">TA 自己的模型<select id="f-model"><option value="">（未选）</option></select></label>' +
-      '<div class="hint">' + (a.builtin ? '用于写交接卡和做梦；聊天时仍按聊天页选的模型。' : '私聊、交接卡、做梦都用它。没选就不回复，不会换成别的模型。') + '</div>' +
+      '<div class="wrow" style="margin-top:12px"><span>TA 自己的模型</span>' +
+      '<span class="seg"><button type="button" id="f-mode-pick">选已有线路</button><button type="button" id="f-mode-own">自己填</button></span></div>' +
+      '<div id="f-pick"><label class="field">线路<select id="f-model"><option value="">（未选）</option></select></label></div>' +
+      '<div id="f-own" style="display:none">' +
+      '<label class="field">API 地址<input type="text" id="f-api-url" maxlength="300" placeholder="https://中转站地址/v1" autocomplete="off"></label>' +
+      '<label class="field">Key<input type="password" id="f-api-key" maxlength="500" autocomplete="new-password"></label>' +
+      '<label class="field">模型名<input type="text" id="f-api-model" maxlength="120" placeholder="例如 gemini-3-pro" autocomplete="off"></label>' +
+      (a.api ? '<button type="button" class="link" id="f-api-clear">不用自己填的了</button>' : '') +
+      '</div>' +
+      '<div class="hint">' + (a.builtin
+        ? '聊天室里用它' + (a.id === 'connor' ? '（Codex 仍可在聊天室设置里选）' : '') + '；交接卡和做梦也用它。'
+        : '私聊、交接卡、做梦都用它。没选就不回复，不会换成别的模型。') + '</div>' +
       '<div class="wrow" style="margin-top:10px"><span>名片颜色</span><input type="color" id="f-color"></div>' +
       (a.id !== 'aion' ? '<div class="wrow"><span>启用这个位置</span><input type="checkbox" id="f-on"></div>' : '') +
       '</div><div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>';
@@ -164,6 +174,23 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       keys.forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = k; sel.appendChild(o); });
       sel.value = a.model || '';
     }).catch(function () {});
+    // 自己填的 API：Key 不回显，留空表示沿用已保存的
+    var mode = a.api && a.api.key === a.model ? 'own' : 'pick', clearApi = false;
+    function setMode(m) {
+      mode = m;
+      $('#f-pick').style.display = m === 'pick' ? '' : 'none'; $('#f-own').style.display = m === 'own' ? '' : 'none';
+      $('#f-mode-pick').classList.toggle('on', m === 'pick'); $('#f-mode-own').classList.toggle('on', m === 'own');
+    }
+    $('#f-mode-pick').onclick = function () { setMode('pick'); };
+    $('#f-mode-own').onclick = function () { setMode('own'); };
+    if (a.api) {
+      $('#f-api-url').value = a.api.base_url || ''; $('#f-api-model').value = a.api.model || '';
+      $('#f-api-key').placeholder = a.api.has_key ? '已保存（不显示），留空不改' : '';
+    }
+    if ($('#f-api-clear')) $('#f-api-clear').onclick = function () {
+      clearApi = true; $('#f-api-url').value = ''; $('#f-api-key').value = ''; $('#f-api-model').value = ''; setMode('pick');
+    };
+    setMode(mode);
     var avatar = a.avatar || '';
     $('#f-up').onclick = function () { $('#f-file').click(); };
     $('#f-file').onchange = function () {
@@ -176,7 +203,15 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     };
     $('[data-x="cancel"]').onclick = function () { mask.remove(); };
     $('[data-x="save"]').onclick = function () {
-      var patch = { sign: $('#f-sign').value, meet_since: $('#f-meet').value, memory_hub: $('#f-hub').value, color: $('#f-color').value, avatar: avatar, model: $('#f-model').value };
+      var patch = { sign: $('#f-sign').value, meet_since: $('#f-meet').value, memory_hub: $('#f-hub').value, color: $('#f-color').value, avatar: avatar };
+      if (mode === 'own') {
+        var url = $('#f-api-url').value.trim(), model = $('#f-api-model').value.trim();
+        if (!url || !model) { alert('请填 API 地址和模型名'); return; }
+        patch.api = { base_url: url, api_key: $('#f-api-key').value.trim(), model: model };
+      } else {
+        patch.model = $('#f-model').value;
+        if (clearApi) patch.api = null;
+      }
       if ($('#f-name')) patch.name = $('#f-name').value;
       if ($('#f-on')) patch.enabled = $('#f-on').checked;
       save(a.id, patch).then(function () { mask.remove(); }).catch(function (e) { alert('保存失败：' + e.message); });
