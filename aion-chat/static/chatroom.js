@@ -141,8 +141,35 @@ let crUserName = '我';
 let crAiName = 'AI';
 let crConnorName = '第二AI';
 
+// 座位 3～6（seat_1v1 私聊）：名字和头像来自角色登记表
+const SEAT_IDS = ['ai3', 'ai4', 'ai5', 'ai6'];
+let crSeats = {};
+
+function crIsSeat(sender) {
+  return SEAT_IDS.includes(sender);
+}
+
+async function crLoadSeats() {
+  try {
+    const data = await fetch('/api/actors').then(r => r.json());
+    crSeats = {};
+    for (const a of (data.actors || [])) {
+      if (!crIsSeat(a.id)) continue;
+      crSeats[a.id] = a;
+      AVATARS[a.id] = a.avatar || '/public/AIIcon.png';
+    }
+  } catch (e) { /* 登记表读不到时保持默认名字 */ }
+}
+
 function crName(sender) {
+  if (crIsSeat(sender)) return crSeats[sender]?.name || sender;
   return { user: crUserName || '我', aion: crAiName || 'AI', connor: crConnorName || '第二AI' }[sender] || sender;
+}
+
+// 当前房间里回复的那位 AI
+function crRoomAi(room = currentRoom) {
+  if (room?.type === 'seat_1v1') return room.actor;
+  return room?.type === 'connor_1v1' ? 'connor' : 'aion';
 }
 
 window.AionPat?.bind({
@@ -263,7 +290,7 @@ function crSenderForTTSMsg(msgId) {
   if (stored) return stored;
   if (String(msgId || "").endsWith("_a")) return "aion";
   if (String(msgId || "").endsWith("_c")) return "connor";
-  return currentRoom?.type === "connor_1v1" ? "connor" : "aion";
+  return crRoomAi();
 }
 
 function crNotifyVoiceCallTTSStart(msgId, seq, item) {
@@ -698,10 +725,10 @@ function crFinishTTSForMsg(msgId, createdAt, targetClientId) {
 
 window.ChatroomVoiceCallAdapter = {
   getDefaultSpeakerName() {
-    return currentRoom?.type === "connor_1v1" ? crName("connor") : crName("aion");
+    return crName(crRoomAi());
   },
   getSpeakerName(sender) {
-    return crName(sender || (currentRoom?.type === "connor_1v1" ? "connor" : "aion"));
+    return crName(sender || crRoomAi());
   },
   speakerForMessage(msgId) {
     return crSenderForTTSMsg(msgId);
@@ -2128,12 +2155,13 @@ function switchTab(tab) {
 }
 
 function renderRoomList() {
-  const filtered = rooms.filter(r => r.type === activeTab);
+  // 「私聊」标签同时列出第二 AI 和座位 3～6 的私聊
+  const filtered = rooms.filter(r => r.type === activeTab || (activeTab === 'connor_1v1' && r.type === 'seat_1v1'));
   roomListEl.innerHTML = filtered.map(r => {
     const active = currentRoom && currentRoom.id === r.id ? 'active' : '';
-    const typeBadge = r.type === 'connor_1v1'
-      ? '<span class="type-badge connor">私聊</span>'
-      : '<span class="type-badge group">群聊</span>';
+    const typeBadge = r.type === 'group'
+      ? '<span class="type-badge group">群聊</span>'
+      : '<span class="type-badge connor">私聊</span>';
     return `
       <div class="room-item ${active}" onclick="selectRoom('${r.id}')">
         ${typeBadge}
@@ -2168,6 +2196,29 @@ async function createRoom(type) {
     return;
   }
   switchTab(type);
+  await loadRooms();
+  selectRoom(result.id);
+  closeSidebar();
+}
+
+// 和座位 3～6 私聊：每位只有一个房间，已存在时服务端直接返回它
+async function createSeatRoom(seatId = '') {
+  await crLoadSeats();
+  const seats = Object.values(crSeats).filter(a => a.enabled);
+  if (!seats.length) { toast('还没有启用的新座位，请先在相遇卡里启用'); return; }
+  let seat = seatId ? seats.find(a => a.id === seatId) : seats[0];
+  if (!seat) { toast('这个座位还没启用'); return; }
+  if (!seatId && seats.length > 1) {
+    const pick = prompt(`和谁私聊？输入序号：\n${seats.map((a, i) => `${i + 1}. ${a.name}`).join('\n')}`, '1');
+    seat = seats[Number(pick) - 1];
+    if (!seat) return;
+  }
+  const result = await api('/rooms', {
+    method: 'POST',
+    body: JSON.stringify({ title: '', type: 'seat_1v1', actor: seat.id }),
+  });
+  if (!result || result.error || result.detail) { toast(result?.error || result?.detail || '创建失败'); return; }
+  switchTab('connor_1v1');
   await loadRooms();
   selectRoom(result.id);
   closeSidebar();
@@ -2364,7 +2415,7 @@ function crMsgSelector(msgId) {
 const CR_LEGACY_COMMAND_SYSTEM_NOTICE_RE = /^(?:🎵\s+.+点了一首|(?:⏰|📅|👀)\s*【[^】]+】设定了|📊\s+.+查看了用户动态|💾\s+.+记住了)/;
 
 function crIsAiSender(sender) {
-  return sender === 'aion' || sender === 'connor';
+  return sender === 'aion' || sender === 'connor' || crIsSeat(sender);
 }
 
 function crSystemNoticeAfterMsgId(m) {
@@ -2610,8 +2661,8 @@ function renderMessages(msgs) {
   if (!msgs || !msgs.length) {
     messagesEl.innerHTML = `
       <div class="empty-state">
-        <div class="icon">${currentRoom.type === 'connor_1v1' ? '🤖' : '👥'}</div>
-        <div>${currentRoom.type === 'connor_1v1' ? `和 ${esc(crConnorName)} 开始私聊吧` : '三人群聊，开始吧'}</div>
+        <div class="icon">${currentRoom.type === 'group' ? '👥' : '🤖'}</div>
+        <div>${currentRoom.type === 'group' ? '三人群聊，开始吧' : `和 ${esc(crName(crRoomAi()))} 开始私聊吧`}</div>
       </div>`;
     return;
   }
@@ -2646,7 +2697,7 @@ function crCanRateAiMsg(msg) {
   if (!msg?.id || !currentRoom) return false;
   if (currentRoom.type === 'group') return msg.sender === 'aion' || msg.sender === 'connor';
   if (currentRoom.type === 'connor_1v1') return msg.sender === 'connor';
-  return false;
+  return false;  // 座位私聊暂不接人设进化的评分
 }
 
 function crMsgFeedbackHtml(msg) {
@@ -2978,7 +3029,7 @@ function msgHTML(m, nextMessage = null) {
   const msgId = m.id || '';
 
   return `
-    <div class="message-row ${sender}" data-msg-id="${msgId}" tabindex="0" onclick="MessageRowFocus.focusRowFromClick(event, this)">
+    <div class="message-row ${sender}${crIsSeat(sender) ? ' seat' : ''}" data-msg-id="${msgId}" tabindex="0" onclick="MessageRowFocus.focusRowFromClick(event, this)">
       <div class="msg-body">
         <div class="msg-content">
           ${hasWishFulfillmentAtt || hasDateSummaryAtt ? attHtml : ''}
@@ -3547,7 +3598,7 @@ function startStreamingBubble(sender, id) {
   if (typing) typing.remove();
 
   const row = document.createElement('div');
-  row.className = `message-row ${sender}`;
+  row.className = `message-row ${sender}${crIsSeat(sender) ? ' seat' : ''}`;
   row.id = `streaming-${id}`;
   const liveMessageUnit = crMessageUnitHtml({
     sender,
@@ -3855,6 +3906,35 @@ function handleSSE(data) {
       }
       playRecv();
       break;
+    case 'seat_start':
+      crRememberTTSMsgSender(data.id, data.actor);
+      appendTyping(crName(data.actor));
+      pendingStreamSender = data.actor;
+      pendingStreamId = data.id;
+      break;
+    case 'seat_status':
+      updateTypingStatus(crName(data.actor), data.text);
+      break;
+    case 'seat_chunk':
+      if (pendingStreamSender && !streamingBubble) {
+        startStreamingBubble(pendingStreamSender, pendingStreamId);
+        pendingStreamSender = null;
+        pendingStreamId = null;
+      }
+      feedStreamingChunk(data.content);
+      break;
+    case 'seat_done':
+      pendingStreamSender = null;
+      pendingStreamId = null;
+      if (data.message && streamingBubble) streamingText = data.message.content;
+      endStreamingBubble(data.message);
+      if (data.message
+          && !document.getElementById(`streaming-${data.message.id}`)
+          && !document.querySelector(`[data-msg-id="${data.message.id}"]`)) {
+        appendMessage(data.message);
+      }
+      playRecv();
+      break;
     case 'round_start':
       appendAiChatStatus(`AI 互聊 第 ${data.round}/${data.total} 轮`);
       break;
@@ -3893,6 +3973,9 @@ function handleSSE(data) {
     case 'moment_new':
       // 朋友圈动态已移至独立页面
       break;
+    default:
+      // 座位私聊失败：ai3_failed 等
+      if (/^ai\d+_failed$/.test(data.type || '')) crHandleReplyFailure(data);
   }
 }
 
@@ -7369,6 +7452,7 @@ function crToyCloseEditor() { document.getElementById('crToyEditorOverlay').clas
   // must wait for the room list, reducing startup from many round trips to two.
   const configPromise = api('/config');
   const roomPromise = api('/rooms');
+  const seatsPromise = crLoadSeats();
   // Auxiliary requests must not hold the room list, cached messages or WebSocket hostage.
   crAmbientRefreshListenerState().then(() => crAmbientSyncRunning()).catch(() => null);
   fetchCurrentModel(configPromise).catch(() => null).finally(() => { crStartupModelsReady = true; });
@@ -7386,6 +7470,7 @@ function crToyCloseEditor() { document.getElementById('crToyEditorOverlay').clas
   } catch(e) {}
   try {
     rooms = await roomPromise;
+    await seatsPromise;
     renderRoomList();
   } catch(e) {
     rooms = [];
@@ -7394,8 +7479,11 @@ function crToyCloseEditor() { document.getElementById('crToyEditorOverlay').clas
   const initParams = new URLSearchParams(location.search);
   const targetRoomId = initParams.get('room');
   const targetMsgId = initParams.get('msg');
+  const targetSeat = initParams.get('seat');
   // 默认打开最后一次聊天的房间
-  if (targetRoomId && rooms.some(r => r.id === targetRoomId)) {
+  if (targetSeat) {
+    await createSeatRoom(targetSeat);  // 从相遇卡「去聊天」进来：打开（没有就创建）TA 的私聊
+  } else if (targetRoomId && rooms.some(r => r.id === targetRoomId)) {
     await selectRoom(targetRoomId);
     if (targetMsgId) setTimeout(() => jumpToChatSearchResult(targetMsgId), 100);
   } else if (!currentRoom && rooms.length > 0) {

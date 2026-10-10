@@ -3758,3 +3758,9 @@ body[data-theme="light"] .toast {
 .message-row:not(.user) .msg-media:has(.lounge-report-card) { margin-left: 0; }
 .lounge-report-card small { color: var(--text-muted); font-size: 10px; }
 body[data-theme="light"] .lounge-report-card { background: var(--surface); }
+
+/* 座位 3～6 私聊（seat_1v1）：沿用 AI 一侧的布局 */
+.message-row.seat { align-self: flex-start; }
+.message-row.seat .bubbles { align-items: flex-start; }
+.sender-label.seat, .sender-label:is(.ai3, .ai4, .ai5, .ai6) { color: var(--connor-accent); }
+

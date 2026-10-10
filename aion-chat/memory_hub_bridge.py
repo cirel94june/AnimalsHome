@@ -169,13 +169,23 @@ def _unwrap_text(raw: str) -> str:
 
 
 async def context_block(actor: str, message: str) -> str:
-    """生成前调用：返回可直接拼进背景注入的文本块；不可用时返回空串。"""
+    """生成前调用：返回可直接拼进背景注入的文本块；不可用时返回空串。
+
+    这位 AI 在本服务里安静满 30 分钟（或从没聊过）时，算一段新对话，同时读交接卡放在最前面。
+    """
     cfg = load_config()
     if not _is_active(cfg) or _in_cooldown("read"):
         return ""
-    source_ai = source_ai_for(actor, cfg)
-    if not source_ai:
+    if not source_ai_for(actor, cfg):
         return ""
+    if not is_new_session(last_activity(actor)):
+        return await _incremental_block(cfg, actor, message)
+    handoff, incremental = await asyncio.gather(handoff_block(actor), _incremental_block(cfg, actor, message))
+    return "\n\n".join(block for block in (handoff, incremental) if block)
+
+
+async def _incremental_block(cfg: dict[str, Any], actor: str, message: str) -> str:
+    source_ai = source_ai_for(actor, cfg)
     arguments = {
         "source_ai": source_ai,
         "message": str(message or "")[:2000],
@@ -198,6 +208,46 @@ async def context_block(actor: str, message: str) -> str:
     return _CONTEXT_HEADER + text
 
 
+_HANDOFF_HEADER = (
+    "[交接卡]\n"
+    "这是你上一段对话结束时的现场（可能在别的端）。像刚放下又拿起一样自然接上，"
+    "不必提交接卡本身：\n"
+)
+NEW_SESSION_GAP_SECONDS = 30 * 60
+
+
+def is_new_session(previous_ts: float | None, now: float | None = None) -> bool:
+    """距离上一条消息超过 30 分钟（或没有上一条）就算一段新对话。"""
+    if not previous_ts:
+        return True
+    return (now or time.time()) - float(previous_ts) >= NEW_SESSION_GAP_SECONDS
+
+
+async def handoff_block(actor: str) -> str:
+    """新对话开头调用一次：读该 AI 的交接卡。不可用或没有卡时返回空串。"""
+    cfg = load_config()
+    if not _is_active(cfg) or _in_cooldown("read"):
+        return ""
+    source_ai = source_ai_for(actor, cfg)
+    if not source_ai:
+        return ""
+    arguments = {"source_ai": source_ai, "mode": "handoff", "max_chars": int(cfg.get("handoff_max_chars") or 1500)}
+    try:
+        raw = await asyncio.wait_for(
+            _call_tool(cfg, "context", arguments),
+            timeout=float(cfg.get("context_timeout_seconds") or 6.0),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        _trip(cfg, error, "read")
+        return ""
+    text = _unwrap_text(raw)
+    if not text or text.startswith("（暂无交接卡）"):
+        return ""
+    return _HANDOFF_HEADER + text
+
+
 # ── 写入：本地 outbox ──
 
 def _outbox() -> sqlite3.Connection:
@@ -210,12 +260,60 @@ def _outbox() -> sqlite3.Connection:
         " attempts INTEGER NOT NULL DEFAULT 0, next_at REAL NOT NULL DEFAULT 0,"
         " state TEXT NOT NULL DEFAULT 'pending', last_error TEXT NOT NULL DEFAULT '')"
     )
+    # 每位 AI 最近一次聊天的时间（判断「新对话」、安静 30 分钟后写交接卡）和最近几轮私聊原话
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS activity ("
+        " actor TEXT PRIMARY KEY, last_ts REAL NOT NULL DEFAULT 0, last_private_ts REAL NOT NULL DEFAULT 0,"
+        " handoff_done_ts REAL NOT NULL DEFAULT 0, handoff_retry_at REAL NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS recent_turns ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, user_message TEXT NOT NULL,"
+        " ai_response TEXT NOT NULL, created_at REAL NOT NULL)"
+    )
     return conn
+
+
+RECENT_TURNS_KEEP = 30
+
+
+def _record_activity(conn: sqlite3.Connection, actor: str, user_message: str, ai_response: str, chat_type: str) -> None:
+    now = time.time()
+    private = chat_type == "private"
+    conn.execute(
+        "INSERT INTO activity (actor, last_ts, last_private_ts) VALUES (?,?,?) "
+        "ON CONFLICT(actor) DO UPDATE SET last_ts=excluded.last_ts,"
+        " last_private_ts=CASE WHEN ? THEN excluded.last_private_ts ELSE activity.last_private_ts END",
+        (actor, now, now if private else 0, private),
+    )
+    if private:
+        conn.execute(
+            "INSERT INTO recent_turns (actor, user_message, ai_response, created_at) VALUES (?,?,?,?)",
+            (actor, user_message[:4000], ai_response[:4000], now),
+        )
+        conn.execute(
+            "DELETE FROM recent_turns WHERE actor=? AND id NOT IN "
+            "(SELECT id FROM recent_turns WHERE actor=? ORDER BY id DESC LIMIT ?)",
+            (actor, actor, RECENT_TURNS_KEEP),
+        )
+
+
+def last_activity(actor: str) -> float | None:
+    if not OUTBOX_PATH.exists():
+        return None
+    try:
+        with closing(_outbox()) as conn:
+            row = conn.execute("SELECT last_ts FROM activity WHERE actor=?", (actor,)).fetchone()
+    except sqlite3.Error as error:
+        log.warning("[MemoryHub] 读取活跃时间失败：%s", error)
+        return None
+    return float(row[0]) if row and row[0] else None
 
 
 def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) -> int | None:
     global _dropped
     with closing(_outbox()) as conn, conn:
+        _record_activity(conn, actor, user_message, ai_response, chat_type)
         (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
         if pending >= OUTBOX_MAX:
             _dropped += 1

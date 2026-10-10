@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from config import BASE_DIR, DATA_DIR, PUBLIC_DIR, UPLOADS_DIR, ALBUM_IMAGES_DIR, SONGS_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, load_cam_config
 import memory_hub_bridge
+import memory_hub_jobs
 from request_limits import BodySizeLimitMiddleware
 from database import init_db, get_db
 from active_window_state import restore_active_windows
@@ -201,6 +202,7 @@ async def lifespan(app: FastAPI):
     persona_evolution_task = asyncio.create_task(main_ai_persona_evolution_loop())
     connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
     memory_hub_outbox_task = asyncio.create_task(memory_hub_bridge.outbox_worker())
+    memory_hub_jobs_task = asyncio.create_task(memory_hub_jobs.jobs_worker())
     idle_autonomy_mgr.start()
     board_patrol_mgr.start()
     ha_event_listener.start()
@@ -215,6 +217,7 @@ async def lifespan(app: FastAPI):
     idle_autonomy_mgr.stop()
     await board_patrol_mgr.stop()
     memory_hub_outbox_task.cancel()
+    memory_hub_jobs_task.cancel()
     connor_persona_evolution_task.cancel()
     persona_evolution_task.cancel()
     cr_digest_task.cancel()

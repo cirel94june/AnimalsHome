@@ -97,7 +97,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       var card = document.createElement('section');
       card.className = 'card' + (a.enabled ? '' : ' off');
       card.style.setProperty('--c', a.color || '#5c86c8');
-      var chat = CHAT[a.id];
+      var chat = CHAT[a.id] || '/chatroom?seat=' + encodeURIComponent(a.id);
       card.innerHTML =
         '<div class="cover"><span class="no">No. ' + a.seat + (a.builtin ? (a.id === 'aion' ? ' · 主 AI' : ' · 第二位') : '') + '</span></div>' +
         (a.avatar ? '<div class="ava"><img src="' + esc(a.avatar) + '" alt=""></div>' : '<div class="ava empty">' + esc((a.name || '?').slice(0, 1)) + '</div>') +
@@ -146,6 +146,8 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       '<label class="field">签名<input type="text" id="f-sign" maxlength="80" placeholder="一句话介绍 TA"></label>' +
       '<label class="field">相遇的日子<input type="date" id="f-meet"></label>' +
       '<label class="field">Memory Hub 身份（source_ai）<input type="text" id="f-hub" maxlength="40" placeholder="例如 claude / lucien / jasper"></label>' +
+      '<label class="field">TA 自己的模型<select id="f-model"><option value="">（未选）</option></select></label>' +
+      '<div class="hint">' + (a.builtin ? '用于写交接卡和做梦；聊天时仍按聊天页选的模型。' : '私聊、交接卡、做梦都用它。没选就不回复，不会换成别的模型。') + '</div>' +
       '<div class="wrow" style="margin-top:10px"><span>名片颜色</span><input type="color" id="f-color"></div>' +
       (a.id !== 'aion' ? '<div class="wrow"><span>启用这个位置</span><input type="checkbox" id="f-on"></div>' : '') +
       '</div><div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>';
@@ -156,6 +158,12 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     $('#f-sign').value = a.sign || ''; $('#f-meet').value = a.meet_since || ''; $('#f-hub').value = a.memory_hub || '';
     $('#f-color').value = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : '#5c86c8';
     if ($('#f-on')) $('#f-on').checked = !!a.enabled;
+    fetch('/api/models', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (models) {
+      var sel = $('#f-model'), keys = models.map(function (m) { return m.key; });
+      if (a.model && keys.indexOf(a.model) < 0) keys.unshift(a.model);  // 已失效的线路也显示出来，方便看清
+      keys.forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = k; sel.appendChild(o); });
+      sel.value = a.model || '';
+    }).catch(function () {});
     var avatar = a.avatar || '';
     $('#f-up').onclick = function () { $('#f-file').click(); };
     $('#f-file').onchange = function () {
@@ -168,7 +176,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     };
     $('[data-x="cancel"]').onclick = function () { mask.remove(); };
     $('[data-x="save"]').onclick = function () {
-      var patch = { sign: $('#f-sign').value, meet_since: $('#f-meet').value, memory_hub: $('#f-hub').value, color: $('#f-color').value, avatar: avatar };
+      var patch = { sign: $('#f-sign').value, meet_since: $('#f-meet').value, memory_hub: $('#f-hub').value, color: $('#f-color').value, avatar: avatar, model: $('#f-model').value };
       if ($('#f-name')) patch.name = $('#f-name').value;
       if ($('#f-on')) patch.enabled = $('#f-on').checked;
       save(a.id, patch).then(function () { mask.remove(); }).catch(function (e) { alert('保存失败：' + e.message); });

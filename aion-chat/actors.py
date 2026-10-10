@@ -28,7 +28,7 @@ router = APIRouter()
 ACTORS_PATH = DATA_DIR / "actors.json"
 AVATAR_DIR = DATA_DIR / "skin"
 SEAT_IDS = ["aion", "connor", "ai3", "ai4", "ai5", "ai6"]
-EDITABLE = ("name", "avatar", "sign", "color", "memory_hub", "meet_since", "enabled")
+EDITABLE = ("name", "avatar", "sign", "color", "memory_hub", "meet_since", "enabled", "model")
 COLORS = ["#5c86c8", "#c98a5c", "#5ca88f", "#9a7bd0", "#c96f8f", "#6f9fc9"]
 AVATAR_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
@@ -83,6 +83,8 @@ def list_actors(include_disabled: bool = True) -> list[dict[str, Any]]:
             "memory_hub": "",
             "meet_since": "",
             "enabled": False,
+            # 该 AI 自己的模型：座位私聊、交接卡、做梦都用它；没设就跳过，不换别的模型
+            "model": "",
             "builtin": actor_id in ("aion", "connor"),
         }
         item.update(copy.deepcopy(_DEFAULTS[actor_id]))
@@ -150,6 +152,12 @@ async def api_update_actor(actor_id: str, request: Request):
             value = str(value or "").strip()
             if value and not re.fullmatch(r"/(public|skin-assets|static)/[\w\-./]+", value):
                 raise HTTPException(400, "头像地址不正确")
+            updates[key] = value
+        elif key == "model":
+            from config import MODELS
+            value = str(value or "").strip()
+            if value and value not in MODELS:
+                raise HTTPException(400, "没有这个模型，请先在设置里添加线路")
             updates[key] = value
         else:
             updates[key] = str(value or "").strip()[:200]

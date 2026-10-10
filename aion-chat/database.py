@@ -634,6 +634,11 @@ async def init_db():
             )
         """)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_chatroom_rooms_updated ON chatroom_rooms(updated_at DESC)")
+        # seat_1v1 房间属于哪个座位（ai3～ai6）
+        try:
+            await db.execute("ALTER TABLE chatroom_rooms ADD COLUMN actor TEXT DEFAULT ''")
+        except Exception:
+            pass
         # ── 聊天室消息表 ──
         await db.execute("""
             CREATE TABLE IF NOT EXISTS chatroom_messages (

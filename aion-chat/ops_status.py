@@ -35,7 +35,8 @@ def _tail(path: Path, lines: int) -> str:
 def _git(*args: str) -> str:
     try:
         return subprocess.run(
-            ["git", "-C", str(REPO_DIR), *args], capture_output=True, text=True, timeout=5
+            ["git", "-C", str(REPO_DIR), *args], capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",  # 提交信息是中文，Windows 默认 GBK 会解码失败
         ).stdout.strip()
     except Exception:
         return ""
@@ -79,6 +80,25 @@ def _uptime(seconds: float) -> str:
     return f"{days}天{hours}小时{rest // 60}分" if days else f"{hours}小时{rest // 60}分"
 
 
+def _hub_job_rows() -> list[tuple[str, str]]:
+    """交接卡和做梦的最近结果（做梦状态存盘，重启后也能看到昨晚的）。"""
+    import memory_hub_jobs
+    from actors import display_name
+
+    def fmt(entries: dict) -> str:
+        parts = []
+        for actor, entry in entries.items():
+            at = time.strftime("%m-%d %H:%M", time.localtime(entry.get("at") or entry.get("last_try") or 0))
+            parts.append(f"{display_name(actor)}：{entry.get('result', '')}（{at}）")
+        return " · ".join(parts) or "还没有记录"
+
+    dreams = memory_hub_jobs._load_jobs().get("dream", {})
+    return [
+        ("交接卡（本次启动后）", fmt(memory_hub_jobs.status()["handoff"])),
+        ("每晚做梦", fmt(dreams)),
+    ]
+
+
 @router.get("/ops/status", response_class=HTMLResponse)
 async def ops_status():
     mem = _meminfo()
@@ -104,6 +124,8 @@ async def ops_status():
                     f"swap 已用 {mem.get('SwapTotal', 0) - mem.get('SwapFree', 0)} / {mem.get('SwapTotal', 0)} MB"),
         ("跨端记忆 Memory Hub", hub_state),
     ]
+    if memory_hub_bridge._is_active(hub):
+        rows += _hub_job_rows()
     table = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(v)}</td></tr>" for k, v in rows)
     update_log = html.escape(_tail(LOG_DIR / "update.log", 20))
     app_log = html.escape(_tail(LOG_DIR / "app.log", 150))

@@ -35,6 +35,8 @@ def fake_hub():
         CALLS.append(("context", {"source_ai": source_ai, "message": message, "mode": mode, "max_chars": max_chars}))
         if message in ("slow", "很慢"):
             time.sleep(2)
+        if mode == "handoff":
+            return "（暂无交接卡）" if source_ai == "jasper" else f"【交接卡｜上一段在 telegram】{source_ai} 说到一半"
         return json.dumps({"text": f"【最近动态】{source_ai} 在 TG 上陪小猫聊了蜡烛", "metadata": {}}, ensure_ascii=False)
 
     @hub.tool()
@@ -86,9 +88,52 @@ def test_disabled_by_default_does_nothing():
 def test_context_block_injects_hub_text_for_mapped_actor(fake_hub, isolated_config):
     _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude", "connor": "lucien"})
     block = asyncio.run(bridge.context_block("connor", "今天怎么样"))
-    assert block.startswith("[跨端记忆]")
+    assert "[跨端记忆]" in block  # 第一次聊也算新对话，前面还会附交接卡
     assert "lucien 在 TG 上陪小猫聊了蜡烛" in block
-    assert CALLS[-1] == ("context", {"source_ai": "lucien", "message": "今天怎么样", "mode": "incremental", "max_chars": 2500})
+    assert ("context", {"source_ai": "lucien", "message": "今天怎么样", "mode": "incremental", "max_chars": 2500}) in CALLS
+
+
+def test_handoff_block_reads_own_card_and_hides_empty(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude", "ai3": "jasper"})
+    block = asyncio.run(bridge.handoff_block("aion"))
+    assert block.startswith("[交接卡]") and "claude 说到一半" in block
+    assert CALLS[-1] == ("context", {"source_ai": "claude", "message": "", "mode": "handoff", "max_chars": 1500})
+    assert asyncio.run(bridge.handoff_block("ai3")) == ""
+
+
+def test_handoff_only_at_start_of_a_new_session(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude"})
+    first = asyncio.run(bridge.context_block("aion", "我回来了"))
+    assert first.startswith("[交接卡]") and "[跨端记忆]" in first  # 从没聊过 → 新对话
+
+    assert asyncio.run(bridge.capture_turn("aion", "我回来了", "欢迎回来"))
+    CALLS.clear()
+    second = asyncio.run(bridge.context_block("aion", "继续"))
+    assert "[交接卡]" not in second and [c[1]["mode"] for c in CALLS] == ["incremental"]
+
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:  # 安静了 31 分钟
+        conn.execute("UPDATE activity SET last_ts=last_ts-31*60")
+    assert asyncio.run(bridge.context_block("aion", "又来了")).startswith("[交接卡]")
+
+
+def test_new_session_rule():
+    assert bridge.is_new_session(None)
+    assert bridge.is_new_session(1000, now=1000 + 31 * 60)
+    assert not bridge.is_new_session(1000, now=1000 + 5 * 60)
+
+
+def test_activity_keeps_recent_private_turns_only(isolated_config, monkeypatch):
+    monkeypatch.setattr(bridge, "RECENT_TURNS_KEEP", 2)
+    for i in range(3):
+        bridge._enqueue("aion", f"问{i}", f"答{i}", "private")
+    bridge._enqueue("aion", "群里", "嗯", "group")
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        turns = conn.execute("SELECT user_message FROM recent_turns ORDER BY id").fetchall()
+        last_ts, private_ts = conn.execute("SELECT last_ts, last_private_ts FROM activity").fetchone()
+    assert turns == [("问1",), ("问2",)]
+    assert last_ts >= private_ts > 0  # 群聊更新活跃时间，但不算私聊
 
 
 def test_unmapped_actor_is_skipped(fake_hub, isolated_config):

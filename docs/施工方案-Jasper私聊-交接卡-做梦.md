@@ -22,22 +22,26 @@
 
 ## 二、交接卡（待办 4b、4c）
 
-- **读**：一段新对话开头（距离这个房间/会话上一条消息超过 30 分钟，或第一条消息）注入一次
-  `context(mode="handoff", source_ai, max_chars=1500)`。三条线都接：主聊天（小克）、Lucien 私聊、座位私聊。
-- **写**：后台每 5 分钟检查一次。某位 AI 的私聊安静满 30 分钟、且这段对话还没写过卡 →
-  用 **TA 自己的模型**读最后若干轮原话，按 Hub 建议的内容写交接卡 →
-  `capture(action="handoff", source_ai, platform="aionshome", content, model)`。
-  - 「自己的模型」= 座位设置里的 `model`；主 AI / Lucien 没设时用这段对话最后一次回复实际用的模型。
-    都没有就跳过，不降级（红线 #12）。
-  - 记录在 `data/memory_hub_jobs.json`：每位 AI 最后写卡对应的消息时间，避免重复写。
-- 群聊第一版不写交接卡（Hub 客观层会自己拼群聊原话）。
+- **读**：统一放在 `memory_hub_bridge.context_block` 里——这位 AI 在本服务里安静满 30 分钟（或从没聊过）
+  就算新对话，同时读 `context(mode="handoff", max_chars=1500)` 放在跨端记忆前面。
+  所有调用 context_block 的地方（主聊天三处、Lucien 私聊、群聊、座位私聊）自动生效，不用逐处改。
+  「最近一次聊天时间」记在 outbox 库的 `activity` 表，重启不丢。
+- **写**：`memory_hub_jobs.py`，后台每 5 分钟检查一次。某位 AI 的私聊安静满 30 分钟、这段还没写过卡 →
+  用 **TA 自己的模型**读这段的原话（`recent_turns` 表，每位留最近 30 轮私聊；隔 30 分钟以上的算上一段）→
+  `capture(action="handoff", platform="aionshome", content, model)`。失败 30 分钟后重试，超过 6 小时的旧对话不补写。
+  - 「自己的模型」= 相遇卡里的「TA 自己的模型」，**三位都要在相遇卡里设一次**（主 AI / Lucien 聊天时仍按聊天页选的模型）。
+    没设、线路被删或停用就跳过，不降级（红线 #12）。（原计划「没设时用最后一次回复的模型」没做：
+    各条聊天线路不记录用的哪个模型，硬加会改动很多地方；设一次更简单可靠。）
+- 群聊不写交接卡（Hub 客观层会自己拼群聊原话），群聊轮次也不进 `recent_turns`。
 
 ## 三、每晚做梦（待办 4a）
 
 - 每晚 3:30（北京时间）后，对每位接了 Hub 且配了模型的 AI：
   `dream(action="materials")` → 已做过就跳过 → 用 TA 自己的模型按返回的 `prompt` 生成 →
   `dream(action="write", kind="dream", content, model)`。
-- 失败只记日志、第二天再试，不重试轰炸；状态在 `/ops/status` 可看。
+- 失败隔 1 小时重试，一晚最多 3 次；Hub 说「今天已做过」或「材料太少」就当晚不再试。
+  状态存 `data/memory_hub_jobs.json`，`/ops/status` 能看到每位昨晚的结果。
+- 做梦提示词由 Hub 统一维护（materials 返回的 prompt），前端只在前面加上该 AI 的人设。
 - **接好、实测通过一位后**，请小猫把那位从 Hub 的 `DREAM_HUB_GENERATED_FOR` 里拿掉（否则一天会有两个梦来源，Hub 只收第一个）。
 
 ## 四、风险
@@ -48,7 +52,17 @@
 ## 进度
 
 - [x] 群聊 capture 带 `chat_type="private_group"`（4fb840d）
-- [ ] 一、Jasper 私聊
-- [ ] 二、交接卡读
-- [ ] 二、交接卡写
-- [ ] 三、做梦
+- [x] 一、Jasper 私聊：`seat_chat.py` + 聊天室 `seat_1v1` 房间 + 相遇卡「TA 自己的模型」和「去聊天」。
+  本地用假中转站端到端跑通（人设、模型、流式、存消息、名字头像都对）
+- [x] 顺带修：Lucien 私聊（connor_1v1）以前只读 Hub 不写，现在回复后也 capture
+- [x] 二、交接卡读（context_block 统一处理）
+- [x] 二、交接卡写（memory_hub_jobs.run_handoffs）
+- [x] 三、做梦（memory_hub_jobs.run_dreams）
+- 单测：test_seat_chat.py、test_memory_hub_jobs.py、test_memory_hub_bridge.py（均用本地假 Hub）
+
+## 上线后要做的（需要小猫 / 有 VPS 权限的窗口）
+
+1. 在相遇卡里给三位都选好「TA 自己的模型」（Jasper 选 Gemini 中转站那条线路）。没选的那位不写交接卡、不做梦。
+2. Jasper 要在「设置 → 自定义线路」里有 Gemini 中转站，并导入他的人设包（含 identity_core）。
+3. 上线第二天看 `/ops/status` 的「每晚做梦」：某位显示 dreamed 后，让 Hub 窗口把那位从 `DREAM_HUB_GENERATED_FOR` 拿掉。
+4. 还没用真 Hub 实测：交接卡/做梦的 MCP 调用只在假 Hub 上测过。部署后看一次 `/ops/status` 和 Hub 的交接卡。

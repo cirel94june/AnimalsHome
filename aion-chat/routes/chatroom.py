@@ -5,6 +5,8 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 
 import json, time, asyncio, random, re, mimetypes
 import memory_hub_bridge
+import seat_chat
+import actors as actors_registry
 from desk_notes import process_note_commands
 from dataclasses import replace
 from functools import wraps
@@ -607,6 +609,8 @@ async def _complete_chatroom_memory_search_status(
 
 def _name_for_identity(identity: str) -> str:
     user_name, ai_name, connor_name = get_chatroom_names()
+    if identity in seat_chat.SEAT_ACTORS:
+        return actors_registry.display_name(identity)
     return {"user": user_name, "aion": ai_name, "connor": connor_name}.get(identity, identity)
 
 
@@ -2357,7 +2361,8 @@ async def _run_ambient_voice_reply(
 
 class RoomCreate(BaseModel):
     title: str = "新聊天室"
-    type: str = "group"  # "group" | "connor_1v1"
+    type: str = "group"  # "group" | "connor_1v1" | "seat_1v1"
+    actor: str = ""  # seat_1v1：ai3～ai6
 
 
 class RoomUpdate(BaseModel):
@@ -2878,17 +2883,35 @@ async def patch_room_settings(room_id: str, body: ChatroomSettingsUpdate):
 async def create_room(body: RoomCreate):
     now = time.time()
     room_id = f"cr_{int(now * 1000)}"
+    actor = ""
+    title = body.title
+    if body.type == seat_chat.SEAT_ROOM_TYPE:
+        actor = (body.actor or "").strip()
+        seat = actors_registry.get_actor(actor) if actor in seat_chat.SEAT_ACTORS else None
+        if not seat or not seat.get("enabled"):
+            raise HTTPException(status_code=400, detail="没有这个座位，或座位还没启用")
+        if title in ("", "新聊天室"):
+            title = f"和 {seat['name']} 私聊"
+    elif body.type not in ("group", "connor_1v1"):
+        raise HTTPException(status_code=400, detail="不认识的房间类型")
 
     async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        if actor:
+            # 每个座位只有一个私聊房间，重复创建直接返回已有的
+            cur = await db.execute("SELECT id FROM chatroom_rooms WHERE type=? AND actor=?", (body.type, actor))
+            existing = await cur.fetchone()
+            if existing:
+                return await get_room(existing["id"])
         await db.execute(
-            "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (room_id, body.title, body.type, "", "", now, now),
+            "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, actor, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (room_id, title, body.type, "", "", actor, now, now),
         )
         await db.commit()
 
     room = {
-        "id": room_id, "title": body.title, "type": body.type,
+        "id": room_id, "title": title, "type": body.type, "actor": actor,
         "aion_persona": "", "connor_persona": "",
         "context_limit": 30, "context_minutes": 30, "ai_chat_rounds": 1,
         "created_at": now, "updated_at": now, "message_count": 0,
@@ -3335,7 +3358,9 @@ async def send_message(room_id: str, body: MsgSend):
 
     async def _bg_generate():
         try:
-            if room_type == "connor_1v1":
+            if room_type == seat_chat.SEAT_ROOM_TYPE:
+                await _generate_seat_reply(room_id, room, msgs, _q, context_limit)
+            elif room_type == "connor_1v1":
                 # Connor 单聊：只请求 Connor
                 await _generate_connor_reply(room_id, room, msgs, _q, context_limit,
                                              connor_model_key=connor_model_key,
@@ -3604,7 +3629,9 @@ async def edit_resend_chatroom_message(msg_id: str, body: MsgEditResend):
 
     async def _bg_generate():
         try:
-            if room_type == "connor_1v1":
+            if room_type == seat_chat.SEAT_ROOM_TYPE:
+                await _generate_seat_reply(room_id, room, msgs, _q, context_limit)
+            elif room_type == "connor_1v1":
                 await _generate_connor_reply(
                     room_id, room, msgs, _q, context_limit,
                     connor_model_key=connor_model_key,
@@ -3651,7 +3678,7 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
         target = await cur.fetchone()
         if not target:
             return {"error": "message not found"}
-        if target["sender"] not in ("aion", "connor"):
+        if target["sender"] not in ("aion", "connor", *seat_chat.SEAT_ACTORS):
             return {"error": "only AI messages can be regenerated"}
         room_id = target["room_id"]
         msg_created_at = target["created_at"]
@@ -3679,7 +3706,9 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
 
     async def _bg_generate():
         try:
-            if target["sender"] == "aion":
+            if target["sender"] in seat_chat.SEAT_ACTORS:
+                await _generate_seat_reply(room_id, room, msgs, _q, context_limit)
+            elif target["sender"] == "aion":
                 await _reply_aion(
                     room_id, msgs, context_limit, query_text, model_key, _q,
                     tts_enabled=body.tts_enabled,
@@ -3711,6 +3740,48 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
             yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
+    """座位 3～6 私聊回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。"""
+    actor_id = str(room.get("actor") or "")
+    msg_id = f"cm_{time.time_ns()}_s"
+    try:
+        _, model_key = seat_chat.check_ready(actor_id)
+    except seat_chat.SeatNotReady as exc:
+        await _save_chatroom_generation_failure(room_id, _q, exc)
+        return
+    await _q.put({"type": "seat_start", "id": msg_id, "actor": actor_id})
+    usage_meta: dict = {}
+    raw_text = ""
+    try:
+        async with asyncio.timeout(960):
+            messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit)
+            stream_filter = KnownCommandStreamFilter()
+            async for chunk in stream_ai(messages, model_key, usage_meta):
+                if not isinstance(chunk, str):
+                    continue
+                if chunk.startswith(CLI_STATUS_PREFIX):
+                    await _q.put({"type": "seat_status", "actor": actor_id, "text": chunk[len(CLI_STATUS_PREFIX):]})
+                    continue
+                if usage_meta.get("provider_error"):
+                    raise RuntimeError(usage_meta["provider_error"])
+                raw_text += chunk
+                visible = stream_filter.feed(chunk)
+                if visible:
+                    await _q.put({"type": "seat_chunk", "actor": actor_id, "content": visible})
+    except Exception as exc:
+        reason = "timeout" if isinstance(exc, (TimeoutError, httpx.TimeoutException)) else (str(exc) or type(exc).__name__)
+        await _save_chatroom_reply_failure(room_id, actor_id, _q, reason, partial_text=raw_text, msg_id=msg_id)
+        return
+    clean_text = _visible_chatroom_text(await process_note_commands(raw_text, actor_id)).strip()
+    if not clean_text:
+        await _save_chatroom_reply_failure(room_id, actor_id, _q, "empty_response", msg_id=msg_id)
+        return
+    msg = await _save_msg(room_id, actor_id, clean_text, msg_id, auto_tts=False,
+                          reasoning_content=usage_meta.get("reasoning_content", "").strip())
+    await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
+    memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
 
 
 @_chatroom_reply_guard("connor")
@@ -3839,6 +3910,8 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "connor_done", "message": msg})
+    if not has_error and not safety_notice:
+        memory_hub_bridge.schedule_capture("connor", memory_hub_bridge.paired_user_message(msgs, "connor"), reply)
     await _emit_chatroom_debug(_q, _chatroom_debug_payload(
         room_id=room_id,
         model_key=connor_model_key,
