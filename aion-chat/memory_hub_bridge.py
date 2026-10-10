@@ -6,7 +6,8 @@ Memory Hub 桥接：让 AionsHome 里的 AI 与 TG bot / 官方客户端共用�
      拿到「各端最近动态 + 与这句话相关的记忆 + 待办」，作为一段背景注入；
   2. 回复落库后 schedule_capture()：先写进本地 outbox（data/memory_hub_outbox.db），
      再后台调用 capture(action="log")，记进 Memory Hub 的对话缓冲区，由 Memory Hub
-     自己提取长期记忆。Hub 断线或本服务重启后由 outbox_worker 自动补传。
+     自己提取长期记忆。Hub 断线或本服务重启后由 outbox_worker 自动补传；
+     每轮带唯一 event_id，Hub 按它去重，重发不会重复记录。
 
 设计约束：
   - 不依赖 AI「想起来」调用工具，由程序在每轮自动完成；
@@ -26,6 +27,7 @@ import logging
 import os
 import sqlite3
 import time
+import uuid
 from contextlib import closing
 from typing import Any
 
@@ -260,6 +262,11 @@ def _outbox() -> sqlite3.Connection:
         " attempts INTEGER NOT NULL DEFAULT 0, next_at REAL NOT NULL DEFAULT 0,"
         " state TEXT NOT NULL DEFAULT 'pending', last_error TEXT NOT NULL DEFAULT '')"
     )
+    # 每条记录一个全局唯一编号：Hub 按编号去重，同一条重发几次都只记一次（Hub PR #81）。
+    # 这一列加上之前入队的旧记录没有编号，仍按「不确定就不重发」处理。
+    if "event_id" not in {row[1] for row in conn.execute("PRAGMA table_info(outbox)")}:
+        conn.execute("ALTER TABLE outbox ADD COLUMN event_id TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     # 每位 AI 最近一次聊天的时间（判断「新对话」、安静 30 分钟后写交接卡）和最近几轮私聊原话
     conn.execute(
         "CREATE TABLE IF NOT EXISTS activity ("
@@ -320,17 +327,22 @@ def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) ->
             log.warning("[MemoryHub] 待补传队列已满（%s 条），这一轮没有记录", OUTBOX_MAX)
             return None
         cur = conn.execute(
-            "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at) VALUES (?,?,?,?,?,0)",
-            (actor, user_message, ai_response, chat_type, time.time()),
+            "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id)"
+            " VALUES (?,?,?,?,?,0,?)",
+            (actor, user_message, ai_response, chat_type, time.time(), f"aionshome-{uuid.uuid4().hex}"),
         )
         return int(cur.lastrowid)
 
 
 def recover_outbox() -> None:
-    """启动时调用：上次退出时正在发送的条目可能已经写进 Hub，标为「不确定」，不自动重发。"""
+    """启动时调用：上次退出时正在发送的条目可能已经写进 Hub。
+
+    带编号的放回待发送（Hub 会去重）；没有编号的旧记录标为「不确定」，不自动重发。
+    """
     if not OUTBOX_PATH.exists():
         return
     with closing(_outbox()) as conn, conn:
+        conn.execute("UPDATE outbox SET state='pending', next_at=0 WHERE state='sending' AND event_id!=''")
         conn.execute("UPDATE outbox SET state='uncertain', last_error='发送中服务重启' WHERE state='sending'")
 
 
@@ -363,6 +375,8 @@ async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str
         arguments["platform"] = f"{platform}-{row['chat_type']}"
         # Hub 不传 chat_type 时按私聊记，群聊内容会进私人层
         arguments["chat_type"] = "private_group"
+    if row["event_id"]:
+        arguments["event_id"] = row["event_id"]  # 重复提交时 Hub 回 {"status": "duplicate"}，同样算送达
     sent: list = []
     try:
         await asyncio.wait_for(
@@ -408,10 +422,11 @@ async def drain_outbox() -> int:
                     if outcome == "ok":
                         conn.execute("DELETE FROM outbox WHERE id=?", (row["id"],))
                         sent_count += 1
-                    elif outcome == "uncertain":
-                        # Hub 可能已经收到；capture 目前没有幂等键，重发会重复记录，所以不自动重发
+                    elif outcome == "uncertain" and not row["event_id"]:
+                        # 没有编号的旧记录：Hub 可能已经收到，重发会重复记录，所以不自动重发
                         conn.execute("UPDATE outbox SET state='uncertain', last_error=? WHERE id=?", (error, row["id"]))
                     else:
+                        # 肯定没送到，或带编号（可能送到了也没关系，Hub 会去重）：稍后重发
                         delay = min(_RETRY_BASE_SECONDS * 2 ** row["attempts"], _RETRY_MAX_SECONDS)
                         conn.execute(
                             "UPDATE outbox SET state='pending', attempts=attempts+1, next_at=?, last_error=? WHERE id=?",

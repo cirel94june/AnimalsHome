@@ -60,6 +60,9 @@
 - [x] 三、做梦（memory_hub_jobs.run_dreams）
 - 单测：test_seat_chat.py、test_memory_hub_jobs.py、test_memory_hub_bridge.py（均用本地假 Hub）
 
+- [x] 待办 5：outbox 每轮带 `event_id`（`aionshome-<uuid>`），「不确定」的带编号记录自动重发，Hub 回 duplicate 算送达；
+  升级前没编号的旧记录仍不自动重发。依赖 Hub PR #81（已上线）
+
 ## 上线后要做的（需要小猫 / 有 VPS 权限的窗口）
 
 1. 在相遇卡里给三位都选好「TA 自己的模型」（Jasper 选 Gemini 中转站那条线路）。没选的那位不写交接卡、不做梦。

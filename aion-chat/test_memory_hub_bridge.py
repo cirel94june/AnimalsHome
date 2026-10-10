@@ -18,6 +18,9 @@ import memory_hub_bridge as bridge
 
 
 CALLS: list[tuple[str, dict]] = []
+STORED: list[str] = []  # Hub 真正记下的（去重后）
+STORED_IDS: set[tuple[str, str]] = set()
+HUB_STATE: dict = {}
 
 
 def _free_port() -> int:
@@ -41,13 +44,19 @@ def fake_hub():
 
     @hub.tool()
     def capture(action: str = "log", source_ai: str = "claude", user_message: str = "",
-                ai_response: str = "", platform: str = "mcp", chat_type: str = "") -> str:
+                ai_response: str = "", platform: str = "mcp", chat_type: str = "", event_id: str = "") -> str:
         args = {"action": action, "source_ai": source_ai, "user_message": user_message,
                 "ai_response": ai_response, "platform": platform}
         if chat_type:
             args["chat_type"] = chat_type
         CALLS.append(("capture", args))
-        if user_message == "很慢":
+        # 和真 Hub 一样：同一位 AI + 同一个 event_id 只记一次
+        if event_id and (source_ai, event_id) in STORED_IDS:
+            return json.dumps({"status": "duplicate", "raw_event_id": 1})
+        if event_id:
+            STORED_IDS.add((source_ai, event_id))
+        STORED.append(user_message)
+        if user_message == "很慢" and HUB_STATE.get("slow", True):
             time.sleep(2)
         return json.dumps({"status": "ok"})
 
@@ -73,6 +82,9 @@ def isolated_config(tmp_path, monkeypatch):
     for key in ("MEMORY_HUB_URL", "MEMORY_HUB_TOKEN", "MEMORY_HUB_ENABLED"):
         monkeypatch.delenv(key, raising=False)
     CALLS.clear()
+    STORED.clear()
+    STORED_IDS.clear()
+    HUB_STATE.clear()
     return tmp_path / "memory_hub.json"
 
 
@@ -223,10 +235,39 @@ def test_capture_survives_hub_outage_and_is_resent_later(fake_hub, isolated_conf
     assert _rows() == []
 
 
-def test_capture_that_may_have_arrived_is_not_resent(fake_hub, isolated_config):
+def test_capture_that_may_have_arrived_is_resent_and_hub_dedupes(fake_hub, isolated_config):
     # 超时要长于握手（Windows 上本机握手可能超过 0.5s）、短于服务端的 2s 卡顿
     _write(isolated_config, enabled=True, url=fake_hub, capture_timeout_seconds=1.5)
     assert asyncio.run(bridge.capture_turn("aion", "很慢", "嗯")) is False
+    assert _rows() == [("很慢", "pending", 1)]  # 带编号：不再卡在「不确定」
+    time.sleep(2.2)  # 等第一次提交在 Hub 那边真正完成
+    assert STORED == ["很慢"]
+
+    bridge._cooldown_until["write"] = 0.0
+    _make_due()
+    HUB_STATE["slow"] = False
+    assert asyncio.run(bridge.drain_outbox()) == 1  # Hub 回 duplicate，算送达
+    assert _rows() == [] and STORED == ["很慢"]  # 只记了一次
+    first, second = [c for c in CALLS if c[0] == "capture"][-2:]
+    assert first[1]["user_message"] == second[1]["user_message"] == "很慢"
+
+
+def test_each_turn_gets_its_own_event_id(isolated_config):
+    bridge._enqueue("aion", "a", "b", "private")
+    bridge._enqueue("aion", "a", "b", "private")  # 内容一样也是两轮
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        ids = [r[0] for r in conn.execute("SELECT event_id FROM outbox")]
+    assert len(set(ids)) == 2 and all(i.startswith("aionshome-") for i in ids)
+
+
+def test_legacy_row_without_event_id_is_not_resent(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, capture_timeout_seconds=1.5)
+    bridge._enqueue("aion", "很慢", "嗯", "private")
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET event_id=''")  # 升级前入队的记录
+    assert asyncio.run(bridge.drain_outbox()) == 0
     assert _rows() == [("很慢", "uncertain", 0)]
     bridge._cooldown_until["write"] = 0.0
     CALLS.clear()
@@ -234,14 +275,39 @@ def test_capture_that_may_have_arrived_is_not_resent(fake_hub, isolated_config):
     assert CALLS == [] and bridge.outbox_stats()["uncertain"] == 1
 
 
-def test_restart_mid_send_marks_uncertain(isolated_config):
+def test_restart_mid_send(isolated_config):
     _write(isolated_config, enabled=True, url="http://127.0.0.1:1/mcp")
-    bridge._enqueue("aion", "a", "b", "private")
+    bridge._enqueue("aion", "有编号", "b", "private")
+    bridge._enqueue("aion", "旧记录", "b", "private")
     import sqlite3
     with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
         conn.execute("UPDATE outbox SET state='sending'")
+        conn.execute("UPDATE outbox SET event_id='' WHERE user_message='旧记录'")
     bridge.recover_outbox()
-    assert _rows() == [("a", "uncertain", 0)]
+    assert _rows() == [("有编号", "pending", 0), ("旧记录", "uncertain", 0)]
+
+
+def test_old_database_gets_event_id_column(isolated_config):
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:  # 升级前的表结构
+        conn.execute(
+            "CREATE TABLE outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, user_message TEXT NOT NULL,"
+            " ai_response TEXT NOT NULL, chat_type TEXT NOT NULL, created_at REAL NOT NULL,"
+            " attempts INTEGER NOT NULL DEFAULT 0, next_at REAL NOT NULL DEFAULT 0,"
+            " state TEXT NOT NULL DEFAULT 'pending', last_error TEXT NOT NULL DEFAULT '')"
+        )
+        conn.execute("INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, state)"
+                     " VALUES ('aion','旧','b','private',1,'uncertain')")
+    bridge._enqueue("aion", "新", "b", "private")
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        rows = conn.execute("SELECT user_message, event_id FROM outbox ORDER BY id").fetchall()
+    assert rows[0] == ("旧", "") and rows[1][1].startswith("aionshome-")
+
+
+def _make_due():
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET next_at=0")
 
 
 def test_read_failure_does_not_block_writes(fake_hub, isolated_config):

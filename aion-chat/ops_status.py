@@ -113,7 +113,7 @@ async def ops_status():
         stats = memory_hub_bridge.outbox_stats()
         hub_state += f" · 待补传 {stats['pending']} 条"
         if stats["uncertain"]:
-            hub_state += f" · 不确定是否送达 {stats['uncertain']} 条（未自动重发，避免重复）"
+            hub_state += f" · 不确定是否送达 {stats['uncertain']} 条（升级前的旧记录，没有编号，未自动重发）"
         if stats["dropped"]:
             hub_state += f" · 队列满丢弃 {stats['dropped']} 条"
     rows = [
