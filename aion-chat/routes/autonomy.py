@@ -51,6 +51,10 @@ async def read_autonomy_status():
         {"key": key, "label": label}
         for key, label in ACTION_DEFS.items()
     ]
+    from autonomy import SEAT_ACTIONS, _is_seat
+    for role in payload["roles"]:
+        # 座位 3～6 只显示已经能做的活动
+        role["available_actions"] = [k for k in ACTION_DEFS if not _is_seat(role["actor"]) or k in SEAT_ACTIONS]
     return payload
 
 
