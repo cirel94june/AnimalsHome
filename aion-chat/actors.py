@@ -184,3 +184,87 @@ async def api_upload_avatar(actor_id: str, file: UploadFile = File(...)):
 @router.get("/ai-cards")
 async def ai_cards_page():
     return FileResponse(BASE_DIR / "static" / "ib" / "cards.html", headers={"Cache-Control": "no-cache"})
+
+
+# ── 人设包：种子 + 起始性格 + 关于用户 ──
+# 种子分区（核心身份、关系锚点、边界与禁令）在人设进化中完全锁定，其余分区会慢慢生长。
+SEED_LOCKED_SECTIONS = ["identity_core", "relationship_core", "boundaries_and_forbidden"]
+USER_SECTION_LABELS = {
+    "basic_profile": "基础资料",
+    "life_context": "生活与作息",
+    "preferences_and_relationship": "偏好与关系期待",
+    "additional_notes": "补充",
+}
+
+
+def seed_locked_sections(actor_id: str) -> list[str]:
+    seat = (_load_raw().get("seats") or {}).get(actor_id) or {}
+    keys = seat.get("seed_locked_sections")
+    return list(keys) if isinstance(keys, list) else list(SEED_LOCKED_SECTIONS)
+
+
+def persona_sections(actor_id: str) -> dict[str, str]:
+    """座位 3～6 的人设分区（前两位以世界书 / 聊天室设置为准）。"""
+    seat = (_load_raw().get("seats") or {}).get(actor_id) or {}
+    sections = seat.get("persona_sections")
+    return {k: str(v) for k, v in sections.items()} if isinstance(sections, dict) else {}
+
+
+def _clean_sections(raw: Any, allowed: set[str]) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        raise HTTPException(400, "人设分区格式不正确")
+    unknown = set(raw) - allowed
+    if unknown:
+        raise HTTPException(400, f"不认识的分区：{', '.join(sorted(unknown))}")
+    return {k: str(v or "").strip()[:6000] for k, v in raw.items()}
+
+
+@router.post("/api/actors/persona-pack")
+async def api_import_persona_pack(request: Request):
+    """导入人设包：写入世界书（主 AI + 关于用户）、聊天室设置（第二位）和登记表（3～6 号）。导入前自动备份。"""
+    import time
+    from config import save_worldbook
+    from persona_evolution import _AI_SECTION_KEYS, _compile_ai_persona_sections
+
+    try:
+        pack = await request.json()
+    except ValueError:
+        raise HTTPException(400, "格式不正确")
+    if not isinstance(pack, dict):
+        raise HTTPException(400, "格式不正确")
+    actors_pack = pack.get("actors") or {}
+    if not isinstance(actors_pack, dict) or set(actors_pack) - set(SEAT_IDS):
+        raise HTTPException(400, "actors 里只能是 aion / connor / ai3～ai6")
+    about = _clean_sections(pack.get("about_user") or {}, set(USER_SECTION_LABELS)) if pack.get("about_user") else None
+    sections_by_actor = {aid: _clean_sections((v or {}).get("sections") or {}, set(_AI_SECTION_KEYS)) for aid, v in actors_pack.items()}
+
+    from chatroom import load_chatroom_config, save_chatroom_config
+    wb = load_worldbook()
+    cfg = load_chatroom_config()
+    backup = {
+        "at": time.time(),
+        "worldbook": {k: wb.get(k) for k in ("ai_persona", "ai_persona_sections", "user_persona", "user_persona_sections")},
+        "chatroom": {k: cfg.get(k) for k in ("connor_persona", "connor_persona_sections")},
+        "seats": _load_raw().get("seats", {}),
+    }
+    backup_path = DATA_DIR / f"persona_pack_backup_{int(backup['at'])}.json"
+    backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if about is not None:
+        wb["user_persona_sections"] = about
+        wb["user_persona"] = "\n\n".join(f"[{USER_SECTION_LABELS[k]}]\n{v}" for k, v in about.items() if v)
+    if "aion" in sections_by_actor:
+        wb["ai_persona_sections"] = sections_by_actor["aion"]
+        wb["ai_persona"] = _compile_ai_persona_sections(sections_by_actor["aion"], actor="main_ai")
+    save_worldbook(wb)
+    if "connor" in sections_by_actor:
+        cfg["connor_persona_sections"] = sections_by_actor["connor"]
+        cfg["connor_persona"] = _compile_ai_persona_sections(sections_by_actor["connor"], actor="connor")
+        save_chatroom_config(cfg)
+    data = _load_raw()
+    for aid, sections in sections_by_actor.items():
+        if aid in ("aion", "connor"):
+            continue
+        data.setdefault("seats", {}).setdefault(aid, {})["persona_sections"] = sections
+    _save_raw(data)
+    return {"ok": True, "imported": sorted(sections_by_actor), "about_user": about is not None, "backup": backup_path.name}

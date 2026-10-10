@@ -814,11 +814,34 @@ def _diff_sections(
     return diffs
 
 
+def _locked_section_keys(actor: str) -> set[str]:
+    """完全锁定、进化不得改写的人设分区：世界书里标为 locked 的，加上角色登记表里该角色的种子分区。"""
+    locks = (load_worldbook().get("persona_section_locks") or {}).get("ai") or {}
+    keys = {key for key, mode in locks.items() if mode == "locked"}
+    keys.add("identity_core")  # 核心身份始终锁定
+    try:
+        from actors import seed_locked_sections
+        keys.update(seed_locked_sections("connor" if actor == ACTOR_CONNOR else "aion"))
+    except Exception:
+        pass
+    return keys
+
+
+def _effective_section_locks(actor: str) -> dict:
+    locks = dict(load_worldbook().get("persona_section_locks") or {})
+    ai_locks = dict(locks.get("ai") or {})
+    for key in _locked_section_keys(actor):
+        ai_locks[key] = "locked"
+    locks["ai"] = ai_locks
+    return locks
+
+
 def _apply_section_updates(actor: str, before_sections: dict, updates: dict) -> tuple[dict, list[dict]]:
     actor = _require_actor(actor)
     after_sections = dict(before_sections)
+    locked = _locked_section_keys(actor)
     for key, update in updates.items():
-        if key in _AI_SECTION_KEYS:
+        if key in _AI_SECTION_KEYS and key not in locked:
             after_sections[key] = str(update.get("content") or "").strip()
     diffs = _diff_sections(before_sections, after_sections, updates, actor=actor)
     if not diffs:
@@ -903,7 +926,7 @@ def _build_prompt(
         "current_ai_persona_text": ai_persona_text,
         "current_user_persona_text": wb.get("user_persona") or "",
         "creative_rules": creative_rules,
-        "section_locks": wb.get("persona_section_locks") or {},
+        "section_locks": _effective_section_locks(actor),
         "daily_memory_summaries": daily_memory_summaries or [],
         "timeline_context": timeline_context,
         "feedback": [

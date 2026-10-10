@@ -12,7 +12,8 @@ html, body { height: 100%; }
 body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); overflow: hidden; -webkit-tap-highlight-color: transparent; }
 .page { height: 100dvh; display: flex; flex-direction: column; }
 .top-bar { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; flex: none; }
-.top-bar h2 { font-weight: 400; }
+.top-bar h2 { font-weight: 400; flex: 1; min-width: 0; }
+.pack-btn { flex: none; border: 1px solid rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.6); color: var(--ib-acc); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; }
 .deck { flex: 1; min-height: 0; display: flex; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 14px 28px 10px; scrollbar-width: none; }
 .deck::-webkit-scrollbar { display: none; }
 .card {
@@ -60,7 +61,8 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
 </head>
 <body>
 <div class="page">
-  <div class="top-bar"><button class="back-btn" onclick="location.href='/'">⬅</button><h2>AI 名片</h2></div>
+  <div class="top-bar"><button class="back-btn" onclick="location.href='/'">⬅</button><h2>AI 名片</h2>
+    <button type="button" class="pack-btn" id="pack-btn">导入人设包</button><input type="file" id="pack-file" accept=".json,application/json" hidden></div>
   <div class="deck" id="deck"></div>
   <div class="pager" id="pager"></div>
 </div>
@@ -179,6 +181,21 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     var en = e.target.closest('[data-enable]');
     if (en) { var a = data.actors.filter(function (x) { return x.id === en.dataset.enable; })[0]; openEdit(Object.assign({}, a, { enabled: true })); }
   });
+
+  var packFile = document.getElementById('pack-file');
+  document.getElementById('pack-btn').onclick = function () { packFile.click(); };
+  packFile.onchange = function () {
+    var f = this.files && this.files[0]; this.value = '';
+    if (!f) return;
+    f.text().then(function (text) {
+      var pack = JSON.parse(text);
+      var who = Object.keys(pack.actors || {}).map(function (id) { var a = data.actors.filter(function (x) { return x.id === id; })[0]; return a ? a.name : id; });
+      if (!confirm('导入人设包会替换这些人设：' + who.join('、') + (pack.about_user ? '，以及「关于你」' : '') + '。\n原来的版本会自动备份。继续吗？')) return;
+      return fetch('/api/actors/persona-pack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: text })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
+        .then(function (j) { alert('已导入：' + who.join('、') + '\n备份文件：' + j.backup); });
+    }).catch(function (e) { alert('导入失败：' + (e && e.message ? e.message : '文件不是有效的人设包')); });
+  };
 
   fetch('/api/actors', { cache: 'no-store' }).then(function (r) { return r.json(); })
     .then(function (d) { data = d; render(); })

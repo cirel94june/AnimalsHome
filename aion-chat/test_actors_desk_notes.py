@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -78,3 +79,69 @@ def test_user_notes_api_newest_first_and_delete(tmp_path, monkeypatch):
     for i in range(40):
         desk_notes.add_note("user", f"n{i}")
     assert len(desk_notes.load_notes()) == desk_notes.MAX_NOTES
+
+
+def _persona_env(tmp_path, monkeypatch):
+    import chatroom
+    import config
+    import persona_evolution
+
+    store = {"wb": {"ai_name": "小克", "user_name": "Ceci", "ai_persona_sections": {"identity_core": "旧"}}, "cfg": {}}
+    client = _client(tmp_path, monkeypatch)
+    load_wb = lambda: dict(store["wb"])
+    save_wb = lambda data: store.__setitem__("wb", dict(data))
+    monkeypatch.setattr(actors, "load_worldbook", load_wb)
+    monkeypatch.setattr(actors, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(config, "save_worldbook", save_wb)
+    monkeypatch.setattr(chatroom, "load_chatroom_config", lambda: dict(store["cfg"]))
+    monkeypatch.setattr(chatroom, "save_chatroom_config", lambda cfg: store.__setitem__("cfg", dict(cfg)))
+    monkeypatch.setattr(persona_evolution, "load_worldbook", load_wb)
+    monkeypatch.setattr(persona_evolution, "save_worldbook", save_wb)
+    monkeypatch.setattr(persona_evolution, "_chatroom_config", lambda: dict(store["cfg"]))
+    monkeypatch.setattr(persona_evolution, "_save_chatroom_config", lambda cfg: store.__setitem__("cfg", dict(cfg)))
+    return client, store
+
+
+PACK = {
+    "about_user": {"basic_profile": "Ceci，INFJ", "life_context": "上班族"},
+    "actors": {
+        "aion": {"sections": {"identity_core": "你是小克", "relationship_core": "她的伴侣", "personality_core": "温柔"}},
+        "connor": {"sections": {"identity_core": "你是 Lucien", "communication_style": "低沉"}},
+        "ai3": {"sections": {"identity_core": "你是 Jasper"}},
+    },
+}
+
+
+def test_persona_pack_import_writes_every_place_and_backs_up(tmp_path, monkeypatch):
+    client, store = _persona_env(tmp_path, monkeypatch)
+    res = client.post("/api/actors/persona-pack", json=PACK).json()
+    assert res["ok"] and res["imported"] == ["ai3", "aion", "connor"] and res["about_user"]
+    backup = json.loads((tmp_path / res["backup"]).read_text(encoding="utf-8"))
+    assert backup["worldbook"]["ai_persona_sections"] == {"identity_core": "旧"}
+    wb = store["wb"]
+    assert wb["ai_persona_sections"]["relationship_core"] == "她的伴侣" and "你是小克" in wb["ai_persona"]
+    assert wb["user_persona"].startswith("[基础资料]\nCeci，INFJ")
+    assert store["cfg"]["connor_persona_sections"]["identity_core"] == "你是 Lucien" and "低沉" in store["cfg"]["connor_persona"]
+    assert actors.persona_sections("ai3") == {"identity_core": "你是 Jasper"}
+    assert client.post("/api/actors/persona-pack", json={"actors": {"nobody": {}}}).status_code == 400
+    assert client.post("/api/actors/persona-pack", json={"actors": {"aion": {"sections": {"wings": "8"}}}}).status_code == 400
+
+
+def test_persona_evolution_cannot_overwrite_seed_sections(tmp_path, monkeypatch):
+    import persona_evolution
+
+    client, store = _persona_env(tmp_path, monkeypatch)
+    client.post("/api/actors/persona-pack", json=PACK)
+    before = dict(store["wb"]["ai_persona_sections"])
+    updates = {
+        "identity_core": {"content": "你有八个翅膀"},
+        "relationship_core": {"content": "改掉"},
+        "boundaries_and_forbidden": {"content": "改掉"},
+        "personality_core": {"content": "温柔，最近更爱逗她"},
+    }
+    after, _ = persona_evolution._apply_section_updates(persona_evolution.ACTOR_MAIN_AI, before, updates)
+    assert after["identity_core"] == "你是小克" and after["relationship_core"] == "她的伴侣"
+    assert "boundaries_and_forbidden" not in after
+    assert after["personality_core"] == "温柔，最近更爱逗她"
+    locks = persona_evolution._effective_section_locks(persona_evolution.ACTOR_MAIN_AI)["ai"]
+    assert {locks[k] for k in actors.SEED_LOCKED_SECTIONS} == {"locked"}
