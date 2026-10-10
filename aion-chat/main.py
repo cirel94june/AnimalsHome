@@ -29,6 +29,8 @@ logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from config import BASE_DIR, DATA_DIR, PUBLIC_DIR, UPLOADS_DIR, ALBUM_IMAGES_DIR, SONGS_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, load_cam_config
+import memory_hub_bridge
+from request_limits import BodySizeLimitMiddleware
 from database import init_db, get_db
 from active_window_state import restore_active_windows
 from ws import manager
@@ -198,6 +200,7 @@ async def lifespan(app: FastAPI):
     compression_task = asyncio.create_task(auto_calendar_compression_loop())
     persona_evolution_task = asyncio.create_task(main_ai_persona_evolution_loop())
     connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
+    memory_hub_outbox_task = asyncio.create_task(memory_hub_bridge.outbox_worker())
     idle_autonomy_mgr.start()
     board_patrol_mgr.start()
     ha_event_listener.start()
@@ -211,6 +214,7 @@ async def lifespan(app: FastAPI):
     await ha_event_listener.stop()
     idle_autonomy_mgr.stop()
     await board_patrol_mgr.stop()
+    memory_hub_outbox_task.cancel()
     connor_persona_evolution_task.cancel()
     persona_evolution_task.cancel()
     cr_digest_task.cancel()
@@ -264,6 +268,7 @@ app.add_middleware(SkinInjectMiddleware)  # 最内层：在 GZip 压缩之前插
 app.add_middleware(NoCacheStaticMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 app.add_middleware(SecurityAccessMiddleware, service=security_access_service)
+app.add_middleware(BodySizeLimitMiddleware)  # 最外层：超大请求在进入任何接口前拒绝
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

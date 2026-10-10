@@ -145,3 +145,39 @@ def test_persona_evolution_cannot_overwrite_seed_sections(tmp_path, monkeypatch)
     assert after["personality_core"] == "温柔，最近更爱逗她"
     locks = persona_evolution._effective_section_locks(persona_evolution.ACTOR_MAIN_AI)["ai"]
     assert {locks[k] for k in actors.SEED_LOCKED_SECTIONS} == {"locked"}
+
+
+def test_bad_persona_pack_is_rejected_without_touching_anything(tmp_path, monkeypatch):
+    client, store = _persona_env(tmp_path, monkeypatch)
+    before = json.dumps(store, ensure_ascii=False, sort_keys=True)
+    bad_packs = [
+        {"actors": {"aion": None}},
+        {"actors": {"aion": {}}},
+        {"actors": {"aion": {"sections": {}}}},
+        {"actors": {"aion": {"sections": {"identity_core": ""}}}},
+        {"actors": {"aion": {"sections": {"personality_core": "温柔"}}}},  # 缺核心身份
+        {"actors": {"aion": {"sections": {"identity_core": ["不是文字"]}}}},
+        {"actors": {"aion": {"sections": {"identity_core": "你是小克"}}, "connor": None}},  # 后一个坏了，前一个也不写
+        {"about_user": None},
+        {"about_user": {"basic_profile": "  "}},
+        {},
+        {"aion": {"sections": {"identity_core": "层级放错"}}},
+    ]
+    for pack in bad_packs:
+        assert client.post("/api/actors/persona-pack", json=pack).status_code == 400, pack
+    assert json.dumps(store, ensure_ascii=False, sort_keys=True) == before
+    assert not list(tmp_path.glob("persona_pack_backup_*"))
+    assert actors.persona_sections("ai3") == {}
+
+
+def test_persona_pack_backups_never_overwrite_each_other(tmp_path, monkeypatch):
+    client, _ = _persona_env(tmp_path, monkeypatch)
+    names = {client.post("/api/actors/persona-pack", json=PACK).json()["backup"] for _ in range(3)}
+    assert len(names) == 3
+
+
+def test_oversized_avatar_is_rejected(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    big = b"\x89PNG" + b"0" * (4 * 1024 * 1024 + 10)
+    assert client.post("/api/actors/ai3/avatar", files={"file": ("a.png", big, "image/png")}).status_code == 413
+    assert not (tmp_path / "skin").exists() or not list((tmp_path / "skin").iterdir())

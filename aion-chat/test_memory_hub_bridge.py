@@ -33,7 +33,7 @@ def fake_hub():
     @hub.tool()
     def context(source_ai: str = "claude", message: str = "", mode: str = "full", max_chars: int = 3000) -> str:
         CALLS.append(("context", {"source_ai": source_ai, "message": message, "mode": mode, "max_chars": max_chars}))
-        if message == "slow":
+        if message in ("slow", "很慢"):
             time.sleep(2)
         return json.dumps({"text": f"【最近动态】{source_ai} 在 TG 上陪小猫聊了蜡烛", "metadata": {}}, ensure_ascii=False)
 
@@ -42,6 +42,8 @@ def fake_hub():
                 ai_response: str = "", platform: str = "mcp") -> str:
         CALLS.append(("capture", {"action": action, "source_ai": source_ai, "user_message": user_message,
                                   "ai_response": ai_response, "platform": platform}))
+        if user_message == "很慢":
+            time.sleep(2)
         return json.dumps({"status": "ok"})
 
     port = _free_port()
@@ -60,7 +62,9 @@ def fake_hub():
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge, "CONFIG_PATH", tmp_path / "memory_hub.json")
-    monkeypatch.setattr(bridge, "_cooldown_until", 0.0)
+    monkeypatch.setattr(bridge, "_cooldown_until", {"read": 0.0, "write": 0.0})
+    monkeypatch.setattr(bridge, "OUTBOX_PATH", tmp_path / "outbox.db")
+    monkeypatch.setattr(bridge, "_dropped", 0)
     for key in ("MEMORY_HUB_URL", "MEMORY_HUB_TOKEN", "MEMORY_HUB_ENABLED"):
         monkeypatch.delenv(key, raising=False)
     CALLS.clear()
@@ -139,3 +143,76 @@ def test_env_overrides_config(isolated_config, monkeypatch):
     cfg = bridge.load_config()
     assert cfg["enabled"] and cfg["url"] == "http://127.0.0.1:1/mcp"
     assert bridge._headers(cfg)["Authorization"] == "Bearer secret"
+
+
+def _rows():
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        return conn.execute("SELECT user_message, state, attempts FROM outbox ORDER BY id").fetchall()
+
+
+def test_capture_survives_hub_outage_and_is_resent_later(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=f"http://127.0.0.1:{_free_port()}/mcp")
+    assert asyncio.run(bridge.capture_turn("aion", "我到家了", "欢迎回来")) is False
+    assert _rows() == [("我到家了", "pending", 1)]
+    assert asyncio.run(bridge.capture_turn("aion", "第二句", "嗯")) is False  # 冷却中：只落盘
+    assert bridge.outbox_stats()["pending"] == 2
+    # Hub 恢复、冷却结束、到了重试时间
+    _write(isolated_config, enabled=True, url=fake_hub)
+    bridge._cooldown_until["write"] = 0.0
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET next_at=0")
+    assert asyncio.run(bridge.drain_outbox()) == 2
+    assert [c[1]["user_message"] for c in CALLS if c[0] == "capture"] == ["我到家了", "第二句"]
+    assert _rows() == []
+
+
+def test_capture_that_may_have_arrived_is_not_resent(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, capture_timeout_seconds=0.5)
+    assert asyncio.run(bridge.capture_turn("aion", "很慢", "嗯")) is False
+    assert _rows() == [("很慢", "uncertain", 0)]
+    bridge._cooldown_until["write"] = 0.0
+    CALLS.clear()
+    assert asyncio.run(bridge.drain_outbox()) == 0
+    assert CALLS == [] and bridge.outbox_stats()["uncertain"] == 1
+
+
+def test_restart_mid_send_marks_uncertain(isolated_config):
+    _write(isolated_config, enabled=True, url="http://127.0.0.1:1/mcp")
+    bridge._enqueue("aion", "a", "b", "private")
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET state='sending'")
+    bridge.recover_outbox()
+    assert _rows() == [("a", "uncertain", 0)]
+
+
+def test_read_failure_does_not_block_writes(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub)
+    bridge._cooldown_until["read"] = time.monotonic() + 60
+    assert asyncio.run(bridge.context_block("aion", "hi")) == ""
+    assert asyncio.run(bridge.capture_turn("aion", "我到家了", "欢迎回来")) is True
+
+
+def test_outbox_is_bounded(isolated_config, monkeypatch):
+    _write(isolated_config, enabled=True, url="http://127.0.0.1:1/mcp")
+    monkeypatch.setattr(bridge, "OUTBOX_MAX", 2)
+    assert bridge._enqueue("aion", "1", "x", "private") and bridge._enqueue("aion", "2", "x", "private")
+    assert bridge._enqueue("aion", "3", "x", "private") is None
+    assert bridge.outbox_stats() == {"pending": 2, "uncertain": 0, "dropped": 1}
+
+
+def test_chatroom_reply_pairs_with_its_own_trigger_message():
+    history = [
+        {"sender": "user", "content": "第一句"},
+        {"sender": "aion", "content": "回第一句"},
+        {"sender": "user", "content": "第二句"},
+        {"sender": "connor", "content": "Lucien 先回了"},
+        {"sender": "system", "content": "提示"},
+    ]
+    assert bridge.paired_user_message(history, "aion") == "第二句"
+    assert bridge.paired_user_message(history, "connor") == ""  # 已经回过，主动/后续消息不配对
+    assert bridge.paired_user_message(history + [{"sender": "ai3", "content": "Jasper"}], "aion") == "第二句"
+    assert bridge.paired_user_message(history[:2], "aion") == ""
+    assert bridge.paired_user_message([{"sender": "user", "content": "", "attachments": ["/a.png"]}], "aion") == "[图片]"

@@ -3184,8 +3184,6 @@ async def _save_msg(
     msg = {"id": msg_id, "room_id": room_id, "sender": sender, "content": content,
            "created_at": now, "attachments": att_list, "reasoning_content": reasoning_content}
     await broadcast_synced(manager, {"type": "chatroom_msg_created", "data": msg})
-    if sender in ("aion", "connor"):
-        memory_hub_bridge.schedule_chatroom_capture(room_id, sender, content, now)
 
     if auto_tts and content.strip():
         voice = _chatroom_auto_tts_voice(sender)
@@ -4035,6 +4033,10 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "aion_done", "message": aion_msg})
+    if not has_error and not safety_notice and not ambient_context:
+        memory_hub_bridge.schedule_chatroom_capture(
+            "aion", memory_hub_bridge.paired_user_message(msgs, "aion"), clean_text, await _get_room_type(room_id),
+        )
     await _emit_chatroom_debug(_q, _chatroom_debug_payload(
         room_id=room_id,
         model_key=model_key,
@@ -4173,6 +4175,10 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "connor_done", "message": connor_msg})
+    if not has_error and not safety_notice and not ambient_context:
+        memory_hub_bridge.schedule_chatroom_capture(
+            "connor", memory_hub_bridge.paired_user_message(msgs, "connor"), clean_text, await _get_room_type(room_id),
+        )
     await _emit_chatroom_debug(_q, _chatroom_debug_payload(
         room_id=room_id,
         model_key=connor_model_key,

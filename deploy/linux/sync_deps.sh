@@ -8,7 +8,8 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
-venv="$root/.venv"
+# VENV 可指定安装到别的目录（自动更新时先装到新目录，验证通过再切换）
+venv="${VENV:-$root/.venv}"
 
 if [ ! -x "$venv/bin/python" ]; then
   uv python install 3.12

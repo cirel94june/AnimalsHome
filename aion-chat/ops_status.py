@@ -41,6 +41,16 @@ def _git(*args: str) -> str:
         return ""
 
 
+# 启动时的代码版本：自动更新重启后，用它确认跑起来的确实是新版本
+STARTUP_COMMIT = _git("rev-parse", "HEAD")
+
+
+@router.get("/ops/healthz")
+async def healthz():
+    """给自动更新用的健康检查：能返回说明启动流程（lifespan）已经走完。"""
+    return {"ok": True, "commit": STARTUP_COMMIT, "started_at": STARTED_AT}
+
+
 def _meminfo() -> dict[str, int]:
     info: dict[str, int] = {}
     try:
@@ -75,10 +85,17 @@ async def ops_status():
     hub = memory_hub_bridge.load_config()
     if not memory_hub_bridge._is_active(hub):
         hub_state = "未启用"
-    elif memory_hub_bridge._in_cooldown():
+    elif memory_hub_bridge._in_cooldown("read") or memory_hub_bridge._in_cooldown("write"):
         hub_state = "最近调用失败，暂时跳过（1 分钟后重试）"
     else:
         hub_state = "已启用"
+    if memory_hub_bridge._is_active(hub):
+        stats = memory_hub_bridge.outbox_stats()
+        hub_state += f" · 待补传 {stats['pending']} 条"
+        if stats["uncertain"]:
+            hub_state += f" · 不确定是否送达 {stats['uncertain']} 条（未自动重发，避免重复）"
+        if stats["dropped"]:
+            hub_state += f" · 队列满丢弃 {stats['dropped']} 条"
     rows = [
         ("服务", f"运行中 · 已运行 {_uptime(time.time() - STARTED_AT)}"),
         ("版本", f"{_git('rev-parse', '--abbrev-ref', 'HEAD')} @ {_git('log', '-1', '--format=%h %s (%cr)')}"),

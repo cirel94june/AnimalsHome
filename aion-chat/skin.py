@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from request_limits import read_body_limited, read_upload_limited
 from fastapi.responses import FileResponse
 
 from config import BASE_DIR, DATA_DIR
@@ -64,9 +65,7 @@ async def get_skin():
 
 @router.put("/api/skin")
 async def put_skin(request: Request):
-    raw = await request.body()
-    if len(raw) > MAX_SKIN_BYTES:
-        raise HTTPException(413, "外观设置过大")
+    raw = await read_body_limited(request, MAX_SKIN_BYTES, "外观设置过大")
     try:
         data = json.loads(raw)
     except ValueError:
@@ -84,9 +83,7 @@ async def upload_background(file: UploadFile = File(...)):
     ext = BG_TYPES.get((file.content_type or "").lower())
     if not ext:
         raise HTTPException(400, "只支持 jpg / png / webp / gif 图片")
-    content = await file.read()
-    if len(content) > MAX_BG_BYTES:
-        raise HTTPException(413, "图片不能超过 8MB")
+    content = await read_upload_limited(file, MAX_BG_BYTES, "图片不能超过 8MB")
     SKIN_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     name = hashlib.sha1(content).hexdigest()[:16] + ext
     (SKIN_ASSET_DIR / name).write_bytes(content)

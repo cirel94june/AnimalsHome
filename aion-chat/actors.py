@@ -14,12 +14,14 @@ import hashlib
 import json
 import os
 import re
+import time
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from config import BASE_DIR, DATA_DIR, load_worldbook
+from request_limits import read_body_limited, read_upload_limited
 
 router = APIRouter()
 
@@ -167,9 +169,7 @@ async def api_upload_avatar(actor_id: str, file: UploadFile = File(...)):
     ext = AVATAR_TYPES.get((file.content_type or "").lower())
     if not ext:
         raise HTTPException(400, "只支持 jpg / png / webp / gif 图片")
-    content = await file.read()
-    if len(content) > 4 * 1024 * 1024:
-        raise HTTPException(413, "头像不能超过 4MB")
+    content = await read_upload_limited(file, 4 * 1024 * 1024, "头像不能超过 4MB")
     AVATAR_DIR.mkdir(parents=True, exist_ok=True)
     name = hashlib.sha1(content).hexdigest()[:16] + ext
     (AVATAR_DIR / name).write_bytes(content)
@@ -210,33 +210,60 @@ def persona_sections(actor_id: str) -> dict[str, str]:
     return {k: str(v) for k, v in sections.items()} if isinstance(sections, dict) else {}
 
 
-def _clean_sections(raw: Any, allowed: set[str]) -> dict[str, str]:
-    if not isinstance(raw, dict):
-        raise HTTPException(400, "人设分区格式不正确")
+MAX_PACK_BYTES = 256 * 1024
+
+
+def _clean_sections(raw: Any, allowed: set[str], *, who: str, required: str = "") -> dict[str, str]:
+    """校验一组人设分区。缺失、为空、类型不对都拒绝，避免一个写错的人设包把已有身份清空。"""
+    if not isinstance(raw, dict) or not raw:
+        raise HTTPException(400, f"{who}：分区必须是非空的对象")
     unknown = set(raw) - allowed
     if unknown:
-        raise HTTPException(400, f"不认识的分区：{', '.join(sorted(unknown))}")
-    return {k: str(v or "").strip()[:6000] for k, v in raw.items()}
+        raise HTTPException(400, f"{who}：不认识的分区 {', '.join(sorted(unknown))}")
+    cleaned: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise HTTPException(400, f"{who}：分区 {key} 必须是文字")
+        cleaned[key] = value.strip()[:6000]
+    if not any(cleaned.values()):
+        raise HTTPException(400, f"{who}：分区内容全是空的")
+    if required and not cleaned.get(required):
+        raise HTTPException(400, f"{who}：缺少 {required}")
+    return cleaned
 
 
 @router.post("/api/actors/persona-pack")
 async def api_import_persona_pack(request: Request):
-    """导入人设包：写入世界书（主 AI + 关于用户）、聊天室设置（第二位）和登记表（3～6 号）。导入前自动备份。"""
-    import time
+    """导入人设包：写入世界书（主 AI + 关于用户）、聊天室设置（第二位）和登记表（3～6 号）。
+
+    整包先全部校验，有任何问题就 400、什么都不写；通过后先备份再写入。
+    """
+    import uuid
+    from datetime import datetime
     from config import save_worldbook
     from persona_evolution import _AI_SECTION_KEYS, _compile_ai_persona_sections
 
+    raw = await read_body_limited(request, MAX_PACK_BYTES, "人设包过大")
     try:
-        pack = await request.json()
+        pack = json.loads(raw)
     except ValueError:
         raise HTTPException(400, "格式不正确")
-    if not isinstance(pack, dict):
-        raise HTTPException(400, "格式不正确")
-    actors_pack = pack.get("actors") or {}
-    if not isinstance(actors_pack, dict) or set(actors_pack) - set(SEAT_IDS):
+    if not isinstance(pack, dict) or set(pack) - {"about_user", "actors", "note", "version"}:
+        raise HTTPException(400, "格式不正确：顶层只能有 about_user / actors")
+    actors_pack = pack.get("actors")
+    if actors_pack is not None and (not isinstance(actors_pack, dict) or set(actors_pack) - set(SEAT_IDS)):
         raise HTTPException(400, "actors 里只能是 aion / connor / ai3～ai6")
-    about = _clean_sections(pack.get("about_user") or {}, set(USER_SECTION_LABELS)) if pack.get("about_user") else None
-    sections_by_actor = {aid: _clean_sections((v or {}).get("sections") or {}, set(_AI_SECTION_KEYS)) for aid, v in actors_pack.items()}
+    actors_pack = actors_pack or {}
+    sections_by_actor: dict[str, dict[str, str]] = {}
+    for aid, entry in actors_pack.items():
+        if not isinstance(entry, dict):
+            raise HTTPException(400, f"{aid}：必须是带 sections 的对象")
+        sections_by_actor[aid] = _clean_sections(entry.get("sections"), set(_AI_SECTION_KEYS), who=aid, required="identity_core")
+    about = None
+    if "about_user" in pack:
+        about = _clean_sections(pack["about_user"], set(USER_SECTION_LABELS), who="about_user")
+    if not sections_by_actor and about is None:
+        raise HTTPException(400, "人设包是空的")
 
     from chatroom import load_chatroom_config, save_chatroom_config
     wb = load_worldbook()
@@ -247,7 +274,8 @@ async def api_import_persona_pack(request: Request):
         "chatroom": {k: cfg.get(k) for k in ("connor_persona", "connor_persona_sections")},
         "seats": _load_raw().get("seats", {}),
     }
-    backup_path = DATA_DIR / f"persona_pack_backup_{int(backup['at'])}.json"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = DATA_DIR / f"persona_pack_backup_{stamp}_{uuid.uuid4().hex[:6]}.json"
     backup_path.write_text(json.dumps(backup, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if about is not None:
