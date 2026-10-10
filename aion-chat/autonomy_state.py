@@ -16,7 +16,8 @@ import aiosqlite
 from config import DB_PATH
 
 
-ACTOR_IDS = ("aion", "connor")
+# 六个座位都有自己的自主设置；新座位默认关闭，小猫在「家庭动态」里打开才会醒来
+ACTOR_IDS = ("aion", "connor", "ai3", "ai4", "ai5", "ai6")
 MIN_INTERVAL_MINUTES = 5
 MAX_INTERVAL_MINUTES = 24 * 60
 MAX_STATE_CHARS = 800
@@ -35,6 +36,7 @@ ACTION_IDS = (
     "board_visit",
     "seeky_interaction",
     "wish_pool",
+    "mcp_outing",
 )
 DEFAULT_OFF_ACTIONS = {"album_browse", "board_check", "board_visit"}
 
@@ -686,11 +688,18 @@ async def process_persona_message_event(event: dict) -> tuple[dict, bool]:
 async def autonomy_status_payload() -> dict:
     from chatroom import get_chatroom_names
 
+    import actors as actors_registry
+
     _user_name, ai_name, connor_name = get_chatroom_names()
     names = {"aion": ai_name, "connor": connor_name}
     roles = []
     now = time.time()
     for actor in ACTOR_IDS:
+        if actor not in names:
+            seat = actors_registry.get_actor(actor)
+            if not seat or not seat.get("enabled"):
+                continue  # 空座位不显示
+            names[actor] = seat["name"]
         cfg = await get_actor_config(actor)
         wake_at = cfg.get("next_wake_at")
         roles.append({

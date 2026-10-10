@@ -49,7 +49,11 @@ ACTION_DEFS = {
     "friend_visit": "拜访一位 AI 好友",
     "board_check": "自己去看看家里的朋友留言板，决定要不要接话",
     "board_visit": "到朋友家的留言板看看，决定要不要留句话或分享新鲜事",
+    "mcp_outing": "出门去外面的一个地方逛逛（小猫接的论坛、游戏、网站等），回来讲讲见闻",
 }
+
+# 座位 3～6 目前能做的事；其余活动按座位核对过再逐个放开（见 docs/功能盘点）
+SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing"}
 
 SEEKY_ACTIONS = {
     "feed": "投喂",
@@ -415,6 +419,8 @@ async def _call_actor(actor: str, messages: list[dict]) -> str:
 
 
 async def _actor_context(actor: str, limit: int = 30, *, include_history: bool = True) -> list[dict]:
+    if _is_seat(actor):
+        return await _seat_actor_context(actor, limit, include_history=include_history)
     room_id = await _latest_group_room_id() if include_history else None
     wb = load_worldbook()
     messages: list[dict] = []
@@ -435,9 +441,6 @@ async def _actor_context(actor: str, limit: int = 30, *, include_history: bool =
             include_image_attachments=False,
         ))
         return messages
-
-    if _is_seat(actor):
-        return await _seat_actor_context(actor, limit, include_history=include_history)
 
     try:
         from chatroom import _read_connor_persona
@@ -631,6 +634,12 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         key for key in ACTION_DEFS
         if bool(cfg.get("actions", {}).get(key, key == "rest"))
     ]
+    if _is_seat(actor):
+        enabled = [key for key in enabled if key in SEAT_ACTIONS]
+    if "mcp_outing" in enabled:
+        import mcp_outings
+        if not mcp_outings.places_for(actor) or not mcp_outings.tool_model_for(actor):
+            enabled.remove("mcp_outing")
     if "album_browse" in enabled:
         if not await asyncio.to_thread(get_album_store().has_unseen_photos, actor):
             enabled.remove("album_browse")
@@ -2202,6 +2211,27 @@ async def _latest_idle_event_ts() -> float:
     return float(row["created_at"]) if row else 0.0
 
 
+async def _run_mcp_outing(actor: str) -> dict:
+    """从「有空时可以自己去」的地方里挑一个，最近没去过的优先。"""
+    import mcp_outings
+    from routes.mcp_tools import go_out
+
+    places = [p["name"] for p in mcp_outings.places_for(actor)]
+    if not places:
+        raise RuntimeError("没有可以去的地方")
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT target_id FROM idle_events WHERE actor=? AND action='mcp_outing' ORDER BY created_at DESC LIMIT ?",
+            (actor, max(0, len(places) - 1)),
+        )
+        recent = {row[0] for row in await cur.fetchall()}
+    fresh = [p for p in places if p not in recent] or places
+    result = await go_out(actor, random.choice(fresh))
+    if not result.get("ok"):
+        raise RuntimeError(result.get("error") or "出门没成功")
+    return result
+
+
 async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int = 0) -> dict:
     selected = await _select_action(actor, manual=manual, idle_minutes=idle_minutes)
     action = selected["action"]
@@ -2244,6 +2274,8 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         elif action == "board_visit":
             from visitor_lounge.home_board import visit_friend_board
             result = await visit_friend_board(actor)
+        elif action == "mcp_outing":
+            result = await _run_mcp_outing(actor)
         else:
             result = {}
         outcome = str(getattr(result, "outcome", "finished"))
@@ -2276,6 +2308,7 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         "friend_visit": f"{actor_name}拜访了一位 AI 好友",
         "board_check": f"{actor_name}去看了朋友留言板",
         "board_visit": f"{actor_name}到朋友家留言板串门了",
+        "mcp_outing": f"{actor_name}出门逛了一趟",
     }
     title = action_titles.get(action, f"{actor_name}进行了一次自主行动")
     if outcome in {"round_limit", "failed", "no_direction", "tool_failed"}:
@@ -2361,6 +2394,10 @@ class IdleAutonomyManager:
         if lock.locked():
             return {"ok": False, "actor": actor, "error": "autonomy already running"}
         async with lock:
+            if _is_seat(actor):
+                from actors import get_actor
+                if not (get_actor(actor) or {}).get("enabled"):
+                    return {"ok": False, "actor": actor, "skipped": "seat disabled"}
             cfg = await get_actor_config(actor)
             if not cfg.get("enabled"):
                 return {"ok": False, "actor": actor, "skipped": "disabled"}
