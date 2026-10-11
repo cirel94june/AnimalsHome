@@ -193,8 +193,11 @@ def _unwrap_text(raw: str) -> str:
     return raw.strip() if isinstance(raw, str) else ""
 
 
-async def context_block(actor: str, message: str) -> str:
+async def context_block(actor: str, message: str, chat_id: str = "") -> str:
     """生成前调用：返回可直接拼进背景注入的文本块；不可用时返回空串。
+
+    chat_id：对话 / 房间编号，同一个对话保持不变。Hub 据此做「三轮内想起过的只提一句」
+    和「『后来呢』接上一个话题」（Hub PR #82）；不传也能用，只是没有这两项。
 
     这位 AI 在本服务里安静满 30 分钟（或从没聊过）时，算一段新对话，同时读交接卡放在最前面。
     """
@@ -204,12 +207,12 @@ async def context_block(actor: str, message: str) -> str:
     if not source_ai_for(actor, cfg):
         return ""
     if not is_new_session(last_activity(actor)):
-        return await _incremental_block(cfg, actor, message)
-    handoff, incremental = await asyncio.gather(handoff_block(actor), _incremental_block(cfg, actor, message))
+        return await _incremental_block(cfg, actor, message, chat_id)
+    handoff, incremental = await asyncio.gather(handoff_block(actor), _incremental_block(cfg, actor, message, chat_id))
     return "\n\n".join(block for block in (handoff, incremental) if block)
 
 
-async def _incremental_block(cfg: dict[str, Any], actor: str, message: str) -> str:
+async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat_id: str = "") -> str:
     source_ai = source_ai_for(actor, cfg)
     arguments = {
         "source_ai": source_ai,
@@ -217,6 +220,8 @@ async def _incremental_block(cfg: dict[str, Any], actor: str, message: str) -> s
         "mode": "incremental",
         "max_chars": int(cfg.get("context_max_chars") or 2500),
     }
+    if chat_id:
+        arguments["chat_id"] = str(chat_id)[:200]
     try:
         raw = await asyncio.wait_for(
             _call_tool(cfg, "context", arguments),

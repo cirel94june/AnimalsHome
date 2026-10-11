@@ -3788,7 +3788,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
     raw_text = ""
     try:
         async with asyncio.timeout(960):
-            messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit)
+            messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit, chat_id=room_id)
             stream_filter = KnownCommandStreamFilter()
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):

@@ -1391,7 +1391,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     debug_top6_data = []
     debug_recalled = []
 
-    hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content))
+    hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content, conv_id))
     digest_result = await instant_digest(actual_recent)
     recall_keywords = digest_result.get("keywords", [])
     recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
@@ -2052,7 +2052,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         inject_offset += 2
     else:
         # ── 正常模式：本地路由 + 完整 RAG 流程 ──
-        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content))
+        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content, conv_id))
         digest_result = await instant_digest(actual_recent)
         recall_keywords = digest_result.get("keywords", [])
         recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""
@@ -3565,7 +3565,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         inject_offset += 2
     else:
         # ── 正常模式：本地路由 + 完整 RAG 流程 ──
-        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", lounge_request_text))
+        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", lounge_request_text, conv_id))
         digest_result = await instant_digest(actual_recent)
         recall_keywords = digest_result.get("keywords", [])
         recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""

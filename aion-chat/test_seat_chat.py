@@ -70,11 +70,12 @@ def test_context_has_persona_user_info_and_hub_memory(seats, monkeypatch):
     ctx = AsyncMock(return_value="[交接卡]\n上次聊到一半的电影\n\n[跨端记忆]\n最近在搬家")
     monkeypatch.setattr(memory_hub_bridge, "context_block", ctx)
 
-    messages = asyncio.run(seat_chat.build_context("ai3", [{"sender": "user", "content": "我回来了", "created_at": 1}]))
+    messages = asyncio.run(seat_chat.build_context("ai3", [{"sender": "user", "content": "我回来了", "created_at": 1}],
+                                                  chat_id="cr_1_ai3"))
     joined = "\n".join(m["content"] for m in messages)
     assert "我是 Jasper" in joined and "喜欢猫" in joined
     assert "上次聊到一半的电影" in joined and "最近在搬家" in joined
-    ctx.assert_awaited_once_with("ai3", "我回来了")
+    ctx.assert_awaited_once_with("ai3", "我回来了", "cr_1_ai3")
     assert messages[-1]["role"] == "user" and messages[-1]["content"].startswith("我回来了")
 
 

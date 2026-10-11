@@ -77,14 +77,14 @@ def _history(actor_id: str, msgs: list[dict], limit: int) -> list[dict]:
     return out
 
 
-async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int = 30) -> list[dict]:
+async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int = 30, chat_id: str = "") -> list[dict]:
     actor = actors.get_actor(actor_id) or {"name": actor_id}
     wb = load_worldbook()
     user_name = (wb.get("user_name") or "").strip() or "用户"
     query_text = str((msgs[-1] if msgs else {}).get("content") or "")
 
     # 新对话开头的交接卡由 context_block 自己判断并附上
-    hub_task = asyncio.create_task(memory_hub_bridge.context_block(actor_id, query_text))
+    hub_task = asyncio.create_task(memory_hub_bridge.context_block(actor_id, query_text, chat_id))
 
     messages: list[dict] = [
         {"role": "user", "content": f"[你的角色设定]\n你是{actor['name']}。\n\n{_persona_text(actor_id)}"},

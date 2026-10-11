@@ -34,8 +34,12 @@ def fake_hub():
     hub = FastMCP("fake-memory-hub", stateless_http=True)
 
     @hub.tool()
-    def context(source_ai: str = "claude", message: str = "", mode: str = "full", max_chars: int = 3000) -> str:
-        CALLS.append(("context", {"source_ai": source_ai, "message": message, "mode": mode, "max_chars": max_chars}))
+    def context(source_ai: str = "claude", message: str = "", mode: str = "full", max_chars: int = 3000,
+                chat_id: str = "") -> str:
+        args = {"source_ai": source_ai, "message": message, "mode": mode, "max_chars": max_chars}
+        if chat_id:
+            args["chat_id"] = chat_id
+        CALLS.append(("context", args))
         if message in ("slow", "很慢"):
             time.sleep(2)
         if mode == "handoff":
@@ -103,6 +107,14 @@ def test_context_block_injects_hub_text_for_mapped_actor(fake_hub, isolated_conf
     assert "[跨端记忆]" in block  # 第一次聊也算新对话，前面还会附交接卡
     assert "lucien 在 TG 上陪小猫聊了蜡烛" in block
     assert ("context", {"source_ai": "lucien", "message": "今天怎么样", "mode": "incremental", "max_chars": 2500}) in CALLS
+
+
+def test_context_block_passes_chat_id_to_incremental_only(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude"})
+    asyncio.run(bridge.context_block("aion", "后来呢", "conv_123"))
+    modes = {c[1]["mode"]: c[1] for c in CALLS if c[0] == "context"}
+    assert modes["incremental"]["chat_id"] == "conv_123"
+    assert "chat_id" not in modes["handoff"]  # 交接卡跨对话读，不带对话编号
 
 
 def test_handoff_block_reads_own_card_and_hides_empty(fake_hub, isolated_config):
