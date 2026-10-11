@@ -13,11 +13,12 @@ AionsHome 原本跑在 Windows 电脑上。这里的脚本让它在一台小 VPS
    ```
 
    仓库设为私有后，下载脚本也需要 token：`curl -fsSL -H "Authorization: token 只读token" 同一个地址 | BRANCH=... GIT_TOKEN=只读token bash`。
-3. 中途会打印一个 Tailscale 登录链接，用手机打开、登录你的 Tailscale 账号。
-   如果之后提示要开启 HTTPS 证书，也点开它给的链接确认一次。
+3. 中途会打印一个 Tailscale 登录链接，用手机打开、登录你的 Tailscale 账号（链接几分钟就过期，过期了重新执行 `tailscale login` 拿新的）。
+   第一次还要开启 Serve：执行 `tailscale serve --bg --https=8443 8080`，它会给一个链接，打开点 Enable 后再执行一次。
+   用 8443 而不是 443：服务器上 443 常被 Caddy 占用，tailscale 抢不到会 TLS 握手失败。
 4. 结束时会打印两个地址：
-   - `https://<你的VPS>.<tailnet>.ts.net/`：AionsHome 本体（手机也装 Tailscale 并登录同一账号才能打开）；
-   - `https://<你的VPS>.<tailnet>.ts.net/ops/status`：运行状态页，看服务是否正常、内存、最近更新和日志。
+   - `https://<你的VPS>.<tailnet>.ts.net:8443/`：AionsHome 本体（手机也装 Tailscale 并登录同一账号才能打开）；
+   - `https://<你的VPS>.<tailnet>.ts.net:8443/ops/status`：运行状态页，看服务是否正常、内存、最近更新和日志。
 
 脚本做了什么：
 

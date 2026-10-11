@@ -8,6 +8,7 @@
 #   BRANCH       跟随的分支（默认 main）
 #   GIT_TOKEN    仓库设为私有时填一个只读 token
 #   PORT         本机监听端口（默认 8080，只监听 127.0.0.1）
+#   TS_HTTPS_PORT  Tailscale 私网 HTTPS 端口（默认 8443；本机 443 已被 Caddy 等占用时不能用 443）
 #   SWAP_MB      内存小于 2G 且没有 swap 时创建的 swap 大小（默认 2048）
 #   NO_TAILSCALE=1  跳过 Tailscale 安装
 #   MEMORY_HIGH / MEMORY_MAX  本服务的内存软/硬上限（默认 450M / 600M）。超过硬上限只会重启本服务，
@@ -20,6 +21,8 @@ REPO_URL="${REPO_URL:-https://github.com/cirel94june/AnimalsHome.git}"
 BRANCH="${BRANCH:-main}"
 GIT_TOKEN="${GIT_TOKEN:-}"
 PORT="${PORT:-8080}"
+# 本机 443 常被 Caddy/nginx 占着（tailscale 抢不到，会 TLS 握手失败），默认用 8443
+TS_HTTPS_PORT="${TS_HTTPS_PORT:-8443}"
 SWAP_MB="${SWAP_MB:-2048}"
 MEMORY_HIGH="${MEMORY_HIGH:-450M}"
 MEMORY_MAX="${MEMORY_MAX:-600M}"
@@ -202,7 +205,7 @@ if [ "${NO_TAILSCALE:-0}" != 1 ]; then
     echo "下面会打印一个登录链接，用手机打开并登录你的 Tailscale 账号："
     tailscale up
   fi
-  tailscale serve --bg "$PORT" >/dev/null 2>&1 || warn "tailscale serve 未成功，可稍后手动执行：tailscale serve --bg $PORT"
+  tailscale serve --bg --https="$TS_HTTPS_PORT" "$PORT" >/dev/null 2>&1 || warn "tailscale serve 未成功（第一次要先在 Tailscale 网页上开启 Serve/HTTPS），之后手动执行：tailscale serve --bg --https=$TS_HTTPS_PORT $PORT"
 fi
 
 for _ in $(seq 1 30); do
@@ -217,7 +220,7 @@ else
 fi
 if command -v tailscale >/dev/null && tailscale status >/dev/null 2>&1; then
   host=$(tailscale status --json 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)
-  [ -n "$host" ] && echo "手机装好 Tailscale 并登录同一账号后打开：https://$host/"
-  [ -n "$host" ] && echo "运行状态页：https://$host/ops/status"
+  [ -n "$host" ] && echo "手机装好 Tailscale 并登录同一账号后打开：https://$host:$TS_HTTPS_PORT/"
+  [ -n "$host" ] && echo "运行状态页：https://$host:$TS_HTTPS_PORT/ops/status"
 fi
 echo "Memory Hub 配置：编辑 $ENV_FILE 后执行 systemctl restart aionshome"
