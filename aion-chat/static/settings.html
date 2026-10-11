@@ -389,11 +389,31 @@
 }
 .add-model-row {
   margin-top: 8px;
+  display: flex;
+  gap: 8px;
 }
 .add-model-row .ghost-btn {
-  width: 100%;
+  flex: 1;
   min-height: 36px;
 }
+.model-picker-mask {
+  position: fixed; inset: 0; z-index: 3000; background: rgba(10,14,28,.45);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.model-picker {
+  width: 100%; max-width: 560px; max-height: 82dvh; display: flex; flex-direction: column; gap: 10px;
+  background: #1d2130; color: rgba(255,255,255,.88); border-radius: 18px 18px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+body[data-theme="light"] .model-picker { background: #f7f8fc; color: #1f2a44; }
+.model-picker h3 { margin: 0; font-size: 16px; }
+.model-picker .hint { font-size: 12px; opacity: .65; }
+.model-picker-list { overflow-y: auto; flex: 1; min-height: 120px; display: flex; flex-direction: column; gap: 2px; }
+.model-picker-list label { display: flex; align-items: center; gap: 10px; padding: 8px 4px; font-size: 14px; word-break: break-all; }
+.model-picker-list label.is-added { opacity: .5; }
+.model-picker-list input { width: 18px; height: 18px; flex: none; }
+.model-picker-foot { display: flex; gap: 8px; }
+.model-picker-foot .ghost-btn { flex: 1; min-height: 40px; }
 /* legacy fallback for older cached markup */
 .model-row .check-field {
   justify-content: center;
@@ -1116,7 +1136,8 @@ function renderCustomRoutes() {
               modelsHtml +
             '</div>' +
             '<div class="add-model-row">' +
-              '<button class="ghost-btn" type="button" onclick="addCustomModel(' + routeIndex + ')">＋ 添加模型</button>' +
+              '<button class="ghost-btn" type="button" onclick="fetchRouteModels(' + routeIndex + ', this)">⇣ 拉取模型列表</button>' +
+              '<button class="ghost-btn" type="button" onclick="addCustomModel(' + routeIndex + ')">＋ 手动添加</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -1164,6 +1185,87 @@ function removeCustomModel(routeIndex, modelIndex) {
   route.models.splice(modelIndex, 1);
   if (!route.models.length) route.models.push(newCustomModel());
   renderCustomRoutes();
+}
+
+function allCustomModelKeys() {
+  var keys = new Set();
+  customModelRoutes.forEach(function(route) {
+    (route.models || []).forEach(function(model) { if ((model.key || "").trim()) keys.add(model.key.trim()); });
+  });
+  return keys;
+}
+
+async function fetchRouteModels(routeIndex, button) {
+  var route = customModelRoutes[routeIndex];
+  if (!route) return;
+  var baseUrl = (route.base_url || "").trim();
+  if (!baseUrl) { alert("先填这条线路的 Base URL"); return; }
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在问中转站…";
+  try {
+    var res = await api("POST", "/api/custom-routes/models", { base_url: baseUrl, api_key: (route.api_key || "").trim() }, { timeoutMs: 30000 });
+    openModelPicker(routeIndex, res.models || []);
+  } catch (e) {
+    alert(e.message || "拉取失败");
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
+function openModelPicker(routeIndex, ids) {
+  var route = customModelRoutes[routeIndex];
+  var added = new Set((route.models || []).map(function(m) { return (m.model || "").trim(); }));
+  var mask = document.createElement("div");
+  mask.className = "model-picker-mask";
+  mask.innerHTML =
+    '<div class="model-picker" role="dialog" aria-label="选择模型">' +
+      '<h3>' + escHtml(route.name || ("线路 " + (routeIndex + 1))) + ' 有 ' + ids.length + ' 个模型</h3>' +
+      '<div class="hint">勾选要用的，加进这条线路。已经加过的是灰的。</div>' +
+      '<input class="form-input" type="search" placeholder="搜索，例如 claude / gemini / gpt">' +
+      '<div class="model-picker-list">' +
+        ids.map(function(id) {
+          var has = added.has(id);
+          return '<label class="' + (has ? 'is-added' : '') + '" data-id="' + escAttr(id.toLowerCase()) + '">' +
+            '<input type="checkbox" value="' + escAttr(id) + '"' + (has ? ' checked disabled' : '') + '>' +
+            '<span>' + escHtml(id) + '</span></label>';
+        }).join("") +
+      '</div>' +
+      '<div class="model-picker-foot">' +
+        '<button class="ghost-btn" type="button" data-act="cancel">取消</button>' +
+        '<button class="ghost-btn" type="button" data-act="add">加入所选</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(mask);
+  var close = function() { mask.remove(); };
+  mask.addEventListener("click", function(e) { if (e.target === mask) close(); });
+  mask.querySelector('[data-act="cancel"]').onclick = close;
+  mask.querySelector('input[type="search"]').oninput = function() {
+    var q = this.value.trim().toLowerCase();
+    mask.querySelectorAll(".model-picker-list label").forEach(function(row) {
+      row.style.display = !q || row.getAttribute("data-id").indexOf(q) >= 0 ? "" : "none";
+    });
+  };
+  mask.querySelector('[data-act="add"]').onclick = function() {
+    var picked = Array.prototype.map.call(mask.querySelectorAll(".model-picker-list input:checked:not(:disabled)"), function(c) { return c.value; });
+    if (!picked.length) { close(); return; }
+    // 去掉还空着的那一行，再按勾选顺序加入；显示名和别的线路撞了就加上线路名
+    route.models = (route.models || []).filter(function(m) { return (m.key || "").trim() || (m.model || "").trim(); });
+    var used = allCustomModelKeys();
+    var prefix = (route.name || "").trim() || ("线路" + (routeIndex + 1));
+    picked.forEach(function(id) {
+      var model = newCustomModel();
+      var key = used.has(id) ? prefix + "·" + id : id;
+      model.key = key;
+      model.model = id;
+      used.add(key);
+      route.models.push(model);
+    });
+    route.collapsed = false;
+    close();
+    renderCustomRoutes();
+  };
 }
 
 function collectCustomRoutes() {
