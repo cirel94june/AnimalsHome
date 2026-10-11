@@ -94,3 +94,12 @@ systemctl status aionshome                # 服务状态
 tail -n 100 /var/lib/aionshome/logs/app.log    # 日志
 systemctl start aionshome-update          # 立刻检查更新
 ```
+
+## 设置页「拉取模型列表」只连公网中转站
+
+服务器替页面去问中转站有哪些模型时，本机、内网、Tailscale 地址一律拒绝（防止被借去访问服务器内部）。
+要用同一台 VPS 上的中转站（比如本机的 CLIProxyAPI），在 `/etc/aionshome.env` 里写明主机和端口，逗号分隔，然后 `systemctl restart aionshome`：
+
+```bash
+AIONSHOME_RELAY_ALLOW=127.0.0.1:8317
+```

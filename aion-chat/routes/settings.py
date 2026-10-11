@@ -17,6 +17,7 @@ from tts import cleanup_tts_cache_dir, _request_tts_audio, EDGE_VOICES, MINIMAX_
 from ws import manager
 import elevenlabs_tts
 import antigravity_cli
+import relay_models
 from config import replace_antigravity_models
 from asr import ASR_FIELDS, normalize_asr_settings
 
@@ -52,83 +53,18 @@ async def list_models():
     return sorted(rows, key=lambda item: 1 if item["provider"] in RELAY_MODEL_PROVIDERS else 0)
 
 # ── 从中转站拉取模型列表 ────────────────────────────
-MODEL_LIST_MAX_BYTES = 2 * 1024 * 1024
-MODEL_LIST_MAX_ITEMS = 1000
-
-
 class RouteModelsQuery(BaseModel):
     base_url: str = ""
     api_key: str = ""
 
 
-def _models_url(base_url: str) -> str:
-    """和发请求时同一套补全规则：…/v1 → …/v1/models，否则补 /v1/models。"""
-    base = (base_url or "").strip().rstrip("/")
-    if base.endswith("/chat/completions"):
-        base = base[: -len("/chat/completions")].rstrip("/")
-    try:
-        parsed = httpx.URL(base)
-    except httpx.InvalidURL:
-        raise HTTPException(400, "Base URL 格式不对")
-    if parsed.scheme not in ("http", "https") or not parsed.host or parsed.userinfo or parsed.query or parsed.fragment:
-        raise HTTPException(400, "Base URL 须为 http(s) 地址，不能带账号、查询参数或 #")
-    return f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
-
-
-def _model_ids(payload) -> list[str]:
-    items = payload.get("data") if isinstance(payload, dict) else payload
-    if isinstance(payload, dict) and not isinstance(items, list):
-        items = payload.get("models")
-    ids: list[str] = []
-    for item in items if isinstance(items, list) else []:
-        model_id = item.get("id") or item.get("name") if isinstance(item, dict) else item
-        if isinstance(model_id, str):
-            model_id = model_id.strip()
-            if model_id.startswith("models/"):  # Gemini 风格
-                model_id = model_id[len("models/"):]
-            if model_id and len(model_id) <= 200 and model_id not in ids:
-                ids.append(model_id)
-        if len(ids) >= MODEL_LIST_MAX_ITEMS:
-            break
-    return sorted(ids, key=str.lower)
-
-
 @router.post("/api/custom-routes/models")
 async def fetch_route_models(body: RouteModelsQuery):
-    """问中转站有哪些模型（OpenAI 兼容的 GET /v1/models），给设置页勾选用。只读，不保存任何东西。"""
-    url = _models_url(body.base_url)
-    headers = {"Accept": "application/json"}
-    if body.api_key.strip():
-        headers["Authorization"] = f"Bearer {body.api_key.strip()}"
+    """问中转站有哪些模型，给设置页勾选用。只读，不保存；安全限制见 relay_models。"""
     try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
-            async with client.stream("GET", url, headers=headers) as r:
-                if r.status_code in (401, 403):
-                    raise HTTPException(400, "中转站拒绝了：Key 不对或没有权限")
-                if r.status_code == 404:
-                    raise HTTPException(400, "这个中转站不支持拉取模型列表，请手动添加模型")
-                if r.status_code >= 400:
-                    raise HTTPException(400, f"中转站返回错误（{r.status_code}）")
-                chunks, size = [], 0
-                async for chunk in r.aiter_bytes():
-                    size += len(chunk)
-                    if size > MODEL_LIST_MAX_BYTES:
-                        raise HTTPException(400, "中转站返回的内容太大")
-                    chunks.append(chunk)
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(400, "中转站 20 秒没有回应")
-    except httpx.HTTPError:
-        raise HTTPException(400, "连不上这个中转站，检查一下地址")
-    try:
-        payload = json.loads(b"".join(chunks))
-    except ValueError:
-        raise HTTPException(400, "中转站返回的不是模型列表，请手动添加模型")
-    ids = _model_ids(payload)
-    if not ids:
-        raise HTTPException(400, "中转站没有返回任何模型，请手动添加模型")
-    return {"models": ids}
+        return {"models": await relay_models.fetch(body.base_url, body.api_key)}
+    except relay_models.RelayModelsError as error:
+        raise HTTPException(400, str(error))
 
 
 # ── 设置 ──────────────────────────────────────────

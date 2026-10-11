@@ -86,7 +86,9 @@ async def geocode(client: httpx.AsyncClient, name: str) -> Place | None:
             if place:
                 return place
         except Exception as error:
-            log.info("[travel] 高德查地名失败：%s", error)
+            # 不记异常全文：高德的 Key 在请求地址里，HTTPStatusError 的文字会带上它
+            status = getattr(getattr(error, "response", None), "status_code", "")
+            log.info("[travel] 高德查地名失败：%s %s", type(error).__name__, status)
     try:
         place = await _geocode_osm(client, name)
         if place:

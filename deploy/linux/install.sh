@@ -124,7 +124,7 @@ User=$APP_USER
 WorkingDirectory=$APP_DIR/aion-chat
 EnvironmentFile=$ENV_FILE
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$APP_DIR/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port \${PORT}
+ExecStart=$APP_DIR/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port \${PORT} --proxy-headers --forwarded-allow-ips 127.0.0.1
 Restart=always
 RestartSec=5
 # 内存护栏：超过软上限先回收，超过硬上限只杀本服务（随后自动重启），保护同机的 Memory Hub

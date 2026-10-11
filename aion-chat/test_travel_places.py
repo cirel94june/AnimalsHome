@@ -209,3 +209,12 @@ def test_amap_is_skipped_for_non_chinese_names(net, monkeypatch):
     seen = _amap_net(monkeypatch)
     asyncio.run(tp.lookup("Dali"))
     assert not any("amap" in u for u in seen)
+
+
+def test_amap_failure_log_never_contains_the_key(net, monkeypatch, caplog):
+    import logging
+    _amap_net(monkeypatch, fail=True)
+    monkeypatch.setattr(tp, "_amap_key", lambda: "SECRET-AMAP-KEY")
+    with caplog.at_level(logging.INFO, logger="travel_places"):
+        asyncio.run(tp.lookup("大理"))
+    assert "高德查地名失败" in caplog.text and "SECRET-AMAP-KEY" not in caplog.text
