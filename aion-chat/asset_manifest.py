@@ -65,6 +65,10 @@ _DOCUMENT_ROUTES = {
     "/health": "health.html",
     "/hug": "hug.html",
     "/pet": "pet.html",
+    "/travel": "travel.html",
+    "/mcp-tools": "mcp-tools.html",
+    "/ai-cards": "ib/cards.html",
+    "/skin": "ib/workbench.html",
 }
 
 

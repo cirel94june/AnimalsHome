@@ -1,8 +1,9 @@
 """
 旅行用的真实资料：地名 → 位置、当地此刻的天气和时间、简介、真实照片。
 
-都是免费、不需要 Key 的公开服务：
-  Open-Meteo（地理编码、天气）、维基百科摘要、维基共享资源（照片）。
+都是免费的公开服务：
+  OpenStreetMap / Open-Meteo（地理编码、天气）、维基百科摘要、维基共享资源（照片）。
+  填了高德 Key（定位设置里那个）时，国内地名先用高德查，小地方、景点认得更准。
 哪一项拿不到就留空，提示词里不写，不让 AI 编。
 """
 
@@ -76,7 +77,16 @@ def _client() -> httpx.AsyncClient:
 
 
 async def geocode(client: httpx.AsyncClient, name: str) -> Place | None:
-    """先用 OpenStreetMap（中文和「国家+城市」这种写法认得好），查不到再用 Open-Meteo。"""
+    """有高德 Key 且是中文地名时先用高德；再用 OpenStreetMap（中文和「国家+城市」这种写法认得好），
+    都查不到再用 Open-Meteo。"""
+    key = _amap_key()
+    if key and _has_cjk(name):
+        try:
+            place = await _geocode_amap(client, name, key)
+            if place:
+                return place
+        except Exception as error:
+            log.info("[travel] 高德查地名失败：%s", error)
     try:
         place = await _geocode_osm(client, name)
         if place:
@@ -84,6 +94,53 @@ async def geocode(client: httpx.AsyncClient, name: str) -> Place | None:
     except Exception as error:
         log.info("[travel] OSM 查地名失败：%s", error)
     return await _geocode_open_meteo(client, name)
+
+
+def _amap_key() -> str:
+    try:
+        from location import load_location_config
+        return str(load_location_config().get("amap_key") or "").strip()
+    except Exception:
+        return ""
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text or "")
+
+
+def _amap_point(location: str) -> tuple[float, float] | None:
+    try:
+        lng, lat = (float(v) for v in str(location).split(",", 1))
+        return lng, lat
+    except (TypeError, ValueError):
+        return None
+
+
+async def _geocode_amap(client: httpx.AsyncClient, name: str, key: str) -> Place | None:
+    """高德只覆盖国内：先按地址查（城市、区县、街道），查不到再按地点名查（景点、商圈）。
+    坐标是高德的 GCJ-02，和真实位置差几百米，查天气够用。"""
+    r = await client.get("https://restapi.amap.com/v3/geocode/geo", params={"key": key, "address": name})
+    r.raise_for_status()
+    data = r.json()
+    for g in (data.get("geocodes") or []) if str(data.get("status")) == "1" else []:
+        point = _amap_point(g.get("location"))
+        if point:
+            region = g.get("province") or ""
+            city = g.get("city") if isinstance(g.get("city"), str) else ""
+            return Place(name=name, country="中国", region=city or region,
+                         latitude=point[1], longitude=point[0], timezone="Asia/Shanghai")
+    r = await client.get("https://restapi.amap.com/v3/place/text",
+                         params={"key": key, "keywords": name, "offset": 1, "page": 1})
+    r.raise_for_status()
+    data = r.json()
+    for poi in (data.get("pois") or []) if str(data.get("status")) == "1" else []:
+        point = _amap_point(poi.get("location"))
+        if point:
+            city = poi.get("cityname") if isinstance(poi.get("cityname"), str) else ""
+            return Place(name=poi.get("name") or name, country="中国",
+                         region=city or (poi.get("pname") if isinstance(poi.get("pname"), str) else ""),
+                         latitude=point[1], longitude=point[0], timezone="Asia/Shanghai")
+    return None
 
 
 async def _geocode_osm(client: httpx.AsyncClient, name: str) -> Place | None:

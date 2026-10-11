@@ -57,6 +57,7 @@ def _handler(*, weather=True, wiki=True, commons=True, found=True):
 @pytest.fixture
 def net(tmp_path, monkeypatch):
     monkeypatch.setattr(tp, "TRAVEL_PHOTO_DIR", tmp_path / "travel")
+    monkeypatch.setattr(tp, "_amap_key", lambda: "")  # 不读本机的定位设置
 
     def use(**kw):
         monkeypatch.setattr(tp, "_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(_handler(**kw))))
@@ -168,3 +169,43 @@ def test_unknown_place_is_an_error(net):
         asyncio.run(tp.lookup("不存在的地方"))
     with pytest.raises(ValueError):
         asyncio.run(tp.lookup("  "))
+
+
+def _amap_net(monkeypatch, *, geo=None, poi=None, fail=False):
+    seen = []
+
+    def handle(request):
+        seen.append(request.url.host + request.url.path)
+        if request.url.host == "restapi.amap.com":
+            if fail:
+                return httpx.Response(500)
+            if request.url.path == "/v3/geocode/geo":
+                return httpx.Response(200, json={"status": "1", "geocodes": geo or []})
+            return httpx.Response(200, json={"status": "1", "pois": poi or []})
+        if request.url.host == "nominatim.openstreetmap.org":
+            return httpx.Response(200, json=[{"name": "大理市", "lat": "25.6", "lon": "100.26",
+                                              "address": {"state": "云南省", "country": "中国"}}])
+        return _handler(weather=False, wiki=False, commons=False)(request)
+    monkeypatch.setattr(tp, "_amap_key", lambda: "k")
+    monkeypatch.setattr(tp, "_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+    return seen
+
+
+def test_amap_is_used_first_for_chinese_names_when_key_is_set(net, monkeypatch):
+    seen = _amap_net(monkeypatch, geo=[{"location": "100.22,25.59", "province": "云南省", "city": "大理白族自治州"}])
+    place = asyncio.run(tp.lookup("大理古城"))
+    assert place.label == "大理古城，大理白族自治州，中国" and place.longitude == 100.22
+    assert not any("nominatim" in u for u in seen)
+
+
+def test_amap_falls_back_to_place_search_then_osm(net, monkeypatch):
+    _amap_net(monkeypatch, poi=[{"name": "成都太古里", "location": "104.08,30.65", "cityname": "成都市", "pname": "四川省"}])
+    assert asyncio.run(tp.lookup("太古里")).label == "成都太古里，成都市，中国"
+    _amap_net(monkeypatch, fail=True)
+    assert asyncio.run(tp.lookup("大理")).label == "大理市，云南省，中国"  # 高德出错就照旧用 OSM
+
+
+def test_amap_is_skipped_for_non_chinese_names(net, monkeypatch):
+    seen = _amap_net(monkeypatch)
+    asyncio.run(tp.lookup("Dali"))
+    assert not any("amap" in u for u in seen)
