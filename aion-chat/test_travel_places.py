@@ -95,6 +95,37 @@ def test_lead_photo_uses_a_1280px_version():
     assert tp._sized_image({"originalimage": {"source": "https://o.example/a.png"}}) == "https://o.example/a.png"
 
 
+def _streaming_client(sent: list, *, chunks=20, ctype="image/jpeg", length=None):
+    async def body():
+        for _ in range(chunks):
+            sent.append(1)
+            yield b"0" * (1024 * 1024)
+
+    def handle(request):
+        headers = {"content-type": ctype}
+        if length is not None:
+            headers["content-length"] = str(length)
+        return httpx.Response(200, headers=headers, content=body())
+    return httpx.AsyncClient(transport=httpx.MockTransport(handle))
+
+
+def test_download_stops_as_soon_as_it_passes_the_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(tp, "TRAVEL_PHOTO_DIR", tmp_path / "travel")
+
+    async def run(**kw):
+        sent = []
+        async with _streaming_client(sent, **kw) as client:
+            with pytest.raises(ValueError):
+                await tp._download(client, "https://upload.example/big.jpg")
+        return len(sent)
+
+    assert asyncio.run(run()) <= 7  # 20MB 的流，读到 6MB 出头就停
+    assert asyncio.run(run(length=50 * 1024 * 1024)) == 0  # 声明的大小超限，一个字节都不读
+    assert asyncio.run(run(ctype="image/gif")) == 0  # 不支持的类型不读
+    assert asyncio.run(run(ctype="text/html")) == 0
+    assert not (tmp_path / "travel").exists() or not list((tmp_path / "travel").iterdir())
+
+
 def test_unknown_place_is_an_error(net):
     net(found=False)
     with pytest.raises(ValueError, match="没找到"):

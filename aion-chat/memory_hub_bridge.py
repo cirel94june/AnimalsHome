@@ -22,6 +22,7 @@ Memory Hub 桥接：让 AionsHome 里的 AI 与 TG bot / 官方客户端共用�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -264,9 +265,13 @@ def _outbox() -> sqlite3.Connection:
     )
     # 每条记录一个全局唯一编号：Hub 按编号去重，同一条重发几次都只记一次（Hub PR #81）。
     # 这一列加上之前入队的旧记录没有编号，仍按「不确定就不重发」处理。
-    if "event_id" not in {row[1] for row in conn.execute("PRAGMA table_info(outbox)")}:
-        conn.execute("ALTER TABLE outbox ADD COLUMN event_id TEXT NOT NULL DEFAULT ''")
-        conn.commit()
+    # 入队时就把「记到谁名下、哪个平台、发往哪个 Hub」固定下来（快照）：之后改 AI 名片上的身份或换 Hub，
+    # 已经排队的旧对话也不会跟着变成别人的。没有快照的旧记录不自动发送。
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(outbox)")}
+    for col in ("event_id", "source_ai", "platform", "hub"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+    conn.commit()
     # 每位 AI 最近一次聊天的时间（判断「新对话」、安静 30 分钟后写交接卡）和最近几轮私聊原话
     conn.execute(
         "CREATE TABLE IF NOT EXISTS activity ("
@@ -317,19 +322,32 @@ def last_activity(actor: str) -> float | None:
     return float(row[0]) if row and row[0] else None
 
 
+def hub_id(cfg: dict[str, Any]) -> str:
+    """当前 Hub 的标识（地址的指纹）：换了 Hub 的旧记录不会被发到新 Hub。"""
+    url = str(cfg.get("url") or "").strip().rstrip("/").lower()
+    return hashlib.sha1(url.encode()).hexdigest()[:16] if url else ""
+
+
 def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) -> int | None:
     global _dropped
+    cfg = load_config()
+    source_ai = source_ai_for(actor, cfg)
+    base_platform = str(cfg.get("platform") or "aionshome")
+    platform = base_platform if chat_type == "private" else f"{base_platform}-{chat_type}"
     with closing(_outbox()) as conn, conn:
         _record_activity(conn, actor, user_message, ai_response, chat_type)
+        if not source_ai:
+            return None  # 这位 AI 没接 Memory Hub
         (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
         if pending >= OUTBOX_MAX:
             _dropped += 1
             log.warning("[MemoryHub] 待补传队列已满（%s 条），这一轮没有记录", OUTBOX_MAX)
             return None
         cur = conn.execute(
-            "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id)"
-            " VALUES (?,?,?,?,?,0,?)",
-            (actor, user_message, ai_response, chat_type, time.time(), f"aionshome-{uuid.uuid4().hex}"),
+            "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
+            " source_ai, platform, hub) VALUES (?,?,?,?,?,0,?,?,?,?)",
+            (actor, user_message, ai_response, chat_type, time.time(), f"aionshome-{uuid.uuid4().hex}",
+             source_ai, platform, hub_id(cfg)),
         )
         return int(cur.lastrowid)
 
@@ -347,7 +365,7 @@ def recover_outbox() -> None:
 
 
 def outbox_stats() -> dict[str, int]:
-    stats = {"pending": 0, "uncertain": 0, "dropped": _dropped}
+    stats = {"pending": 0, "uncertain": 0, "held": 0, "dropped": _dropped}
     if OUTBOX_PATH.exists():
         with closing(_outbox()) as conn:
             for state, count in conn.execute("SELECT state, COUNT(*) FROM outbox GROUP BY state"):
@@ -355,24 +373,30 @@ def outbox_stats() -> dict[str, int]:
                     stats["pending"] += count
                 elif state == "uncertain":
                     stats["uncertain"] += count
+                elif state == "held":
+                    stats["held"] += count
     return stats
 
 
+def _hold_reason(cfg: dict[str, Any], row: sqlite3.Row) -> str:
+    """这条记录现在不能自动发的原因；空串 = 可以发。"""
+    if not row["source_ai"]:
+        return "旧记录没有身份快照，未自动发送"
+    if row["hub"] and row["hub"] != hub_id(cfg):
+        return "Memory Hub 地址换过了，旧记录未自动发到新 Hub"
+    return ""
+
+
 async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
-    """返回 ("ok"|"not_sent"|"uncertain", 错误说明)。"""
-    source_ai = source_ai_for(row["actor"], cfg)
-    if not source_ai:
-        return "ok", ""  # 角色已不再接 Memory Hub，丢弃
-    platform = str(cfg.get("platform") or "aionshome")
+    """只用入队时的快照发送。返回 ("ok"|"not_sent"|"uncertain", 错误说明)。"""
     arguments = {
         "action": "log",
-        "source_ai": source_ai,
+        "source_ai": row["source_ai"],
         "user_message": row["user_message"][:8000],
         "ai_response": row["ai_response"][:8000],
-        "platform": platform,
+        "platform": row["platform"],
     }
     if row["chat_type"] != "private":
-        arguments["platform"] = f"{platform}-{row['chat_type']}"
         # Hub 不传 chat_type 时按私聊记，群聊内容会进私人层
         arguments["chat_type"] = "private_group"
     if row["event_id"]:
@@ -409,9 +433,18 @@ async def drain_outbox() -> int:
                     "DELETE FROM outbox WHERE state='uncertain' AND created_at<?",
                     (time.time() - OUTBOX_UNCERTAIN_KEEP_SECONDS,),
                 )
+            with conn:
+                for row in conn.execute("SELECT * FROM outbox WHERE state='pending'").fetchall():
+                    reason = _hold_reason(cfg, row)
+                    if reason:
+                        conn.execute("UPDATE outbox SET state=?, last_error=? WHERE id=?",
+                                     ("uncertain" if not row["source_ai"] else "held", reason, row["id"]))
             while not _in_cooldown("write"):
+                # 同一身份严格按入队顺序：只有每个身份最早的那条（队头）到了重试时间才发，后面的不能插队
                 row = conn.execute(
-                    "SELECT * FROM outbox WHERE state='pending' AND next_at<=? ORDER BY id LIMIT 1", (time.time(),)
+                    "SELECT * FROM outbox o WHERE state='pending' AND next_at<=? AND id = ("
+                    " SELECT MIN(id) FROM outbox o2 WHERE o2.source_ai=o.source_ai AND o2.state IN ('pending','sending'))"
+                    " ORDER BY id LIMIT 1", (time.time(),)
                 ).fetchone()
                 if not row:
                     break

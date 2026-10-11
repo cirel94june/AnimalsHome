@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -182,16 +183,33 @@ def _strip_html(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text or "").strip()[:80]
 
 
+PHOTO_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+DOWNLOAD_SECONDS = 30.0
+
+
 async def _download(client: httpx.AsyncClient, url: str) -> str:
-    r = await client.get(url)
-    r.raise_for_status()
-    ctype = r.headers.get("content-type", "")
-    if not ctype.startswith("image/") or len(r.content) > MAX_PHOTO_BYTES:
-        raise ValueError("不是图片或太大")
-    ext = {"image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}.get(ctype.split(";")[0], ".jpg")
+    """边下边数：超过上限立刻停，不把整张大图先读进内存（服务器只有 1G）。"""
+    async def fetch() -> tuple[bytes, str]:
+        async with client.stream("GET", url) as r:
+            r.raise_for_status()
+            ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
+            if ctype not in PHOTO_TYPES:
+                raise ValueError(f"不是支持的图片类型：{ctype or '未知'}")
+            declared = r.headers.get("content-length")
+            if declared and declared.isdigit() and int(declared) > MAX_PHOTO_BYTES:
+                raise ValueError("图片太大")
+            chunks, total = [], 0
+            async for chunk in r.aiter_bytes():  # 已解压的字节，按解压后计数
+                total += len(chunk)
+                if total > MAX_PHOTO_BYTES:
+                    raise ValueError("图片太大")
+                chunks.append(chunk)
+            return b"".join(chunks), ctype
+
+    content, ctype = await asyncio.wait_for(fetch(), timeout=DOWNLOAD_SECONDS)
     TRAVEL_PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    name = hashlib.sha1(r.content).hexdigest()[:16] + ext
-    (TRAVEL_PHOTO_DIR / name).write_bytes(r.content)
+    name = hashlib.sha1(content).hexdigest()[:16] + PHOTO_TYPES[ctype]
+    (TRAVEL_PHOTO_DIR / name).write_bytes(content)
     return f"/uploads/travel/{name}"
 
 

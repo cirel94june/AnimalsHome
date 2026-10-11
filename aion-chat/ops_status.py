@@ -114,6 +114,8 @@ async def ops_status():
         hub_state += f" · 待补传 {stats['pending']} 条"
         if stats["uncertain"]:
             hub_state += f" · 不确定是否送达 {stats['uncertain']} 条（升级前的旧记录，没有编号，未自动重发）"
+        if stats.get("held"):
+            hub_state += f" · 换过 Hub 地址前排队的 {stats['held']} 条（未发到新 Hub）"
         if stats["dropped"]:
             hub_state += f" · 队列满丢弃 {stats['dropped']} 条"
     rows = [

@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from config import SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, resolve_model_transport_mode, model_supports_safe_live
+from config import SEAT_ROUTE_PREFIX, SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, resolve_model_transport_mode, model_supports_safe_live
 from tts import cleanup_tts_cache_dir, _request_tts_audio, EDGE_VOICES, MINIMAX_TTS_MODELS, MINIMAX_VOICE_PREFIX
 from ws import manager
 import elevenlabs_tts
@@ -270,7 +270,11 @@ async def update_settings(body: SettingsUpdate):
     if body.luckin_default_shop_keyword is not None:
         SETTINGS["luckin_default_shop_keyword"] = body.luckin_default_shop_keyword
     if body.custom_model_routes is not None:
-        SETTINGS["custom_model_routes"] = normalize_custom_model_routes(body.custom_model_routes)
+        # 每位 AI 自己的线路另存（seat_model_routes），这里不接收、也不会被覆盖
+        SETTINGS["custom_model_routes"] = [
+            r for r in normalize_custom_model_routes(body.custom_model_routes)
+            if not str(r.get("id") or "").startswith(SEAT_ROUTE_PREFIX)
+        ]
         refresh_custom_models()
     if body.model_transport_modes is not None:
         SETTINGS["model_transport_modes"] = normalize_model_transport_modes(body.model_transport_modes)

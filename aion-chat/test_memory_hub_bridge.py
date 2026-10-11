@@ -228,8 +228,8 @@ def test_capture_survives_hub_outage_and_is_resent_later(fake_hub, isolated_conf
     _write(isolated_config, enabled=True, url=fake_hub)
     bridge._cooldown_until["write"] = 0.0
     import sqlite3
-    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
-        conn.execute("UPDATE outbox SET next_at=0")
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:  # 测试里用换地址模拟「断线又恢复」，把记录指向恢复后的同一个 Hub
+        conn.execute("UPDATE outbox SET next_at=0, hub=?", (bridge.hub_id(bridge.load_config()),))
     assert asyncio.run(bridge.drain_outbox()) == 2
     assert [c[1]["user_message"] for c in CALLS if c[0] == "capture"] == ["我到家了", "第二句"]
     assert _rows() == []
@@ -304,6 +304,49 @@ def test_old_database_gets_event_id_column(isolated_config):
     assert rows[0] == ("旧", "") and rows[1][1].startswith("aionshome-")
 
 
+def test_queued_turn_keeps_the_identity_it_was_queued_with(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=f"http://127.0.0.1:{_free_port()}/mcp", actors={"ai3": "jasper"})
+    assert asyncio.run(bridge.capture_turn("ai3", "Jasper 听到的话", "嗯")) is False  # Hub 断线，排队
+    # 之后把 ai3 改绑成另一位，Hub 也恢复了
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"ai3": "someone_else"})
+    bridge._cooldown_until["write"] = 0.0
+    _make_due()
+    asyncio.run(bridge.drain_outbox())
+    assert _rows() == [("Jasper 听到的话", "held", 1)]  # 换了 Hub 地址：不发到新 Hub
+
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:  # 同一个 Hub 时：仍按入队时的身份发
+        conn.execute("UPDATE outbox SET state='pending', hub=?", (bridge.hub_id(bridge.load_config()),))
+    assert asyncio.run(bridge.drain_outbox()) == 1
+    sent = [c[1] for c in CALLS if c[0] == "capture"][-1]
+    assert sent["source_ai"] == "jasper" and sent["user_message"] == "Jasper 听到的话"
+
+
+def test_legacy_row_without_identity_is_not_guessed(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub)
+    bridge._enqueue("aion", "旧", "b", "private")
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET source_ai='', platform='', hub=''")
+    assert asyncio.run(bridge.drain_outbox()) == 0
+    assert _rows() == [("旧", "uncertain", 0)] and not [c for c in CALLS if c[0] == "capture"]
+
+
+def test_same_identity_is_sent_in_order(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude", "ai3": "jasper"})
+    bridge._enqueue("aion", "第一句", "b", "private")
+    bridge._enqueue("aion", "第二句", "b", "private")
+    bridge._enqueue("ai3", "别人的", "b", "private")
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:  # 第一句在等重试
+        conn.execute("UPDATE outbox SET next_at=? WHERE user_message='第一句'", (time.time() + 3600,))
+    assert asyncio.run(bridge.drain_outbox()) == 1
+    assert [c[1]["user_message"] for c in CALLS if c[0] == "capture"] == ["别人的"]  # 第二句不插队，别人不受影响
+    _make_due()
+    assert asyncio.run(bridge.drain_outbox()) == 2
+    assert [c[1]["user_message"] for c in CALLS if c[0] == "capture"][-2:] == ["第一句", "第二句"]
+
+
 def _make_due():
     import sqlite3
     with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
@@ -322,7 +365,7 @@ def test_outbox_is_bounded(isolated_config, monkeypatch):
     monkeypatch.setattr(bridge, "OUTBOX_MAX", 2)
     assert bridge._enqueue("aion", "1", "x", "private") and bridge._enqueue("aion", "2", "x", "private")
     assert bridge._enqueue("aion", "3", "x", "private") is None
-    assert bridge.outbox_stats() == {"pending": 2, "uncertain": 0, "dropped": 1}
+    assert bridge.outbox_stats() == {"pending": 2, "uncertain": 0, "held": 0, "dropped": 1}
 
 
 def test_chatroom_reply_pairs_with_its_own_trigger_message():

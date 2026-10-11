@@ -119,18 +119,23 @@ def display_name(actor_id: str) -> str:
 
 
 # ── 每位 AI 自己的 API（自己填地址 + Key + 模型）──
-# 存成设置里的一条自定义线路（id = seat_<座位>），这样聊天、聊天室、交接卡、做梦都能直接用；
-# Key 只存在服务器的设置里，接口只回答「有没有填」，不把 Key 发给浏览器。
+# 存在设置的 seat_model_routes 里（id = seat_<座位>），和设置页的 custom_model_routes 分开：
+# 设置页接口不返回它（Key 不会回到浏览器），设置页保存时也不会把它整份覆盖掉。
+# 运行时 refresh_custom_models 会把它并进模型列表，聊天、聊天室、交接卡、做梦都能直接用。
 
 def _seat_route_id(actor_id: str) -> str:
     return f"seat_{actor_id}"
 
 
+def _seat_routes() -> list[dict]:
+    from config import SEAT_ROUTES_KEY, SETTINGS
+    return [r for r in (SETTINGS.get(SEAT_ROUTES_KEY) or []) if isinstance(r, dict)]
+
+
 def _seat_route(actor_id: str) -> dict[str, Any] | None:
-    from config import SETTINGS, normalize_custom_model_routes
+    from config import normalize_custom_model_routes
     rid = _seat_route_id(actor_id)
-    return next((r for r in normalize_custom_model_routes(SETTINGS.get("custom_model_routes"))
-                 if r["id"] == rid), None)
+    return next((r for r in normalize_custom_model_routes(_seat_routes()) if r["id"] == rid), None)
 
 
 def api_summary(actor_id: str) -> dict[str, Any] | None:
@@ -142,15 +147,18 @@ def api_summary(actor_id: str) -> dict[str, Any] | None:
 
 
 def _write_routes(routes: list[dict]) -> None:
-    from config import SETTINGS, normalize_custom_model_routes, refresh_custom_models, save_settings
-    SETTINGS["custom_model_routes"] = normalize_custom_model_routes(routes)
+    from config import SEAT_ROUTES_KEY, SETTINGS, normalize_custom_model_routes, refresh_custom_models, save_settings
+    SETTINGS[SEAT_ROUTES_KEY] = normalize_custom_model_routes(routes)
     save_settings(SETTINGS)
     refresh_custom_models()
 
 
 def save_seat_api(actor_id: str, name: str, api: dict[str, Any]) -> str:
-    """保存这位 AI 自己的 API，返回对应的模型键。Key 留空表示沿用已保存的。"""
-    from config import BUILTIN_MODELS, MODELS, SETTINGS
+    """保存这位 AI 自己的 API，返回对应的模型键。
+
+    Key 留空 = 沿用已保存的；要清空 Key 传 clear_key=true（不会把空串当成「不修改」）。
+    """
+    from config import BUILTIN_MODELS, MODELS
     base_url = str(api.get("base_url") or "").strip().rstrip("/")
     model = str(api.get("model") or "").strip()
     api_key = str(api.get("api_key") or "").strip()
@@ -159,25 +167,26 @@ def save_seat_api(actor_id: str, name: str, api: dict[str, Any]) -> str:
     if not model or len(model) > 120:
         raise HTTPException(400, "请填写模型名")
     existing = _seat_route(actor_id)
-    if not api_key and existing:
+    if api.get("clear_key") is True:
+        api_key = ""
+    elif not api_key and existing:
         api_key = existing.get("api_key", "")
     key = f"{name}专属·{model}"[:100]
     if key in BUILTIN_MODELS:
         key = f"{actor_id}·{key}"
     rid = _seat_route_id(actor_id)
-    others = [r for r in (SETTINGS.get("custom_model_routes") or []) if not (isinstance(r, dict) and r.get("id") == rid)]
+    taken = MODELS.get(key)
+    if taken and taken.get("route_id") != rid:
+        raise HTTPException(400, "这个模型名和已有线路重名了，换一个写法试试")
+    others = [r for r in _seat_routes() if r.get("id") != rid]
     _write_routes(others + [{"id": rid, "name": f"{name} 专属线路", "base_url": base_url, "api_key": api_key,
                              "models": [{"key": key, "model": model}]}])
-    if (MODELS.get(key) or {}).get("route_id") != rid:
-        raise HTTPException(400, "这个模型名和已有线路重名了，换一个写法试试")
     return key
 
 
 def remove_seat_api(actor_id: str) -> None:
-    from config import SETTINGS
     rid = _seat_route_id(actor_id)
-    _write_routes([r for r in (SETTINGS.get("custom_model_routes") or [])
-                   if not (isinstance(r, dict) and r.get("id") == rid)])
+    _write_routes([r for r in _seat_routes() if r.get("id") != rid])
 
 
 def _sync_chatroom_model(actor_id: str, model: str) -> None:
@@ -225,6 +234,11 @@ async def api_update_actor(actor_id: str, request: Request):
             value = str(value or "").strip()
             if value and not re.fullmatch(r"/(public|skin-assets|static)/[\w\-./]+", value):
                 raise HTTPException(400, "头像地址不正确")
+            updates[key] = value
+        elif key == "color":
+            value = str(value or "").strip()
+            if value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+                raise HTTPException(400, "颜色格式应为 #RRGGBB")
             updates[key] = value
         elif key == "model":
             from config import MODELS

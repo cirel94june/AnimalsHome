@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -35,7 +36,8 @@ def client(tmp_path, monkeypatch):
 
 
 def _route(saved, rid):
-    return next((r for r in saved["custom_model_routes"] if r["id"] == rid), None)
+    routes = (saved.get("custom_model_routes") or []) + (saved.get("seat_model_routes") or [])
+    return next((r for r in routes if r["id"] == rid), None)
 
 
 def test_own_api_becomes_a_dedicated_route_and_key_is_never_returned(client):
@@ -59,6 +61,51 @@ def test_own_api_becomes_a_dedicated_route_and_key_is_never_returned(client):
     assert _route(saved, "seat_ai3")["api_key"] == "sk-secret"
     assert actors.get_actor("ai3")["model"] == "Jasper专属·gemini-3-flash"
     assert "Jasper专属·gemini-3-pro" not in config.MODELS
+
+
+def test_seat_key_never_in_settings_response_and_survives_stale_settings_page(client, monkeypatch):
+    import routes.settings as settings_routes
+    monkeypatch.setattr(settings_routes, "save_settings", lambda data: None)  # 不写真实设置文件
+    c, saved = client
+    c.put("/api/actors/ai3", json={"api": {"base_url": "https://gem.example/v1", "api_key": "audit-secret", "model": "g"}})
+    # 设置页 GET 不含座位线路和 Key
+    page = asyncio.run(settings_routes.get_settings())
+    assert "audit-secret" not in json.dumps(page, ensure_ascii=False)
+    assert all(not r["id"].startswith("seat_") for r in page["custom_model_routes"])
+    # 一个早就打开的旧设置页把整份线路发回来（还夹带一条伪造的 seat_ 线路）
+    stale = [{"id": "relay", "name": "原有线路", "base_url": "https://relay.example/v1", "api_key": "k0",
+              "models": [{"key": "原有模型", "model": "m0"}]},
+             {"id": "seat_ai3", "name": "伪造", "base_url": "https://evil.example/v1", "api_key": "x",
+              "models": [{"key": "伪造", "model": "x"}]}]
+    asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(custom_model_routes=stale)))
+    assert config.MODELS["Jasper专属·g"]["base_url"] == "https://gem.example/v1"  # 座位线路没被覆盖
+    assert "伪造" not in config.MODELS
+    assert actors.api_summary("ai3")["has_key"] is True
+
+
+def test_clear_key_is_explicit(client):
+    c, saved = client
+    c.put("/api/actors/ai3", json={"api": {"base_url": "https://gem.example/v1", "api_key": "k", "model": "g"}})
+    c.put("/api/actors/ai3", json={"api": {"base_url": "https://gem.example/v1", "api_key": "", "model": "g"}})
+    assert actors.api_summary("ai3")["has_key"] is True  # 留空 = 不改
+    c.put("/api/actors/ai3", json={"api": {"base_url": "https://gem.example/v1", "clear_key": True, "model": "g"}})
+    assert actors.api_summary("ai3")["has_key"] is False
+
+
+def test_old_mixed_storage_is_migrated(client, monkeypatch):
+    monkeypatch.setitem(config.SETTINGS, "custom_model_routes", config.SETTINGS["custom_model_routes"] + [
+        {"id": "seat_ai3", "name": "Jasper 专属线路", "base_url": "https://gem.example/v1", "api_key": "old",
+         "models": [{"key": "Jasper专属·old", "model": "old"}]}])
+    config.refresh_custom_models()
+    assert [r["id"] for r in config.SETTINGS["custom_model_routes"]] == ["relay"]
+    assert [r["id"] for r in config.SETTINGS["seat_model_routes"]] == ["seat_ai3"]
+    assert "Jasper专属·old" in config.MODELS
+
+
+def test_bad_color_rejected(client):
+    c, _ = client
+    assert c.put("/api/actors/ai3", json={"color": "red\" onclick=\"x"}).status_code == 400
+    assert c.put("/api/actors/ai3", json={"color": "#5ca88f"}).status_code == 200
 
 
 def test_clearing_own_api_removes_route_and_model(client):

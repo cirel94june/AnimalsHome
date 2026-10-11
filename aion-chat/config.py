@@ -405,14 +405,40 @@ def normalize_custom_model_routes(value) -> list[dict]:
     return routes
 
 
+# 每位 AI 在名片里自己填的线路（含 Key）单独存在这里：设置页的接口不返回、也不会整份覆盖它
+SEAT_ROUTES_KEY = "seat_model_routes"
+SEAT_ROUTE_PREFIX = "seat_"
+
+
+def _migrate_seat_routes() -> bool:
+    """旧版本把座位线路混在 custom_model_routes 里，挪到 seat_model_routes。返回是否有改动。"""
+    custom = SETTINGS.get("custom_model_routes")
+    if not isinstance(custom, list):
+        return False
+    moving = [r for r in custom if isinstance(r, dict) and str(r.get("id") or "").startswith(SEAT_ROUTE_PREFIX)]
+    if not moving:
+        return False
+    seats = [r for r in (SETTINGS.get(SEAT_ROUTES_KEY) or []) if isinstance(r, dict)]
+    have = {r.get("id") for r in seats}
+    SETTINGS[SEAT_ROUTES_KEY] = seats + [r for r in moving if r.get("id") not in have]
+    SETTINGS["custom_model_routes"] = [r for r in custom if r not in moving]
+    return True
+
+
 def refresh_custom_models() -> None:
-    """根据 settings.json 里的自定义线路刷新运行时模型列表。"""
+    """根据 settings.json 里的自定义线路（设置页的 + 每位 AI 自己填的）刷新运行时模型列表。"""
+    if _migrate_seat_routes():
+        save_settings(SETTINGS)
     MODELS.clear()
     MODELS.update(BUILTIN_MODELS)
     MODELS.update(ANTIGRAVITY_MODELS)
-    for route in normalize_custom_model_routes(SETTINGS.get("custom_model_routes")):
+    routes = normalize_custom_model_routes(SETTINGS.get("custom_model_routes"))
+    routes += normalize_custom_model_routes(SETTINGS.get(SEAT_ROUTES_KEY))
+    for route in routes:
         for item in route.get("models", []):
             key = item["key"]
+            if key in MODELS:  # 两边重名时先到先得，不互相覆盖
+                continue
             MODELS[key] = {
                 "provider": CUSTOM_OPENAI_PROVIDER,
                 "model": item["model"],

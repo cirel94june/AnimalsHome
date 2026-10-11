@@ -35,7 +35,22 @@
 
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
-  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  // 拼进 HTML（含属性值）前一律转义，引号也要转，否则能跳出 src="…" / title="…"
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  // 图片地址只接受本站路径或 https，其余一律不用
+  function safeUrl(u) {
+    u = String(u || '').trim();
+    return /^\/(?!\/)[\w\-./%?=&]*$/.test(u) || /^https:\/\/[\w\-.]+(:\d+)?\/[\w\-./%?=&~+]*$/.test(u) ? u : '';
+  }
+  // 颜色只接受 #十六进制 或本皮肤自己的 CSS 变量
+  function safeColor(c) {
+    c = String(c || '').trim();
+    return /^#[0-9a-f]{3,8}$/i.test(c) || /^var\(--ib-[\w-]+(,\s*var\(--ib-[\w-]+\))?\)$/.test(c) ? c : '';
+  }
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
   var MD = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
@@ -71,7 +86,7 @@
     var list = activeActors();
     return list.filter(function (a) { return a.id === desk.meet_actor; })[0] || list[0] || null;
   }
-  function avatarOf(a) { return (a && a.avatar) || '/public/AIIcon.png'; }
+  function avatarOf(a) { return safeUrl(a && a.avatar) || '/public/AIIcon.png'; }
 
   // ── Hero ──
   function heroHtml() {
@@ -80,7 +95,7 @@
       '<div class="ib-time"><span class="t-shadow" data-k="time2"></span><span class="t-face" data-k="time"></span></div>' +
       '</div>' +
       '<div class="ib-hero-side">' +
-      '<div class="ib-duo" data-act="cards"><img class="me" src="' + esc(people.user.avatar) + '" alt=""><img class="ai" src="' + esc(avatarOf(meetActor())) + '" alt=""></div>' +
+      '<div class="ib-duo" data-act="cards"><img class="me" src="' + esc(safeUrl(people.user.avatar) || '/public/UserIcon.png') + '" alt=""><img class="ai" src="' + esc(avatarOf(meetActor())) + '" alt=""></div>' +
       '<button class="ib-icon-btn" type="button" data-act="search" aria-label="搜索聊天记录">' +
       '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg></button>' +
       '</div>';
@@ -108,12 +123,12 @@
       left = Math.round((next - t0) / 86400000);
     }
     var dots = list.length > 1 ? '<div class="dots">' + list.map(function (x) {
-      return '<i' + (a && x.id === a.id ? ' class="on" style="background:' + esc(x.color) + '"' : '') + '></i>';
+      return '<i' + (a && x.id === a.id ? ' class="on" style="background:' + esc(safeColor(x.color)) + '"' : '') + '></i>';
     }).join('') + '</div>' : '';
     return '<span class="wgt-lab">Together</span>' +
       '<div class="names">' + esc(people.user.name) + '<i>&amp;</i>' + esc(a ? a.name : 'AI') + '</div>' +
       '<div class="tf">together for</div>' +
-      '<div class="days"><b' + (a ? ' style="color:' + esc(a.color) + '"' : '') + '>' + (days === null ? '—' : days) + '</b><span>' + (days === 1 ? 'Day' : 'Days') + '</span></div>' +
+      '<div class="days"><b' + (a ? ' style="color:' + esc(safeColor(a.color)) + '"' : '') + '>' + (days === null ? '—' : days) + '</b><span>' + (days === 1 ? 'Day' : 'Days') + '</span></div>' +
       '<div class="cd">' + (days === null ? '去 AI 名片里设置相遇的日子' : (left === 0 ? 'anniversary is today' : left + ' days to go')) + '</div>' + dots;
   }
 
@@ -125,7 +140,7 @@
   function notesHtml() {
     var n = notes && notes[0];
     var who = n ? actorById(n.author) : null;
-    var by = n ? '<span class="by"><img src="' + esc(n.author === 'user' ? people.user.avatar : avatarOf(who)) + '" alt="">' + esc(who ? who.name : n.author) + '</span>' : '';
+    var by = n ? '<span class="by"><img src="' + esc(n.author === 'user' ? (safeUrl(people.user.avatar) || '/public/UserIcon.png') : avatarOf(who)) + '" alt="">' + esc(who ? who.name : n.author) + '</span>' : '';
     return '<span class="wgt-lab">Notes</span><div class="note">' +
       '<div class="body' + (n ? '' : ' empty') + '">' + (n ? esc(n.text) : (notes === null ? '读取中…' : '点这里写点什么…')) + '</div>' +
       '<div class="date">' + by + (n ? fmtAt(n.at) : '') + '</div></div>';
@@ -184,7 +199,7 @@
     for (var d = 1; d <= days; d++) {
       var mk = byDay[d];
       cells += '<i class="' + (d === now.getDate() ? 'today' : '') + (mk ? ' mk' : '') + '"' +
-        (mk ? ' title="' + esc(mk.map(function (x) { return x.name; }).join('、')) + '" style="--mk:' + esc(mk[0].color) + '"' : '') + '>' + d + '</i>';
+        (mk ? ' title="' + esc(mk.map(function (x) { return x.name; }).join('、')) + '" style="--mk:' + esc(safeColor(mk[0].color)) + '"' : '') + '>' + d + '</i>';
     }
     var next = all.map(function (x) { return { x: x, n: daysUntil(x.md, now) }; }).sort(function (a, b) { return a.n - b.n; })[0];
     var foot = next ? (next.n === 0 ? '今天是' + esc(next.x.name) : '还有 ' + next.n + ' 天 · ' + esc(next.x.name)) : '在桌面设置里加上生日和纪念日';
@@ -197,7 +212,7 @@
     var t = tracks && tracks[0];
     if (!t) return '<span class="wgt-lab">Music</span><div class="mu-empty">' + (tracks === null ? '读取中…' : '去点歌台点一首') + '</div>';
     return '<span class="wgt-lab">Music</span><div class="mu">' +
-      (t.cover_url ? '<img class="mu-cover" src="' + esc(t.cover_url) + '" alt="" loading="lazy">' : '<div class="mu-cover none">♪</div>') +
+      (safeUrl(t.cover_url) ? '<img class="mu-cover" src="' + esc(safeUrl(t.cover_url)) + '" alt="" loading="lazy">' : '<div class="mu-cover none">♪</div>') +
       '<div class="mu-text"><b>' + esc(t.title) + '</b><span>' + esc(t.artist || '') + '</span></div></div>';
   }
 
@@ -207,13 +222,13 @@
     var list = photos || [];
     if (!list.length) return '<span class="wgt-lab">Photo</span><div class="ph-empty">' + (photos === null ? '读取中…' : '相册里还没有照片') + '</div>';
     if (!photoPick || list.indexOf(photoPick) === -1) photoPick = desk.photo_mode === 'random' ? list[Math.floor(Math.random() * list.length)] : list[0];
-    return '<div class="ph" style="background-image:url(&quot;' + esc(photoPick.thumbnail_url || photoPick.url) + '&quot;)"></div>' +
+    return '<div class="ph" style="background-image:url(&quot;' + esc(safeUrl(photoPick.thumbnail_url) || safeUrl(photoPick.url)) + '&quot;)"></div>' +
       '<span class="ph-cap">' + esc(photoPick.taken_on || '') + '</span>';
   }
 
   // ── 装饰：一句话 / 一张贴纸 ──
   function decoHtml() {
-    var t = desk.deco.text, img = desk.deco.image;
+    var t = desk.deco.text, img = safeUrl(desk.deco.image);
     if (!t && !img) return '<div class="deco-empty">长按桌面，在设置里写一句话或放一张贴纸</div>';
     return (img ? '<img class="deco-img" src="' + esc(img) + '" alt="">' : '') + (t ? '<div class="deco-text">' + esc(t) + '</div>' : '');
   }
@@ -265,7 +280,7 @@
   function openNote() {
     var list = (notes || []).slice(0, 12).map(function (n) {
       var who = actorById(n.author);
-      return '<div class="nrow"><img src="' + esc(n.author === 'user' ? people.user.avatar : avatarOf(who)) + '" alt="">' +
+      return '<div class="nrow"><img src="' + esc(n.author === 'user' ? (safeUrl(people.user.avatar) || '/public/UserIcon.png') : avatarOf(who)) + '" alt="">' +
         '<div class="nmain"><div class="nmeta"><b>' + esc(who ? who.name : n.author) + '</b><span>' + fmtAt(n.at) + '</span>' +
         '<button type="button" data-del="' + esc(n.id) + '" aria-label="删除">×</button></div><div class="ntext">' + esc(n.text) + '</div></div></div>';
     }).join('');
