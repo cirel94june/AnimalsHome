@@ -107,8 +107,29 @@ def source_ai_for(actor: str, cfg: dict[str, Any] | None = None) -> str:
         return {"aion": "claude", "connor": "lucien"}.get(actor, "")
 
 
+def _url_has_credentials(url: str) -> bool:
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return True
+    return parts.username is not None or parts.password is not None
+
+
+_warned_credentials = False
+
+
 def _is_active(cfg: dict[str, Any]) -> bool:
-    return bool(cfg.get("enabled") and str(cfg.get("url") or "").strip())
+    """Hub 地址里不接受「账号:密码@」：认证请放 token / headers。带了就当没配置，不连接。"""
+    global _warned_credentials
+    url = str(cfg.get("url") or "").strip()
+    if not (cfg.get("enabled") and url):
+        return False
+    if _url_has_credentials(url):
+        if not _warned_credentials:
+            log.warning("[MemoryHub] Hub 地址里不要写账号密码，请改用 token 设置；在改好之前不连接 Hub")
+            _warned_credentials = True
+        return False
+    return True
 
 
 def _headers(cfg: dict[str, Any]) -> dict[str, str]:
@@ -323,6 +344,15 @@ def last_activity(actor: str) -> float | None:
     return float(row[0]) if row and row[0] else None
 
 
+HUB_ID_VERSION = 2  # 指纹格式版本；记录里的 hub 形如 "2:xxxx"。没有前缀的是旧格式（见 _legacy_hub_id_v1）
+
+
+def _legacy_hub_id_v1(url: str) -> str:
+    """b78241e 时的旧指纹算法（整串小写、去结尾斜杠），只用于确认旧记录、不用于新记录。"""
+    url = str(url or "").strip().rstrip("/").lower()
+    return hashlib.sha1(url.encode()).hexdigest()[:16] if url else ""
+
+
 def hub_id(cfg: dict[str, Any]) -> str:
     """当前 Hub 的标识（地址的指纹）：换了 Hub 的旧记录不会被发到新 Hub。
 
@@ -333,8 +363,12 @@ def hub_id(cfg: dict[str, Any]) -> str:
     if not url:
         return ""
     parts = urlsplit(url)
-    normalized = urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, parts.fragment))
-    return hashlib.sha1(normalized.encode()).hexdigest()[:16]
+    # netloc 里只有主机名不区分大小写；端口原样（地址里的账号密码在 _is_active 就被拒绝了）
+    host = (parts.hostname or "") + (f":{parts.port}" if parts.port else "")
+    if "@" in parts.netloc:  # 不该走到这里；保险起见原样保留认证部分，不折叠大小写
+        host = parts.netloc.rsplit("@", 1)[0] + "@" + host
+    normalized = urlunsplit((parts.scheme.lower(), host, parts.path, parts.query, parts.fragment))
+    return f"{HUB_ID_VERSION}:" + hashlib.sha1(normalized.encode()).hexdigest()[:16]
 
 
 def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) -> int | None:
@@ -391,6 +425,9 @@ def _hold_reason(cfg: dict[str, Any], row: sqlite3.Row) -> str:
     """这条记录现在不能自动发的原因；空串 = 可以发。"""
     if not row["source_ai"]:
         return "旧记录没有身份快照，未自动发送"
+    if row["hub"] and not row["hub"].startswith(f"{HUB_ID_VERSION}:"):
+        return ("旧版本排队的记录（Hub 指纹格式升级了），不能确定原来的 Hub；"
+                "确认 Hub 地址后运行 `python memory_hub_bridge.py rebind-legacy <Hub 地址>` 恢复")
     if row["hub"] and row["hub"] != hub_id(cfg):
         return "Memory Hub 地址换过了，旧记录未自动发到新 Hub"
     return ""
@@ -446,6 +483,10 @@ async def drain_outbox() -> int:
             with conn:
                 # 之前因为「Hub 换了」暂扣的记录：现在配置的又是它们那个 Hub，就放回队列
                 conn.execute("UPDATE outbox SET state='pending', last_error='' WHERE state='held' AND hub=?", (current_hub,))
+                # 升级前就暂扣着的旧格式记录：补上能操作的恢复说明（状态页能看到）
+                for row in conn.execute("SELECT * FROM outbox WHERE state='held' AND hub!='' AND hub NOT LIKE ?",
+                                        (f"{HUB_ID_VERSION}:%",)).fetchall():
+                    conn.execute("UPDATE outbox SET last_error=? WHERE id=?", (_hold_reason(cfg, row), row["id"]))
                 for row in conn.execute("SELECT * FROM outbox WHERE state='pending'").fetchall():
                     reason = _hold_reason(cfg, row)
                     if reason:
@@ -574,3 +615,35 @@ def paired_user_message(history: list[dict], sender: str) -> str:
 def schedule_chatroom_capture(sender: str, user_message: str, ai_response: str, room_type: str) -> None:
     """聊天室里一次正常回复完成后调用（失败提示、主动消息、工具后续不要调用）。"""
     schedule_capture(sender, user_message, ai_response, chat_type="group" if room_type == "group" else "private")
+
+
+def rebind_legacy_held(confirmed_url: str) -> int:
+    """人工确认的恢复：把「旧格式指纹」的暂扣记录重新绑到 confirmed_url。
+
+    只有同时满足才恢复，其余继续暂扣（不猜）：
+      - confirmed_url 就是当前配置里的 Hub 地址（逐字相同）；
+      - 记录的旧指纹 == 用旧算法对 confirmed_url 算出的指纹。
+    恢复后保持原身份、原 event_id、原顺序。返回恢复的条数。
+    """
+    cfg = load_config()
+    url = str(confirmed_url or "").strip()
+    if not url or url != str(cfg.get("url") or "").strip():
+        raise ValueError("要确认的地址必须和当前配置里的 Memory Hub 地址完全一样")
+    if not _is_active(cfg):
+        raise ValueError("Memory Hub 现在没有启用，或者地址里带了账号密码")
+    if not OUTBOX_PATH.exists():
+        return 0
+    with closing(_outbox()) as conn, conn:
+        cur = conn.execute(
+            "UPDATE outbox SET hub=?, state='pending', next_at=0, last_error='' WHERE state='held' AND hub=?",
+            (hub_id(cfg), _legacy_hub_id_v1(url)),
+        )
+        return int(cur.rowcount or 0)
+
+
+if __name__ == "__main__":  # 运维用：python memory_hub_bridge.py rebind-legacy <Hub 地址>
+    import sys
+    if len(sys.argv) == 3 and sys.argv[1] == "rebind-legacy":
+        print(f"恢复了 {rebind_legacy_held(sys.argv[2])} 条旧记录")
+    else:
+        print("用法：python memory_hub_bridge.py rebind-legacy <Hub 地址>")

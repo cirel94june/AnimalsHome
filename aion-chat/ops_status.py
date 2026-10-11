@@ -115,7 +115,8 @@ async def ops_status():
         if stats["uncertain"]:
             hub_state += f" · 不确定是否送达 {stats['uncertain']} 条（升级前的旧记录，没有编号，未自动重发）"
         if stats.get("held"):
-            hub_state += f" · 换过 Hub 地址前排队的 {stats['held']} 条（未发到新 Hub）"
+            hub_state += (f" · 暂扣 {stats['held']} 条（换过 Hub 地址，或升级前的旧格式记录；"
+                          "确认地址后可用 rebind-legacy 恢复，见 deploy/README.md）")
         if stats["dropped"]:
             hub_state += f" · 队列满丢弃 {stats['dropped']} 条"
     rows = [

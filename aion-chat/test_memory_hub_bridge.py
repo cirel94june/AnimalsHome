@@ -370,6 +370,59 @@ def test_hub_fingerprint_keeps_path_case_and_slashes():
     assert fp("https://example.test/mcp/") != fp("https://example.test/mcp")
 
 
+def test_hub_url_with_credentials_is_refused(isolated_config, monkeypatch):
+    _write(isolated_config, enabled=True, url="https://Alice:Secret@hub.example/mcp")
+    assert bridge._is_active(bridge.load_config()) is False
+    assert asyncio.run(bridge.capture_turn("aion", "a", "b")) is False and CALLS == []
+    # 即使到了指纹这一步，大小写不同的账号也不会被当成同一个
+    assert bridge.hub_id({"url": "https://Alice:Secret@hub.example/mcp"}) != \
+        bridge.hub_id({"url": "https://alice:secret@hub.example/mcp"})
+    assert bridge.hub_id({"url": "https://HUB.example:8443/mcp"}) == bridge.hub_id({"url": "https://hub.example:8443/mcp"})
+
+
+@pytest.mark.parametrize("url", ["https://example.test/mcp/", "https://example.test/TenantA/mcp",
+                                 "https://example.test/mcp?key=AbC"])
+@pytest.mark.parametrize("start_state", ["pending", "sending", "held"])
+def test_old_fingerprint_rows_are_held_until_confirmed(isolated_config, monkeypatch, url, start_state):
+    import sqlite3
+    _write(isolated_config, enabled=True, url=url, actors={"aion": "claude"})
+    bridge._enqueue("aion", "升级前的一句", "b", "private")
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:  # 模拟 b78241e 写下的旧格式指纹
+        conn.execute("UPDATE outbox SET hub=?, state=?", (bridge._legacy_hub_id_v1(url), start_state))
+        (event_id,) = conn.execute("SELECT event_id FROM outbox").fetchone()
+    sent = []
+
+    async def fake_send(cfg, row):
+        sent.append((row["source_ai"], row["event_id"], row["user_message"]))
+        return "ok", ""
+
+    monkeypatch.setattr(bridge, "_send_capture", fake_send)
+    bridge.recover_outbox()
+    for _ in range(3):
+        asyncio.run(bridge.drain_outbox())
+    assert sent == [] and _rows() == [("升级前的一句", "held", 0)]  # 不猜目标
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        (reason,) = conn.execute("SELECT last_error FROM outbox").fetchone()
+    assert "rebind-legacy" in reason  # 给出可以操作的恢复办法
+
+    with pytest.raises(ValueError):
+        bridge.rebind_legacy_held("https://example.test/other")  # 不是当前地址：拒绝
+    assert bridge.rebind_legacy_held(url) == 1
+    asyncio.run(bridge.drain_outbox())
+    assert sent == [("claude", event_id, "升级前的一句")] and _rows() == []  # 原身份、原编号
+
+
+def test_legacy_rows_for_another_hub_stay_held(isolated_config, monkeypatch):
+    import sqlite3
+    _write(isolated_config, enabled=True, url="https://example.test/b/mcp", actors={"aion": "claude"})
+    bridge._enqueue("aion", "属于 A 的", "b", "private")
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET hub=?", (bridge._legacy_hub_id_v1("https://example.test/a/mcp"),))
+    assert bridge.rebind_legacy_held("https://example.test/b/mcp") == 0
+    asyncio.run(bridge.drain_outbox())
+    assert _rows() == [("属于 A 的", "held", 0)]
+
+
 def test_legacy_row_without_identity_is_not_guessed(fake_hub, isolated_config):
     _write(isolated_config, enabled=True, url=fake_hub)
     bridge._enqueue("aion", "旧", "b", "private")
