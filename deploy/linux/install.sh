@@ -33,6 +33,8 @@ warn() { printf '\033[1;33m[!] %s\033[0m\n' "$*"; }
 
 [ "$(id -u)" = 0 ] || { echo "请用 root 运行（网页控制台里先执行 sudo -i）"; exit 1; }
 command -v apt-get >/dev/null || { echo "目前只支持 Debian / Ubuntu"; exit 1; }
+# 应用用户读不了 /root：从那里启动时 uv 会因找不到可读的工作目录配置而失败
+cd /
 
 say "1/7 检查内存与 swap"
 mem_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
