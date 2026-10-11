@@ -22,6 +22,46 @@ MODES = ("solo", "duo", "family")
 WHERE = ("pick", "near", "named")
 
 
+# ── 同一时间只走一趟（手动和自主活动共用；在确认出发前就占住）──
+
+class TravelBusy(RuntimeError):
+    pass
+
+
+_busy = False
+
+
+def try_claim() -> bool:
+    """同步占位：返回 True 表示这次可以出发，结束时必须 release()。"""
+    global _busy
+    if _busy:
+        return False
+    _busy = True
+    return True
+
+
+def release() -> None:
+    global _busy
+    _busy = False
+
+
+def busy() -> bool:
+    return _busy
+
+
+def models_for(actors: list[str]) -> dict[str, str]:
+    """每位 AI 名片上自己的模型；有一位没有就整趟不去（不换成聊天窗口里的模型）。"""
+    import autonomy
+    from memory_hub_jobs import own_model
+    models = {}
+    for actor in actors:
+        model = own_model(actor)
+        if not model:
+            raise ValueError(f"{autonomy._actor_label(actor)} 还没在 AI 名片里选「TA 自己的模型」")
+        models[actor] = model
+    return models
+
+
 # ── 目的地 ──
 
 async def near_user_city() -> str:
@@ -51,7 +91,7 @@ async def _visited(actor: str, limit: int = 8) -> list[str]:
         return []
 
 
-async def choose_place(actor: str, *, where: str, named: str = "", wish: str = "") -> str:
+async def choose_place(actor: str, *, where: str, named: str = "", wish: str = "", model: str = "") -> str:
     """返回一个具体地名（给 travel_places.lookup 查）。"""
     import autonomy
     if where == "named":
@@ -67,11 +107,12 @@ async def choose_place(actor: str, *, where: str, named: str = "", wish: str = "
                 + (f"最近去过：{'、'.join(visited)}，这次换个地方。" if visited else ""))
     if wish:
         hint += f"\n小猫说：{wish}"
-    data = await autonomy._ask_actor_json(actor, (
+    raw = await _write(actor, (
         "[选旅行目的地]\n" + hint +
         "\n地名要具体到能在地图上查到（写「城市 + 地点」），不要虚构。只返回 JSON。\n"
         '格式：{"place":"地名","why":"一句话：为什么想去"}'
-    ))
+    ), model)
+    data = autonomy._json_extract(raw)
     place = str((data or {}).get("place") or "").strip()
     if not place:
         raise RuntimeError("没选出目的地")
@@ -85,12 +126,13 @@ def _user_name() -> str:
     return (load_worldbook().get("user_name") or "").strip() or "小猫"
 
 
-async def _write(actor: str, instruction: str) -> str:
-    """用 TA 自己的人设、最近的聊天和 TA 自己的模型写。"""
+async def _write(actor: str, instruction: str, model: str) -> str:
+    """用 TA 自己的人设、最近的聊天，和本趟固定下来的 TA 自己的模型写。"""
     import autonomy
+    from memory_hub_jobs import complete
     messages = await autonomy._actor_context(actor, 20)
     messages.append({"role": "user", "content": instruction})
-    text = (await autonomy._call_actor(actor, messages)).strip()
+    text = (await complete(model, messages)).strip()
     if not text:
         raise RuntimeError(f"{autonomy._actor_label(actor)} 没有写出内容")
     return text
@@ -162,22 +204,36 @@ def _photo_attachments(place: travel_places.Place) -> list[str]:
 
 # ── 三种玩法 ──
 
-async def trip(mode: str, actors: list[str], *, where: str = "pick", named: str = "", wish: str = "") -> dict[str, Any]:
-    import autonomy
+async def trip(mode: str, actors: list[str], *, where: str = "pick", named: str = "", wish: str = "",
+               claimed: bool = False) -> dict[str, Any]:
+    """走一趟。claimed=True 表示调用方已经 try_claim() 占好位（路由先占位再起后台任务）。"""
     if mode not in MODES or where not in WHERE:
+        if claimed:
+            release()
         raise ValueError("玩法或目的地选法不对")
+    if not claimed and not try_claim():
+        raise TravelBusy("大家还在路上，等这一趟回来再出发")
+    try:
+        return await _trip(mode, actors, where=where, named=named, wish=wish)
+    finally:
+        release()
+
+
+async def _trip(mode: str, actors: list[str], *, where: str, named: str, wish: str) -> dict[str, Any]:
+    import autonomy
     if not actors or (mode != "family" and len(actors) != 1) or (mode == "family" and len(actors) < 2):
         raise ValueError("独自和两人只能选一位 AI，全家至少两位")
+    models = models_for(actors)  # 出发前就固定每位的模型，没有就不去
     user = _user_name()
     wish = (wish or "").strip()[:200]
-    place_name = await choose_place(actors[0], where=where, named=named, wish=wish)
+    place_name = await choose_place(actors[0], where=where, named=named, wish=wish, model=models[actors[0]])
     place = await travel_places.lookup(place_name)
     session_id = f"travel_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
     if mode in ("solo", "duo"):
         actor = actors[0]
         prompt = (_solo_prompt if mode == "solo" else _duo_prompt)(place, user, wish)
-        text, title = _split_title(await _write(actor, prompt), place.name)
+        text, title = _split_title(await _write(actor, prompt, models[actor]), place.name)
         message = await autonomy._save_private_message(actor, text, _photo_attachments(place), force_private=True)
         tag = "独自旅行" if mode == "solo" else f"和{user}"
         card = await _keepsake(actor, session_id, title, text, place, ["旅行", tag, place.name])
@@ -199,7 +255,7 @@ async def trip(mode: str, actors: list[str], *, where: str = "pick", named: str 
     parts, cards = [], []
     for i, actor in enumerate(actors):
         position = "first" if i == 0 else ("last" if i == len(actors) - 1 else "middle")
-        text = await _write(actor, _family_prompt(place, user, wish, names, names[i], story, position))
+        text = await _write(actor, _family_prompt(place, user, wish, names, names[i], story, position), models[actor])
         story.append((names[i], text))
         await autonomy._save_autonomy_chatroom_message(
             room_id, actor, text, attachments=_photo_attachments(place) if i == 0 else [], auto_tts=False,

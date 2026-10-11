@@ -60,13 +60,22 @@ def _offered_actions(env, monkeypatch, actor):
 
 def test_seat_only_gets_seat_safe_actions_and_outing_when_possible(env, monkeypatch):
     offered = _offered_actions(env, monkeypatch, "ai3")
-    assert offered == {"rest", "private_chat", "web_roam", "wish_pool"}  # 还没有可去的地方
+    assert offered == {"rest", "private_chat", "web_roam", "wish_pool", "travel"}  # 还没有可去的 MCP 地方
 
     mcp_outings.save_tool({"name": "小论坛", "url": "https://forum.example/mcp", "autonomy": True})
     assert "mcp_outing" in _offered_actions(env, monkeypatch, "ai3")
 
     actors._save_raw({"seats": {"ai3": {"model": "", "persona_sections": {"identity_core": "Jasper"}}}})
-    assert "mcp_outing" not in _offered_actions(env, monkeypatch, "ai3")  # 没有能调用工具的模型就不提供
+    offered = _offered_actions(env, monkeypatch, "ai3")
+    assert "mcp_outing" not in offered and "travel" not in offered  # 没有自己的模型就不提供
+
+    import travel
+    actors._save_raw({"seats": {"ai3": {"model": "relay-gemini", "persona_sections": {"identity_core": "Jasper"}}}})
+    assert travel.try_claim()
+    try:
+        assert "travel" not in _offered_actions(env, monkeypatch, "ai3")  # 别人正在旅行时不提供
+    finally:
+        travel.release()
 
 
 def test_disabled_seat_never_wakes(env):

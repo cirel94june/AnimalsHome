@@ -152,6 +152,31 @@ def test_handoff_failure_retries_later(env, monkeypatch):
     assert CALLS[-1][1]["source_ai"] == "jasper" and CALLS[-1][1]["model"] == "gemini-x"
 
 
+def test_handoff_for_old_session_ignores_a_newer_one(env):
+    bridge._enqueue("aion", "旧的一段", "嗯", "private")
+    _age_activity(40 * 60)
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        (old_ts,) = conn.execute("SELECT last_private_ts FROM activity WHERE actor='aion'").fetchone()
+    bridge._enqueue("aion", "刚开始的新一段", "嗯", "private")  # 写旧卡之前，新的一段开始了
+    assert asyncio.run(jobs.write_handoff("aion", old_ts)) == "saved"
+    prompt = "\n".join(m["content"] for m in env[-1][1])
+    assert "旧的一段" in prompt and "刚开始的新一段" not in prompt
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        done, latest = conn.execute("SELECT handoff_done_ts, last_private_ts FROM activity WHERE actor='aion'").fetchone()
+    assert done == old_ts < latest  # 新的一段之后还会单独写
+
+
+def test_cancelled_dream_still_counts_as_an_attempt(env, monkeypatch):
+    async def cancelled(model_key, messages):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(jobs, "complete", cancelled)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(jobs.run_dreams(_night()))
+    state = json.loads(jobs.JOBS_PATH.read_text(encoding="utf-8"))["dream"]["aion"]
+    assert state["attempts"] == 1 and state["result"] == "cancelled"
+
+
 def test_old_sessions_are_not_backfilled(env):
     bridge._enqueue("aion", "很久以前", "嗯", "private")
     _age_activity(7 * 3600)

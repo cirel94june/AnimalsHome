@@ -640,6 +640,11 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
     ]
     if _is_seat(actor):
         enabled = [key for key in enabled if key in SEAT_ACTIONS]
+    if "travel" in enabled:
+        import travel
+        from memory_hub_jobs import own_model
+        if travel.busy() or not own_model(actor):
+            enabled.remove("travel")
     if "mcp_outing" in enabled:
         import mcp_outings
         if not mcp_outings.places_for(actor) or not mcp_outings.tool_model_for(actor):

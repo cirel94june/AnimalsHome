@@ -225,6 +225,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Memory Hub 的两个后台任务：先取消并等它们收尾（关连接），不受下面其他服务停止失败的影响
+        memory_hub_outbox_task.cancel()
+        memory_hub_jobs_task.cancel()
+        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, return_exceptions=True)
         await post_sentinel.stop()
         try:
             from billiards.service import get_service as billiards_service
@@ -238,8 +242,6 @@ async def lifespan(app: FastAPI):
             await ha_event_listener.stop()
             idle_autonomy_mgr.stop()
             await board_patrol_mgr.stop()
-            memory_hub_outbox_task.cancel()
-            memory_hub_jobs_task.cancel()
             connor_persona_evolution_task.cancel()
             persona_evolution_task.cancel()
             cr_digest_task.cancel()

@@ -162,6 +162,48 @@ def test_outing_without_tool_model_is_refused(env):
         asyncio.run(mcp_outings.run_outing("connor", "小论坛"))
 
 
+def test_half_open_connection_is_closed_when_setup_fails(env, monkeypatch):
+    from contextlib import asynccontextmanager
+    closed = []
+
+    @asynccontextmanager
+    async def transport():
+        try:
+            yield
+        finally:
+            closed.append("transport")
+
+    async def failing_open(self):
+        await self._stack.enter_async_context(transport())
+        raise RuntimeError("initialize 失败")
+
+    monkeypatch.setattr(mcp_outings._Session, "_open", failing_open)
+
+    async def run():
+        async with mcp_outings._Session({"name": "x", "url": "https://x.example/mcp"}):
+            pass
+
+    with pytest.raises(RuntimeError, match="initialize"):
+        asyncio.run(run())
+    assert closed == ["transport"]
+
+
+def test_summary_is_inside_the_overall_deadline(env, forum, monkeypatch):
+    monkeypatch.setattr(mcp_outings, "OUTING_TIMEOUT_SECONDS", 1.6)
+    monkeypatch.setattr(mcp_outings, "SUMMARY_RESERVE_SECONDS", 0.5)
+    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+
+    async def slow_summary(model_key, messages, tools):
+        if tools is None:
+            await asyncio.sleep(5)  # 回家总结拖太久
+        return {"content": "逛完了"}
+
+    started = time.monotonic()
+    with pytest.raises(asyncio.TimeoutError):
+        asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=slow_summary))
+    assert time.monotonic() - started < 3.5
+
+
 def test_test_connection_lists_tools(env, forum):
     mcp_outings.save_tool({"name": "小论坛", "url": forum})
     assert asyncio.run(mcp_outings.test_tool("小论坛")) == {"ok": True, "tools": ["read_posts", "reply"]}

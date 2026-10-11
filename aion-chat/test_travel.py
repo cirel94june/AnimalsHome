@@ -28,9 +28,13 @@ def env(monkeypatch):
         calls["lookup"].append(name)
         return PLACE
 
-    async def write(actor, messages):
+    async def write(model, messages):  # 假的 memory_hub_jobs.complete：模型名是 own-<座位>
+        actor = model.split("own-", 1)[1]
         prompt = messages[-1]["content"]
         calls["written"].append((actor, prompt))
+        if "[选旅行目的地]" in prompt:
+            calls["pick_prompt"] = prompt
+            return '{"place": "挪威 罗弗敦群岛", "why": "想看极光"}'
         if "[全家出游]" in prompt:
             return f"{actor} 写的一段"
         return f"{actor} 的游记正文\n标题：北边的风"
@@ -53,7 +57,9 @@ def env(monkeypatch):
 
     monkeypatch.setattr(travel_places, "lookup", lookup)
     monkeypatch.setattr(autonomy, "_actor_context", AsyncMock(return_value=[{"role": "user", "content": "人设"}]))
-    monkeypatch.setattr(autonomy, "_call_actor", write)
+    import memory_hub_jobs
+    monkeypatch.setattr(memory_hub_jobs, "complete", write)
+    monkeypatch.setattr(memory_hub_jobs, "own_model", lambda actor: f"own-{actor}")
     monkeypatch.setattr(autonomy, "_save_private_message", private)
     monkeypatch.setattr(autonomy, "_save_autonomy_chatroom_message", group)
     monkeypatch.setattr(autonomy, "_latest_group_room_id", AsyncMock(return_value="room-group"))
@@ -96,22 +102,47 @@ def test_family_trip_each_ai_writes_its_own_part_in_turn(env):
     assert {c["actor"] for c in env["cards"]} == {"aion", "connor", "ai3"}
 
 
-def test_ai_picks_destination_when_asked(env, monkeypatch):
-    ask = AsyncMock(return_value={"place": "挪威 罗弗敦群岛", "why": "想看极光"})
-    monkeypatch.setattr(autonomy, "_ask_actor_json", ask)
+def test_ai_picks_destination_with_its_own_model(env, monkeypatch):
     monkeypatch.setattr(travel, "_visited", AsyncMock(return_value=["京都"]))
     asyncio.run(travel.trip("solo", ["ai3"], where="pick"))
     assert env["lookup"] == ["挪威 罗弗敦群岛"]
-    assert "最近去过：京都" in ask.await_args.args[1]
+    assert "最近去过：京都" in env["pick_prompt"]
+    assert [a for a, _ in env["written"]] == ["ai3", "ai3"]  # 选地点和写游记都用 ai3 自己的模型
 
 
 def test_near_me_only_gives_the_city(env, monkeypatch):
-    ask = AsyncMock(return_value={"place": "杭州 西湖"})
-    monkeypatch.setattr(autonomy, "_ask_actor_json", ask)
     monkeypatch.setattr(travel, "near_user_city", AsyncMock(return_value="杭州市"))
     asyncio.run(travel.trip("solo", ["ai3"], where="near"))
-    prompt = ask.await_args.args[1]
-    assert "小猫现在在杭州市" in prompt
+    assert "小猫现在在杭州市" in env["pick_prompt"]
+
+
+def test_no_own_model_means_no_trip(env, monkeypatch):
+    import memory_hub_jobs
+    monkeypatch.setattr(memory_hub_jobs, "own_model", lambda actor: "" if actor == "connor" else f"own-{actor}")
+    with pytest.raises(ValueError, match="TA 自己的模型"):
+        asyncio.run(travel.trip("family", ["aion", "connor"], where="named", named="京都"))
+    assert env["written"] == [] and not travel.busy()
+
+
+def test_only_one_trip_at_a_time(env):
+    assert travel.try_claim()
+    try:
+        with pytest.raises(travel.TravelBusy):
+            asyncio.run(travel.trip("solo", ["ai3"], where="named", named="京都"))
+    finally:
+        travel.release()
+    asyncio.run(travel.trip("solo", ["ai3"], where="named", named="京都"))  # 放开后能出发
+    assert not travel.busy()  # 走完自动放开
+
+
+def test_claimed_trip_releases_even_on_failure(env, monkeypatch):
+    async def boom(name, **kw):
+        raise ValueError("没找到")
+    monkeypatch.setattr(travel_places, "lookup", boom)
+    assert travel.try_claim()
+    with pytest.raises(ValueError):
+        asyncio.run(travel.trip("solo", ["ai3"], where="named", named="x", claimed=True))
+    assert not travel.busy()
 
 
 def test_bad_combinations_are_rejected(env):

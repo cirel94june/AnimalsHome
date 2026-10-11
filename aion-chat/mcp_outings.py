@@ -30,6 +30,7 @@ TOOL_PROVIDERS = {"custom_openai", "siliconflow", "aipro"}
 MAX_ROUNDS = 8
 TOOL_TIMEOUT_SECONDS = 60
 OUTING_TIMEOUT_SECONDS = 600
+SUMMARY_RESERVE_SECONDS = 90
 SUMMARY_MAX_CHARS = 600
 NAME_PATTERN = re.compile(r"^[\w一-鿿 \-·.]{1,40}$")
 
@@ -205,6 +206,14 @@ class _Session:
         self.tools: list[dict] = []
 
     async def __aenter__(self):
+        try:
+            return await self._open()
+        except BaseException:
+            # 连到一半失败（握手、列工具、超时、取消）：已打开的连接当场关掉，不等垃圾回收
+            await self._stack.aclose()
+            raise
+
+    async def _open(self):
         from mcp import ClientSession
         url, headers = self.server["url"], dict(self.server.get("headers") or {})
         if self.server.get("type") == "sse":
@@ -316,16 +325,18 @@ async def run_outing(
                     actions.append(f"{name} → {text[:120]}")
                     messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": text[:4000]})
 
-    await asyncio.wait_for(loop(), timeout=OUTING_TIMEOUT_SECONDS)
+    # 整趟一个截止时间：逛（含连接和工具）+ 回家总结 一共不超过 OUTING_TIMEOUT_SECONDS，给总结预留一段
+    deadline = time.monotonic() + OUTING_TIMEOUT_SECONDS
+    await asyncio.wait_for(loop(), timeout=OUTING_TIMEOUT_SECONDS - SUMMARY_RESERVE_SECONDS)
     trail = "\n".join(f"- {a}" for a in actions[-12:]) or "（没有用工具）"
-    final = await model_call(model_key, messages[:1] + (persona_messages if persona_messages is not None else _persona_messages(actor)) + [{
+    final = await asyncio.wait_for(model_call(model_key, messages[:1] + (persona_messages if persona_messages is not None else _persona_messages(actor)) + [{
         "role": "user",
         "content": (
             f"你刚从「{server['name']}」回来。你在那里做了这些：\n{trail}\n\n"
             f"用你自己的口吻，像平时聊天一样跟{user_name}说说你刚才去了哪、做了什么、看到了什么有意思的。"
             f"不超过 {SUMMARY_MAX_CHARS // 2} 字，不要写成报告，不要编造没发生的事。"
         ),
-    }], None)
+    }], None), timeout=max(1.0, deadline - time.monotonic()))
     summary = (final.get("content") or "").strip()[:SUMMARY_MAX_CHARS]
     if not summary:
         raise RuntimeError("模型没有返回见闻")

@@ -112,6 +112,48 @@ def test_create_seat_room_once_per_seat(seats, monkeypatch):
     asyncio.run(run())
 
 
+def test_concurrent_first_open_creates_one_room(seats, monkeypatch):
+    async def run():
+        async with _memory_db() as get_db:
+            async with get_db() as db:
+                await db.execute("CREATE UNIQUE INDEX idx_chatroom_seat_room ON chatroom_rooms(actor) WHERE type='seat_1v1'")
+            with patch.object(chatroom_routes, "get_db", get_db), \
+                    patch.object(chatroom_routes.manager, "broadcast", new=AsyncMock()):
+                body = chatroom_routes.RoomCreate(title="", type="seat_1v1", actor="ai3")
+                a, b = await asyncio.gather(chatroom_routes.create_room(body), chatroom_routes.create_room(body))
+                async with get_db() as db:
+                    cur = await db.execute("SELECT COUNT(*) FROM chatroom_rooms WHERE type='seat_1v1'")
+                    (count,) = await cur.fetchone()
+                return a["id"], b["id"], count
+
+    a, b, count = asyncio.run(run())
+    assert a == b and count == 1
+
+
+def test_init_db_merges_duplicate_seat_rooms(tmp_path, monkeypatch):
+    import sqlite3
+    import database
+    path = tmp_path / "chat.db"
+    with sqlite3.connect(path) as conn:  # 旧库：没有唯一索引时并发留下了两个 Jasper 房间
+        conn.executescript("""
+            CREATE TABLE chatroom_rooms (id TEXT PRIMARY KEY, title TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'group',
+                aion_persona TEXT DEFAULT '', connor_persona TEXT DEFAULT '', context_minutes INTEGER DEFAULT 30,
+                ai_chat_rounds INTEGER DEFAULT 3, created_at REAL NOT NULL, updated_at REAL NOT NULL, actor TEXT DEFAULT '');
+            CREATE TABLE chatroom_messages (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, sender TEXT NOT NULL,
+                content TEXT NOT NULL, attachments TEXT DEFAULT '[]', created_at REAL NOT NULL);
+            INSERT INTO chatroom_rooms (id,title,type,actor,created_at,updated_at) VALUES
+                ('r1','和 Jasper 私聊','seat_1v1','ai3',1,1), ('r2','和 Jasper 私聊','seat_1v1','ai3',2,2);
+            INSERT INTO chatroom_messages (id,room_id,sender,content,created_at) VALUES ('m1','r1','user','a',1),('m2','r2','user','b',2);
+        """)
+    monkeypatch.setattr(database, "DB_PATH", path)
+    asyncio.run(database.init_db())
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT id FROM chatroom_rooms WHERE type='seat_1v1'").fetchall() == [("r1",)]
+        assert sorted(r[0] for r in conn.execute("SELECT room_id FROM chatroom_messages")) == ["r1", "r1"]
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("INSERT INTO chatroom_rooms (id,title,type,actor,created_at,updated_at) VALUES ('r3','x','seat_1v1','ai3',3,3)")
+
+
 def _stream(*chunks):
     async def gen(messages, model_key, meta=None, *args, **kwargs):
         assert model_key == "gemini-relay"

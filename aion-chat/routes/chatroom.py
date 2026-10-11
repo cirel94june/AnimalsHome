@@ -2912,6 +2912,7 @@ async def create_room(body: RoomCreate):
             raise HTTPException(status_code=400, detail="没有这个座位，或座位还没启用")
         if title in ("", "新聊天室"):
             title = f"和 {seat['name']} 私聊"
+        room_id = f"cr_{int(now * 1000)}_{actor}"
     elif body.type not in ("group", "connor_1v1"):
         raise HTTPException(status_code=400, detail="不认识的房间类型")
 
@@ -2923,12 +2924,21 @@ async def create_room(body: RoomCreate):
             existing = await cur.fetchone()
             if existing:
                 return await get_room(existing["id"])
-        await db.execute(
-            "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, actor, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (room_id, title, body.type, "", "", actor, now, now),
-        )
-        await db.commit()
+        try:
+            await db.execute(
+                "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, actor, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (room_id, title, body.type, "", "", actor, now, now),
+            )
+            await db.commit()
+        except aiosqlite.IntegrityError:
+            # 两个请求同时为同一座位建房间：唯一索引挡下后一个，返回先建好的那个
+            await db.rollback()
+            cur = await db.execute("SELECT id FROM chatroom_rooms WHERE type=? AND actor=?", (body.type, actor))
+            existing = await cur.fetchone()
+            if existing:
+                return await get_room(existing["id"])
+            raise
 
     room = {
         "id": room_id, "title": title, "type": body.type, "actor": actor,

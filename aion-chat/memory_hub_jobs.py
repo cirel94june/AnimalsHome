@@ -103,11 +103,12 @@ def _persona_messages(actor: str) -> list[dict]:
 
 # ── 交接卡 ──
 
-def _session_turns(conn: sqlite3.Connection, actor: str) -> list[sqlite3.Row]:
-    """最近一段私聊（相邻两轮间隔不到 30 分钟算同一段），最多取最后 12 轮。"""
+def _session_turns(conn: sqlite3.Connection, actor: str, until: float) -> list[sqlite3.Row]:
+    """以 until（这段对话最后一轮的时间）为终点往前的一段私聊（相邻两轮间隔不到 30 分钟算同一段），
+    最多取最后 12 轮。有了终点，写旧一段的卡时不会读到之后才开始的新一段。"""
     rows = conn.execute(
-        "SELECT user_message, ai_response, created_at FROM recent_turns WHERE actor=? ORDER BY id DESC",
-        (actor,),
+        "SELECT user_message, ai_response, created_at FROM recent_turns WHERE actor=? AND created_at<=? ORDER BY id DESC",
+        (actor, until),
     ).fetchall()
     session: list[sqlite3.Row] = []
     for row in rows:
@@ -151,7 +152,9 @@ def _due_handoffs(now: float) -> list[sqlite3.Row]:
 def _mark_handoff(actor: str, *, done_ts: float | None = None, retry_at: float | None = None) -> None:
     with closing(bridge._outbox()) as conn, conn:
         if done_ts is not None:
-            conn.execute("UPDATE activity SET handoff_done_ts=?, handoff_retry_at=0 WHERE actor=?", (done_ts, actor))
+            # 只往前推：写完旧一段时，不会把已经写过的更新的一段标回「没写」
+            conn.execute("UPDATE activity SET handoff_done_ts=MAX(handoff_done_ts, ?), handoff_retry_at=0 WHERE actor=?",
+                         (done_ts, actor))
         if retry_at is not None:
             conn.execute("UPDATE activity SET handoff_retry_at=? WHERE actor=?", (retry_at, actor))
 
@@ -170,7 +173,7 @@ async def write_handoff(actor: str, session_ts: float, *, now: float | None = No
         return "skipped:too_old"
     with closing(bridge._outbox()) as conn:
         conn.row_factory = sqlite3.Row
-        turns = _session_turns(conn, actor)
+        turns = _session_turns(conn, actor, session_ts)
     if not turns:
         _mark_handoff(actor, done_ts=session_ts)
         return "skipped:no_turns"
@@ -283,6 +286,16 @@ async def run_dreams(now: datetime | None = None) -> dict[str, str]:
     cfg = bridge.load_config()
     if not _dream_due(now) or not bridge._is_active(cfg) or bridge._in_cooldown("write"):
         return {}
+    if _dream_lock.locked():  # 同一时间只跑一轮，避免两轮同时读写状态文件
+        return {}
+    async with _dream_lock:
+        return await _run_dreams_locked(now, cfg)
+
+
+_dream_lock = asyncio.Lock()
+
+
+async def _run_dreams_locked(now: datetime, cfg: dict[str, Any]) -> dict[str, str]:
     day = now.strftime("%Y-%m-%d")
     jobs = _load_jobs()
     state = jobs.setdefault("dream", {})
@@ -294,18 +307,23 @@ async def run_dreams(now: datetime | None = None) -> dict[str, str]:
             continue
         if entry.get("day") != day:
             entry = {"day": day, "attempts": 0}
+        # 先把这次尝试记下来再调模型：中途取消或重启，这次也算用掉了，一晚不会超过 3 次
         entry["attempts"] += 1
         entry["last_try"] = time.time()
+        entry["result"] = "running"
+        state[actor] = entry
+        _save_jobs(jobs)
         try:
             result = await dream_for(actor)
             entry["done"] = True  # 做成、已做过、或按规则跳过：今晚都不再试
         except asyncio.CancelledError:
+            entry["result"] = "cancelled"
+            _save_jobs(jobs)
             raise
         except Exception as error:
             result = f"failed:{str(error)[:200]}"
             log.warning("[MemoryHub] %s 今晚的梦没做成：%s", actor, result)
         entry["result"] = result
-        state[actor] = entry
         _save_jobs(jobs)
         results[actor] = result
         _status["dream"][actor] = {"at": time.time(), "result": result}

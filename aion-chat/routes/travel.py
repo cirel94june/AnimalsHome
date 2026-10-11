@@ -13,7 +13,6 @@ from config import BASE_DIR
 
 router = APIRouter()
 log = logging.getLogger("travel_routes")
-_lock = asyncio.Lock()
 _tasks: set[asyncio.Task] = set()
 _last: dict = {}
 
@@ -33,7 +32,7 @@ async def api_options():
     from location import load_location_status
     status = load_location_status()
     return {"actors": _actors(), "has_location": bool(status.get("lat") and status.get("lng")),
-            "running": _lock.locked(), "last": _last}
+            "running": travel.busy(), "last": _last}
 
 
 @router.get("/api/travel/journals")
@@ -69,20 +68,24 @@ async def api_go(request: Request):
         raise HTTPException(400, "独自和两人只能选一位 AI，全家至少两位")
     if where == "named" and not str(body.get("named") or "").strip():
         raise HTTPException(400, "请写想去的地方")
-    if _lock.locked():
+    try:
+        travel.models_for(actor_ids)  # 有人没在名片里选模型就当场说，不进后台
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+    # 回复「出发了」之前就占好位：手动和自主旅行共用这一个占位，两个请求不会同时被接受
+    if not travel.try_claim():
         raise HTTPException(409, "大家还在路上，等这一趟回来再出发")
+    _last.clear()
+    _last.update({"status": "running", "mode": mode, "actors": actor_ids})
 
     async def run():
-        async with _lock:
-            _last.clear()
-            _last.update({"status": "running", "mode": mode, "actors": actor_ids})
-            try:
-                result = await travel.trip(mode, actor_ids, where=where, named=str(body.get("named") or ""),
-                                           wish=str(body.get("wish") or ""))
-                _last.update({"status": "done", "place": result["place"], "title": result["title"]})
-            except Exception as error:
-                log.warning("[travel] 这趟没成：%s", error)
-                _last.update({"status": "failed", "error": str(error)[:300]})
+        try:
+            result = await travel.trip(mode, actor_ids, where=where, named=str(body.get("named") or ""),
+                                       wish=str(body.get("wish") or ""), claimed=True)
+            _last.update({"status": "done", "place": result["place"], "title": result["title"]})
+        except Exception as error:
+            log.warning("[travel] 这趟没成：%s", error)
+            _last.update({"status": "failed", "error": str(error)[:300]})
 
     task = asyncio.create_task(run())
     _tasks.add(task)
