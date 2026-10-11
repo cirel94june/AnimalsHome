@@ -273,3 +273,47 @@ html[data-skin="ib"] .dock { padding: 12px 24px; margin-bottom: calc(18px + env(
 .ib-sheet .nmeta b { color: var(--ib-tx); font-weight: 600; font-size: 13px; }
 .ib-sheet .nmeta button { margin-left: auto; border: none; background: none; color: var(--ib-tx3); font-size: 18px; line-height: 1; padding: 0 2px; }
 .ib-sheet .ntext { margin-top: 2px; font-size: 14px; line-height: 1.7; color: var(--ib-tx2); white-space: pre-wrap; word-break: break-word; }
+
+/* ── 新挂件：月历 / 音乐 / 相片卡 / 装饰 ── */
+#ib-desk .ib-cal { padding: 30px 14px 12px; }
+#ib-desk .cal-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+#ib-desk .cal-head b { font-family: var(--ib-serif); font-weight: 600; font-size: 20px; color: var(--ib-tx); }
+#ib-desk .cal-head small { font-size: 11px; color: var(--ib-tx3); letter-spacing: 0.1em; }
+#ib-desk .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+#ib-desk .cal-grid i { font-style: normal; font-size: 11.5px; line-height: 22px; color: var(--ib-tx2); border-radius: 8px; position: relative; }
+#ib-desk .cal-grid i.wk { font-size: 10px; color: var(--ib-tx3); }
+#ib-desk .cal-grid i.today { background: var(--ib-acc); color: #fff; }
+#ib-desk .cal-grid i.mk::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--mk, var(--ib-acc)); }
+#ib-desk .cal-grid i.today.mk::after { background: #fff; }
+#ib-desk .cal-foot { margin-top: 6px; font-size: 11.5px; color: var(--ib-tx2); text-align: center; }
+#ib-desk .ib-music { padding: 30px 12px 12px; }
+#ib-desk .mu { display: flex; gap: 10px; align-items: center; }
+#ib-desk .mu-cover { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; flex: none; box-shadow: 0 4px 12px rgba(60, 90, 140, 0.2); }
+#ib-desk .mu-cover.none { display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.6); color: var(--ib-acc); font-size: 22px; }
+#ib-desk .mu-text { min-width: 0; }
+#ib-desk .mu-text b { display: block; font-size: 13.5px; font-weight: 600; color: var(--ib-tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ib-desk .mu-text span { display: block; font-size: 11.5px; color: var(--ib-tx3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ib-desk .mu-empty, #ib-desk .ph-empty, #ib-desk .deco-empty { padding: 34px 12px 14px; font-size: 12px; color: var(--ib-tx3); text-align: center; line-height: 1.6; }
+#ib-desk .ib-photo { min-height: 128px; }
+#ib-desk .ph { position: absolute; inset: 0; background: center / cover no-repeat; }
+#ib-desk .ph-cap { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); }
+#ib-desk .ib-deco { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 14px 12px; min-height: 96px; text-align: center; }
+#ib-desk .deco-img { max-width: 100%; max-height: 110px; object-fit: contain; }
+#ib-desk .deco-text { font-family: var(--ib-serif); font-size: 15px; line-height: 1.6; color: var(--ib-tx); white-space: pre-wrap; }
+
+/* 挂件材质：毛玻璃（默认）/ 实底 / 透明 */
+#ib-desk[data-material="solid"] .wgt { background: rgba(255, 255, 255, 0.92); backdrop-filter: none; -webkit-backdrop-filter: none; }
+#ib-desk[data-material="clear"] .wgt { background: transparent; border-color: rgba(255, 255, 255, 0.35); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+#ib-desk[data-material="clear"] .wgt::before { display: none; }
+#ib-desk .ib-photo.wgt { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* 桌面设置：拖动排序的行 */
+.ib-sheet .ib-wrow .grip { flex: none; cursor: grab; touch-action: none; padding: 0 6px; color: var(--ib-tx3); font-size: 18px; line-height: 1; }
+.ib-sheet .ib-wrow.dragging { opacity: 0.6; outline: 2px dashed var(--ib-acc); }
+.ib-sheet .ib-wrow .wname { flex: 1; }
+.ib-sheet .wrow button.size { width: auto; padding: 0 10px; }
+.ib-sheet .wrow > button[data-del-date] { width: auto; padding: 0 10px; }
+.ib-sheet .sec > .seg { display: inline-flex; margin-top: 6px; border: 1px solid var(--ib-line); border-radius: 10px; overflow: hidden; }
+.ib-sheet .sec > .seg button { border: 0; background: transparent; color: var(--ib-tx2); padding: 6px 12px; font-size: 13px; }
+.ib-sheet .sec > .seg button.on { background: var(--ib-acc); color: #fff; }
+.ib-sheet .btn.small { margin-top: 6px; }
