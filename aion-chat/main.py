@@ -397,6 +397,8 @@ app.include_router(actors_router)
 app.include_router(desk_notes_router)
 from routes.mcp_tools import router as mcp_tools_router
 app.include_router(mcp_tools_router)
+from routes.travel import router as travel_router
+app.include_router(travel_router)
 
 
 @app.get("/api/client-assets")

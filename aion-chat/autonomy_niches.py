@@ -10,7 +10,7 @@ import aiosqlite
 from database import get_db
 
 
-ACTORS = ("aion", "connor")
+ACTORS = ("aion", "connor", "ai3", "ai4", "ai5", "ai6")  # 六个座位都有自己的「空间」
 
 
 async def ensure_autonomy_niche_tables(db) -> None:

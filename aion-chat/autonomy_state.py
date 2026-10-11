@@ -38,6 +38,7 @@ ACTION_IDS = (
     "seeky_interaction",
     "wish_pool",
     "mcp_outing",
+    "travel",
 )
 DEFAULT_OFF_ACTIONS = {"album_browse", "board_check", "board_visit", "billiards_play"}
 

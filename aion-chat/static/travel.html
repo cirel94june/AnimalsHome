@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>旅行</title>
+<link rel="stylesheet" href="/static/ib/desk.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); min-height: 100dvh; -webkit-tap-highlight-color: transparent; }
+.page { max-width: 640px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom)); }
+.top-bar { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; }
+.top-bar h2 { font-weight: 400; flex: 1; }
+.panel { border-radius: 22px; padding: 16px; background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 8px 24px rgba(70, 100, 150, 0.1); }
+.label { font-size: 12.5px; color: var(--ib-tx2); margin: 14px 0 6px; }
+.label:first-child { margin-top: 0; }
+.seg { display: flex; border: 1px solid var(--ib-line, rgba(120,150,200,.3)); border-radius: 12px; overflow: hidden; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--ib-tx2); padding: 9px 4px; font-size: 13.5px; }
+.seg button.on { background: var(--ib-acc); color: #fff; }
+.seg button:disabled { opacity: 0.45; }
+.who { display: flex; flex-wrap: wrap; gap: 8px; }
+.who label { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px 6px 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(255, 255, 255, 0.9); font-size: 13.5px; }
+.who img { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.who input { accent-color: var(--ib-acc); }
+input[type="text"] { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(120, 150, 200, 0.3); background: rgba(255, 255, 255, 0.75); font-size: 14px; color: inherit; }
+.go { width: 100%; margin-top: 16px; padding: 12px 0; border: 0; border-radius: 14px; background: var(--ib-acc); color: #fff; font-size: 15px; }
+.go:disabled { opacity: 0.5; }
+.status { margin-top: 10px; font-size: 12.5px; color: var(--ib-tx2); min-height: 1.4em; line-height: 1.6; }
+h3.sec { font-weight: 400; font-size: 15px; margin: 22px 2px 10px; color: var(--ib-tx2); }
+.journal { border-radius: 20px; overflow: hidden; margin-bottom: 12px; background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.8); }
+.journal img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
+.journal .body { padding: 12px 14px 14px; }
+.journal .meta { font-size: 11.5px; color: var(--ib-tx3); }
+.journal h4 { font-size: 16px; font-weight: 600; margin: 4px 0 6px; }
+.journal p { font-size: 13.5px; line-height: 1.75; color: var(--ib-tx2); white-space: pre-wrap; max-height: 5.3em; overflow: hidden; }
+.journal.open p { max-height: none; }
+.empty { text-align: center; color: var(--ib-tx3); font-size: 13.5px; padding: 30px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top-bar"><button class="back-btn" onclick="location.href='/'">⬅</button><h2>旅行</h2></div>
+  <div class="panel">
+    <div class="label">怎么去</div>
+    <div class="seg" id="mode"><button data-v="solo" class="on">TA 独自去</button><button data-v="duo">我和 TA</button><button data-v="family">全家一起</button></div>
+    <div class="label" id="who-label">谁去</div>
+    <div class="who" id="who"></div>
+    <div class="label">去哪</div>
+    <div class="seg" id="where"><button data-v="pick" class="on">TA 自己挑</button><button data-v="near">我附近</button><button data-v="named">我点名</button></div>
+    <div id="named-box" style="display:none;margin-top:8px"><input type="text" id="named" maxlength="80" placeholder="例如 冰岛雷克雅未克、大理古城"></div>
+    <div class="label">想说一句（可以不填）</div>
+    <input type="text" id="wish" maxlength="200" placeholder="例如 想看看秋天的样子">
+    <button class="go" id="go">出发</button>
+    <div class="status" id="status"></div>
+  </div>
+  <h3 class="sec">游记</h3>
+  <div id="journals"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { mode: 'solo', where: 'pick', actors: [], hasLocation: false };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function api(path, opts) {
+    return fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {}))
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); });
+  }
+  function seg(id, key, after) {
+    $(id).addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b || b.disabled) return;
+      state[key] = b.dataset.v;
+      $(id).querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      if (after) after();
+    });
+  }
+  function renderWho() {
+    var multi = state.mode === 'family';
+    $('who-label').textContent = multi ? '谁去（至少选两位，按顺序轮流写）' : (state.mode === 'duo' ? '和谁去' : '谁去');
+    $('who').innerHTML = state.actors.map(function (a, i) {
+      return '<label><input type="' + (multi ? 'checkbox' : 'radio') + '" name="who" value="' + esc(a.id) + '"' +
+        (i === 0 || multi ? ' checked' : '') + '><img src="' + esc(a.avatar || '/public/AIIcon.png') + '" alt="">' + esc(a.name) + '</label>';
+    }).join('');
+  }
+  seg('mode', 'mode', renderWho);
+  seg('where', 'where', function () { $('named-box').style.display = state.where === 'named' ? '' : 'none'; });
+
+  function status(text) { $('status').textContent = text || ''; }
+  var polling = null;
+  function poll() {
+    api('/api/travel/options').then(function (o) {
+      var last = o.last || {};
+      if (o.running) { status('在路上了……回来后会在聊天里讲，也会出现在下面的游记里。'); $('go').disabled = true; return; }
+      $('go').disabled = false;
+      clearInterval(polling); polling = null;
+      if (last.status === 'done') { status('回来了：' + last.title + '（' + last.place + '）'); loadJournals(); }
+      else if (last.status === 'failed') status('这趟没去成：' + last.error);
+    });
+  }
+  $('go').onclick = function () {
+    var chosen = Array.prototype.map.call(document.querySelectorAll('#who input:checked'), function (c) { return c.value; });
+    var body = { mode: state.mode, actors: chosen, where: state.where, named: $('named').value.trim(), wish: $('wish').value.trim() };
+    api('/api/travel', { method: 'POST', body: JSON.stringify(body) }).then(function () {
+      status('出发了……'); $('go').disabled = true;
+      if (!polling) polling = setInterval(poll, 5000);
+    }).catch(function (e) { status(e.message); });
+  };
+
+  function loadJournals() {
+    api('/api/travel/journals').then(function (j) {
+      if (!j.journals.length) { $('journals').innerHTML = '<div class="empty">还没有游记。</div>'; return; }
+      $('journals').innerHTML = j.journals.map(function (c) {
+        var when = new Date(c.created_at * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return '<article class="journal">' + (c.photo_path ? '<img src="' + esc(c.photo_path) + '" alt="" loading="lazy">' : '') +
+          '<div class="body"><div class="meta">' + esc(c.actor_name) + ' · ' + esc(when) + ' · ' + esc((c.tags || []).slice(1).join(' · ')) + '</div>' +
+          '<h4>' + esc(c.title) + '</h4><p>' + esc(c.reflection) + '</p></div></article>';
+      }).join('');
+    });
+  }
+  $('journals').addEventListener('click', function (e) { var j = e.target.closest('.journal'); if (j) j.classList.toggle('open'); });
+
+  api('/api/travel/options').then(function (o) {
+    state.actors = o.actors; state.hasLocation = o.has_location;
+    var near = document.querySelector('#where [data-v="near"]');
+    near.disabled = !o.has_location; if (!o.has_location) near.title = '定位追踪里还没有你的位置';
+    renderWho();
+    if (o.running) { $('go').disabled = true; polling = setInterval(poll, 5000); poll(); }
+  });
+  loadJournals();
+})();
+</script>
+</body>
+</html>

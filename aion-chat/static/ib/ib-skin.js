@@ -55,7 +55,7 @@
     '/activity-logs': 'Activity', '/family-dynamics': 'Family', '/gift': 'Gifts',
     '/capabilities': 'Tools', '/app-supervision': 'Guard', '/memory-compression': 'Archive',
     '/heart-whispers': 'Whispers', '/english-corner': 'English', '/lounge-friends': 'Friends',
-    '/taobao': 'Shop', '/xhs-lite': 'Notes', '/playground': 'Playground', '/mcp-tools': 'MCP', '/repair': 'Repair',
+    '/taobao': 'Shop', '/xhs-lite': 'Notes', '/playground': 'Playground', '/mcp-tools': 'MCP', '/travel': 'Travel', '/repair': 'Repair',
     '/fund': 'Fund', '/ai-cards': 'Cards', '/wallpaper': 'Wallpaper', '/hug': 'Hug', '/toys': 'Whisper', '/tts-test': 'Voice'
   };
   var LEADING_EMOJI = /^[\s\u200d\ufe0f\u2190-\u21ff\u2300-\u27bf\u2b00-\u2bff\ud83c-\udbff\udc00-\udfff]+/;

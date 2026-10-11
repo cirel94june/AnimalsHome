@@ -367,6 +367,7 @@ html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="mome
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="music-station"] .icon-img img { content: url("/static/ib/icons/music-station.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="playground"] .icon-img img { content: url("/static/ib/icons/playground.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="mcp-tools"] .icon-img img { content: url("/static/ib/icons/mcp-tools.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="travel"] .icon-img img { content: url("/static/ib/icons/location.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="reading"] .icon-img img { content: url("/static/ib/icons/reading.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="repair"] .icon-img img { content: url("/static/ib/icons/repair.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="seeky"] .icon-img img { content: url("/static/ib/icons/seeky.svg"); }

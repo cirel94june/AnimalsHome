@@ -51,10 +51,11 @@ ACTION_DEFS = {
     "board_check": "自己去看看家里的朋友留言板，决定要不要接话",
     "board_visit": "到朋友家的留言板看看，决定要不要留句话或分享新鲜事",
     "mcp_outing": "出门去外面的一个地方逛逛（小猫接的论坛、游戏、网站等），回来讲讲见闻",
+    "travel": "去一个真实的地方旅行，看看那里的样子，写下感想和接下来想做的事",
 }
 
 # 座位 3～6 目前能做的事；其余活动按座位核对过再逐个放开（见 docs/功能盘点）
-SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing"}
+SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel"}
 
 SEEKY_ACTIONS = {
     "feed": "投喂",
@@ -2289,6 +2290,9 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
             result = await visit_friend_board(actor)
         elif action == "mcp_outing":
             result = await _run_mcp_outing(actor)
+        elif action == "travel":
+            from travel import trip
+            result = await trip("solo", [actor], where="pick")
         else:
             result = {}
         outcome = str(getattr(result, "outcome", "finished"))
@@ -2323,6 +2327,7 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         "board_check": f"{actor_name}去看了朋友留言板",
         "board_visit": f"{actor_name}到朋友家留言板串门了",
         "mcp_outing": f"{actor_name}出门逛了一趟",
+        "travel": f"{actor_name}出门旅行了",
     }
     title = action_titles.get(action, f"{actor_name}进行了一次自主行动")
     if outcome in {"round_limit", "failed", "no_direction", "tool_failed"}:
