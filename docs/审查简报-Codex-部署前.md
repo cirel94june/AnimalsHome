@@ -96,3 +96,20 @@ Hub 据此做「三轮内想起过的只提一句」和「后来呢」接续；�
 
 - IPv6：`hub_id` 对含冒号的主机名加回方括号，端口判断改 `is not None`；测试 `test_hub_id_keeps_ipv6_brackets_apart_from_port`。此前从未部署，不存在旧的 IPv6 指纹记录。
 - 3fe5325 中间格式：明确不支持恢复（该版本从未部署，不会有这类记录），已写进 `_legacy_hub_id_v1` 的说明。
+
+## 9. 2f4eb59 复审之后（已部署，请按「上线后复审」看）
+
+2f4eb59 复审结论「可以部署」，已于 2026-10-11 部署到 VPS（只经 tailscale serve 私网对外，HTTPS 端口 8443，因 443 被 Caddy 占用）。复审里仍列的两项 Medium：
+
+- IPv6 方括号：已在 3effcb6 修复（见第 8 节），复审时尚未包含。
+- 3fe5325 中间格式恢复：维持「不支持」，该版本从未部署，生产队列为空。
+
+此后的提交（请重点看带 ★ 的）：
+
+| 提交 | 内容 | 重点 |
+|---|---|---|
+| 7443dae / 05e2150 | 安装脚本先 `cd /`；Tailscale serve 改用 8443 | 安装脚本 |
+| 281ecc2 | 首页矮屏布局（纯 CSS） | — |
+| ★ 13d9315 | `AIONSHOME_TRUST_TAILSCALE=1` 时经 Tailscale 来的请求视为自己的设备，不弹陌生设备警报；三段原作者录音换成提示音 | `security_access.py` 信任判断：是否可被伪造来源绕过（服务只监听 127.0.0.1，客户端 IP 来自 tailscale serve 的 X-Forwarded-For） |
+| 86d11bf | 新页面进 App 离线清单；旅行查国内地名先用高德 | `asset_manifest.py`、`travel_places._geocode_amap` |
+| ★ 3709348 | 设置页「拉取模型列表」：服务器替页面 GET 中转站 `/v1/models` | `routes/settings.fetch_route_models`：服务端发请求（不跟随跳转、20 秒、2MB 上限、只返回模型 ID）；地址校验 |
