@@ -494,3 +494,10 @@ def test_chatroom_reply_pairs_with_its_own_trigger_message():
     assert bridge.paired_user_message(history + [{"sender": "ai3", "content": "Jasper"}], "aion") == "第二句"
     assert bridge.paired_user_message(history[:2], "aion") == ""
     assert bridge.paired_user_message([{"sender": "user", "content": "", "attachments": ["/a.png"]}], "aion") == "[图片]"
+
+
+def test_hub_id_keeps_ipv6_brackets_apart_from_port():
+    with_port = bridge.hub_id({"url": "http://[2001:db8::1]:8080/mcp"})
+    other_host = bridge.hub_id({"url": "http://[2001:db8::1:8080]/mcp"})
+    assert with_port != other_host
+    assert bridge.hub_id({"url": "http://[2001:DB8::1]:8080/mcp"}) == with_port

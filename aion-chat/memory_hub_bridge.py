@@ -353,7 +353,10 @@ HUB_ID_VERSION = 2  # 指纹格式版本；记录里的 hub 形如 "2:xxxx"。�
 
 
 def _legacy_hub_id_v1(url: str) -> str:
-    """b78241e 时的旧指纹算法（整串小写、去结尾斜杠），只用于确认旧记录、不用于新记录。"""
+    """b78241e 时的旧指纹算法（整串小写、去结尾斜杠），只用于确认旧记录、不用于新记录。
+
+    3fe5325 的中间格式（无版本前缀、保留大小写）不支持恢复：那个版本从未部署，不会有这类记录。
+    """
     url = str(url or "").strip().rstrip("/").lower()
     return hashlib.sha1(url.encode()).hexdigest()[:16] if url else ""
 
@@ -369,7 +372,11 @@ def hub_id(cfg: dict[str, Any]) -> str:
         return ""
     parts = urlsplit(url)
     # netloc 里只有主机名不区分大小写；端口原样（地址里的账号密码在 _is_active 就被拒绝了）
-    host = (parts.hostname or "") + (f":{parts.port}" if parts.port else "")
+    host = parts.hostname or ""
+    if ":" in host:  # IPv6 字面地址要加回方括号，否则和端口分不清
+        host = f"[{host}]"
+    if parts.port is not None:
+        host += f":{parts.port}"
     if "@" in parts.netloc:  # 不该走到这里；保险起见原样保留认证部分，不折叠大小写
         host = parts.netloc.rsplit("@", 1)[0] + "@" + host
     normalized = urlunsplit((parts.scheme.lower(), host, parts.path, parts.query, parts.fragment))
