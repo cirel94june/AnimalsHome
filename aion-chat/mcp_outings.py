@@ -289,7 +289,16 @@ async def run_outing(
     model_key = model_key or tool_model_for(actor)
     if not model_key:
         raise ValueError(f"{actors_registry.display_name(actor)} 没有能调用工具的模型（相遇卡里选一条 API 线路）")
-    model_call = model_call or call_model
+    from config import ensure_model_unchanged, model_snapshot
+    pinned = model_snapshot(model_key)  # 出门时固定线路：逛到一半被删/被改就停下，不换模型
+    if pinned is None:
+        raise ValueError(f"模型线路「{model_key}」不可用")
+    raw_call = model_call or call_model
+
+    async def model_call(key, messages, tools):
+        ensure_model_unchanged(key, pinned)
+        return await raw_call(key, messages, tools)
+
     user_name = (load_worldbook().get("user_name") or "").strip() or "她"
     actor_name = actors_registry.display_name(actor)
 

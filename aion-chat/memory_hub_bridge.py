@@ -30,6 +30,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import closing
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
 from config import DATA_DIR
@@ -323,9 +324,17 @@ def last_activity(actor: str) -> float | None:
 
 
 def hub_id(cfg: dict[str, Any]) -> str:
-    """当前 Hub 的标识（地址的指纹）：换了 Hub 的旧记录不会被发到新 Hub。"""
-    url = str(cfg.get("url") or "").strip().rstrip("/").lower()
-    return hashlib.sha1(url.encode()).hexdigest()[:16] if url else ""
+    """当前 Hub 的标识（地址的指纹）：换了 Hub 的旧记录不会被发到新 Hub。
+
+    只把协议和主机名转小写（它们本来不区分大小写）；路径、查询参数、结尾斜杠原样保留，
+    因为它们可能区分不同的 Hub。
+    """
+    url = str(cfg.get("url") or "").strip()
+    if not url:
+        return ""
+    parts = urlsplit(url)
+    normalized = urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, parts.fragment))
+    return hashlib.sha1(normalized.encode()).hexdigest()[:16]
 
 
 def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) -> int | None:
@@ -433,13 +442,19 @@ async def drain_outbox() -> int:
                     "DELETE FROM outbox WHERE state='uncertain' AND created_at<?",
                     (time.time() - OUTBOX_UNCERTAIN_KEEP_SECONDS,),
                 )
+            current_hub = hub_id(cfg)
             with conn:
+                # 之前因为「Hub 换了」暂扣的记录：现在配置的又是它们那个 Hub，就放回队列
+                conn.execute("UPDATE outbox SET state='pending', last_error='' WHERE state='held' AND hub=?", (current_hub,))
                 for row in conn.execute("SELECT * FROM outbox WHERE state='pending'").fetchall():
                     reason = _hold_reason(cfg, row)
                     if reason:
                         conn.execute("UPDATE outbox SET state=?, last_error=? WHERE id=?",
                                      ("uncertain" if not row["source_ai"] else "held", reason, row["id"]))
             while not _in_cooldown("write"):
+                # 补传途中改了 Hub 地址：这一批立刻停，下一批用新配置重新判断
+                if hub_id(load_config()) != current_hub:
+                    break
                 # 同一身份严格按入队顺序：只有每个身份最早的那条（队头）到了重试时间才发，后面的不能插队
                 row = conn.execute(
                     "SELECT * FROM outbox o WHERE state='pending' AND next_at<=? AND id = ("
@@ -448,6 +463,13 @@ async def drain_outbox() -> int:
                 ).fetchone()
                 if not row:
                     break
+                # 发之前逐条再核对一次：这一批开始后才入队的记录也要看它属于哪个 Hub
+                reason = _hold_reason(cfg, row)
+                if reason:
+                    with conn:
+                        conn.execute("UPDATE outbox SET state=?, last_error=? WHERE id=?",
+                                     ("uncertain" if not row["source_ai"] else "held", reason, row["id"]))
+                    continue
                 with conn:
                     conn.execute("UPDATE outbox SET state='sending' WHERE id=?", (row["id"],))
                 outcome, error = await _send_capture(cfg, row)

@@ -205,6 +205,21 @@ def test_seat_reply_without_model_explains_instead_of_switching(seats, monkeypat
     assert "选模型" in str(failure.await_args.args[2])
 
 
+def test_seat_reply_stops_if_line_removed_while_reading_memory(seats, monkeypatch):
+    async def context_then_delete(actor, msgs, **kw):  # 取 Hub 记忆的那几秒里线路被删
+        seat_chat.MODELS.pop("gemini-relay", None)
+        return [{"role": "user", "content": "x"}]
+
+    stream = MagicMock()
+    failure = AsyncMock()
+    monkeypatch.setattr(seat_chat, "build_context", context_then_delete)
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    monkeypatch.setattr(chatroom_routes, "_save_chatroom_reply_failure", failure)
+    asyncio.run(chatroom_routes._generate_seat_reply("room", {"actor": "ai3"}, [], asyncio.Queue(), 30))
+    stream.assert_not_called()  # 没有换成默认模型去生成
+    assert "改动" in failure.await_args.args[3]
+
+
 def test_seat_reply_provider_error_is_saved_as_seat_failure(seats, monkeypatch):
     async def broken(messages, model_key, meta=None, *a, **kw):
         meta["provider_error"] = "HTTP 401"

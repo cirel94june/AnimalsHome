@@ -73,14 +73,21 @@ def persona_for(actor: str) -> tuple[str, str]:
     return name, _compile_ai_persona_sections(actors.persona_sections(actor))
 
 
-async def complete(model_key: str, messages: list[dict]) -> str:
-    """用指定模型生成一段完整文本；模型报错时抛异常。"""
-    from ai_providers import CLI_STATUS_PREFIX, stream_ai
+async def complete(model_key: str, messages: list[dict], *, snapshot: dict | None = None) -> str:
+    """用指定模型生成一段完整文本；模型报错时抛异常。
 
+    snapshot：调用方早先固定下来的线路（config.model_snapshot）。不传就以此刻为准。
+    真正调用前核对线路没被删、没被改、也不会被悄悄换成默认模型，否则抛 config.ModelChanged。
+    """
+    from ai_providers import CLI_STATUS_PREFIX, stream_ai
+    from config import ensure_model_unchanged, model_snapshot
+
+    pinned = snapshot if snapshot is not None else model_snapshot(model_key)
     meta: dict[str, Any] = {}
     parts: list[str] = []
 
     async def run() -> None:
+        ensure_model_unchanged(model_key, pinned)  # 和下面真正发起调用之间没有 await
         async for chunk in stream_ai(messages, model_key, meta, include_device_context=False):
             if not isinstance(chunk, str) or chunk.startswith(CLI_STATUS_PREFIX):
                 continue

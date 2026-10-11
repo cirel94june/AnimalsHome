@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from config import SEAT_ROUTE_PREFIX, SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, resolve_model_transport_mode, model_supports_safe_live
+from config import SEAT_ROUTE_PREFIX, SEAT_ROUTES_KEY, route_model_keys, SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, resolve_model_transport_mode, model_supports_safe_live
 from tts import cleanup_tts_cache_dir, _request_tts_audio, EDGE_VOICES, MINIMAX_TTS_MODELS, MINIMAX_VOICE_PREFIX
 from ws import manager
 import elevenlabs_tts
@@ -179,6 +179,17 @@ async def get_settings():
 
 @router.put("/api/settings")
 async def update_settings(body: SettingsUpdate):
+    new_routes = None
+    if body.custom_model_routes is not None:
+        # 每位 AI 自己的线路另存（seat_model_routes），这里不接收、也不会被覆盖
+        new_routes = [
+            r for r in normalize_custom_model_routes(body.custom_model_routes)
+            if not str(r.get("id") or "").startswith(SEAT_ROUTE_PREFIX)
+        ]
+        clash = route_model_keys(new_routes) & route_model_keys(SETTINGS.get(SEAT_ROUTES_KEY))
+        if clash:
+            # 和某位 AI 自己的线路重名：在改任何设置之前就拒绝，整次保存都不写
+            raise HTTPException(400, f"模型名和 AI 名片里的专属线路重名了：{'、'.join(sorted(clash))}，换个名字再保存")
     asr_config = {}
     if any(getattr(body, field) is not None for field in ASR_FIELDS):
         proposed = {field: getattr(body, field) if getattr(body, field) is not None else SETTINGS.get(field) for field in ASR_FIELDS}
@@ -269,12 +280,8 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["luckin_default_latitude"] = body.luckin_default_latitude
     if body.luckin_default_shop_keyword is not None:
         SETTINGS["luckin_default_shop_keyword"] = body.luckin_default_shop_keyword
-    if body.custom_model_routes is not None:
-        # 每位 AI 自己的线路另存（seat_model_routes），这里不接收、也不会被覆盖
-        SETTINGS["custom_model_routes"] = [
-            r for r in normalize_custom_model_routes(body.custom_model_routes)
-            if not str(r.get("id") or "").startswith(SEAT_ROUTE_PREFIX)
-        ]
+    if new_routes is not None:
+        SETTINGS["custom_model_routes"] = new_routes
         refresh_custom_models()
     if body.model_transport_modes is not None:
         SETTINGS["model_transport_modes"] = normalize_model_transport_modes(body.model_transport_modes)

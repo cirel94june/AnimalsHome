@@ -158,7 +158,7 @@ def save_seat_api(actor_id: str, name: str, api: dict[str, Any]) -> str:
 
     Key 留空 = 沿用已保存的；要清空 Key 传 clear_key=true（不会把空串当成「不修改」）。
     """
-    from config import BUILTIN_MODELS, MODELS
+    from config import BUILTIN_MODELS, MODELS, SETTINGS, route_model_keys
     base_url = str(api.get("base_url") or "").strip().rstrip("/")
     model = str(api.get("model") or "").strip()
     api_key = str(api.get("api_key") or "").strip()
@@ -175,10 +175,11 @@ def save_seat_api(actor_id: str, name: str, api: dict[str, Any]) -> str:
     if key in BUILTIN_MODELS:
         key = f"{actor_id}·{key}"
     rid = _seat_route_id(actor_id)
-    taken = MODELS.get(key)
-    if taken and taken.get("route_id") != rid:
-        raise HTTPException(400, "这个模型名和已有线路重名了，换一个写法试试")
     others = [r for r in _seat_routes() if r.get("id") != rid]
+    taken = MODELS.get(key)
+    if (taken and taken.get("route_id") != rid) or key in route_model_keys(SETTINGS.get("custom_model_routes")) \
+            or key in route_model_keys(others):
+        raise HTTPException(400, "这个模型名和已有线路重名了，换一个写法试试")
     _write_routes(others + [{"id": rid, "name": f"{name} 专属线路", "base_url": base_url, "api_key": api_key,
                              "models": [{"key": key, "model": model}]}])
     return key

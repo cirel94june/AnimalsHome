@@ -13,6 +13,9 @@ import autonomy
 import autonomy_niches
 import travel
 import travel_places
+import memory_hub_jobs as _mhj
+
+REAL_COMPLETE = _mhj.complete  # 夹具会把 complete 换成假的，先留住真的
 
 PLACE = travel_places.Place(name="雷克雅未克", country="冰岛", weather="阴，7°C", local_time="10月10日 17:02",
                             intro="冰岛的首都。", wiki_url="https://zh.wikipedia.org/wiki/x",
@@ -28,7 +31,11 @@ def env(monkeypatch):
         calls["lookup"].append(name)
         return PLACE
 
-    async def write(model, messages):  # 假的 memory_hub_jobs.complete：模型名是 own-<座位>
+    import config
+    for a in ("aion", "connor", "ai3"):
+        monkeypatch.setitem(config.MODELS, f"own-{a}", {"provider": "custom_openai", "model": a, "route_id": f"seat_{a}"})
+
+    async def write(model, messages, **kw):  # 假的 memory_hub_jobs.complete：模型名是 own-<座位>
         actor = model.split("own-", 1)[1]
         prompt = messages[-1]["content"]
         calls["written"].append((actor, prompt))
@@ -122,6 +129,54 @@ def test_no_own_model_means_no_trip(env, monkeypatch):
     with pytest.raises(ValueError, match="TA 自己的模型"):
         asyncio.run(travel.trip("family", ["aion", "connor"], where="named", named="京都"))
     assert env["written"] == [] and not travel.busy()
+
+
+def test_line_deleted_mid_trip_stops_instead_of_falling_back(env, monkeypatch):
+    """不打桩 complete：走真实的核对 + stream_ai 入口，确认没有任何模型被调用。"""
+    import ai_providers
+    import config
+    import memory_hub_jobs
+    monkeypatch.setattr(memory_hub_jobs, "complete", REAL_COMPLETE)
+    called = []
+
+    async def fake_stream(messages, model_key, meta=None, *a, **kw):
+        called.append(model_key)
+        yield "不该出现的游记"
+
+    monkeypatch.setattr(ai_providers, "stream_ai", fake_stream)
+
+    async def lookup_then_delete(name, **kw):  # 查地点的时候，线路被删了
+        config.MODELS.pop("own-ai3", None)
+        return PLACE
+
+    monkeypatch.setattr(travel_places, "lookup", lookup_then_delete)
+    with pytest.raises(config.ModelChanged):
+        asyncio.run(travel.trip("solo", ["ai3"], where="named", named="京都"))
+    assert called == [] and env["private"] == [] and not travel.busy()
+
+
+def test_line_swapped_under_same_name_also_stops(env, monkeypatch):
+    import ai_providers
+    import config
+    import memory_hub_jobs
+    monkeypatch.setattr(memory_hub_jobs, "complete", REAL_COMPLETE)
+    called = []
+
+    async def fake_stream(messages, model_key, meta=None, *a, **kw):
+        called.append(model_key)
+        yield "x"
+
+    monkeypatch.setattr(ai_providers, "stream_ai", fake_stream)
+
+    async def lookup_then_swap(name, **kw):  # 同名但换了线路（地址变了）
+        config.MODELS["own-ai3"] = {"provider": "custom_openai", "model": "ai3", "route_id": "ordinary",
+                                    "base_url": "https://other.example/v1"}
+        return PLACE
+
+    monkeypatch.setattr(travel_places, "lookup", lookup_then_swap)
+    with pytest.raises(config.ModelChanged):
+        asyncio.run(travel.trip("solo", ["ai3"], where="named", named="京都"))
+    assert called == []
 
 
 def test_only_one_trip_at_a_time(env):

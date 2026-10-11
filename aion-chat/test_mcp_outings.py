@@ -204,6 +204,23 @@ def test_summary_is_inside_the_overall_deadline(env, forum, monkeypatch):
     assert time.monotonic() - started < 3.5
 
 
+def test_outing_stops_if_line_changes_midway(env, forum, monkeypatch):
+    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    calls = []
+
+    async def model(model_key, messages, tools):
+        calls.append(1)
+        if len(calls) == 1:  # 第一轮之后，线路被改成了别的地址
+            config.MODELS["relay-gemini"] = {"provider": "custom_openai", "model": "g",
+                                             "base_url": "https://other.example/v1", "api_key": "k"}
+            return {"content": "", "tool_calls": [{"id": "c1", "function": {"name": "read_posts", "arguments": "{}"}}]}
+        return {"content": "不该到这里"}
+
+    with pytest.raises(config.ModelChanged):
+        asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
+    assert len(calls) == 1
+
+
 def test_test_connection_lists_tools(env, forum):
     mcp_outings.save_tool({"name": "小论坛", "url": forum})
     assert asyncio.run(mcp_outings.test_tool("小论坛")) == {"ok": True, "tools": ["read_posts", "reply"]}

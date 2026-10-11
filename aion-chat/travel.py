@@ -49,16 +49,21 @@ def busy() -> bool:
     return _busy
 
 
-def models_for(actors: list[str]) -> dict[str, str]:
-    """每位 AI 名片上自己的模型；有一位没有就整趟不去（不换成聊天窗口里的模型）。"""
+def models_for(actors: list[str]) -> dict[str, dict]:
+    """每位 AI 名片上自己的模型，连同此刻的线路一起固定下来（{"key", "snapshot"}）。
+
+    有一位没有就整趟不去；旅途中那条线路被删或被改，生成时会停下而不是换模型（见 memory_hub_jobs.complete）。
+    """
     import autonomy
+    from config import model_snapshot
     from memory_hub_jobs import own_model
     models = {}
     for actor in actors:
-        model = own_model(actor)
-        if not model:
+        key = own_model(actor)
+        snapshot = model_snapshot(key) if key else None
+        if not key or snapshot is None:
             raise ValueError(f"{autonomy._actor_label(actor)} 还没在 AI 名片里选「TA 自己的模型」")
-        models[actor] = model
+        models[actor] = {"key": key, "snapshot": snapshot}
     return models
 
 
@@ -91,7 +96,7 @@ async def _visited(actor: str, limit: int = 8) -> list[str]:
         return []
 
 
-async def choose_place(actor: str, *, where: str, named: str = "", wish: str = "", model: str = "") -> str:
+async def choose_place(actor: str, *, where: str, named: str = "", wish: str = "", model: dict | None = None) -> str:
     """返回一个具体地名（给 travel_places.lookup 查）。"""
     import autonomy
     if where == "named":
@@ -126,13 +131,13 @@ def _user_name() -> str:
     return (load_worldbook().get("user_name") or "").strip() or "小猫"
 
 
-async def _write(actor: str, instruction: str, model: str) -> str:
-    """用 TA 自己的人设、最近的聊天，和本趟固定下来的 TA 自己的模型写。"""
+async def _write(actor: str, instruction: str, model: dict) -> str:
+    """用 TA 自己的人设、最近的聊天，和本趟出发时固定下来的 TA 自己的模型线路写。"""
     import autonomy
     from memory_hub_jobs import complete
     messages = await autonomy._actor_context(actor, 20)
     messages.append({"role": "user", "content": instruction})
-    text = (await complete(model, messages)).strip()
+    text = (await complete(model["key"], messages, snapshot=model["snapshot"])).strip()
     if not text:
         raise RuntimeError(f"{autonomy._actor_label(actor)} 没有写出内容")
     return text

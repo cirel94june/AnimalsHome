@@ -425,15 +425,22 @@ def _migrate_seat_routes() -> bool:
     return True
 
 
+def route_model_keys(routes) -> set[str]:
+    return {m["key"] for r in normalize_custom_model_routes(routes) for m in r.get("models", [])}
+
+
 def refresh_custom_models() -> None:
-    """根据 settings.json 里的自定义线路（设置页的 + 每位 AI 自己填的）刷新运行时模型列表。"""
+    """根据 settings.json 里的自定义线路（每位 AI 自己填的 + 设置页的）刷新运行时模型列表。
+
+    座位线路排在前面：万一两边重名，座位的绑定不会被设置页的线路顶掉（保存时两边都会拒绝重名）。
+    """
     if _migrate_seat_routes():
         save_settings(SETTINGS)
     MODELS.clear()
     MODELS.update(BUILTIN_MODELS)
     MODELS.update(ANTIGRAVITY_MODELS)
-    routes = normalize_custom_model_routes(SETTINGS.get("custom_model_routes"))
-    routes += normalize_custom_model_routes(SETTINGS.get(SEAT_ROUTES_KEY))
+    routes = normalize_custom_model_routes(SETTINGS.get(SEAT_ROUTES_KEY))
+    routes += normalize_custom_model_routes(SETTINGS.get("custom_model_routes"))
     for route in routes:
         for item in route.get("models", []):
             key = item["key"]
@@ -508,6 +515,28 @@ def iter_visible_models():
     for key, cfg in MODELS.items():
         if not is_model_deprecated(key):
             yield key, cfg
+
+
+class ModelChanged(RuntimeError):
+    """「必须用这位 AI 自己的模型」的生成途中，那条线路被删、停用或改了。"""
+
+
+def model_snapshot(model_key: str) -> dict | None:
+    """固定一条模型线路此刻的样子（地址、模型名、线路 id 等）；不存在或已停用返回 None。"""
+    key = _clean_text(model_key)
+    if key not in MODELS or is_model_deprecated(key):
+        return None
+    return dict(MODELS[key])
+
+
+def ensure_model_unchanged(model_key: str, snapshot: dict | None) -> None:
+    """生成前核对：线路还在、没变、而且不会被 resolve_model_key 悄悄换成别的模型。否则抛 ModelChanged。
+
+    调用方要在这里和真正发起调用之间不 await，核对和调用才算同一时刻。
+    """
+    key = _clean_text(model_key)
+    if snapshot is None or MODELS.get(key) != snapshot or resolve_model_key(key) != key:
+        raise ModelChanged(f"模型线路「{key}」刚刚被删除或改动了，这次不生成（不会换成别的模型）")
 
 
 def resolve_model_key(model_key: str | None) -> str:

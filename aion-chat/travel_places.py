@@ -190,8 +190,12 @@ DOWNLOAD_SECONDS = 30.0
 async def _download(client: httpx.AsyncClient, url: str) -> str:
     """边下边数：超过上限立刻停，不把整张大图先读进内存（服务器只有 1G）。"""
     async def fetch() -> tuple[bytes, str]:
-        async with client.stream("GET", url) as r:
+        # 要求不压缩，并且只按原始字节读（aiter_raw 不解压）：压缩包解压出来的大块根本不会产生
+        async with client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as r:
             r.raise_for_status()
+            encoding = r.headers.get("content-encoding", "").strip().lower()
+            if encoding not in ("", "identity"):
+                raise ValueError(f"图片被压缩传输（{encoding}），不收")
             ctype = r.headers.get("content-type", "").split(";")[0].strip().lower()
             if ctype not in PHOTO_TYPES:
                 raise ValueError(f"不是支持的图片类型：{ctype or '未知'}")
@@ -199,7 +203,7 @@ async def _download(client: httpx.AsyncClient, url: str) -> str:
             if declared and declared.isdigit() and int(declared) > MAX_PHOTO_BYTES:
                 raise ValueError("图片太大")
             chunks, total = [], 0
-            async for chunk in r.aiter_bytes():  # 已解压的字节，按解压后计数
+            async for chunk in r.aiter_raw(64 * 1024):
                 total += len(chunk)
                 if total > MAX_PHOTO_BYTES:
                     raise ValueError("图片太大")

@@ -322,6 +322,54 @@ def test_queued_turn_keeps_the_identity_it_was_queued_with(fake_hub, isolated_co
     assert sent["source_ai"] == "jasper" and sent["user_message"] == "Jasper 听到的话"
 
 
+def test_hub_switch_during_a_drain_never_sends_to_the_wrong_hub(isolated_config, monkeypatch):
+    hub_a, hub_b = "http://127.0.0.1:1/a/mcp", "http://127.0.0.1:1/b/mcp"
+    _write(isolated_config, enabled=True, url=hub_a, actors={"aion": "claude"})
+    bridge._enqueue("aion", "for hub A", "b", "private")
+    sent = []
+
+    async def fake_send(cfg, row):
+        sent.append((cfg["url"], row["user_message"]))
+        if len(sent) == 1:  # 发第一条的过程中：配置换成 Hub B，并且又来了一轮（记的是 B）
+            _write(isolated_config, enabled=True, url=hub_b, actors={"aion": "claude"})
+            bridge._enqueue("aion", "for hub B", "b", "private")
+        return "ok", ""
+
+    monkeypatch.setattr(bridge, "_send_capture", fake_send)
+    asyncio.run(bridge.drain_outbox())
+    assert sent == [(hub_a, "for hub A")]  # B 的那条没有被发到 A
+    assert _rows() == [("for hub B", "pending", 0)]
+    asyncio.run(bridge.drain_outbox())  # 下一批用新配置
+    assert sent[-1] == (hub_b, "for hub B") and _rows() == []
+
+
+def test_held_rows_go_back_when_their_hub_is_configured_again(isolated_config, monkeypatch):
+    hub_a, hub_b = "http://127.0.0.1:1/a/mcp", "http://127.0.0.1:1/b/mcp"
+    _write(isolated_config, enabled=True, url=hub_a, actors={"aion": "claude"})
+    bridge._enqueue("aion", "A 的", "b", "private")
+    sent = []
+
+    async def fake_send(cfg, row):
+        sent.append((cfg["url"], row["user_message"]))
+        return "ok", ""
+
+    monkeypatch.setattr(bridge, "_send_capture", fake_send)
+    _write(isolated_config, enabled=True, url=hub_b, actors={"aion": "claude"})
+    asyncio.run(bridge.drain_outbox())
+    assert sent == [] and _rows() == [("A 的", "held", 0)]
+    _write(isolated_config, enabled=True, url=hub_a, actors={"aion": "claude"})  # 又换回 A
+    asyncio.run(bridge.drain_outbox())
+    assert sent == [(hub_a, "A 的")] and _rows() == []
+
+
+def test_hub_fingerprint_keeps_path_case_and_slashes():
+    fp = lambda url: bridge.hub_id({"url": url})
+    assert fp("HTTPS://Example.TEST/TenantA/mcp") == fp("https://example.test/TenantA/mcp")
+    assert fp("https://example.test/TenantA/mcp") != fp("https://example.test/tenanta/mcp")
+    assert fp("https://example.test/mcp?k=AbC") != fp("https://example.test/mcp?k=abc")
+    assert fp("https://example.test/mcp/") != fp("https://example.test/mcp")
+
+
 def test_legacy_row_without_identity_is_not_guessed(fake_hub, isolated_config):
     _write(isolated_config, enabled=True, url=fake_hub)
     bridge._enqueue("aion", "旧", "b", "private")

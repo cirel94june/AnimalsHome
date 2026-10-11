@@ -14,6 +14,11 @@ import travel_places as tp
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
 
+async def _stream_body(data: bytes, size: int = 64 * 1024):
+    for i in range(0, len(data), size):
+        yield data[i:i + size]
+
+
 def _handler(*, weather=True, wiki=True, commons=True, found=True):
     def handle(request: httpx.Request) -> httpx.Response:
         host, path = request.url.host, request.url.path
@@ -43,7 +48,8 @@ def _handler(*, weather=True, wiki=True, commons=True, found=True):
                                                  "extmetadata": {"Artist": {"value": "<a>某摄影师</a>"}}}]},
             }}})
         if host == "upload.example":
-            return httpx.Response(200, content=PNG + path.encode(), headers={"content-type": "image/png"})
+            # 用流式 body：bytes 形式的 Response 会在构造时被 httpx 直接读完，和真实网络不一样
+            return httpx.Response(200, content=_stream_body(PNG + path.encode()), headers={"content-type": "image/png"})
         return httpx.Response(404)
     return handle
 
@@ -124,6 +130,36 @@ def test_download_stops_as_soon_as_it_passes_the_limit(tmp_path, monkeypatch):
     assert asyncio.run(run(ctype="image/gif")) == 0  # 不支持的类型不读
     assert asyncio.run(run(ctype="text/html")) == 0
     assert not (tmp_path / "travel").exists() or not list((tmp_path / "travel").iterdir())
+
+
+def test_compressed_image_is_refused_before_any_decompression(tmp_path, monkeypatch):
+    import gzip
+    monkeypatch.setattr(tp, "TRAVEL_PHOTO_DIR", tmp_path / "travel")
+    bomb = gzip.compress(b"\0" * (32 * 1024 * 1024))  # 不到 64KB，解压是 32MB
+    decoded = []
+    real_decode = httpx._decoders.GZipDecoder.decode
+
+    def spy(self, data):
+        out = real_decode(self, data)
+        decoded.append(len(out))
+        return out
+
+    monkeypatch.setattr(httpx._decoders.GZipDecoder, "decode", spy)
+    seen_headers = {}
+
+    def handle(request):
+        seen_headers.update(request.headers)
+        return httpx.Response(200, headers={"content-type": "image/jpeg", "content-encoding": "gzip"},
+                              content=_stream_body(bomb))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            with pytest.raises(ValueError, match="压缩"):
+                await tp._download(client, "https://upload.example/bomb.jpg")
+
+    asyncio.run(run())
+    assert seen_headers.get("accept-encoding") == "identity"
+    assert decoded == []  # 一个字节都没解压
 
 
 def test_unknown_place_is_an_error(net):

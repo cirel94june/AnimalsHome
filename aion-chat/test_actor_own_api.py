@@ -65,7 +65,8 @@ def test_own_api_becomes_a_dedicated_route_and_key_is_never_returned(client):
 
 def test_seat_key_never_in_settings_response_and_survives_stale_settings_page(client, monkeypatch):
     import routes.settings as settings_routes
-    monkeypatch.setattr(settings_routes, "save_settings", lambda data: None)  # 不写真实设置文件
+    monkeypatch.setattr(settings_routes, "save_settings", lambda data: None)
+    monkeypatch.setattr(settings_routes, "SETTINGS", config.SETTINGS)  # 路由模块自己持有一份引用  # 不写真实设置文件
     c, saved = client
     c.put("/api/actors/ai3", json={"api": {"base_url": "https://gem.example/v1", "api_key": "audit-secret", "model": "g"}})
     # 设置页 GET 不含座位线路和 Key
@@ -81,6 +82,32 @@ def test_seat_key_never_in_settings_response_and_survives_stale_settings_page(cl
     assert config.MODELS["Jasper专属·g"]["base_url"] == "https://gem.example/v1"  # 座位线路没被覆盖
     assert "伪造" not in config.MODELS
     assert actors.api_summary("ai3")["has_key"] is True
+
+
+def test_name_clash_is_refused_in_both_directions(client, monkeypatch):
+    import routes.settings as settings_routes
+    from fastapi import HTTPException
+    monkeypatch.setattr(settings_routes, "save_settings", lambda data: None)
+    monkeypatch.setattr(settings_routes, "SETTINGS", config.SETTINGS)  # 路由模块自己持有一份引用
+    c, saved = client
+    # 座位先：设置页再加同名线路 → 拒绝，零写入，座位绑定不变
+    c.put("/api/actors/ai3", json={"api": {"base_url": "https://own.example/v1", "api_key": "k", "model": "test"}})
+    before = json.dumps(config.SETTINGS["custom_model_routes"], sort_keys=True)
+    clash = [{"id": "ordinary", "name": "普通", "base_url": "https://other.example/v1", "api_key": "x",
+              "models": [{"key": "Jasper专属·test", "model": "test"}]}]
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(custom_model_routes=clash, tavily_api_key="probe")))
+    assert err.value.status_code == 400
+    assert json.dumps(config.SETTINGS["custom_model_routes"], sort_keys=True) == before
+    assert config.SETTINGS.get("tavily_api_key") != "probe"  # 同一次请求里的其他设置也没写
+    assert config.MODELS["Jasper专属·test"]["base_url"] == "https://own.example/v1"
+    # 普通先：名片再用同名 → 拒绝
+    monkeypatch.setitem(config.SETTINGS, "custom_model_routes", config.SETTINGS["custom_model_routes"] + [
+        {"id": "ordinary2", "name": "普通2", "base_url": "https://other.example/v1", "api_key": "x",
+         "models": [{"key": "Lucien专属·m", "model": "m"}]}])
+    config.refresh_custom_models()
+    r = c.put("/api/actors/connor", json={"api": {"base_url": "https://own.example/v1", "api_key": "k", "model": "m"}})
+    assert r.status_code == 400 and config.MODELS["Lucien专属·m"]["route_id"] == "ordinary2"
 
 
 def test_clear_key_is_explicit(client):

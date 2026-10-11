@@ -3781,6 +3781,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
     except seat_chat.SeatNotReady as exc:
         await _save_chatroom_generation_failure(room_id, _q, exc)
         return
+    from config import ensure_model_unchanged, model_snapshot
+    pinned = model_snapshot(model_key)  # 取记忆要等几秒，期间线路被删/改就不生成，不换模型
     await _q.put({"type": "seat_start", "id": msg_id, "actor": actor_id})
     usage_meta: dict = {}
     raw_text = ""
@@ -3788,6 +3790,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
         async with asyncio.timeout(960):
             messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit)
             stream_filter = KnownCommandStreamFilter()
+            ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):
                 if not isinstance(chunk, str):
                     continue

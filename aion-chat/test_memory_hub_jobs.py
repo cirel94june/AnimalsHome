@@ -240,6 +240,7 @@ def test_complete_collects_text_and_raises_provider_errors(monkeypatch):
         meta["provider_error"] = "HTTP 401"
         yield "[错误] 401"
 
+    monkeypatch.setitem(jobs.MODELS, "k", {"provider": "custom_openai", "model": "k"})  # 没登记的模型会被拒绝
     monkeypatch.setattr(ai_providers, "stream_ai", ok)
     assert asyncio.run(jobs.complete("k", [])) == "梦见海边"
     monkeypatch.setattr(ai_providers, "stream_ai", bad)
