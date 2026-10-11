@@ -7,8 +7,15 @@ html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: no
 #ib-desk {
   position: relative;
   z-index: 1;
-  flex-shrink: 0;
+  /* 矮屏手机上小组件区自己滚动，不把下面的图标挤没 */
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   display: grid;
+  grid-auto-rows: max-content; /* 小组件保持原高度，放不下就滚动，不压扁 */
+  align-content: start;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 10px;
   padding: calc(14px + env(safe-area-inset-top)) 16px 4px;
@@ -317,3 +324,7 @@ html[data-skin="ib"] .dock { padding: 12px 24px; margin-bottom: calc(18px + env(
 .ib-sheet .sec > .seg button { border: 0; background: transparent; color: var(--ib-tx2); padding: 6px 12px; font-size: 13px; }
 .ib-sheet .sec > .seg button.on { background: var(--ib-acc); color: #fff; }
 .ib-sheet .btn.small { margin-top: 6px; }
+
+#ib-desk::-webkit-scrollbar { display: none; }
+/* 图标区至少放得下两整排（82px 一排、行距 14px、上下留白 24px） */
+html[data-skin="ib"] .app-pages { flex-shrink: 0; min-height: calc(2 * 82px + 14px + 24px); }
