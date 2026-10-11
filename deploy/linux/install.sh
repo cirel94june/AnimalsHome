@@ -101,6 +101,8 @@ if [ ! -f "$ENV_FILE" ]; then
 PORT=$PORT
 BRANCH=$BRANCH
 # Memory Hub 跨端记忆：去掉下面三行开头的 # 并填好（同机部署时地址一般是 http://127.0.0.1:端口/mcp）
+# 只经 Tailscale 访问：私网里都是自己的设备，不弹陌生设备警报
+AIONSHOME_TRUST_TAILSCALE=1
 #MEMORY_HUB_ENABLED=true
 #MEMORY_HUB_URL=http://127.0.0.1:8000/mcp
 #MEMORY_HUB_TOKEN=

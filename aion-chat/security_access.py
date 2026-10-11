@@ -25,6 +25,11 @@ COOKIE_NAME = "aion_security_device"
 log = logging.getLogger("security_access")
 
 
+def _trust_tailscale() -> bool:
+    """VPS 部署只经 tailscale serve 对外：能连进来的都是自己账号下的设备，不当陌生设备报警。"""
+    return os.environ.get("AIONSHOME_TRUST_TAILSCALE", "").strip().lower() in {"1", "true", "yes"}
+
+
 def classify_ip(ip: str, has_cloudflare_metadata: bool = False) -> str:
     if has_cloudflare_metadata:
         return "cloudflare"
@@ -421,6 +426,7 @@ class SecurityAccessService:
         alerts: list[dict] = []
         trusted = (
             source == "localhost"
+            or (source == "tailscale" and _trust_tailscale())
             or device_id in self._devices
             or ip in self._trusted_ips
         )

@@ -1,8 +1,10 @@
 import asyncio
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from security_access import IpGeolocationResolver, SecurityAccessService, classify_ip
 
@@ -253,6 +255,15 @@ class SecurityAccessDeviceTests(SecurityAccessTestCase):
 
         self.assertTrue(observation.trusted)
         self.assertEqual([], list(observation.alerts))
+
+    def test_tailscale_is_trusted_only_when_deployment_says_so(self):
+        with mock.patch.dict(os.environ, {"AIONSHOME_TRUST_TAILSCALE": ""}):
+            self.assertFalse(self.service.observe(make_scope("100.89.242.72"), {}).trusted)
+        with mock.patch.dict(os.environ, {"AIONSHOME_TRUST_TAILSCALE": "1"}):
+            observation = self.service.observe(make_scope("100.89.242.73"), {})
+            self.assertTrue(observation.trusted)
+            self.assertEqual([], list(observation.alerts))
+            self.assertFalse(self.service.observe(make_scope("203.0.113.9"), {}).trusted)
 
     def test_trust_registry_and_cookie_secret_survive_restart(self):
         first = self.service.observe(make_scope("192.168.1.178"), {})
