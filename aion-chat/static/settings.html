@@ -621,6 +621,24 @@ body[data-theme="light"] .transport-mode-btn.is-active {
     <details class="settings-card" open>
       <summary>
         <div class="summary-title">
+          <strong>🎙 ElevenLabs 语音</strong>
+          <span>正常朗读线路与主动语音共用账号；主动语音在「工具与能力」单独开关</span>
+        </div>
+        <span class="summary-chevron">›</span>
+      </summary>
+      <div class="card-body settings-grid">
+        <div class="field full"><label class="form-label" for="elevenKey">ElevenLabs API Key</label><input class="form-input mono-input" type="password" id="elevenKey" autocomplete="off"></div>
+        <div class="field"><label class="form-label" for="elevenModel">语音模型</label><select class="form-input" id="elevenModel"><option value="eleven_v4">Eleven v4</option><option value="eleven_v3">Eleven v3</option></select></div>
+        <div class="field"><label class="form-label" id="elevenAionLabel" for="elevenAion">AI 的主动语音音色</label><input class="form-input" id="elevenAion" list="elevenVoiceOptions" placeholder="选择或粘贴 voice_id"></div>
+        <div class="field"><label class="form-label" id="elevenConnorLabel" for="elevenConnor">第二 AI 的主动语音音色</label><input class="form-input" id="elevenConnor" list="elevenVoiceOptions" placeholder="选择或粘贴 voice_id"></div>
+        <datalist id="elevenVoiceOptions"></datalist>
+        <div class="field full"><button class="action-btn primary" type="button" onclick="loadElevenVoices()">保存 ElevenLabs 配置并加载音色</button><p id="elevenStatus" class="hint" role="status">保存后，在聊天的音色列表中选择 ElevenLabs 即可全量朗读。主动语音不要求开启全量朗读，每次含标签最多 200 字符。</p></div>
+      </div>
+    </details>
+
+    <details class="settings-card" open>
+      <summary>
+        <div class="summary-title">
           <strong>🔑 API 与基础账号</strong>
           <span>官方 Key、联网搜索、内置硅基模型、音乐 Cookie</span>
         </div>
@@ -709,6 +727,41 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       </div>
     </details>
 
+    <details class="settings-card" id="asrSettingsSection">
+      <summary>
+        <div class="summary-title">
+          <strong>🎙 语音转文字</strong>
+          <span>语音消息、手机通话与本机语音唤醒共用</span>
+        </div>
+        <span class="summary-chevron">›</span>
+      </summary>
+      <div class="card-body">
+        <div class="settings-grid">
+          <div class="field full">
+            <label class="form-label" for="asrProviderInput">接口类型</label>
+            <select class="form-input" id="asrProviderInput" onchange="updateAsrProviderUi(true)">
+              <option value="openai">OpenAI 兼容</option>
+              <option value="dashscope">阿里云 Paraformer</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="form-label" for="asrBaseUrlInput">API 地址</label>
+            <input class="form-input mono-input" type="text" id="asrBaseUrlInput" placeholder="https://example.com/v1" autocomplete="off">
+          </div>
+          <div class="field">
+            <label class="form-label" for="asrApiKeyInput">API Key</label>
+            <input class="form-input mono-input" type="password" id="asrApiKeyInput" placeholder="语音识别服务的独立 API Key" autocomplete="off">
+          </div>
+          <div class="field full">
+            <label class="form-label" for="asrModelInput">模型名称</label>
+            <input class="form-input mono-input" type="text" id="asrModelInput" placeholder="填写服务商提供的语音识别模型 ID" autocomplete="off">
+          </div>
+        </div>
+        <p class="hint" id="asrProviderHint"></p>
+        <p class="hint">填写后点击上方“保存全部设置”，从下一次转写生效。</p>
+      </div>
+    </details>
+
     <details class="settings-card">
       <summary>
         <div class="summary-title">
@@ -762,6 +815,24 @@ body[data-theme="light"] .transport-mode-btn.is-active {
               <input class="form-input mono-input" type="text" id="embeddingModelInput" placeholder="例：Qwen/Qwen3-Embedding-8B" autocomplete="off">
             </div>
           </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="settings-card">
+      <summary>
+        <div class="summary-title">
+          <strong>💬 悬浮聊天</strong>
+          <span>刷别的 App 时接收消息，按住说话回复</span>
+        </div>
+        <span class="summary-chevron">›</span>
+      </summary>
+      <div class="card-body">
+        <p class="hint">跟随你最后发消息的窗口，只弹出 AI 的消息。平时保留淡淡的小头像，点按打开或收起，拖动移动。消息预览 5 秒无操作后收起；点正文向下展开，可上下滑动查看完整消息，点头像收起。右侧上方的屏幕图标点亮时，回复附当前截图；灰色时只发消息。下方小麦克风按住说话、松开发送，上滑取消。</p>
+        <p id="floatingChatStatus" class="hint"></p>
+        <div class="section-actions">
+          <button class="btn-save" type="button" onclick="setFloatingChatEnabled(true)">开启悬浮聊天</button>
+          <button class="btn-cancel" type="button" onclick="setFloatingChatEnabled(false)">关闭</button>
         </div>
       </div>
     </details>
@@ -1153,6 +1224,19 @@ function updateSentinelRouteUi() {
     : "原线路继续使用下方配置；留空则走 Gemini 官方 API + 上方 Free Key。";
 }
 
+function updateAsrProviderUi(usePreset) {
+  var aliyun = $("asrProviderInput").value === "dashscope";
+  $("asrBaseUrlInput").placeholder = aliyun ? "wss://dashscope.aliyuncs.com/api-ws/v1/inference" : "https://example.com/v1";
+  $("asrModelInput").placeholder = aliyun ? "paraformer-realtime-v2" : "例：whisper-1";
+  $("asrProviderHint").textContent = aliyun
+    ? "已预填 Paraformer 地址和模型名，填入阿里云百炼北京地域的 API Key 即可。也可使用业务空间专属 WSS 地址。浏览器录音由服务器自动转换，需安装 FFmpeg。"
+    : "支持 OpenAI 格式的语音转写接口。地址、Key、模型名三项全空时，继续使用上方硅基流动 Key 和 SenseVoiceSmall。";
+  if (usePreset) {
+    $("asrBaseUrlInput").value = aliyun ? "wss://dashscope.aliyuncs.com/api-ws/v1/inference" : "https://api.siliconflow.cn/v1";
+    $("asrModelInput").value = aliyun ? "paraformer-realtime-v2" : "FunAudioLLM/SenseVoiceSmall";
+  }
+}
+
 (async function init() {
   var loaded = await Promise.all([
     api("GET", "/api/settings"),
@@ -1179,8 +1263,19 @@ function updateSentinelRouteUi() {
   $("imageGenBaseUrlInput").value = s.image_gen_base_url || "";
   $("imageGenApiKeyInput").value = s.image_gen_api_key || "";
   $("imageGenModelInput").value = s.image_gen_model || "";
+  $("asrProviderInput").value = s.asr_provider === "dashscope" ? "dashscope" : "openai";
+  $("asrBaseUrlInput").value = s.asr_base_url || "";
+  $("asrApiKeyInput").value = s.asr_api_key || "";
+  $("asrModelInput").value = s.asr_model || "";
+  updateAsrProviderUi(false);
   $("sfKeyInput").value = s.siliconflow_key || "";
   $("minimaxTtsKeyInput").value = s.minimax_tts_key || "";
+  $("elevenKey").value = s.elevenlabs_tts_key || "";
+  $("elevenModel").value = s.elevenlabs_tts_model || "eleven_v4";
+  $("elevenAion").value = s.elevenlabs_aion_voice_id || "";
+  $("elevenConnor").value = s.elevenlabs_connor_voice_id || "";
+  $("elevenAionLabel").textContent = (s.minimax_aion_name || "AI") + " 的主动语音音色";
+  $("elevenConnorLabel").textContent = (s.minimax_connor_name || "第二 AI") + " 的主动语音音色";
   $("minimaxTtsModelInput").value = s.minimax_tts_model || "speech-2.8-hd";
   $("minimaxAionVoiceInput").value = s.minimax_aion_voice_id || "";
   $("minimaxConnorVoiceInput").value = s.minimax_connor_voice_id || "";
@@ -1197,10 +1292,51 @@ function updateSentinelRouteUi() {
   renderCustomRoutes();
   renderModelTransportModes();
   refreshPhoneScreenStatus();
+  refreshFloatingChatStatus();
   refreshMediaCacheStatus();
 })();
 
+function elevenSettings() {
+  return {elevenlabs_tts_key: $("elevenKey").value.trim(), elevenlabs_tts_model: $("elevenModel").value,
+    elevenlabs_aion_voice_id: $("elevenAion").value.trim(), elevenlabs_connor_voice_id: $("elevenConnor").value.trim()};
+}
+async function loadElevenVoices() {
+  $("elevenStatus").textContent = "正在保存并加载音色…";
+  try {
+    await api("PUT", "/api/settings", elevenSettings());
+    const data = await api("GET", "/api/tts/elevenlabs-voices", undefined, {timeoutMs: 40000});
+    $("elevenVoiceOptions").replaceChildren();
+    for (const voice of data.voices || []) {
+      const option = document.createElement('option');
+      option.value = voice.uri.replace(/^elevenlabs:/, ''); option.label = voice.customName;
+      $("elevenVoiceOptions").append(option);
+    }
+    $("elevenStatus").textContent = `已加载 ${(data.voices || []).length} 个音色。选好两位角色的音色后，请保存设置。加载列表不会生成音频。`;
+  } catch (err) { $("elevenStatus").textContent = err.message || "音色加载失败"; }
+}
+
 async function saveSettings() {
+  var asrConfig = {
+    asr_provider: $("asrProviderInput").value,
+    asr_base_url: $("asrBaseUrlInput").value.trim(),
+    asr_api_key: $("asrApiKeyInput").value.trim(),
+    asr_model: $("asrModelInput").value.trim()
+  };
+  var asrValues = [asrConfig.asr_base_url, asrConfig.asr_api_key, asrConfig.asr_model];
+  if ((asrConfig.asr_provider === "dashscope" || asrValues.some(Boolean)) && !asrValues.every(Boolean)) {
+    showToast("请完整填写语音转文字的地址、Key 和模型名");
+    return;
+  }
+  if (asrConfig.asr_base_url) {
+    try {
+      var asrUrl = new URL(asrConfig.asr_base_url);
+      var asrSchemes = asrConfig.asr_provider === "dashscope" ? ["wss:"] : ["http:", "https:"];
+      if (!asrSchemes.includes(asrUrl.protocol) || !asrUrl.hostname || asrUrl.search || asrUrl.hash || asrUrl.username || asrUrl.password) throw new Error("invalid URL");
+    } catch (err) {
+      showToast("阿里云地址须为 WSS；OpenAI 兼容地址须为 HTTP(S)，不能包含账号、查询参数或片段");
+      return;
+    }
+  }
   var imageConfig = {
     image_gen_base_url: $("imageGenBaseUrlInput").value.trim(),
     image_gen_api_key: $("imageGenApiKeyInput").value.trim(),
@@ -1229,6 +1365,7 @@ async function saveSettings() {
   }
   var collapsedState = currentRouteCollapsedState();
   await api("PUT", "/api/settings", {
+    ...asrConfig,
     gemini_key: $("geminiKeyInput").value.trim(),
     gemini_free_key: $("geminiFreeKeyInput").value.trim(),
     sentinel_route: $("sentinelRouteInput").value,
@@ -1243,6 +1380,7 @@ async function saveSettings() {
     image_gen_model: imageConfig.image_gen_model,
     siliconflow_key: $("sfKeyInput").value.trim(),
     minimax_tts_key: $("minimaxTtsKeyInput").value.trim(),
+    ...elevenSettings(),
     minimax_tts_model: $("minimaxTtsModelInput").value,
     minimax_aion_voice_id: $("minimaxAionVoiceInput").value.trim(),
     minimax_connor_voice_id: $("minimaxConnorVoiceInput").value.trim(),
@@ -1367,6 +1505,25 @@ function clearMediaCache() {
   showToast("正在清理媒体缓存");
   setTimeout(refreshMediaCacheStatus, 500);
 }
+</script>
+<script>
+function getFloatingChatBridge() {
+  try { return window.AionFloatingChat || window.parent?.AionFloatingChat || null; } catch (_) { return null; }
+}
+function refreshFloatingChatStatus() {
+  const bridge = getFloatingChatBridge();
+  const el = document.getElementById('floatingChatStatus');
+  if (!el) return;
+  el.textContent = bridge ? (bridge.getState() === 'ready' ? '已开启，离开小家后显示悬浮头像。' : '未开启。') : '需要在新版 Android App 内开启。';
+}
+function setFloatingChatEnabled(enabled) {
+  const bridge = getFloatingChatBridge();
+  if (!bridge) { showToast('需要在新版 Android App 内开启'); return; }
+  if (enabled) bridge.enable(); else bridge.disable();
+  setTimeout(refreshFloatingChatStatus, 600);
+}
+document.addEventListener('visibilitychange', refreshFloatingChatStatus);
+window.addEventListener('focus', refreshFloatingChatStatus);
 </script>
 </body>
 </html>

@@ -20,8 +20,8 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
-final class WidgetAsrClient {
-    interface Listener {
+public final class WidgetAsrClient {
+    public interface Listener {
         void onText(String text);
         void onError(String message);
     }
@@ -34,11 +34,11 @@ final class WidgetAsrClient {
             .build();
     private Call call;
 
-    WidgetAsrClient(Context context) {
+    public WidgetAsrClient(Context context) {
         this.context = context.getApplicationContext();
     }
 
-    void transcribe(File wav, Listener listener) {
+    public void transcribe(File wav, Listener listener) {
         SharedPreferences prefs = context.getSharedPreferences("aion_prefs", Context.MODE_PRIVATE);
         String savedPageUrl = prefs.getString("saved_url", "");
         HttpUrl pageUrl = savedPageUrl == null ? null : HttpUrl.parse(savedPageUrl);
@@ -85,7 +85,7 @@ final class WidgetAsrClient {
         });
     }
 
-    void cancel() {
+    public void cancel() {
         if (call != null) call.cancel();
         call = null;
     }

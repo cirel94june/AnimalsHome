@@ -8,6 +8,22 @@ import tts
 
 
 class TTSBackpressureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_monitor_stream_never_speaks_widget_or_banner_commands(self):
+        spoken = []
+
+        async def request_audio(text, _voice, *, seq=0):
+            spoken.append(text)
+            return b"audio"
+
+        with tempfile.TemporaryDirectory() as tmp, patch("tts._request_tts_audio", side_effect=request_audio):
+            streamer = tts.TTSStreamer("monitor_widget", "voice", min_chars=1,
+                                       max_chars=8, cache_dir=Path(tmp))
+            for chunk in ("宝宝回来。", "【小组件:想", "你】", "[横幅：先歇一会儿。]", "我在。"):
+                await streamer.feed_async(chunk)
+            await streamer.flush()
+        self.assertEqual("".join(spoken), "宝宝回来。我在。")
+        self.assertEqual(tts._strip_tags("正文。【横幅:未完成的短句"), "正文。")
+
     async def test_rewind_before_audio_clears_started_workers_for_fallback(self):
         blocker = asyncio.Event()
 

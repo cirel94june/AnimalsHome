@@ -1,7 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 ROOT = Path(__file__).resolve().parent
@@ -23,7 +23,7 @@ async def fake_gemini_cli(*args, **kwargs):
 
 
 class DeprecatedCliModelTests(unittest.IsolatedAsyncioTestCase):
-    async def test_model_list_hides_gemini_and_antigravity_cli_routes(self):
+    async def test_model_list_hides_retired_cli_routes_and_allows_new_antigravity(self):
         with patch.dict(
             config.MODELS,
             {
@@ -35,12 +35,15 @@ class DeprecatedCliModelTests(unittest.IsolatedAsyncioTestCase):
             },
             clear=False,
         ):
-            rows = await settings.list_models()
+            with patch("antigravity_cli.discover_models", AsyncMock(return_value=[])), patch(
+                "routes.settings.replace_antigravity_models"
+            ):
+                rows = await settings.list_models()
 
         providers = {row["provider"] for row in rows}
         keys = {row["key"] for row in rows}
         self.assertNotIn("gemini_cli", providers)
-        self.assertNotIn("antigravity_cli", providers)
+        self.assertIn("antigravity_cli", providers)
         self.assertNotIn("CLI-3.1pro", keys)
         self.assertNotIn("AGY-3.1pro", keys)
 
@@ -61,7 +64,7 @@ class DeprecatedCliModelTests(unittest.IsolatedAsyncioTestCase):
         providers = {row["provider"] for row in rows}
         keys = {row["key"] for row in rows}
         self.assertNotIn("gemini_cli", providers)
-        self.assertNotIn("antigravity_cli", providers)
+        self.assertIn("antigravity_cli", providers)
         self.assertNotIn("CLI-3.1pro", keys)
         self.assertNotIn("AGY-3.1pro", keys)
 

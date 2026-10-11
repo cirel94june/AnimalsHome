@@ -53,6 +53,12 @@ CATEGORY_LABELS = {
 
 
 CAPABILITY_DEFS: list[CapabilityDef] = [
+    CapabilityDef(
+        "post_sentinel", "后置哨兵：画像与当前状态", "context",
+        "后台维护两个 AI 共享的用户画像和活动状态。关闭后停止整理，并停止向聊天与巡逻注入这些资料；已保存内容仍可查看编辑。",
+        default_enabled=True,
+    ),
+    CapabilityDef("expressive_voice", "主动语音", "media", "", default_enabled=False),
     CapabilityDef("music", "点歌", "media", "注入 [MUSIC:歌曲名 歌手名]，让模型可以点歌或推荐音乐。"),
     CapabilityDef("cam_check", "查看监控/状态", "core", "注入 [CAM_CHECK]，让模型可以主动请求查看当前画面。"),
     CapabilityDef("schedule", "闹铃/日程/监督", "core", "注入闹铃、日程、定时监督和删除日程指令；关闭后也不注入当前日程列表。"),
@@ -537,6 +543,9 @@ async def build_capability_prompt_items(
     toy_profiles.capture_permission(legacy_enabled=whisper_mode and is_capability_enabled("toy") and "toy" not in (excluded_capabilities or set()))
     abilities: list[str] = []
     excluded_capabilities = excluded_capabilities or set()
+    if "expressive_voice" not in excluded_capabilities and is_capability_enabled("expressive_voice"):
+        from expressive_voice import PROMPT
+        abilities.append(PROMPT)
     from svakom_ai import capture_permission, reference_strength_prompt, PROMPT as SVAKOM_PROMPT
     if capture_permission(excluded="svakom" in excluded_capabilities):
         abilities.append(SVAKOM_PROMPT + '\n' + reference_strength_prompt())
@@ -706,10 +715,13 @@ async def build_capability_prompt_items(
             "一轮最多输出 5 条，查询应是互补的关键词或短语；选项可省略，"
             "直接写 [MEMORY_SEARCH:查询] 即按相关性搜索。选项可用 relevant（默认）、latest、"
             "earliest、date=昨天/前天/明确日期、range=开始日期..结束日期、detail。"
+            "摘要找不到细节时用 history 选项直接搜索自己可访问的历史聊天；"
+            "用 open=检索回执中的来源ID 打开原文及前后消息。"
             "例如：[MEMORY_SEARCH:过敏药|latest] [MEMORY_SEARCH:开思亭|latest]。"
             "决定搜索时，可以先根据上下文随意、简短地自然回应一句，随后输出搜索指令；"
             "不要固定措辞，也不要在搜索结果返回前猜答案。系统会把结果作为下一条内部上下文交给你，"
-            "你再自然回答。普通闲聊和已有充分依据的问题不要搜索。"
+            "证据不足可换关键词或打开来源继续查，最多追加两轮，再自然回答。"
+            "普通闲聊和已有充分依据的问题不要搜索。"
         )
 
     if is_capability_enabled("inner_monologue"):

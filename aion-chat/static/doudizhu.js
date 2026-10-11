@@ -530,11 +530,7 @@ async function runAiLoop() {
 }
 
 $("backBtn").addEventListener("click", () => {
-  if (window.parent !== window && typeof window.parent.closeSubPage === "function") {
-    window.parent.closeSubPage();
-  } else {
-    window.location.href = "/";
-  }
+  window.location.href = "/playground";
 });
 
 $("newGameBtn").addEventListener("click", newGame);

@@ -55,6 +55,8 @@
   }
 
   function renderSystemNoticeContent(content, options) {
+    const billiardsCard=globalThis.BilliardsResultCard?.render(options?.attachments);
+    if(billiardsCard)return billiardsCard;
     const text = String(content ?? '').trim();
     const escapeHtml = typeof options?.escapeHtml === 'function'
       ? options.escapeHtml

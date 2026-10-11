@@ -173,6 +173,7 @@ async def ensure_calendar_compression_schema() -> None:
                 ("period_start_ts", "REAL"),
                 ("period_end_ts", "REAL"),
                 ("compression_batch_id", "TEXT DEFAULT ''"),
+                ("source_memory_ids", "TEXT"),
             ):
                 try:
                     await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
@@ -375,7 +376,14 @@ def _compression_budget(periods: list[dict], rows_by_id: dict[str, dict]) -> dic
     return {"max_output_count": len(contents), "max_content_chars": _content_chars(contents)}
 
 
+def _source_reference_map(periods: list[dict]) -> dict[str, str]:
+    """Short references are local to one model call; real IDs stay in the application."""
+    memory_ids = [mem_id for period in periods for mem_id in period["memory_ids"]]
+    return {f"M{index}": mem_id for index, mem_id in enumerate(memory_ids, start=1)}
+
+
 def _period_prompt(level: str, periods: list[dict], rows_by_id: dict[str, dict], actor_context: dict | None = None) -> str:
+    references = {mem_id: ref for ref, mem_id in _source_reference_map(periods).items()}
     period_payload = []
     for period in periods:
         period_payload.append(
@@ -386,13 +394,14 @@ def _period_prompt(level: str, periods: list[dict], rows_by_id: dict[str, dict],
                 "max_memories": min(5, len(period["memory_ids"])),
                 "memories": [
                     {
+                        "memory_id": references[mem_id],
                         "source_period": (
                             _week_bounds(_row_event_ts(row))[0]
                             if level == "monthly" else memory_day_for_ts(_row_event_ts(row))
                         ),
                         "content": row["content"],
                     }
-                    for row in (rows_by_id[mem_id] for mem_id in period["memory_ids"])
+                    for mem_id, row in ((mem_id, rows_by_id[mem_id]) for mem_id in period["memory_ids"])
                 ],
             }
         )
@@ -421,7 +430,10 @@ def _period_prompt(level: str, periods: list[dict], rows_by_id: dict[str, dict],
         "每条须独立写清人物，不能依赖其他条目补足指代；原文引语若含人称代词，改为姓名明确的转述，不冒充逐字引用。"
         "将输入中有依据、对角色有意义的情绪自然融入事件，"
         "不逐件补写气氛、情绪分析或意义升华。人设决定视角，不补造事实、对话或当时的感受；"
-        "人物、时间、关键经过和结果须准确，转述不改成亲历，不输出数据库 ID。\n"
+        "人物、时间、关键经过和结果须准确，转述不改成亲历，正文不输出数据库 ID。\n"
+        "每条 memories 和 durable_facts 必须用 source_memory_ids 列出实际支撑它的输入 memory_id；"
+        "memory_id 是本次调用的临时短编号（M1、M2 等），原样引用，不自行编造、改写或返回数据库编号。"
+        "只引用提供的短编号，memories 不跨 period 引用，不把整个批次都当成每条记忆的来源。\n"
         "每条围绕一个主题，尽量用简短的 1-3 句写清。每组通常 1-3 条，重要主题确实较多时最多 max_memories 条；"
         "不凑条数，无保留价值可返回空数组。原文已简洁时不强删重要信息，其余应明显缩短。\n"
         "durable_facts 只提取今后仍需单独记住的稳定偏好、健康禁忌或长期承诺，保持简短准确，"
@@ -435,8 +447,8 @@ def _period_prompt(level: str, periods: list[dict], rows_by_id: dict[str, dict],
         "没话说可省略或留空；感想不计入记忆预算，先完成记忆整理。\n"
         "严格输出 JSON："
         '{"periods":[{"period":"输入中的周期标签","memories":['
-        '{"content":"简洁且带有个人视角的记忆","keywords":["关键词"],"importance":0.5}]}],'
-        '"durable_facts":[{"content":"长期事实","keywords":["关键词"],"importance":0.85}],'
+        '{"content":"简洁且带有个人视角的记忆","keywords":["关键词"],"importance":0.5,"source_memory_ids":["M1"]}]}],'
+        '"durable_facts":[{"content":"长期事实","keywords":["关键词"],"importance":0.85,"source_memory_ids":["M2"]}],'
         '"reflection":"可选，想起这件事时顺口想说的话"}\n'
         f"输入：{json.dumps(period_payload, ensure_ascii=False)}"
     )
@@ -595,6 +607,7 @@ def _normalize_outputs(parsed: dict, expected_periods: set[str]) -> tuple[dict[s
                     "content": content,
                     "keywords": _clean_keywords(item.get("keywords")),
                     "importance": importance,
+                    "source_memory_ids": item.get("source_memory_ids"),
                 }
             )
     if seen_periods != expected_periods:
@@ -615,6 +628,7 @@ def _normalize_outputs(parsed: dict, expected_periods: set[str]) -> tuple[dict[s
                 "content": content,
                 "keywords": _clean_keywords(item.get("keywords")),
                 "importance": importance,
+                "source_memory_ids": item.get("source_memory_ids"),
             }
         )
     return normalized, durable
@@ -625,47 +639,63 @@ def _chunks(items: list[dict], size: int) -> Iterable[list[dict]]:
         yield items[index : index + size]
 
 
-async def resolve_source_message_ids(target: str, memory_id: str, *, max_nodes: int = 500) -> list[str]:
-    """Follow compression batches back to the original summaries' source IDs."""
-    target = target if target in {"main", "chatroom"} else "main"
-    pending = [(target, str(memory_id))]
+async def resolve_source_memories(target: str, memory_id: str, *, max_nodes: int = 500) -> list[dict]:
+    """Return original records; legacy batch ancestry is explicitly approximate."""
+    if target not in {"main", "chatroom"}:
+        raise ValueError("Unsupported memory store")
+    pending = [(str(memory_id), True)]
     visited = set()
-    source_ids = []
-    source_seen = set()
+    originals = []
+    table = "memories" if target == "main" else "chatroom_memories"
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         while pending and len(visited) < max_nodes:
-            store, current_id = pending.pop(0)
-            node = (store, current_id)
-            if node in visited:
+            current_id, exact = pending.pop(0)
+            if current_id in visited:
                 continue
-            visited.add(node)
-            table = "memories" if store == "main" else "chatroom_memories"
+            visited.add(current_id)
             cur = await db.execute(
-                f"SELECT source_msg_id, compression_batch_id FROM {table} WHERE id=?",
+                f"SELECT * FROM {table} WHERE id=?" + (" AND scope='connor'" if target == "chatroom" else ""),
                 (current_id,),
             )
             row = await cur.fetchone()
             if not row:
                 continue
-            for source_id in _json_list(row["source_msg_id"]):
-                text = str(source_id).strip()
-                if text and text not in source_seen:
-                    source_seen.add(text)
-                    source_ids.append(text)
-            batch_id = str(row["compression_batch_id"] or "").strip()
+            mem = dict(row)
+            if _json_list(mem.get("source_msg_id")):
+                originals.append({**mem, "lineage_exact": exact})
+                continue
+            parents = mem.get("source_memory_ids")
+            if parents is not None:
+                pending.extend((str(parent), exact) for parent in _json_list(parents))
+                continue
+            batch_id = str(mem.get("compression_batch_id") or "").strip()
             if not batch_id:
+                originals.append({**mem, "lineage_exact": exact})
                 continue
             cur = await db.execute(
                 "SELECT store, memory_id FROM memory_compression_batch_inputs "
-                "WHERE batch_id=? ORDER BY memory_id",
-                (batch_id,),
+                "WHERE batch_id=? AND store=? ORDER BY memory_id",
+                (batch_id, target),
             )
-            pending.extend(
-                (str(input_row["store"] or store), str(input_row["memory_id"]))
-                for input_row in await cur.fetchall()
-            )
-    return source_ids
+            pending.extend((str(r["memory_id"]), False) for r in await cur.fetchall())
+    return originals
+
+
+async def resolve_source_message_ids(target: str, memory_id: str, *, max_nodes: int = 500) -> list[str]:
+    originals = await resolve_source_memories(target, memory_id, max_nodes=max_nodes)
+    # Keep message namespaces when following old unprefixed private IDs.
+    ids = []
+    for mem in originals:
+        for value in _json_list(mem.get("source_msg_id")):
+            source_id = str(value).strip()
+            if not source_id:
+                continue
+            if ":" not in source_id:
+                prefix = "chatroom" if target == "chatroom" or str(mem.get("source_conv") or "").startswith("chatroom:") else "private"
+                source_id = f"{prefix}:{source_id}"
+            ids.append(source_id)
+    return list(dict.fromkeys(ids))
 
 
 async def _insert_output(
@@ -682,10 +712,18 @@ async def _insert_output(
     embedding,
     durable: bool = False,
     template_row: dict | None = None,
+    allowed_source_ids: list[str] | None = None,
 ) -> None:
     from memory import _pack_embedding
 
     packed = _pack_embedding(embedding) if embedding else None
+    parents = item.get("source_memory_ids")
+    if parents is not None:
+        if not isinstance(parents, list) or not parents or any(
+            not isinstance(parent, str) or parent not in (allowed_source_ids or []) for parent in parents
+        ):
+            raise ValueError("Compression output has invalid source_memory_ids")
+        parents = list(dict.fromkeys(parents))
     now = time.time()
     if target == "main":
         await db.execute(
@@ -693,8 +731,8 @@ async def _insert_output(
             "id, content, type, created_at, source_conv, embedding, keywords, importance, "
             "source_start_ts, source_end_ts, unresolved, source_msg_id, compression_stage, "
             "evidence_summary, evidence_detail_level, archive_state, period_kind, "
-            "period_start_ts, period_end_ts, compression_batch_id"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "period_start_ts, period_end_ts, compression_batch_id, source_memory_ids"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 memory_id,
                 item["content"],
@@ -716,6 +754,7 @@ async def _insert_output(
                 period_start_ts,
                 period_end_ts,
                 batch_id,
+                json.dumps(parents) if parents is not None else None,
             ),
         )
     else:
@@ -725,8 +764,8 @@ async def _insert_output(
             "id, room_id, scope, content, keywords, importance, embedding, source_start_ts, "
             "source_end_ts, created_at, unresolved, source_msg_id, memory_kind, compression_stage, "
             "evidence_summary, evidence_detail_level, archive_state, period_kind, "
-            "period_start_ts, period_end_ts, compression_batch_id"
-            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "period_start_ts, period_end_ts, compression_batch_id, source_memory_ids"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 memory_id,
                 template_row.get("room_id") or "connor_unified",
@@ -749,6 +788,7 @@ async def _insert_output(
                 period_start_ts,
                 period_end_ts,
                 batch_id,
+                json.dumps(parents) if parents is not None else None,
             ),
         )
 
@@ -809,6 +849,7 @@ async def _run_calendar_compression(
     batch_ids = []
     actor_context = _compression_actor_context(target)
     for period_chunk in _chunks(preview["periods"], cfg["periods_per_call"]):
+        source_references = _source_reference_map(period_chunk)
         prompt = _period_prompt(level, period_chunk, by_id, actor_context)
         parsed = await _call_compression_model(model_key, prompt)
         normalized = _normalize_outputs(parsed or {}, {period["label"] for period in period_chunk})
@@ -836,6 +877,22 @@ async def _run_calendar_compression(
                 "input_count": total_inputs,
                 "output_count": total_outputs,
             }
+        source_groups = [(item, period['memory_ids']) for period in period_chunk
+                         for item in period_outputs[period['label']]]
+        source_groups.extend((item, [mid for p in period_chunk for mid in p['memory_ids']]) for item in durable_facts)
+        for item, allowed in source_groups:
+            parents = item.get('source_memory_ids')
+            # A single input is unambiguous; otherwise the model must identify its sources.
+            if parents is None and len(allowed) == 1:
+                item['source_memory_ids'] = list(allowed)
+                continue
+            if not isinstance(parents, list) or not parents or any(
+                not isinstance(parent, str) or source_references.get(parent) not in allowed for parent in parents
+            ):
+                return {'ok': False, 'reason': 'invalid_source_lineage',
+                        'message': '本批来源关联缺失或无效，未写入；原记忆保持活跃。',
+                        'input_count': total_inputs, 'output_count': total_outputs}
+            item['source_memory_ids'] = list(dict.fromkeys(source_references[parent] for parent in parents))
         prepared = []
         for period in period_chunk:
             for item in period_outputs.get(period["label"], []):
@@ -911,6 +968,7 @@ async def _run_calendar_compression(
                         embedding=output["embedding"],
                         durable=output["durable"],
                         template_row=template_row,
+                        allowed_source_ids=input_ids if output["durable"] else output["period"]["memory_ids"],
                     )
                     await db.execute(
                         "INSERT INTO memory_compression_batch_outputs (batch_id, store, memory_id) "

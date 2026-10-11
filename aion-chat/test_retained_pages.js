@@ -52,38 +52,22 @@ test('hidden retained pages stop sockets and reconnect timers; showing them reco
   assert.equal(sockets.length, 3);
 });
 
-test('memory background refresh preserves an open editor and a reader on older pages', async () => {
-  let editing = false, finish;
-  const list = { scrollTop: 0 };
-  const ctx = vm.createContext({
-    document: { querySelector: () => editing }, $: id => id === 'memList' ? list : { value: '' },
-    _memoryKindMenuId: null, _memoryLoading: false, _memoryRequestId: 0, _memoryKindFilter: 'all',
-    _allMemories: [{ id: 'cached' }], MEMORY_PAGE_SIZE: 50, URLSearchParams,
-    api: () => new Promise(resolve => finish = resolve),
-    renderMemories() { throw Error('must not replace reader state'); },
-  });
-  vm.runInContext(block(read('memory.html'), 'function memoryRefreshBlocked()', 'function loadMoreMemories()'), ctx);
-  const pending = ctx.loadMemories({ quiet: true });
-  editing = true;
-  finish({ items: [{ id: 'new' }] });
-  await pending;
-  assert.equal(ctx._allMemories[0].id, 'cached');
-  assert.equal(ctx._memoryLoading, false);
-  editing = false;
-  list.scrollTop = 200;
-  finish = null;
-  await ctx.loadMemories({ quiet: true });
-  assert.equal(finish, null, 'do not reset pagination while reading');
-  ctx._allMemories = Array.from({ length: 100 }, (_, id) => ({ id }));
-  ctx.renderMemories = () => {};
-  ctx.saveMemorySnapshot = () => {};
-  ctx.upsertMemory = item => ctx._allMemories.push(item);
-  const manual = ctx.refreshMemoryList();
-  assert.equal(list.scrollTop, 0);
-  finish({ items: [{ id: 'latest' }], next_cursor: 'next', has_more: true });
-  await manual;
-  assert.equal(ctx._allMemories.length, 1);
-  assert.equal(ctx._allMemories[0].id, 'latest');
+test('memory refresh leaves open drafts and an older page intact', async () => {
+  let requests = 0;
+  const dialog = {open:true}, list = {scrollTop:0}, detail = {classList:{contains:()=>false}};
+  const ctx = vm.createContext({el:id=>({dialog,list,detail}[id]),state:{page:1},refreshPending:false,
+    request(){requests++;}, clearTimeout(){}, searchTimer:null});
+  const source = read('memory-library.js');
+  vm.runInContext(block(source,'  function refreshBlocked()', '  function snapshotBridge()'),ctx);
+  vm.runInContext(block(source,'  async function loadList(', '  function closeDetail()'),ctx);
+  await ctx.loadList({quiet:true});
+  assert.equal(ctx.refreshPending,true);
+  dialog.open=false;ctx.state.page=2;ctx.refreshPending=false;
+  await ctx.loadList({quiet:true});
+  assert.equal(ctx.refreshPending,true);
+  ctx.state.page=1;list.scrollTop=200;
+  await ctx.loadList({quiet:true});
+  assert.equal(requests,0);
 });
 
 test('quiet family refresh keeps settings edits, scroll position and cached data on failure', async () => {

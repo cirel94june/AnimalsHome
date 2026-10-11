@@ -410,19 +410,7 @@ function startPetCareClock() {
 }
 
 function goHome() {
-  if (window.parent !== window) {
-    try {
-      if (typeof window.parent.navigateToHome === 'function') {
-        window.parent.navigateToHome();
-        return;
-      }
-      if (typeof window.parent.openSubPage === 'function') {
-        window.parent.openSubPage('/');
-        return;
-      }
-    } catch {}
-  }
-  window.location.href = '/';
+  window.location.href = '/playground';
 }
 
 function fillModelSelect(select, value) {

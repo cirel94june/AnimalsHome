@@ -15,6 +15,10 @@ import httpx
 from config import SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, resolve_model_transport_mode, model_supports_safe_live
 from tts import cleanup_tts_cache_dir, _request_tts_audio, EDGE_VOICES, MINIMAX_TTS_MODELS, MINIMAX_VOICE_PREFIX
 from ws import manager
+import elevenlabs_tts
+import antigravity_cli
+from config import replace_antigravity_models
+from asr import ASR_FIELDS, normalize_asr_settings
 
 router = APIRouter()
 
@@ -23,6 +27,17 @@ RELAY_MODEL_PROVIDERS = {"aipro", "custom_openai"}
 # ── 模型列表 ──────────────────────────────────────
 @router.get("/api/models")
 async def list_models():
+    try:
+        catalog = await antigravity_cli.discover_models()
+        replace_antigravity_models({
+            f"AGY · {item['name']}": {
+                "provider": "antigravity_cli", "model": item["model"],
+                "vision": False, "audio": False,
+            }
+            for item in catalog
+        }, persist=True)
+    except (antigravity_cli.AntigravityError, OSError, TimeoutError) as error:
+        print(f"[AGY models] {error}")
     rows = [
         {
             "key": k,
@@ -38,6 +53,14 @@ async def list_models():
 
 # ── 设置 ──────────────────────────────────────────
 class SettingsUpdate(BaseModel):
+    asr_provider: Optional[str] = None
+    asr_base_url: Optional[str] = None
+    asr_api_key: Optional[str] = None
+    asr_model: Optional[str] = None
+    elevenlabs_tts_key: Optional[str] = None
+    elevenlabs_tts_model: Optional[str] = None
+    elevenlabs_aion_voice_id: Optional[str] = None
+    elevenlabs_connor_voice_id: Optional[str] = None
     gemini_key: Optional[str] = None
     siliconflow_key: Optional[str] = None
     minimax_tts_key: Optional[str] = None
@@ -110,8 +133,13 @@ async def get_settings():
         minimax_aion_name, minimax_connor_name = "AI", "第二AI"
     return {
         "gemini_key": SETTINGS.get("gemini_key", ""),
+        **{field: SETTINGS.get(field, "openai" if field == "asr_provider" else "") for field in ASR_FIELDS},
         "siliconflow_key": SETTINGS.get("siliconflow_key", ""),
         "minimax_tts_key": SETTINGS.get("minimax_tts_key", ""),
+        "elevenlabs_tts_key": SETTINGS.get("elevenlabs_tts_key", ""),
+        "elevenlabs_tts_model": SETTINGS.get("elevenlabs_tts_model", "eleven_v4"),
+        "elevenlabs_aion_voice_id": SETTINGS.get("elevenlabs_aion_voice_id", ""),
+        "elevenlabs_connor_voice_id": SETTINGS.get("elevenlabs_connor_voice_id", ""),
         "minimax_tts_model": SETTINGS.get("minimax_tts_model", "speech-2.8-hd"),
         "minimax_aion_voice_id": SETTINGS.get("minimax_aion_voice_id", ""),
         "minimax_connor_voice_id": SETTINGS.get("minimax_connor_voice_id", ""),
@@ -151,6 +179,13 @@ async def get_settings():
 
 @router.put("/api/settings")
 async def update_settings(body: SettingsUpdate):
+    asr_config = {}
+    if any(getattr(body, field) is not None for field in ASR_FIELDS):
+        proposed = {field: getattr(body, field) if getattr(body, field) is not None else SETTINGS.get(field) for field in ASR_FIELDS}
+        try:
+            asr_config = normalize_asr_settings(proposed)
+        except (ValueError, httpx.InvalidURL) as error:
+            raise HTTPException(status_code=400, detail=str(error))
     image_fields = ("image_gen_base_url", "image_gen_api_key", "image_gen_model")
     image_config = {}
     if any(getattr(body, key) is not None for key in image_fields):
@@ -168,6 +203,16 @@ async def update_settings(body: SettingsUpdate):
                     raise ValueError("invalid base URL")
             except (httpx.InvalidURL, ValueError):
                 raise HTTPException(status_code=400, detail="生图 API 地址须为 HTTP(S) 地址，不能包含账号、查询参数或片段")
+    if body.elevenlabs_tts_model is not None and body.elevenlabs_tts_model not in elevenlabs_tts.MODELS:
+        raise HTTPException(400, "ElevenLabs 模型无效")
+    for field in ("elevenlabs_aion_voice_id", "elevenlabs_connor_voice_id"):
+        value = getattr(body, field)
+        if value is not None and value.strip() and not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value.strip()):
+            raise HTTPException(400, "ElevenLabs 音色 ID 格式不正确")
+    for field in ("elevenlabs_tts_key", "elevenlabs_tts_model", "elevenlabs_aion_voice_id", "elevenlabs_connor_voice_id"):
+        value = getattr(body, field)
+        if value is not None:
+            SETTINGS[field] = value.strip()
     SETTINGS.update(image_config)
     if body.minimax_tts_model is not None and body.minimax_tts_model not in MINIMAX_TTS_MODELS:
         raise HTTPException(status_code=400, detail="MiniMax 语音模型无效")
@@ -239,6 +284,7 @@ async def update_settings(body: SettingsUpdate):
                 reload_login()
             except Exception:
                 pass
+    SETTINGS.update(asr_config)
     save_settings(SETTINGS)
     if luckin_changed:
         try:
@@ -498,9 +544,11 @@ class TTSRequest(BaseModel):
 
 @router.post("/api/tts")
 async def tts_synthesize(body: TTSRequest):
+    if body.voice.startswith("elevenlabs:") and not get_key("elevenlabs"):
+        raise HTTPException(400, "未配置 ElevenLabs API Key")
     if body.voice.startswith(MINIMAX_VOICE_PREFIX) and not get_key("minimax"):
         return Response(content=json.dumps({"error": "未配置 MiniMax 订阅 Key"}), status_code=400, media_type="application/json")
-    if not body.voice.startswith(("edge:", MINIMAX_VOICE_PREFIX)) and not get_key("siliconflow"):
+    if not body.voice.startswith(("edge:", MINIMAX_VOICE_PREFIX, "elevenlabs:")) and not get_key("siliconflow"):
         return Response(content=json.dumps({"error": "未配置硅基流动 API Key"}), status_code=400, media_type="application/json")
     if not body.text.strip():
         return Response(content=json.dumps({"error": "文本不能为空"}), status_code=400, media_type="application/json")
@@ -548,6 +596,21 @@ async def theater_tts_audio(msg_id: str):
 
 @router.get("/api/tts/voices")
 async def tts_voice_list():
+    eleven_voices = []
+    eleven_error = ""
+    selected_eleven_ids = list(dict.fromkeys(
+        voice_id for sender in ("aion", "connor")
+        if (voice_id := str(SETTINGS.get(f"elevenlabs_{sender}_voice_id") or "").strip())
+    ))
+    if SETTINGS.get("elevenlabs_tts_key") and selected_eleven_ids:
+        catalog = {}
+        try:
+            catalog = {v["uri"]: v for v in await elevenlabs_tts.list_voices()}
+        except RuntimeError as exc:
+            eleven_error = str(exc)
+        for voice_id in selected_eleven_ids:
+            uri = elevenlabs_tts.VOICE_PREFIX + voice_id
+            eleven_voices.append(catalog.get(uri) or {"uri": uri, "customName": voice_id, "provider": "elevenlabs"})
     edge_voices = [v for v in EDGE_VOICES if v["uri"] in SETTINGS.get("edge_tts_favorites", [])]
     minimax_voices = []
     if get_key("minimax"):
@@ -568,7 +631,7 @@ async def tts_voice_list():
                 })
     key = get_key("siliconflow")
     if not key:
-        return {"voices": minimax_voices + edge_voices}
+        return {"voices": minimax_voices + eleven_voices + edge_voices, "error": eleven_error}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(
@@ -576,12 +639,20 @@ async def tts_voice_list():
                 headers={"Authorization": f"Bearer {key}"}
             )
         if resp.status_code != 200:
-            return {"voices": minimax_voices + edge_voices, "error": "硅基流动音色暂时不可用"}
+            return {"voices": minimax_voices + eleven_voices + edge_voices, "error": "硅基流动音色暂时不可用。" + eleven_error}
         data = resp.json()
         voices = data.get("result") or data.get("voices") or data.get("data") or []
-        return {"voices": [{**v, "provider": "siliconflow"} for v in voices] + minimax_voices + edge_voices}
+        return {"voices": [{**v, "provider": "siliconflow"} for v in voices] + minimax_voices + eleven_voices + edge_voices, "error": eleven_error}
     except Exception as e:
-        return {"voices": minimax_voices + edge_voices, "error": "硅基流动音色暂时不可用"}
+        return {"voices": minimax_voices + eleven_voices + edge_voices, "error": "硅基流动音色暂时不可用。" + eleven_error}
+
+
+@router.get("/api/tts/elevenlabs-voices")
+async def elevenlabs_voice_catalog():
+    try:
+        return {"voices": await elevenlabs_tts.list_voices()}
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc)) from None
 
 
 @router.get("/api/tts/edge-voices")

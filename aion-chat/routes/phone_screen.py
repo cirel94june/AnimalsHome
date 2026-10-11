@@ -37,6 +37,8 @@ async def upload_phone_screen(body: PhoneScreenUpload):
         source=body.source,
         reason=body.reason,
     )
+    from routes.floating_chat import screen_uploaded
+    screen_uploaded(meta)
     await manager.broadcast({"type": "phone_screen_uploaded", "data": meta})
     return {"ok": True, "screen": meta}
 

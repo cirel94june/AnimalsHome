@@ -2566,8 +2566,9 @@ public class AionPushService extends Service {
                 case "tts_chunk":
                 case "tts_done": {
                     mainHandler.post(() -> {
-                        if (backgroundTtsClosing || !getSharedPreferences(PREFS, MODE_PRIVATE)
-                                .getBoolean("background_tts_enabled", false)) return;
+                        boolean expressive = data != null && data.optBoolean("expressive", false);
+                        if (backgroundTtsClosing || (!expressive && !getSharedPreferences(PREFS, MODE_PRIVATE)
+                                .getBoolean("background_tts_enabled", false))) return;
                         backgroundTtsPlayer.receive(type, data, getHttpBase());
                     });
                     break;
@@ -2618,6 +2619,12 @@ public class AionPushService extends Service {
                     schedulePhoneScreenCapture("cam_check");
                     break;
                 }
+                case "floating_screen_capture": {
+                    if (FloatingChatService.acceptsScreenRequest(data)) {
+                        schedulePhoneScreenSnapshot("floating:" + data.optString("request_id"), 200, true);
+                    }
+                    break;
+                }
                 case "music": {
                     // 后台自动播放音乐（前台由 WebView JS 处理）
                     if (!isForegroundActive && data != null) {
@@ -2635,6 +2642,7 @@ public class AionPushService extends Service {
                     break;
                 }
                 case "msg_created": {
+                    FloatingChatService.deliver("msg_created", data);
                     if (data != null) {
                         String role = data.optString("role", "");
                         if ("assistant".equals(role)) {
@@ -2649,6 +2657,7 @@ public class AionPushService extends Service {
                     break;
                 }
                 case "chatroom_msg_created": {
+                    FloatingChatService.deliver("chatroom_msg_created", data);
                     if (data != null) {
                         String sender = data.optString("sender", "");
                         if (!"user".equals(sender) && !"system".equals(sender) && !sender.isEmpty()) {
@@ -3306,6 +3315,10 @@ public class AionPushService extends Service {
     }
 
     private void captureAndUploadPhoneScreen(String reason, boolean forceAccessibilityFallback) {
+        if (reason != null && reason.contains("floating:") && AionAccessibilityService.supportsWindowCapture()) {
+            requestAccessibilityPhoneScreen(reason, true);
+            return;
+        }
         if (!phoneScreenEnabled || phoneScreenReader == null) {
             requestAccessibilityPhoneScreen("fallback_" + reason, forceAccessibilityFallback);
             return;

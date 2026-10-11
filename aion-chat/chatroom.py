@@ -2,6 +2,7 @@
 聊天室核心逻辑：Connor 代理调用、跨窗口上下文构建、AI 互聊控制、聊天室记忆管理
 """
 
+from reply_timing import timed
 import json, time, struct, asyncio, uuid, os, threading
 from typing import Optional
 from pathlib import Path
@@ -367,6 +368,7 @@ def format_cross_context(messages: list[dict], label: str) -> str:
 #  聊天室记忆系统
 # ══════════════════════════════════════════════════
 
+@timed("second_recall")
 async def recall_chatroom_memories(
     query_text: str,
     room_id: str = "",
@@ -442,6 +444,7 @@ async def recall_chatroom_memories(
     return matched[:top_k]
 
 
+@timed("second_surfacing")
 async def build_surfacing_chatroom_memories(
     topic: str = "",
     keywords: list[str] = None,
@@ -557,6 +560,7 @@ async def build_surfacing_chatroom_memories(
     return result, surfaced_ids
 
 
+@timed("memory_sources")
 async def fetch_chatroom_source_details(memories: list[dict], keywords: list[str]) -> str:
     """
     优先按 source_msg_id 返回这条记忆真正挂载的来源原文。
@@ -702,7 +706,7 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
             row = await cur.fetchone()
             anchor_ts = row["anchor_ts"] if row else 0
 
-            # ── Connor 1v1 消息 ──
+            # 最新房间仅用于保存记忆的归属，不限定总结的数据源。
             cur = await db.execute(
                 "SELECT id FROM chatroom_rooms WHERE type = 'connor_1v1' ORDER BY updated_at DESC LIMIT 1"
             )
@@ -710,10 +714,11 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
             msgs = []
             if connor_room:
                 cur = await db.execute(
-                    "SELECT id, sender, content, created_at FROM chatroom_messages "
-                    "WHERE room_id = ? AND created_at > ? AND sender != 'system' "
-                    "ORDER BY created_at ASC",
-                    (connor_room["id"], anchor_ts),
+                    "SELECT m.id, m.sender, m.content, m.created_at FROM chatroom_messages m "
+                    "JOIN chatroom_rooms r ON r.id = m.room_id "
+                    "WHERE r.type = 'connor_1v1' AND m.created_at > ? AND m.sender != 'system' "
+                    "ORDER BY m.created_at ASC",
+                    (anchor_ts,),
                 )
                 for r in await cur.fetchall():
                     d = dict(r)
@@ -721,17 +726,18 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                     d["_source_id"] = f"chatroom:{d['id']}"
                     msgs.append(d)
 
-            # ── 群聊消息 ──
+            # ── 所有群聊窗口中本库锚点之后的消息 ──
             cur = await db.execute(
                 "SELECT id FROM chatroom_rooms WHERE type = 'group' ORDER BY updated_at DESC LIMIT 1"
             )
             group_room = await cur.fetchone()
             if group_room:
                 cur = await db.execute(
-                    "SELECT id, sender, content, created_at FROM chatroom_messages "
-                    "WHERE room_id = ? AND created_at > ? AND sender != 'system' "
-                    "ORDER BY created_at ASC",
-                    (group_room["id"], anchor_ts),
+                    "SELECT m.id, m.sender, m.content, m.created_at FROM chatroom_messages m "
+                    "JOIN chatroom_rooms r ON r.id = m.room_id "
+                    "WHERE r.type = 'group' AND m.created_at > ? AND m.sender != 'system' "
+                    "ORDER BY m.created_at ASC",
+                    (anchor_ts,),
                 )
                 for r in await cur.fetchall():
                     d = dict(r)
@@ -1070,6 +1076,7 @@ def _parse_digest_result(raw: str) -> Optional[dict]:
 #  群聊上下文构建
 # ══════════════════════════════════════════════════
 
+@timed("aion_context")
 async def build_aion_group_context(
     room_id: str,
     room_messages: list[dict],
@@ -1165,6 +1172,7 @@ async def build_aion_group_context(
     return history, mem_result.get("digest_result", {})
 
 
+@timed("connor_context")
 async def build_connor_group_context(
     room_id: str,
     room_messages: list[dict],
@@ -1262,7 +1270,7 @@ async def build_connor_group_context(
     history.append({"role": "assistant", "content": "明白了。"})
 
     # 5. 统一时间线（合并 Connor 1v1 + 群聊消息）
-    merged = await fetch_merged_timeline("connor", context_limit)
+    # Reuse this reply's snapshot; the next speaker builds its own fresh context.
     timeline_history = render_merged_timeline(
         merged,
         "connor",
@@ -1273,6 +1281,7 @@ async def build_connor_group_context(
     return history, mem_result.get("digest_result", {})
 
 
+@timed("connor_context")
 async def build_connor_1v1_context(
     room_id: str,
     room_messages: list[dict],

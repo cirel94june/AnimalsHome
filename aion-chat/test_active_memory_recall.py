@@ -34,6 +34,21 @@ async def _empty_health(*args, **kwargs):
 
 
 class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_board_experiences_are_not_automatically_injected_into_chat(self):
+        with (
+            patch("context_builder.build_health_summary", new=_empty_health),
+            patch("context_builder.build_surfacing_memories", new=AsyncMock(return_value=([], set()))),
+            patch("context_builder.recall_memories", new=AsyncMock(return_value=([], []))),
+            patch("context_builder.board_memory_context", return_value="纸条原文不应带入", create=True) as board_context,
+        ):
+            for fast_mode in (False, True):
+                result = await context_builder.build_memory_blocks(
+                    "水母灯", recent_messages=[], skip_digest=fast_mode,
+                    digest_result={"keywords": ["水母灯"], "topic": "", "is_search_needed": False},
+                )
+                self.assertNotIn("纸条原文不应带入", result["time_block"] + result["memory_block"])
+        board_context.assert_not_called()
+
     def test_recall_query_falls_back_to_latest_user_message_when_digest_has_no_clues(self):
         query = context_builder._build_recall_query(
             "",
@@ -319,6 +334,7 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_private_chat_regenerate_injects_recalled_memory_without_search_signal(self):
         captured = {}
+        board_context = Mock(return_value="[留言板经历] 我刚和朋友聊了水母灯。")
 
         async def fake_stream_ai(messages, *args, **kwargs):
             captured["messages"] = messages
@@ -333,7 +349,10 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
         patches = [
             patch("routes.chat.get_db", new=_fake_get_db),
             patch("routes.chat.resolve_model_key", return_value="unit-model"),
-            patch("routes.chat.fetch_merged_timeline", new=AsyncMock(return_value=[])),
+            patch("routes.chat.fetch_merged_timeline", new=AsyncMock(return_value=[
+                {"created_at": 100.0}, {"created_at": 200.0}, {"created_at": 300.0},
+                {"created_at": 400.0},
+            ])),
             patch("routes.chat.render_merged_timeline", return_value=list(rendered_history)),
             patch("routes.chat.load_worldbook", return_value={}),
             patch("routes.chat._insert_private_ability_block", new=AsyncMock(return_value=0)),
@@ -350,7 +369,7 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch("routes.chat.build_health_summary", new=AsyncMock(return_value="")),
-            patch("routes.chat.board_memory_context", return_value="[留言板经历] 我刚和朋友聊了水母灯。", create=True),
+            patch("routes.chat.board_memory_context", new=board_context, create=True),
             patch("routes.chat.build_surfacing_memories", new=AsyncMock(return_value=([], set()))),
             patch("routes.chat.recall_memories", new=AsyncMock(return_value=([_memory("mem1", "private memory")], [_memory("mem1", "private memory")]))),
             patch("routes.chat.stream_ai", new=fake_stream_ai),
@@ -360,6 +379,7 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
             patch("routes.chat._process_wish_commands", new=AsyncMock(side_effect=lambda text, **k: text)),
             patch("routes.chat._extract_reply_image_attachments", side_effect=lambda text: (text, [])),
             patch("routes.chat.luckin_payment_attachments", return_value=[]),
+            patch("routes.chat.with_band_vibration_attachment", new=AsyncMock(side_effect=lambda message_id, attachments: attachments)),
             patch("routes.chat.export_conversation", new=AsyncMock()),
             patch.object(chat_routes.manager, "broadcast", new=AsyncMock()),
             patch.object(chat_routes.manager, "set_tts_fallback", new=Mock()),
@@ -373,7 +393,8 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
 
         prompt_text = "\n".join(str(m.get("content", "")) for m in captured["messages"])
         self.assertIn("private memory", prompt_text)
-        self.assertIn("[留言板经历] 我刚和朋友聊了水母灯。", prompt_text)
+        self.assertNotIn("[留言板经历] 我刚和朋友聊了水母灯。", prompt_text)
+        board_context.assert_not_called()
 
 
 class _FakeCursor:

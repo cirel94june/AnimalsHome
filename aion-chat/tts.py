@@ -11,11 +11,19 @@ import re, asyncio, logging, time
 from collections import deque
 from pathlib import Path
 import httpx
+import weakref
 
 from config import SETTINGS, get_key, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES
 from link_preview import strip_urls_for_message
 
 log = logging.getLogger("tts")
+_message_streamers = weakref.WeakValueDictionary()
+
+
+async def wait_message_tts(msg_id: str):
+    streamer = _message_streamers.get(msg_id)
+    if streamer:
+        await asyncio.wait_for(streamer.completed.wait(), timeout=180)
 
 # Chinese voices verified against Edge's voice list. Keeping this small catalog
 # local lets the free route remain selectable when another provider is offline.
@@ -86,7 +94,10 @@ def cleanup_tts_cache_dir(cache_dir: Path = TTS_CACHE_DIR, max_bytes: int = TTS_
             break
 
 # 需要从 TTS 文本中剥除的特殊标签
+_WIDGET_TTS_COMMAND = re.compile(r'[【\[]\s*(?:小组件|横幅)\s*[:：][^】\]]*(?:[】\]]|$)')
 _STRIP_PATTERNS = [
+    _WIDGET_TTS_COMMAND,
+    re.compile(r'\[语音\s*(?:[|｜:：])[^\]]*(?:\]|$)'),
     re.compile(r'\[CAM_CHECK\]'),
     re.compile(r'\[POI_SEARCH:[^\]]*\]'),
     re.compile(r'\[MUSIC:[^\]]*\]'),
@@ -182,9 +193,9 @@ def _find_cut_position_for_text(buffer: str, min_chars: int, max_chars: int) -> 
             continue
         ch = buffer[i]
 
-        if ch == '[' and not in_meta:
+        if ch in '[【' and not in_meta:
             in_bracket = True
-        elif ch == ']' and in_bracket:
+        elif ch in ']】' and in_bracket:
             in_bracket = False
             i += 1
             continue
@@ -250,6 +261,15 @@ def split_text_for_tts(text: str, *, min_chars: int = 300, max_chars: int = 500)
 
 
 async def _request_tts_audio(text: str, voice: str, *, seq: int | None = None) -> bytes | None:
+    # Every ordinary entry point, including background and manual TTS, excludes
+    # the complete expressive command. The director calls its provider directly.
+    text = re.sub(r'\[语音\s*(?:[|｜:：])[^\]]*(?:\]|$)', '', text).strip()
+    text = _WIDGET_TTS_COMMAND.sub('', text).strip()
+    if not text:
+        return None
+    if voice.startswith("elevenlabs:"):
+        from elevenlabs_tts import request_audio
+        return await request_audio(text, voice[len("elevenlabs:"):])
     if voice.startswith("edge:"):
         return await _request_edge_tts_audio(text, voice[5:])
     if voice.startswith(MINIMAX_VOICE_PREFIX):
@@ -478,6 +498,8 @@ class TTSStreamer:
         low_latency_first_chunk: bool = False,
     ):
         self.msg_id = msg_id
+        self.completed = asyncio.Event()
+        _message_streamers[msg_id] = self
         self.voice = voice
         self._ws = ws_manager
         self._sse_queue = sse_queue
@@ -578,6 +600,7 @@ class TTSStreamer:
     def cancel(self):
         """Suppress notifications and remove every file owned by this streamer."""
         self._cancelled = True
+        self.completed.set()
         self._buffer = ""
         self._deferred_segments.clear()
         if self._queue is not None:
@@ -790,6 +813,7 @@ class TTSStreamer:
             "type": "tts_done",
             "data": self._with_event_data({"msg_id": self.msg_id, "created_at": time.time()})
         })
+        self.completed.set()
 
         if self._merge_segments:
             self._merge_task = spawn_generation_task(self._finalize_merged_audio())

@@ -13,7 +13,7 @@
     for (const voice of voices || []) {
       const id = voice.uri || voice.customized_model_id || voice.name;
       if (!id) continue;
-      const route = id.startsWith('edge:') ? 'Edge 免费' : id.startsWith('minimax:') ? 'MiniMax' : '硅基流动';
+      const route = id.startsWith('elevenlabs:') ? 'ElevenLabs' : id.startsWith('edge:') ? 'Edge 免费' : id.startsWith('minimax:') ? 'MiniMax' : '硅基流动';
       if (!groups.has(route)) {
         const group = doc.createElement('optgroup');
         group.label = route;

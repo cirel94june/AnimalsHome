@@ -177,6 +177,7 @@ public class WebViewActivity extends AppCompatActivity
                 new AppSupervisionBridge(this, AppSupervisionRuntime.get()),
                 "AionAppSupervision");
         webView.addJavascriptInterface(new DeviceContextBridge(this), "AionDeviceContext");
+        webView.addJavascriptInterface(new FloatingChatBridge(this), "AionFloatingChat");
         privateMemoBridge = new PrivateMemoBridge(this, webView);
         webView.addJavascriptInterface(privateMemoBridge, "AionPrivateMemos");
         ttsAudioBridge = new TtsAudioBridge(this, webView);
@@ -927,6 +928,8 @@ public class WebViewActivity extends AppCompatActivity
         AppSupervisionRuntime runtime = AppSupervisionRuntime.get();
         if (runtime != null) runtime.onAionsHomeForegroundChanged(true);
         activityResumed = true;
+        FloatingChatService.setAppForeground(true);
+        FloatingChatBridge.resume(this);
         showAttentionCall();
         setNativeCameraForeground(true);
         // 告诉推送服务：前台已打开，不需要弹通知
@@ -951,6 +954,7 @@ public class WebViewActivity extends AppCompatActivity
         AppSupervisionRuntime runtime = AppSupervisionRuntime.get();
         if (runtime != null) runtime.onAionsHomeForegroundChanged(false);
         activityResumed = false;
+        FloatingChatService.setAppForeground(false);
         setNativeCameraForeground(false);
         if (webView != null) {
             webView.evaluateJavascript(

@@ -65,3 +65,66 @@ test('chatroom ignores another device copy without marking its segment as played
   context.crEnqueueTTSChunk('message', 0, '/segment0', 1, 'phone');
   assert.equal(queued.length, 1);
 });
+
+test('expressive clip follows ordinary audio and works with full reading off', async () => {
+  const source = fs.readFileSync(path.join(__dirname, 'static/chat.js'), 'utf8');
+  const start = source.indexOf('function enqueueTTSChunk(');
+  const end = source.indexOf('// 重听 TTS 音频', start);
+  const played = [];
+  const audio = { play() { played.push(this.src); return Promise.resolve(); } };
+  const context = vm.createContext({
+    ttsEnabled: true, ttsPlaying: false, ttsChunkQueues: {}, ttsPlayOrder: [],
+    ttsAudio: audio, ttsManualStop: false, ttsSuppressedMsgIds: new Set(),
+    ttsAcceptAfter: 0, _clientId: 'desktop', voiceInCall: false, window: {},
+    shouldAcceptTTSMsg: () => true, clearTTSResumeTimer() {},
+    _notifyVoiceCallPrivateTTSStart() {}, _notifyVoiceCallPrivateTTSEnd() {},
+  });
+  vm.runInContext(source.slice(start, end), context);
+  context.enqueueTTSChunk('m', 0, '/ordinary', 1, 'desktop');
+  context.finishTTSForMsg('m', 2, 'desktop');
+  context.enqueueTTSChunk('m_expressive', 0, '/expressive', 3, 'desktop', '台词', true, 'm');
+  context.finishTTSForMsg('m_expressive', 3, 'desktop');
+  assert.deepEqual(played, ['/ordinary']);
+  audio.onended();
+  await Promise.resolve();
+  assert.deepEqual(played, ['/ordinary', '/expressive']);
+  audio.onended();
+  context.ttsEnabled = false;
+  context.enqueueTTSChunk('normal-off', 0, '/must-not-play', 4, 'desktop');
+  context.enqueueTTSChunk('voice-only', 0, '/voice-only', 4, 'desktop', '台词', true);
+  assert.deepEqual(played, ['/ordinary', '/expressive', '/voice-only']);
+});
+
+test('expressive buttons toggle off and switch immediately on both chat surfaces', () => {
+  for (const room of [false, true]) {
+    const audio = {src: ''};
+    const queued = [];
+    let stops = 0;
+    const context = vm.createContext({window: {}, ttsAudio: audio, ttsPlaying: false,
+      _ttsEngine: {audio, playing: false}, _clientId: 'private', crAmbientClientId: 'room',
+      finishTTSForMsg() {}, crFinishTTSForMsg() {},
+    });
+    const stop = () => { stops++; audio.src = ''; context.ttsPlaying = false; context._ttsEngine.playing = false; };
+    const enqueue = (id, seq, url) => { queued.push({id, url}); audio.src = 'http://localhost' + url; context.ttsPlaying = true; context._ttsEngine.playing = true; };
+    Object.assign(context, {stopLiveTTSQueue: stop, crStopTTS: stop, enqueueTTSChunk: enqueue, crEnqueueTTSChunk: enqueue});
+    vm.runInContext(fs.readFileSync(path.join(__dirname, 'static/expressive-voice.js'), 'utf8'), context);
+    const source = fs.readFileSync(path.join(__dirname, 'static', room ? 'chatroom.js' : 'chat.js'), 'utf8');
+    vm.runInContext(source.slice(source.lastIndexOf('let expressiveReplaySequence = 0;')), context);
+    const first = {dataset: {voiceUrl: '/api/tts/audio/first_expressive'}};
+    const second = {dataset: {voiceUrl: '/api/tts/audio/second_expressive'}};
+    const voice = context.window.ExpressiveVoice;
+    voice.play(first);
+    voice.play(first);
+    assert.equal(queued.length, 1);
+    assert.equal(audio.src, '');
+    voice.play(first);
+    voice.play(second);
+    assert.equal(queued.length, 3);
+    assert.equal(audio.src, 'http://localhost/api/tts/audio/second_expressive');
+    assert.equal(stops, 4);
+    assert.equal(new Set(queued.map(q => q.id)).size, 3);
+    context.ttsPlaying = false; context._ttsEngine.playing = false;
+    voice.play(second);
+    assert.equal(queued.length, 4, 'completed audio can be replayed');
+  }
+});

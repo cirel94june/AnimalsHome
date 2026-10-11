@@ -66,6 +66,10 @@ final class BackgroundTtsPlayer {
         if (url == null) { stateChanged.run(); return; }
         MediaPlayer current = new MediaPlayer();
         player = current;
+        TtsPlaybackCoordinator.shared.request(current, () -> prepare(current, url));
+    }
+
+    private void prepare(MediaPlayer current, String url) {
         try {
             current.setAudioAttributes(new AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -129,7 +133,11 @@ final class BackgroundTtsPlayer {
         cancelPrepareTimeout();
         if (enhancer != null) enhancer.release();
         enhancer = null;
-        if (player != null) player.release();
+        MediaPlayer released = player;
         player = null;
+        if (released != null) {
+            released.release();
+            TtsPlaybackCoordinator.shared.release(released);
+        }
     }
 }

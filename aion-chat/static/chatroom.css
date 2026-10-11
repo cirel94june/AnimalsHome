@@ -1581,6 +1581,7 @@ body[data-theme="light"] .monitor-camera-snapshot summary {
 .cr-syslog-btn-flash { animation: cr-syslog-flash-red 1.2s ease-in-out infinite; color: #f44336 !important; }
 
 /* ── 加载指示器 ── */
+.reply-preparation { align-self:flex-start; padding:6px 14px; font-size:13px; color:var(--text3); }
 .typing-indicator {
   align-self: flex-start;
   padding: 4px 14px;

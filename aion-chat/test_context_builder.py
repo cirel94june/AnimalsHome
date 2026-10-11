@@ -3,6 +3,7 @@ import sys
 import re
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -97,7 +98,8 @@ class GroupWindowContinuityTest(unittest.IsolatedAsyncioTestCase):
                     "time_block": "test time", "memory_block": "", "digest_result": {},
                 })),
             ):
-                for build in (chatroom.build_aion_group_context, chatroom.build_connor_group_context):
+                for build in (chatroom.build_aion_group_context, chatroom.build_connor_group_context,
+                              chatroom.build_connor_1v1_context):
                     for limit in (4, 32):
                         with self.subTest(actor=build.__name__, limit=limit):
                             history, _ = await build(
@@ -110,3 +112,68 @@ class GroupWindowContinuityTest(unittest.IsolatedAsyncioTestCase):
                                 for match in re.findall(r"timeline-row-(\d+)", message["content"])
                             ]
                             self.assertEqual(list(range(41 - limit, 41)), actual)
+
+
+class BoundedTimelineTest(unittest.IsolatedAsyncioTestCase):
+    async def test_paging_keeps_visible_system_events_and_reads_only_recent_rows(self):
+        import context_builder as cb
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'timeline.db'
+            async with aiosqlite.connect(path) as db:
+                await db.executescript('''
+                    CREATE TABLE messages (id TEXT, conv_id TEXT, role TEXT, content TEXT, created_at REAL, attachments TEXT);
+                    CREATE TABLE chatroom_rooms (id TEXT, type TEXT);
+                    CREATE TABLE chatroom_messages (id TEXT, room_id TEXT, sender TEXT, content TEXT, created_at REAL, attachments TEXT);
+                    INSERT INTO chatroom_rooms VALUES ('old','group'),('new','group'),('private','connor_1v1');
+                ''')
+                await db.executemany('INSERT INTO chatroom_messages VALUES (?,?,?,?,?,?)',
+                    [(str(i), 'old', 'user', f'old-{i}', i, '[]') for i in range(1000)])
+                # Several pages of invisible notices, including equal timestamps.
+                await db.executemany('INSERT INTO chatroom_messages VALUES (?,?,?,?,?,?)',
+                    [(f'h{i}', 'new', 'system', 'UI only', 2000, '[]') for i in range(150)])
+                events = [('pat', '拍一拍', '[{"type":"system_model_context"}]'),
+                          ('supervision', '查看了动态：今天正常', '[]'),
+                          ('web', '搜索了天气', '[]'), ('music', '点了一首歌', '[]')]
+                for i, (msg_id, content, attachments) in enumerate(events):
+                    await db.execute('INSERT INTO chatroom_messages VALUES (?,?,?,?,?,?)',
+                                     (msg_id, 'old', 'system', content, 1500 + i, attachments))
+                await db.execute("INSERT INTO messages VALUES ('p','conv','user','private',1504,'[]')")
+                await db.execute("INSERT INTO chatroom_messages VALUES ('c','private','user','private',1504,'[]')")
+                await db.commit()
+
+            fetched = []
+            @asynccontextmanager
+            async def connect():
+                async with aiosqlite.connect(path) as db:
+                    execute = db.execute
+                    async def counted(sql, params=()):
+                        cur = await execute(sql, params)
+                        original = cur.fetchall
+                        async def fetchall():
+                            rows = await original()
+                            fetched.append(len(rows))
+                            return rows
+                        cur.fetchall = fetchall
+                        return cur
+                    db.execute = counted
+                    yield db
+
+            with patch.object(cb, 'get_db', connect), patch.object(cb, 'load_trip_products', AsyncMock(return_value={})):
+                for who, private_id in [('aion', 'p'), ('connor', 'c')]:
+                    fetched.clear()
+                    result = await cb.fetch_merged_timeline(who, 6)
+                    self.assertEqual([m['id'] for m in result], ['999','pat','supervision','web','music',private_id])
+                    self.assertLess(sum(fetched), 400, 'Recent context must not materialize all old history')
+                    # Bounds and room filters retain their existing meaning.
+                    bounded = await cb.fetch_merged_timeline(who, 30, room_id='old', since_ts=1501, until_ts=1503)
+                    self.assertEqual([m['id'] for m in bounded], ['supervision','web','music'])
+                    ties = await cb.fetch_merged_timeline(who, 70, until_ts=999)
+                    self.assertEqual([m['id'] for m in ties], [str(i) for i in range(930,1000)])
+                async with aiosqlite.connect(path) as db:
+                    await db.executemany('INSERT INTO chatroom_messages VALUES (?,?,?,?,?,?)',
+                        [(f'tie{i}', 'new', 'user', 'same instant', 3000, '[]') for i in range(100)])
+                    await db.commit()
+                # More equal-time visible rows than one page: no skips or duplicates.
+                tied = await cb.fetch_merged_timeline('connor', 90)
+                self.assertEqual([m['id'] for m in tied], [f'tie{i}' for i in range(10,100)])

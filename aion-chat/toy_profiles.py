@@ -34,6 +34,16 @@ def select(profile):
     return state()
 
 
+def custom_phases():
+    return {'phases': SETTINGS.get('ankni_custom_phases')}
+
+
+def save_custom_phases(phases):
+    save_settings({**SETTINGS, 'ankni_custom_phases': phases})
+    SETTINGS['ankni_custom_phases'] = phases
+    return custom_phases()
+
+
 def capture_permission(*, legacy_enabled=False):
     _permission.set((active(), _epoch) if legacy_enabled else None)
 

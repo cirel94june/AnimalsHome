@@ -76,9 +76,11 @@ class DurableSyncContractTests(unittest.TestCase):
         chatroom = (ROOT / "static/chatroom.js").read_text(encoding="utf-8")
 
         self.assertIn("reconcileCommonSync", common)
-        self.assertIn("sync_event", memory)
-        self.assertIn("sync_event", moments)
-        self.assertIn("sync_event", chatroom)
+        memory = (ROOT / 'static/memory-library.js').read_text(encoding='utf-8')
+        self.assertIn('connectRetainedPageWS', memory)
+        self.assertIn('reconcile:onRefresh', memory)
+        self.assertIn("reconcile: () => loadMoments", moments)
+        self.assertIn("crReconcileSyncEvents", chatroom)
 
 
 if __name__ == "__main__":

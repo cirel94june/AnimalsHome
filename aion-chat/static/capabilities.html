@@ -160,6 +160,7 @@
       <button class="cap-action" onclick="setAllCapabilities(true)">全部勾选</button>
       <button class="cap-action" onclick="setAllCapabilities(false)">全部取消</button>
       <button class="cap-action" onclick="loadCapabilities()">刷新</button>
+      <a class="cap-action" href="/user-profile" style="text-decoration:none">查看与编辑画像</a>
     </div>
     <div class="proactive-card" id="proactiveCompanionshipCard">
       <div class="proactive-card-title">主动陪伴</div>
@@ -260,7 +261,7 @@ function renderCapabilities() {
                   <div class="cap-name">${escHtml(item.name)}</div>
                   <span class="cap-status ${status.cls}">${status.text}</span>
                 </div>
-                <div class="cap-desc">${escHtml(item.description)}</div>
+                ${item.description ? `<div class="cap-desc">${escHtml(item.description)}</div>` : ''}
                 ${noteParts.length ? `<div class="cap-note">${escHtml(noteParts.join('；'))}</div>` : ''}
               </div>
               <label class="toggle-switch" title="${escHtml(item.name)}">

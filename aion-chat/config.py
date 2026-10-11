@@ -91,6 +91,8 @@ def normalize_sentinel_route(value) -> str:
     return route if route in SENTINEL_ROUTES else "original"
 
 def get_key(provider: str) -> str:
+    if provider == "elevenlabs":
+        return SETTINGS.get("elevenlabs_tts_key", "")
     if provider == "gemini":
         return SETTINGS.get("gemini_key", "")
     if provider == "gemini_free":
@@ -251,11 +253,54 @@ SAFE_LIVE_MODEL_DEFAULTS = {
     "Codex-Astra": "safe_live",
     "Codex-Sol": "safe_live",
     "Codex-6-Sol": "safe_live",
+    "Codex-6.1-Sol": "safe_live",
     "3.8Vertex": "safe_live",
     "官Gem3.8flash": "safe_live",
 }
-DEPRECATED_MODEL_PROVIDERS = {"gemini_cli", "antigravity_cli"}
+DEPRECATED_MODEL_PROVIDERS = {"gemini_cli"}
 DEPRECATED_MODEL_KEYS = {"CLI-3.1pro", "AGY-3.1pro"}
+ANTIGRAVITY_MODELS_PATH = DATA_DIR / "antigravity_models.json"
+
+# AGY 模型开关：只展示未注释的官方 slug。取消注释后重启服务器、刷新页面。
+# antigravity_models.json 是自动生成的缓存，不要在那里修改开关。
+ANTIGRAVITY_ENABLED_MODELS = (
+    "gemini-3.8-flash-high",
+    # "gemini-3.8-flash-medium",
+    # "gemini-3.8-flash-low",
+    # "gemini-3.7-flash-high",
+    # "gemini-3.7-flash-medium",
+    # "gemini-3.7-flash-low",
+    # "gemini-3.6-flash-high",
+    # "gemini-3.6-flash-medium",
+    # "gemini-3.6-flash-low",
+    # "gemini-3.1-pro-high",
+    # "gemini-3.1-pro-low",
+    # "claude-opus-5-5-low",
+    "claude-opus-5-5-medium",
+    # "claude-opus-5-5-high",
+    # "claude-sonnet-5-5-low",
+    # "claude-sonnet-5-5-medium",
+    # "claude-sonnet-5-5-high",
+    # "gpt-oss-120b-medium",
+)
+
+
+def _read_antigravity_models() -> dict:
+    try:
+        rows = json.loads(ANTIGRAVITY_MODELS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(rows, dict):
+        return {}
+    return {
+        key: value for key, value in rows.items()
+        if isinstance(key, str) and key.startswith("AGY · ")
+        and isinstance(value, dict) and value.get("provider") == "antigravity_cli"
+        and value.get("model") in ANTIGRAVITY_ENABLED_MODELS
+    }
+
+
+ANTIGRAVITY_MODELS = _read_antigravity_models()
 
 BUILTIN_MODELS = {
     "硅基GLM-5.2":      {"provider": "siliconflow", "model": "zai-org/GLM-5.2", "vision": False},
@@ -264,9 +309,11 @@ BUILTIN_MODELS = {
     # "官Gem3.1pro":  {"provider": "gemini", "model": "gemini-3.1-pro-preview", "vision": True},
     # "Codex-5.5":            {"provider": "codex_cli",  "model": "gpt-5.5", "vision": True},
     # "Codex-Astra":    {"provider": "codex_cli",  "model": "gpt-6-astra", "vision": True, "transport_mode": "safe_live"},
-    "Codex-Sol":      {"provider": "codex_cli",  "model": "gpt-5.6-sol", "vision": True, "transport_mode": "safe_live"},
+    "Codex-5.6-Sol":      {"provider": "codex_cli",  "model": "gpt-5.6-sol", "vision": True, "transport_mode": "safe_live"},
     "Codex-6-Sol":    {"provider": "codex_cli",  "model": "gpt-6-sol", "vision": True, "transport_mode": "safe_live"},
+    "Codex-6.1-Sol":  {"provider": "codex_cli",  "model": "gpt-6.1-sol", "vision": True, "transport_mode": "safe_live"},
     # "Codex-Luna":     {"provider": "codex_cli",  "model": "gpt-5.6-luna", "vision": True},
+    # "AGY（默认）": {"provider": "antigravity_cli", "model": "", "vision": False, "audio": False},
     
 }
 
@@ -362,6 +409,7 @@ def refresh_custom_models() -> None:
     """根据 settings.json 里的自定义线路刷新运行时模型列表。"""
     MODELS.clear()
     MODELS.update(BUILTIN_MODELS)
+    MODELS.update(ANTIGRAVITY_MODELS)
     for route in normalize_custom_model_routes(SETTINGS.get("custom_model_routes")):
         for item in route.get("models", []):
             key = item["key"]
@@ -378,6 +426,21 @@ def refresh_custom_models() -> None:
                 "route_id": route["id"],
                 "route_name": route["name"],
             }
+
+
+def replace_antigravity_models(models: dict, *, persist: bool = False) -> None:
+    """Apply the AGY switches to the official catalog and its saved cache."""
+    models = {key: value for key, value in models.items()
+              if value.get("model") in ANTIGRAVITY_ENABLED_MODELS}
+    for key in ANTIGRAVITY_MODELS:
+        MODELS.pop(key, None)
+    ANTIGRAVITY_MODELS.clear()
+    ANTIGRAVITY_MODELS.update(models)
+    MODELS.update(ANTIGRAVITY_MODELS)
+    if persist:
+        temporary = ANTIGRAVITY_MODELS_PATH.with_suffix(".tmp")
+        temporary.write_text(json.dumps(models, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(ANTIGRAVITY_MODELS_PATH)
 
 
 MODELS = {}

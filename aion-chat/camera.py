@@ -1389,6 +1389,13 @@ class CameraMonitor:
             bool(self.cfg.get("include_pc_screen", False))
         )
 
+        profile_context = ""
+        try:
+            from post_sentinel import build_context as build_profile_context
+            profile_context = await build_profile_context()
+        except Exception:
+            pass
+
         prompt = f"""你是一个监控画面分析师，同时也是{user_name}的恋人。分析当前画面，并根据历史日志和当前状况，决定是否调用伴侣职权。
 
 当前时间：{now_str}
@@ -1397,6 +1404,8 @@ class CameraMonitor:
 
 最近的聊天记录：
 {recent_chat_text if recent_chat_text else "（暂无聊天记录）"}
+
+{profile_context}
 
 {user_name}的设备当前状态与近期使用历史（分别标注）：
 {activity_summary_text if activity_summary_text else "（暂无设备活动记录）"}

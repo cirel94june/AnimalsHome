@@ -1,0 +1,10 @@
+.expressive-voice{margin:8px 0;max-width:100%;overflow-wrap:anywhere}
+.expressive-voice-controls{display:flex;align-items:center;gap:8px}
+.expressive-voice-button{display:inline-flex;align-items:center;justify-content:space-between;gap:10px;min-width:62px;font:inherit;font-size:12px;line-height:1;padding:6px 10px;border-radius:999px;border:1px solid #91a69a66;background:#8baf9930;color:inherit;cursor:pointer}
+.expressive-voice-button svg{width:15px;height:15px;flex:none;overflow:visible}
+.expressive-voice-button:disabled{opacity:.6;cursor:default}
+.expressive-voice-source-toggle{font:inherit;font-size:11px;line-height:1.4;padding:4px 6px;border:0;border-radius:4px;background:transparent;color:inherit;opacity:.6;cursor:pointer}
+.expressive-voice-source-toggle:hover{opacity:1;background:#8baf9918}
+.expressive-voice-source{font:inherit;font-size:11px;line-height:1.7;margin:7px 0 0;padding:0;border:0;background:transparent;color:inherit;opacity:.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.expressive-voice-source[hidden]{display:none}
+.expressive-voice-error{display:block;font-size:11px;opacity:.7;margin-top:5px}

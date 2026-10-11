@@ -54,7 +54,9 @@ class MemoryCompressionWorkbenchTests(unittest.TestCase):
     def test_memory_page_links_to_compression_workbench(self):
         source = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
 
-        self.assertIn('href="/memory-compression"', source)
+        self.assertIn('memory-library.js', source)
+        script = (ROOT / 'static/memory-library.js').read_text(encoding='utf-8')
+        self.assertIn('/memory-compression?target=', script)
 
     def test_memory_page_does_not_show_legacy_compression_draft_button(self):
         source = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
@@ -73,9 +75,9 @@ class MemoryCompressionWorkbenchTests(unittest.TestCase):
     def test_memory_page_discards_stale_search_responses_and_old_count_snapshots(self):
         source = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
 
-        self.assertIn("MEMORY_SNAPSHOT_KEY = \"memory_page_snapshot_v3\"", source)
-        self.assertIn("let _memoryRequestId = 0", source)
-        self.assertIn("requestId !== _memoryRequestId", source)
+        source = (ROOT / 'static/memory-library.js').read_text(encoding='utf-8')
+        self.assertIn('memory_library_v4:${state.store}:${state.view}', source)
+        self.assertIn('serial !== listRequest', source)
 
     def test_workbench_uses_shared_theme_and_compact_layout(self):
         source = (ROOT / "static" / "memory-compression.html").read_text(encoding="utf-8")

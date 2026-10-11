@@ -1241,11 +1241,7 @@ function goBack() {
     loadSessions();
     return;
   }
-  if (window.parent !== window) {
-    window.parent.closeSubPage();
-  } else {
-    location.href = '/';
-  }
+  location.href = '/playground';
 }
 
 function getActiveView() {

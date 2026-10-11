@@ -23,7 +23,7 @@ function harness() {
     replaceWith(row) { rows.splice(rows.indexOf(this), 1, row); } };
   rows.push(partial);
   const context = {
-    rows, suppressed, textarea, window: {},
+    rows, suppressed, textarea, window: {}, crStartupModelsReady: true,
     streamingBubble: { closest: () => partial }, streamingText: '已收到的正文',
     pendingStreamId: 'partial', pendingStreamSender: 'aion', crMessageRevision: 0,
     crMessagesById: { user: { id: 'user', sender: 'user', content: '上一条消息' } },
@@ -47,6 +47,7 @@ function harness() {
   };
   vm.createContext(context);
   for (const [name, next] of [
+    ['crRequireModels', 'let pendingAttachments'],
     ['endStreamingBubble', 'const crMemoryRecordMsgIds'],
     ['crHandleReplyFailure', 'function handleSSE'],
     ['crCanEditMessage', 'function cancelChatroomEdit'],

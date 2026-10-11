@@ -1,11 +1,7 @@
-import json
 import sys
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
-
-import aiosqlite
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent
@@ -13,97 +9,29 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-class DailyCompressionApplySafetyTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.db_path = Path(self.tmp.name) / "chat.db"
+class RetiredDailyCompressionTests(unittest.TestCase):
+    def test_legacy_routes_reject_cached_clients_without_touching_data(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from routes import memories
 
-    def tearDown(self):
-        self.tmp.cleanup()
+        app = FastAPI()
+        app.include_router(memories.router)
+        with patch.object(memories, "get_db", side_effect=AssertionError("must not open DB")):
+            with TestClient(app) as client:
+                for method, path in (
+                    ("POST", ""), ("GET", "/latest"), ("POST", "/old/apply"),
+                    ("PATCH", "/old"), ("POST", "/old/discard"),
+                ):
+                    with self.subTest(method=method, path=path):
+                        response = client.request(method, "/api/memories/compress-daily" + path)
+                        self.assertEqual(response.status_code, 410)
 
-    async def _create_review(self, *, status="draft", apply_result=None):
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "CREATE TABLE daily_memory_compress_reviews ("
-                "id TEXT PRIMARY KEY, target TEXT NOT NULL DEFAULT 'main', "
-                "status TEXT NOT NULL DEFAULT 'draft', days INTEGER NOT NULL DEFAULT 15, "
-                "cutoff_ts REAL NOT NULL DEFAULT 0, model_main TEXT DEFAULT '', "
-                "model_chatroom TEXT DEFAULT '', candidate_count INTEGER NOT NULL DEFAULT 0, "
-                "payload TEXT NOT NULL DEFAULT '{}', raw_response TEXT DEFAULT '', "
-                "error TEXT DEFAULT '', apply_result TEXT DEFAULT '', "
-                "created_at REAL NOT NULL DEFAULT 0, updated_at REAL NOT NULL DEFAULT 0, "
-                "applied_at REAL, discarded_at REAL)"
-            )
-            await db.execute(
-                "INSERT INTO daily_memory_compress_reviews "
-                "(id, target, status, payload, apply_result) VALUES (?,?,?,?,?)",
-                (
-                    "review-1",
-                    "main",
-                    status,
-                    json.dumps({"main": {"batches": []}, "chatroom": {"batches": []}}),
-                    json.dumps(apply_result or {}),
-                ),
-            )
-            await db.commit()
-
-    def _connect(self):
-        return aiosqlite.connect(self.db_path)
-
-    async def test_only_first_request_can_claim_draft(self):
-        import memory
-
-        await self._create_review()
-        with patch.object(memory, "get_db", self._connect), patch.object(
-            memory, "_ensure_daily_compression_schema", AsyncMock()
-        ):
-            first_claimed, first_review = await memory._claim_daily_compression_review("review-1")
-            second_claimed, second_review = await memory._claim_daily_compression_review("review-1")
-
-        self.assertTrue(first_claimed)
-        self.assertFalse(second_claimed)
-        self.assertEqual(first_review["status"], "applying")
-        self.assertEqual(second_review["status"], "applying")
-
-    async def test_already_applied_review_returns_stored_result_without_writing_again(self):
-        import memory
-
-        stored = {
-            "main": {"deleted": 2, "created_daily": 1, "created_important": 0},
-            "chatroom": {"deleted": 0, "created_daily": 0, "created_important": 0},
-        }
-        await self._create_review(status="applied", apply_result=stored)
-        main_apply = AsyncMock()
-        chatroom_apply = AsyncMock()
-        with patch.object(memory, "get_db", self._connect), patch.object(
-            memory, "_ensure_daily_compression_schema", AsyncMock()
-        ), patch.object(memory, "_apply_main_daily_draft", main_apply), patch.object(
-            memory, "_apply_chatroom_daily_draft", chatroom_apply
-        ):
-            result = await memory.apply_daily_compression_review("review-1")
-
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["review"]["apply_result"], stored)
-        main_apply.assert_not_awaited()
-        chatroom_apply.assert_not_awaited()
-
-
-class DailyCompressionFrontendSafetyTests(unittest.TestCase):
-    def test_main_memory_page_has_busy_guard_and_elapsed_timer(self):
-        source = (ROOT / "static" / "memory.html").read_text(encoding="utf-8")
-
-        self.assertIn("_dailyCompressionRequestBusy", source)
-        self.assertIn("startCompressionElapsedTimer", source)
-        self.assertIn("clearInterval", source)
-        self.assertIn("已等待", source)
-
-    def test_chatroom_page_has_busy_guard_and_elapsed_timer(self):
-        source = (ROOT / "static" / "chatroom.js").read_text(encoding="utf-8")
-
-        self.assertIn("_chatroomCompressionRequestBusy", source)
-        self.assertIn("startChatroomCompressionElapsedTimer", source)
-        self.assertIn("clearInterval", source)
-        self.assertIn("已等待", source)
+    def test_frontends_no_longer_load_or_submit_legacy_drafts(self):
+        for filename in ("memory.html", "chatroom.js"):
+            with self.subTest(filename=filename):
+                source = (ROOT / "static" / filename).read_text(encoding="utf-8")
+                self.assertFalse("/api/memories/compress-daily" in source, filename)
 
 
 class DigestBatchingTests(unittest.TestCase):

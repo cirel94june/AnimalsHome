@@ -2,29 +2,18 @@
 语音唤醒 + 半双工通话模块
 - sounddevice 录音
 - WebRTC VAD 语音检测（频谱分析，不靠音量阈值）
-- 硅基流动 ASR 识别
+- 可配置 ASR 识别
 - 通过内部 API 发送消息到聊天
 - WebSocket 广播通话状态
 """
 
-import io, wave, time, threading, asyncio, re
+import io, wave, time, threading, asyncio
 import numpy as np
 import sounddevice as sd
 import httpx
 import webrtcvad
 
-_EMOJI_RE = re.compile(
-    "[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
-    "\U0001F1E0-\U0001F1FF\U00002702-\U000027B0\U000024C2-\U0001F251"
-    "\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF"
-    "\U00002600-\U000026FF\U0000FE00-\U0000FE0F\U0000200D]+"
-)
-
-from config import get_key
-
-# ─── ASR 配置 ──────────────────────────────────────
-ASR_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
-ASR_MODEL = "FunAudioLLM/SenseVoiceSmall"
+from asr import transcribe_audio
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
@@ -128,22 +117,9 @@ class VoiceWakeup:
         return buf.read()
 
     def _asr(self, audio) -> str:
-        """调硅基流动 ASR"""
-        key = get_key("siliconflow")
-        if not key:
-            return ""
-        wav = self._to_wav(audio)
+        """录音线程使用与手机转写相同的 ASR 配置。"""
         try:
-            resp = httpx.post(
-                ASR_URL,
-                headers={"Authorization": f"Bearer {key}"},
-                files={"file": ("s.wav", wav, "audio/wav")},
-                data={"model": ASR_MODEL, "language": "zh"},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            text = resp.json().get("text", "").strip()
-            return _EMOJI_RE.sub("", text).strip()
+            return asyncio.run(transcribe_audio(self._to_wav(audio), timeout=15))
         except Exception as e:
             print(f"[Voice ASR Error] {e}")
             return ""

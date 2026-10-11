@@ -16,6 +16,7 @@ from typing import Optional, List, Any
 from config import DEFAULT_MODEL, MODELS, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
 from database import get_db
 from ws import manager
+from reply_timing import model_started
 from generation_control import (cancellable, cancel_generation, generation_status, GenerationQueue, spawn_generation_task)
 from cancelled_reply import save_cancelled_replies
 from active_window_state import record_aion_private_active
@@ -52,6 +53,7 @@ from app_supervision_ai import (
 )
 from capabilities import is_capability_enabled
 from active_memory_search import (
+    continue_memory_search,
     MemorySearchRequest,
     extract_memory_search_requests,
     format_memory_search_context,
@@ -94,7 +96,7 @@ THEATER_ITEM_PATTERN = re.compile(r'\[剧场道具[：:]([^\]]+)\]')
 _SYSTEM_MSG_CONTEXT_KEYWORDS = ('查看了监控', '搜索了', '点歌', '点了一首', '推荐了', '查看了动态', '视频通话', '本条为微信消息')
 from context_builder import (
     fetch_merged_timeline, render_merged_timeline, build_health_summary,
-    build_ability_block, board_memory_context, WISH_CMD_PATTERN, _build_recall_query, strip_tool_commands,
+    build_ability_block, WISH_CMD_PATTERN, _build_recall_query, strip_tool_commands,
     BAND_VIBRATE_CMD_PATTERN,
 )
 from music import search_songs, get_audio_url
@@ -1388,7 +1390,6 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     debug_top6 = []
     debug_top6_data = []
     debug_recalled = []
-    board_memory = board_memory_context("aion", body.content)
 
     hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", body.content))
     digest_result = await instant_digest(actual_recent)
@@ -1421,8 +1422,6 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     health_text = await build_health_summary()
     if health_text:
         bg_block += health_text
-    if board_memory:
-        bg_block += "\n\n" + board_memory
     hub_block = await hub_task
     if hub_block:
         bg_block += "\n\n" + hub_block
@@ -1492,10 +1491,12 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             await _q.put({"id": ai_msg_id, "type": "start"})
 
             async def content_stream():
+                _mark_first_text = model_started()
                 async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, cancel_event=cancel_event):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         await _q.put({"type": "cli_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
                         continue
+                    _mark_first_text(chunk)
                     yield chunk
 
             stream_result, visible_text, _used_fallback, manual_retry = await _consume_chat_realtime_stream(
@@ -2038,7 +2039,6 @@ async def send_message(conv_id: str, body: MsgCreate):
     debug_top6 = []
     debug_top6_data = []
     debug_recalled = []
-    board_memory = board_memory_context("aion", body.content)
 
     if body.fast_mode:
         # ── 快速模式：仅注入当前时间，跳过哨兵和记忆 ──
@@ -2047,8 +2047,6 @@ async def send_message(conv_id: str, body: MsgCreate):
         health_text = await build_health_summary()
         if health_text:
             bg_block += health_text
-        if board_memory:
-            bg_block += "\n\n" + board_memory
         history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
         history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
         inject_offset += 2
@@ -2088,8 +2086,6 @@ async def send_message(conv_id: str, body: MsgCreate):
         health_text = await build_health_summary()
         if health_text:
             bg_block += health_text
-        if board_memory:
-            bg_block += "\n\n" + board_memory
         hub_block = await hub_task
         if hub_block:
             bg_block += "\n\n" + hub_block
@@ -2166,10 +2162,12 @@ async def send_message(conv_id: str, body: MsgCreate):
             await _q.put({"id": ai_msg_id, "type": "start"})
 
             async def content_stream():
+                _mark_first_text = model_started()
                 async for chunk in stream_ai(history, model_key, usage_meta, max_tokens=body.max_tokens, cancel_event=cancel_event):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         await _q.put({"type": "cli_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
                         continue
+                    _mark_first_text(chunk)
                     yield chunk
 
             stream_result, visible_text, _used_fallback, manual_retry = await _consume_chat_realtime_stream(
@@ -2908,8 +2906,6 @@ async def perform_private_memory_search(
         )
 
     wb = load_worldbook()
-    if status_msg_id:
-        await _complete_private_memory_search_status(conv_id, status_msg_id, wb)
     user_name = wb.get("user_name", "用户")
     ai_name = wb.get("ai_name", "AI")
     messages: list[dict] = []
@@ -2943,7 +2939,7 @@ async def perform_private_memory_search(
             f"你刚才为了回答{user_name}的这个原始问题而翻找了自己的记忆：\n"
             f"{original_question[:1000]}\n\n{memory_context}\n\n"
             f"现在请直接、自然地回答{user_name}。不要写成检索报告；如果证据不足或冲突就坦白说明。"
-            "本轮不要再次输出 MEMORY_SEARCH 指令。"
+            "需要继续核实时，按后续检索指引查找。"
         ),
     })
 
@@ -2954,21 +2950,23 @@ async def perform_private_memory_search(
         if voice:
             tts_streamer = TTSStreamer(msg_id, voice, manager)
     full_text = ""
-    reply_filter = WebCommandStreamFilter()
-    try:
-        async for chunk in stream_ai(messages, model_key, temperature=SETTINGS.get("temperature")):
+    async def generate_search_reply(search_messages):
+        nonlocal full_text
+        full_text = ''
+        async for chunk in stream_ai(search_messages, model_key, temperature=SETTINGS.get("temperature")):
             if chunk.startswith(CLI_STATUS_PREFIX):
                 continue
             full_text += chunk
-            visible = reply_filter.feed(chunk)
-            if tts_streamer and visible:
-                tts_streamer.feed(visible)
-        tail = reply_filter.flush()
-        if tts_streamer and tail:
-            tts_streamer.feed(tail)
+        return full_text
+
+    try:
+        full_text = await continue_memory_search('aion', messages, generate_search_reply, original_question)
     except Exception as exc:
         resolution = resolve_stream_failure(full_text, exc, "记忆搜索完成但回复生成失败")
         full_text = resolution.visible_text
+
+    if status_msg_id:
+        await _complete_private_memory_search_status(conv_id, status_msg_id, wb)
 
     full_text, _ignored = extract_memory_search_requests(full_text, enabled=True)
     if not full_text.strip():
@@ -2982,6 +2980,8 @@ async def perform_private_memory_search(
         ai_msg_id=msg_id,
     )
     full_text = _visible_ai_text(full_text)
+    if tts_streamer:
+        tts_streamer.feed(full_text)
     now = time.time()
     reply_atts = await with_band_vibration_attachment(msg_id, [])
     att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else "[]"
@@ -3552,7 +3552,6 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
     debug_top6 = []
     debug_top6_data = []
     debug_recalled = []
-    board_memory = board_memory_context("aion", lounge_request_text)
 
     if fast_mode:
         # ── 快速模式：仅注入当前时间 ──
@@ -3561,8 +3560,6 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         health_text = await build_health_summary()
         if health_text:
             bg_block += health_text
-        if board_memory:
-            bg_block += "\n\n" + board_memory
         history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block})
         history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。"})
         inject_offset += 2
@@ -3582,8 +3579,6 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         health_text = await build_health_summary()
         if health_text:
             bg_block += health_text
-        if board_memory:
-            bg_block += "\n\n" + board_memory
         hub_block = await hub_task
         if hub_block:
             bg_block += "\n\n" + hub_block
@@ -3670,10 +3665,12 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             await _q.put({"id": ai_msg_id, "type": "start"})
 
             async def content_stream():
+                _mark_first_text = model_started()
                 async for chunk in stream_ai(history, model_key, usage_meta, temperature, max_tokens=max_tokens, cancel_event=cancel_event):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         await _q.put({"type": "cli_status", "text": chunk[len(CLI_STATUS_PREFIX):]})
                         continue
+                    _mark_first_text(chunk)
                     yield chunk
 
             stream_result, visible_text, _used_fallback, manual_retry = await _consume_chat_realtime_stream(

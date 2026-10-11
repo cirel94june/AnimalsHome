@@ -14,7 +14,7 @@ python-multipart
 ebooklib
 beautifulsoup4
 lxml
-websockets
+websockets>=13
 pywin32
 psutil
 akshare

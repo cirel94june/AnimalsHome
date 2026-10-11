@@ -15,9 +15,7 @@ from config import load_digest_anchor, load_worldbook, save_digest_anchor
 from database import get_db
 from memory import (
     _pack_embedding, get_embedding, manual_digest, rebuild_embeddings,
-    memory_kind_for_type, memory_kind_label, generate_daily_compression_draft,
-    get_latest_daily_compression_review, apply_daily_compression_review,
-    discard_daily_compression_review, update_daily_compression_review, _memory_time_payload,
+    memory_kind_for_type, memory_kind_label, _memory_time_payload,
 )
 from memory_compression import (
     compression_preview,
@@ -58,15 +56,6 @@ class AnchorReset(BaseModel):
 
 class MemorySourceSelection(BaseModel):
     source_message_ids: list[str] = []
-
-
-class DailyCompressionRequest(BaseModel):
-    target: str = "main"
-    days: int = 15
-
-
-class DailyCompressionDraftUpdate(BaseModel):
-    payload: dict
 
 
 class CalendarCompressionRequest(BaseModel):
@@ -452,36 +441,14 @@ async def trigger_digest():
     return await manual_digest()
 
 
+# 为缓存中的旧页面保留明确的退役响应，不再读取或写入草稿。
 @router.post("/api/memories/compress-daily")
-async def trigger_daily_compression(body: Optional[DailyCompressionRequest] = None):
-    payload = body or DailyCompressionRequest()
-    return await generate_daily_compression_draft(days=payload.days, target=payload.target)
-
-
 @router.get("/api/memories/compress-daily/latest")
-async def latest_daily_compression_review(target: str = "main"):
-    review = await get_latest_daily_compression_review(target=target)
-    return {"ok": True, "review": review}
-
-
 @router.post("/api/memories/compress-daily/{review_id}/apply")
-async def apply_daily_compression(review_id: str):
-    result = await apply_daily_compression_review(review_id)
-    await manager.broadcast({
-        "type": "memory_collection_changed",
-        "data": {"review_id": review_id, "reason": "compression"},
-    })
-    return result
-
-
 @router.patch("/api/memories/compress-daily/{review_id}")
-async def update_daily_compression(review_id: str, body: DailyCompressionDraftUpdate):
-    return await update_daily_compression_review(review_id, body.payload)
-
-
 @router.post("/api/memories/compress-daily/{review_id}/discard")
-async def discard_daily_compression(review_id: str):
-    return await discard_daily_compression_review(review_id)
+async def retired_daily_compression():
+    raise HTTPException(status_code=410, detail="旧版草稿压缩已停用，请使用记忆压缩工作台 /memory-compression")
 
 
 @router.get("/api/memories/calendar-compression/preview")

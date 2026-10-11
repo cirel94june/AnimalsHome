@@ -21,6 +21,8 @@ import android.util.Base64;
 import android.util.Log;
 import android.view.Display;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import androidx.core.content.ContextCompat;
 
@@ -60,6 +62,11 @@ public class AionAccessibilityService extends AccessibilityService {
 
     public static boolean isReady() {
         return instance != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+    }
+
+    public static boolean supportsWindowCapture() {
+        AionAccessibilityService service = instance;
+        return Build.VERSION.SDK_INT >= 34 && service != null && service.serviceActive;
     }
 
     public static boolean captureLatest(Context context, String app, String reason, boolean force, long delayMs, String httpBase) {
@@ -344,7 +351,7 @@ public class AionAccessibilityService extends AccessibilityService {
             return;
         }
 
-        takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
+        TakeScreenshotCallback callback = new TakeScreenshotCallback() {
             @Override
             public void onSuccess(ScreenshotResult screenshot) {
                 if (!serviceActive) return;
@@ -393,7 +400,29 @@ public class AionAccessibilityService extends AccessibilityService {
                 if (!serviceActive) return;
                 postSkip("accessibility_error_" + errorCode, app, false);
             }
-        });
+        };
+        if (Build.VERSION.SDK_INT >= 34 && reason != null && reason.contains("floating:")) {
+            int windowId = externalAppWindowId();
+            if (windowId < 0) { postSkip("floating_window_unavailable", app, false); return; }
+            Log.i(TAG, "floating window screenshot requested window=" + windowId);
+            takeScreenshotOfWindow(windowId, getMainExecutor(), callback);
+        } else {
+            takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), callback);
+        }
+    }
+
+    private int externalAppWindowId() {
+        // Windows are ordered topmost first. Skip our overlay and keyboard/system windows.
+        for (AccessibilityWindowInfo window : getWindows()) {
+            if (window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root == null) continue;
+            try {
+                CharSequence packageName = root.getPackageName();
+                if (packageName != null && !getPackageName().contentEquals(packageName)) return window.getId();
+            } finally { root.recycle(); }
+        }
+        return -1;
     }
 
     private String getHttpBase() {

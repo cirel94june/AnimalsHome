@@ -3,10 +3,9 @@
 被 routes/chat.py（私聊）和 chatroom.py（群聊）共同使用。
 """
 
+from reply_timing import timed
 import json, re, time, asyncio
 from datetime import datetime
-from pathlib import Path
-import sys
 
 import aiosqlite
 
@@ -111,6 +110,7 @@ def _timeline_display_names() -> tuple[str, str, str]:
     return user_name, ai_name, connor_name
 
 
+@timed("health_context")
 async def build_health_summary() -> str:
     """当健康数据分享开关打开时，构建简短的身体数据摘要。"""
     if not is_capability_enabled("health_context"):
@@ -209,6 +209,7 @@ async def build_health_summary() -> str:
         return ""
 
 
+@timed("abilities")
 async def build_ability_block(
     user_name: str,
     *,
@@ -257,6 +258,15 @@ async def build_ability_block(
     cli_file_text = build_cli_file_storage_text(model_key)
     if cli_file_text:
         parts.append(cli_file_text.strip())
+
+    if "post_sentinel" not in (excluded_capabilities or set()):
+        try:
+            from post_sentinel import build_context as build_profile_context
+            profile_context = await build_profile_context()
+            if profile_context:
+                parts.append(profile_context)
+        except Exception:
+            pass
 
     return "\n\n".join(parts)
 
@@ -315,18 +325,7 @@ def _build_recall_query(
     return f"{base} {keyword_text}".strip()
 
 
-def board_memory_context(actor_id: str, query_text: str = "", *, include_recent: bool = True) -> str:
-    """Read this actor's own留言板经历 for any home chat surface."""
-    try:
-        lounge_src = Path(__file__).resolve().parents[1] / "AionsHome-Visitor-Lounge" / "src"
-        if str(lounge_src) not in sys.path:
-            sys.path.insert(0, str(lounge_src))
-        from visitor_lounge.home_board import memory_context
-        return memory_context(actor_id, query_text, include_recent=include_recent)
-    except Exception:
-        return ""
-
-
+@timed("memory_context")
 async def build_memory_blocks(
     query_text: str,
     recent_messages: list[dict] = None,
@@ -365,9 +364,6 @@ async def build_memory_blocks(
     """
     now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
     time_block = f"系统当前的准确时间是 {now_str}"
-    board_memory = board_memory_context("aion" if use_main_memories else "connor", query_text)
-    if board_memory:
-        time_block += "\n\n" + board_memory
     hub_task = None
     if memory_hub_actor:
         import memory_hub_bridge
@@ -392,11 +388,6 @@ async def build_memory_blocks(
         digest_result = {"is_search_needed": False, "keywords": [], "topic": ""}
 
     recall_keywords = digest_result.get("keywords", [])
-    relevant_board_memory = board_memory_context(
-        "aion" if use_main_memories else "connor",
-        " ".join(str(word) for word in recall_keywords),
-        include_recent=False,
-    )
     topic = digest_result.get("topic", "")
     status = digest_result.get("status", "")
     is_search_needed = digest_result.get("is_search_needed", False)
@@ -515,8 +506,6 @@ async def build_memory_blocks(
         "debug_top6": [_memory_debug_item(m) for m in debug_candidates[:6]],
     })
 
-    if relevant_board_memory:
-        memory_block = (memory_block + "\n\n" if memory_block else "") + relevant_board_memory
     return {
         "time_block": await _with_hub(time_block),
         "memory_block": memory_block,
@@ -756,76 +745,57 @@ async def _load_model_visible_merged_timeline(
     room_id: str = None,
     since_ts: float = None,
     until_ts: float = None,
+    limit: int = None,
 ) -> list[dict]:
-    """Load one bounded, model-visible merged transcript without limiting it."""
-    results = []
+    """Read newest pages until each source has enough model-visible messages.
 
+    No limit means a full scan, used by the explicit transcript count API.
+    Visibility is evaluated before limiting, including meaningful system events.
+    """
+    results = []
+    page_size = min(256, max(64, limit or 256))
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
-        source_filters = {
-            source: (conditions, params)
-            for source, _, _, conditions, params in _merged_timeline_sources(
-                who,
-                conv_id=conv_id,
-                room_id=room_id,
-                since_ts=since_ts,
-                until_ts=until_ts,
-            )
-        }
-
-        # ── 私聊消息 ──
-        if who == "aion":
-            private_conditions, private_params = source_filters["private"]
-            cur = await db.execute(
-                "SELECT id, role AS sender, content, created_at, attachments "
-                "FROM messages "
-                f"WHERE {' AND '.join(private_conditions)} "
-                "ORDER BY created_at",
-                private_params,
-            )
-            for r in await cur.fetchall():
-                d = dict(r)
-                d["source"] = "private"
-                results.append(d)
-
-        elif who == "connor":
-            private_conditions, private_params = source_filters["private"]
-            cur = await db.execute(
-                "SELECT m.id, m.sender, m.content, m.created_at, m.attachments "
-                "FROM chatroom_messages m "
-                "JOIN chatroom_rooms r ON r.id = m.room_id "
-                f"WHERE {' AND '.join(private_conditions)} "
-                "ORDER BY m.created_at",
-                private_params,
-            )
-            for r in await cur.fetchall():
-                d = dict(r)
-                d["source"] = "private"
-                results.append(d)
-
-        # ── 群聊消息 ──
-        group_conditions, group_params = source_filters["group"]
-        cur = await db.execute(
-            "SELECT m.id, m.sender, m.content, m.created_at, m.attachments "
-            "FROM chatroom_messages m "
-            "JOIN chatroom_rooms r ON r.id = m.room_id "
-            f"WHERE {' AND '.join(group_conditions)} "
-            "ORDER BY m.created_at",
-            group_params,
-        )
-        for r in await cur.fetchall():
-            d = dict(r)
-            d["source"] = "group"
-            results.append(d)
-
-    results.sort(key=lambda x: x["created_at"])
-    return [
-        message
-        for message in results
-        if _is_model_visible_timeline_message(message)
-    ]
+        # Keep both sources and all pages on the same SQLite read snapshot.
+        await db.execute("BEGIN")
+        for source, sender, from_sql, conditions, params in _merged_timeline_sources(
+            who, conv_id=conv_id, room_id=room_id,
+            since_ts=since_ts, until_ts=until_ts,
+        ):
+            prefix = "" if from_sql == "FROM messages" else "m."
+            collected = []
+            cursor = None
+            while limit is None or len(collected) < limit:
+                filters, values = list(conditions), list(params)
+                if cursor is not None:
+                    filters.append(f"({prefix}created_at < ? OR "
+                                   f"({prefix}created_at = ? AND {prefix}rowid < ?))")
+                    values.extend((cursor[0], cursor[0], cursor[1]))
+                cur = await db.execute(
+                    f"SELECT {prefix}rowid AS _timeline_rowid, {prefix}id, "
+                    f"{sender} AS sender, {prefix}content, {prefix}created_at, {prefix}attachments "
+                    f"{from_sql} WHERE {' AND '.join(filters)} "
+                    f"ORDER BY {prefix}created_at DESC, {prefix}rowid DESC"
+                    + (" LIMIT ?" if limit is not None else ""),
+                    [*values, page_size] if limit is not None else values,
+                )
+                rows = await cur.fetchall()
+                for row in rows:
+                    message = {**dict(row), "source": source}
+                    if _is_model_visible_timeline_message(message):
+                        collected.append(message)
+                if limit is None or len(rows) < page_size:
+                    break
+                cursor = (rows[-1]["created_at"], rows[-1]["_timeline_rowid"])
+            results.extend(collected[:limit] if limit is not None else collected)
+    # Explicit tie order makes equal timestamps stable across page boundaries.
+    results.sort(key=lambda m: (m["created_at"], m["source"] == "group", m["_timeline_rowid"]))
+    for message in results:
+        message.pop("_timeline_rowid")
+    return results
 
 
+@timed("timeline")
 async def fetch_merged_timeline(
     who: str,
     limit: int,
@@ -850,6 +820,7 @@ async def fetch_merged_timeline(
         room_id=room_id,
         since_ts=since_ts,
         until_ts=until_ts,
+        limit=normalized_limit,
     )
     results = (
         results[-normalized_limit:]
@@ -947,6 +918,10 @@ def render_merged_timeline(
         message_attachments = _parse_timeline_attachments(
             msg.get("attachments", [])
         )
+        from expressive_voice import transcript_for_context
+        voice_transcript = transcript_for_context(message_attachments)
+        if voice_transcript:
+            content = (content + '\n' + voice_transcript).strip()
         pat_command = _pat_history_command(msg) if sender == "system" else None
         if pat_command:
             sender, content = pat_command

@@ -2,6 +2,7 @@
 设备活动日志：上报接收、JSONL 存储、自动清理（保留最近 N 小时）、PC 活动窗口采集、10 分钟摘要
 """
 
+from reply_timing import timed
 import json, time, threading, logging, sqlite3
 from pathlib import Path
 from collections import defaultdict
@@ -1125,6 +1126,7 @@ def get_device_context_snapshot(
     return device_context_store.snapshot(pc if pc is not None else get_current_pc_context(now), now)
 
 
+@timed("device_context")
 def get_device_context_for_prompt(max_chars: int = 800) -> str:
     if not is_activity_tracking_enabled():
         return ""

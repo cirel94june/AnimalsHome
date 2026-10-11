@@ -263,6 +263,8 @@ def _idle_event_timeline_title(row, actor: str, shown_diary_ids: set[str], shown
         return f"{actor}对Seeky{phrase}" if phrase else row["title"]
     if action == "home_dynamics_result":
         return None
+    if action in ("billiards_invite", "billiards_result"):
+        return row["title"]
     if action.endswith("_result") and result_type == "message":
         return None
     if action == "memory_browse_result":
