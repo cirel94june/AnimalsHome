@@ -56,10 +56,10 @@ def models_for(actors: list[str]) -> dict[str, dict]:
     """
     import autonomy
     from config import model_snapshot
-    from memory_hub_jobs import own_model
+    from memory_hub_jobs import background_model
     models = {}
     for actor in actors:
-        key = own_model(actor)
+        key = background_model(actor)
         snapshot = model_snapshot(key) if key else None
         if not key or snapshot is None:
             raise ValueError(f"{autonomy._actor_label(actor)} 还没在 AI 名片里选「TA 自己的模型」")

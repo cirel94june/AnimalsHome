@@ -155,8 +155,8 @@ def places_for(actor: str, *, autonomy_only: bool = True) -> list[dict[str, Any]
 
 def tool_model_for(actor: str) -> str:
     """该 AI 自己的、能调用工具的模型（OpenAI 兼容线路）。没有就返回空串，不换别的模型。"""
-    from memory_hub_jobs import own_model
-    key = own_model(actor)
+    from memory_hub_jobs import background_model
+    key = background_model(actor)
     if not key:
         return ""
     return key if (MODELS.get(key) or {}).get("provider") in TOOL_PROVIDERS else ""

@@ -539,6 +539,23 @@ def ensure_model_unchanged(model_key: str, snapshot: dict | None) -> None:
         raise ModelChanged(f"模型线路「{key}」刚刚被删除或改动了，这次不生成（不会换成别的模型）")
 
 
+def _model_core(key: str) -> str:
+    """线路里写的模型 ID，去掉中转站常加的厂商前缀（anthropic/、models/），统一小写。"""
+    name = str((MODELS.get(key) or {}).get("model") or "").strip().lower()
+    return name.rsplit("/", 1)[-1]
+
+
+def same_underlying_model(a: str, b: str) -> bool:
+    """两条线路是不是同一个模型（只是走不同的中转站）。允许一边多一个日期后缀，比如 -20250805。"""
+    x, y = _model_core(a), _model_core(b)
+    if not x or not y:
+        return False
+    if x == y:
+        return True
+    short, long = sorted((x, y), key=len)
+    return long.startswith(short + "-") and long[len(short) + 1:].isdigit()
+
+
 def resolve_model_key(model_key: str | None) -> str:
     candidates = [_clean_text(model_key), _clean_text(DEFAULT_MODEL)]
     for key in candidates:

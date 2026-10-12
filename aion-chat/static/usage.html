@@ -30,6 +30,16 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 18px 2px 8px; color: var(--i
 .bar { height: 4px; border-radius: 2px; background: var(--ib-acc); opacity: .55; margin-top: 4px; }
 .note { font-size: 12px; line-height: 1.7; color: var(--ib-tx3); padding: 2px 4px; }
 .empty { text-align: center; color: var(--ib-tx3); font-size: 13.5px; padding: 24px 0; }
+.cache-line { margin-top: 10px; text-align: center; font-size: 12.5px; color: var(--ib-tx2); }
+.prices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.prices label { font-size: 12px; color: var(--ib-tx2); display: flex; flex-direction: column; gap: 4px; }
+.prices input { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(120, 150, 200, 0.3); background: rgba(255, 255, 255, 0.75); font-size: 14px; color: inherit; }
+.prices .wide { grid-column: 1 / -1; }
+table.cmp { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+table.cmp th, table.cmp td { padding: 7px 4px; text-align: right; border-bottom: 1px solid var(--ib-line, rgba(120,150,200,.18)); }
+table.cmp th:first-child, table.cmp td:first-child { text-align: left; }
+table.cmp th { font-weight: 400; color: var(--ib-tx2); font-size: 12px; }
+td.cheap { color: var(--ib-acc); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -42,6 +52,17 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 18px 2px 8px; color: var(--i
       <div><b id="t-in">–</b><span>读入 token</span></div>
       <div><b id="t-out">–</b><span>写出 token</span></div>
     </div>
+    <div class="cache-line" id="t-cache"></div>
+  </div>
+  <h3 class="sec">按次还是按量更划算</h3>
+  <div class="panel">
+    <div class="prices">
+      <label class="wide">按次：每次多少钱（元）<input type="number" min="0" step="0.001" inputmode="decimal" id="p-call" placeholder="例如 0.05"></label>
+      <label>按量：读入 元 / 百万<input type="number" min="0" step="0.01" inputmode="decimal" id="p-in" placeholder="例如 15"></label>
+      <label>按量：写出 元 / 百万<input type="number" min="0" step="0.01" inputmode="decimal" id="p-out" placeholder="例如 75"></label>
+      <label class="wide">按量：命中缓存的读入 元 / 百万（不填就按读入价算）<input type="number" min="0" step="0.01" inputmode="decimal" id="p-cache" placeholder="Claude 一般是读入价的十分之一"></label>
+    </div>
+    <div id="cmp"></div>
   </div>
   <h3 class="sec">花在哪</h3>
   <div class="panel" id="kinds"></div>
@@ -49,6 +70,8 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 18px 2px 8px; color: var(--i
   <div class="panel" id="models"></div>
   <h3 class="sec" id="days-title" style="display:none">每天</h3>
   <div class="panel" id="days" style="display:none"></div>
+  <p class="note">价格只存在这台手机上，换个中转站就改一下数字。「后台」是聊天以外的全部（自主活动、做梦、交接卡、旅行、哨兵等）。
+    这里只是粗算：写缓存的加价、各家的零头规则都没算进去。</p>
   <p class="note">「读入」是每次请求连带发给模型的内容（人设、记忆、最近的聊天），「写出」是模型回的话。
     按次计费看「次请求」，按量计费主要看读入和写出。
     中转站没告诉用量时按字数估算（中文约一字一个 token），标「含估算」的只能当量级参考。只记数字，不记聊天内容。</p>
@@ -70,14 +93,60 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 18px 2px 8px; color: var(--i
     return list.map(function (r) {
       return '<div class="row"><div class="name">' + esc(r.name) + (sub ? sub(r) : '') +
         '<div class="bar" style="width:' + Math.max(4, Math.round(r.requests / max * 100)) + '%"></div></div>' +
-        '<div class="num">' + r.requests + ' 次<small>读 ' + fmt(r.prompt) + ' · 写 ' + fmt(r.completion) + est(r) + '</small></div></div>';
+        '<div class="num">' + r.requests + ' 次<small>读 ' + fmt(r.prompt) + (r.cache_read ? '（缓存 ' + fmt(r.cache_read) + '）' : '') +
+        ' · 写 ' + fmt(r.completion) + est(r) + '</small></div></div>';
     }).join('');
   }
+  var last = null, PRICE_KEY = 'aion_usage_prices';
+  function readPrices() {
+    try { return JSON.parse(localStorage.getItem(PRICE_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+  function savePrices(v) { try { localStorage.setItem(PRICE_KEY, JSON.stringify(v)); } catch (e) {} }
+  function money(n) { return n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(3); }
+  function sumRows(list) {
+    return list.reduce(function (a, r) {
+      a.requests += r.requests; a.prompt += r.prompt; a.completion += r.completion; a.cache_read += r.cache_read || 0;
+      return a;
+    }, { requests: 0, prompt: 0, completion: 0, cache_read: 0 });
+  }
+  function compare() {
+    if (!last) return;
+    var p = { call: parseFloat($('p-call').value), inp: parseFloat($('p-in').value), out: parseFloat($('p-out').value), cache: parseFloat($('p-cache').value) };
+    savePrices({ call: $('p-call').value, inp: $('p-in').value, out: $('p-out').value, cache: $('p-cache').value });
+    var hasCall = !isNaN(p.call), hasTok = !isNaN(p.inp) && !isNaN(p.out);
+    if (!hasCall && !hasTok) { $('cmp').innerHTML = ''; return; }
+    var cachePrice = isNaN(p.cache) ? p.inp : p.cache;
+    var chat = sumRows(last.by_kind.filter(function (r) { return r.name === '聊天'; }));
+    var bg = sumRows(last.by_kind.filter(function (r) { return r.name !== '聊天'; }));
+    function perCall(g) { return hasCall ? g.requests * p.call : NaN; }
+    function perTok(g) {
+      if (!hasTok) return NaN;
+      var plain = Math.max(0, g.prompt - g.cache_read);
+      return (plain * p.inp + g.cache_read * cachePrice + g.completion * p.out) / 1e6;
+    }
+    function line(name, g) {
+      var a = perCall(g), b = perTok(g), both = !isNaN(a) && !isNaN(b);
+      return '<tr><td>' + name + '</td><td class="' + (both && a <= b ? 'cheap' : '') + '">' + (isNaN(a) ? '–' : '¥' + money(a)) +
+        '</td><td class="' + (both && b < a ? 'cheap' : '') + '">' + (isNaN(b) ? '–' : '¥' + money(b)) + '</td></tr>';
+    }
+    $('cmp').innerHTML = '<table class="cmp"><tr><th></th><th>按次</th><th>按量</th></tr>' +
+      line('聊天', chat) + line('后台', bg) + line('合计', sumRows(last.by_kind)) + '</table>';
+  }
+  (function initPrices() {
+    var v = readPrices();
+    $('p-call').value = v.call || ''; $('p-in').value = v.inp || ''; $('p-out').value = v.out || ''; $('p-cache').value = v.cache || '';
+    ['p-call', 'p-in', 'p-out', 'p-cache'].forEach(function (id) { $(id).oninput = compare; });
+  })();
   function load(days) {
     fetch('/api/usage?days=' + days, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
       $('t-req').textContent = fmt(d.total.requests);
       $('t-in').textContent = fmt(d.total.prompt);
       $('t-out').textContent = fmt(d.total.completion);
+      var real = d.total.prompt && d.total.cache_read;
+      $('t-cache').textContent = real ? '读入里有 ' + fmt(d.total.cache_read) + '（' + Math.round(d.total.cache_read / d.total.prompt * 100) + '%）命中了缓存'
+        : (d.total.requests ? '这段时间中转站没有报告缓存命中' : '');
+      last = d;
+      compare();
       $('kinds').innerHTML = rows(d.by_kind);
       $('models').innerHTML = rows(d.by_model, function (r) {
         return r.users && r.users.length ? '<small>' + esc(r.users.join('、')) + ' 在用</small>' : '';

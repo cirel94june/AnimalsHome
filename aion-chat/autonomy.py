@@ -410,16 +410,22 @@ async def _collect(aiter) -> str:
 
 
 async def _call_actor(actor: str, messages: list[dict]) -> str:
+    # 自主活动算后台：名片里选了「后台用的线路」（同一个模型、换一家中转站）就走它
+    from memory_hub_jobs import background_model
     if _is_seat(actor):
         from seat_chat import seat_model
         model = seat_model(actor)
         if not model:
             raise RuntimeError(f"{_actor_label(actor)} 还没有选模型")
-        return await _collect(stream_ai(messages, model, {}))
+        return await _collect(stream_ai(messages, background_model(actor, model), {}))
     if actor == "connor":
+        usual = _connor_model()
+        chosen = background_model("connor", usual)
+        if chosen != usual:
+            return await _collect(stream_ai(messages, chosen, {}))
         from routes.chatroom import _stream_connor_model
-        return await _collect(_stream_connor_model(messages, _connor_model()))
-    return await _collect(stream_ai(messages, await _aion_model(), {}))
+        return await _collect(_stream_connor_model(messages, usual))
+    return await _collect(stream_ai(messages, background_model("aion", await _aion_model()), {}))
 
 
 async def _actor_context(actor: str, limit: int = 30, *, include_history: bool = True) -> list[dict]:

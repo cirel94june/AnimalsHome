@@ -28,7 +28,7 @@ router = APIRouter()
 ACTORS_PATH = DATA_DIR / "actors.json"
 AVATAR_DIR = DATA_DIR / "skin"
 SEAT_IDS = ["aion", "connor", "ai3", "ai4", "ai5", "ai6"]
-EDITABLE = ("name", "avatar", "sign", "color", "memory_hub", "meet_since", "enabled", "model")
+EDITABLE = ("name", "avatar", "sign", "color", "memory_hub", "meet_since", "enabled", "model", "background_model")
 COLORS = ["#5c86c8", "#c98a5c", "#5ca88f", "#9a7bd0", "#c96f8f", "#6f9fc9"]
 AVATAR_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
 
@@ -85,6 +85,8 @@ def list_actors(include_disabled: bool = True) -> list[dict[str, Any]]:
             "enabled": False,
             # 该 AI 自己的模型：座位私聊、交接卡、做梦都用它；没设就跳过，不换别的模型
             "model": "",
+            # 后台活动（自主活动、做梦、交接卡、旅行、出门逛）走的线路：必须和 model 是同一个模型，只是换个中转站
+            "background_model": "",
             "builtin": actor_id in ("aion", "connor"),
         }
         item.update(copy.deepcopy(_DEFAULTS[actor_id]))
@@ -241,7 +243,7 @@ async def api_update_actor(actor_id: str, request: Request):
             if value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
                 raise HTTPException(400, "颜色格式应为 #RRGGBB")
             updates[key] = value
-        elif key == "model":
+        elif key in ("model", "background_model"):
             from config import MODELS
             value = str(value or "").strip()
             if value and value not in MODELS:
@@ -265,6 +267,11 @@ async def api_update_actor(actor_id: str, request: Request):
             updates["model"] = save_seat_api(actor_id, name, api)
         else:
             raise HTTPException(400, "api 格式不正确")
+    if updates.get("background_model"):
+        from config import same_underlying_model
+        main = updates.get("model", (get_actor(actor_id) or {}).get("model", ""))
+        if main and not same_underlying_model(updates["background_model"], main):
+            raise HTTPException(400, "后台用的线路要和平时是同一个模型（只是换一家中转站），这样做梦、交接卡还是 TA 自己写的")
     data = _load_raw()
     seats = data.setdefault("seats", {})
     seats.setdefault(actor_id, {}).update(updates)

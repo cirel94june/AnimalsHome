@@ -66,10 +66,16 @@ def _connect() -> sqlite3.Connection:
         "CREATE TABLE IF NOT EXISTS usage (day TEXT, kind TEXT, model TEXT, requests INTEGER, "
         "prompt INTEGER, completion INTEGER, estimated INTEGER, PRIMARY KEY (day, kind, model))"
     )
+    have = {row[1] for row in conn.execute("PRAGMA table_info(usage)")}
+    for column in ("cache_read", "cache_write"):  # 后加的两列：读缓存、写缓存
+        if column not in have:
+            conn.execute(f"ALTER TABLE usage ADD COLUMN {column} INTEGER DEFAULT 0")
     return conn
 
 
-def record(model: str, kind: str, prompt_tokens: int, completion_tokens: int, *, estimated: bool) -> None:
+def record(model: str, kind: str, prompt_tokens: int, completion_tokens: int, *, estimated: bool,
+           cache_read: int = 0, cache_write: int = 0) -> None:
+    """prompt_tokens 是这次读入的全部（含命中缓存的部分）。"""
     global _last_prune
     day = time.strftime("%Y-%m-%d")
     try:
@@ -78,11 +84,14 @@ def record(model: str, kind: str, prompt_tokens: int, completion_tokens: int, *,
             try:
                 with conn:
                     conn.execute(
-                        "INSERT INTO usage VALUES (?,?,?,1,?,?,?) ON CONFLICT(day, kind, model) DO UPDATE SET "
+                        "INSERT INTO usage (day, kind, model, requests, prompt, completion, estimated, cache_read, cache_write) "
+                        "VALUES (?,?,?,1,?,?,?,?,?) ON CONFLICT(day, kind, model) DO UPDATE SET "
                         "requests=requests+1, prompt=prompt+excluded.prompt, "
-                        "completion=completion+excluded.completion, estimated=estimated+excluded.estimated",
+                        "completion=completion+excluded.completion, estimated=estimated+excluded.estimated, "
+                        "cache_read=cache_read+excluded.cache_read, cache_write=cache_write+excluded.cache_write",
                         (day, kind, model or "未知模型", max(0, int(prompt_tokens or 0)),
-                         max(0, int(completion_tokens or 0)), 1 if estimated else 0),
+                         max(0, int(completion_tokens or 0)), 1 if estimated else 0,
+                         max(0, int(cache_read or 0)), max(0, int(cache_write or 0))),
                     )
                     if _last_prune != day:
                         cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - KEEP_DAYS * 86400))
@@ -94,12 +103,41 @@ def record(model: str, kind: str, prompt_tokens: int, completion_tokens: int, *,
         log.warning("用量记账失败：%s", type(error).__name__)
 
 
+def _num(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def cache_tokens(usage: Any) -> tuple[int, int]:
+    """从各家的用量格式里取（读缓存, 写缓存）。各家字段名不一样，认得的都试一遍。"""
+    if not isinstance(usage, dict):
+        return 0, 0
+    details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
+    read = (_num(details.get("cached_tokens")) if isinstance(details, dict) else 0) \
+        or _num(usage.get("cache_read_input_tokens")) or _num(usage.get("cachedContentTokenCount")) \
+        or _num(usage.get("cached_input_tokens")) or _num(usage.get("cached_tokens"))
+    write = _num(usage.get("cache_creation_input_tokens"))
+    if not write and isinstance(details, dict):
+        write = _num(details.get("cache_creation_tokens")) or _num(details.get("cache_write_tokens"))
+    return read, write
+
+
+def _record_real(model: str, kind: str, prompt: int, completion: int, usage: Any) -> None:
+    read, write = cache_tokens(usage)
+    if read + write > prompt:
+        # Claude 原生格式里「读入」不含缓存部分；统一成含缓存的总读入
+        prompt += read + write
+    record(model, kind, prompt, completion, estimated=False, cache_read=read, cache_write=write)
+
+
 def record_call(model: str, kind: str, meta: dict | None, prompt_text: str, output_text: str) -> None:
     """stream_ai 用：meta 里有中转站给的用量就用，没有就估算。"""
     meta = meta or {}
-    prompt, completion = int(meta.get("prompt_tokens") or 0), int(meta.get("completion_tokens") or 0)
+    prompt, completion = _num(meta.get("prompt_tokens")), _num(meta.get("completion_tokens"))
     if prompt or completion:
-        record(model, kind, prompt, completion, estimated=False)
+        _record_real(model, kind, prompt, completion, meta.get("raw"))
     else:
         record(model, kind, estimate_tokens(prompt_text), estimate_tokens(output_text), estimated=True)
 
@@ -108,12 +146,11 @@ def record_json(model: str, kind: str, data: Any, prompt_text: str, output_text:
     """非流式调用用：OpenAI 的 usage 或 Gemini 的 usageMetadata。"""
     usage = data.get("usage") if isinstance(data, dict) else None
     if isinstance(usage, dict) and (usage.get("prompt_tokens") or usage.get("completion_tokens")):
-        record(model, kind, usage.get("prompt_tokens") or 0, usage.get("completion_tokens") or 0, estimated=False)
+        _record_real(model, kind, _num(usage.get("prompt_tokens")), _num(usage.get("completion_tokens")), usage)
         return
     gemini = data.get("usageMetadata") if isinstance(data, dict) else None
     if isinstance(gemini, dict) and (gemini.get("promptTokenCount") or gemini.get("candidatesTokenCount")):
-        record(model, kind, gemini.get("promptTokenCount") or 0, gemini.get("candidatesTokenCount") or 0,
-               estimated=False)
+        _record_real(model, kind, _num(gemini.get("promptTokenCount")), _num(gemini.get("candidatesTokenCount")), gemini)
         return
     record(model, kind, estimate_tokens(prompt_text), estimate_tokens(output_text), estimated=True)
 
@@ -126,7 +163,8 @@ def summary(days: int) -> dict:
         conn = _connect()
         try:
             rows = conn.execute(
-                "SELECT day, kind, model, requests, prompt, completion, estimated FROM usage WHERE day >= ?",
+                "SELECT day, kind, model, requests, prompt, completion, estimated, cache_read, cache_write "
+                "FROM usage WHERE day >= ?",
                 (since,),
             ).fetchall()
         finally:
@@ -138,16 +176,19 @@ def summary(days: int) -> dict:
     def group(index: int) -> list[dict]:
         out: dict[str, dict] = {}
         for row in rows:
-            item = out.setdefault(row[index], {"name": row[index], "requests": 0, "prompt": 0,
-                                               "completion": 0, "estimated": 0})
+            item = out.setdefault(row[index], {"name": row[index], "requests": 0, "prompt": 0, "completion": 0,
+                                               "estimated": 0, "cache_read": 0, "cache_write": 0})
             item["requests"] += row[3]
             item["prompt"] += row[4]
             item["completion"] += row[5]
             item["estimated"] += row[6]
+            item["cache_read"] += row[7] or 0
+            item["cache_write"] += row[8] or 0
         return sorted(out.values(), key=lambda x: (-x["requests"], x["name"]))
 
     total = {"requests": sum(r[3] for r in rows), "prompt": sum(r[4] for r in rows),
-             "completion": sum(r[5] for r in rows), "estimated": sum(r[6] for r in rows)}
+             "completion": sum(r[5] for r in rows), "estimated": sum(r[6] for r in rows),
+             "cache_read": sum(r[7] or 0 for r in rows), "cache_write": sum(r[8] or 0 for r in rows)}
     by_day = {d["name"]: d for d in group(0)}
     return {"days": days, "since": since, "total": total, "by_kind": group(1), "by_model": group(2),
             "by_day": [by_day[k] for k in sorted(by_day)]}

@@ -31,7 +31,7 @@ def test_real_usage_is_recorded_under_the_calling_feature(book, monkeypatch):
     _fake_provider(monkeypatch, usage={"prompt_tokens": 1200, "completion_tokens": 30})
     assert asyncio.run(_drain(ai_providers.stream_ai([{"role": "user", "content": "嗨"}], "测试模型"))) == "好的呀"
     s = usage_log.summary(1)
-    assert s["total"] == {"requests": 1, "prompt": 1200, "completion": 30, "estimated": 0}
+    assert s["total"] == {"requests": 1, "prompt": 1200, "completion": 30, "estimated": 0, "cache_read": 0, "cache_write": 0}
     # 从测试模块调用，归到「其他（模块名）」
     assert s["by_kind"][0]["name"] == f"其他（{__name__}）"
     assert s["by_model"][0]["name"] == "测试模型"
@@ -100,7 +100,7 @@ def test_bookkeeping_failure_never_breaks_chat(book, monkeypatch):
 def test_old_days_are_pruned(book):
     conn = sqlite3.connect(usage_log.USAGE_DB)
     usage_log._connect().close()
-    conn.execute("INSERT INTO usage VALUES ('2000-01-01','聊天','x',1,1,1,0)")
+    conn.execute("INSERT INTO usage (day, kind, model, requests, prompt, completion, estimated) VALUES ('2000-01-01','聊天','x',1,1,1,0)")
     conn.commit()
     conn.close()
     usage_log.record("x", "聊天", 1, 1, estimated=False)

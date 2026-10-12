@@ -158,6 +158,8 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       '<div class="hint">' + (a.builtin
         ? '聊天室里用它' + (a.id === 'connor' ? '（Codex 仍可在聊天室设置里选）' : '') + '；交接卡和做梦也用它。'
         : '私聊、交接卡、做梦都用它。没选就不回复，不会换成别的模型。') + '</div>' +
+      '<label class="field" style="margin-top:12px">后台用的线路（可不选）<select id="f-bg"><option value="">和上面一样</option></select></label>' +
+      '<div class="hint">自主活动、做梦、交接卡、旅行、出门逛走这条。要和上面是<b>同一个模型</b>，只是换一家中转站（比如聊天走按次、后台走按量），这样还是 TA 自己。</div>' +
       '<div class="wrow" style="margin-top:10px"><span>名片颜色</span><input type="color" id="f-color"></div>' +
       (a.id !== 'aion' ? '<div class="wrow"><span>启用这个位置</span><input type="checkbox" id="f-on"></div>' : '') +
       '</div><div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>';
@@ -169,15 +171,20 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     $('#f-color').value = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : '#5c86c8';
     if ($('#f-on')) $('#f-on').checked = !!a.enabled;
     fetch('/api/models', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (models) {
-      var sel = $('#f-model'), keys = models.map(function (m) { return m.key; }), groups = {};
-      if (a.model && keys.indexOf(a.model) < 0) models.unshift({ key: a.model, route_name: '已失效' });  // 已失效的线路也显示出来，方便看清
-      // 按中转站分组：同一个中转站的模型放在一起
-      models.forEach(function (m) {
-        var g = m.route_name || '内置', box = groups[g];
-        if (!box) { box = groups[g] = document.createElement('optgroup'); box.label = g; sel.appendChild(box); }
-        var o = document.createElement('option'); o.value = m.key; o.textContent = m.key; box.appendChild(o);
-      });
-      sel.value = a.model || '';
+      var keys = models.map(function (m) { return m.key; });
+      // 按中转站分组：同一个中转站的模型放在一起；已失效的线路也显示出来，方便看清
+      function fill(sel, current) {
+        var groups = {}, list = models.slice();
+        if (current && keys.indexOf(current) < 0) list.unshift({ key: current, route_name: '已失效' });
+        list.forEach(function (m) {
+          var g = m.route_name || '内置', grp = groups[g];
+          if (!grp) { grp = groups[g] = document.createElement('optgroup'); grp.label = g; sel.appendChild(grp); }
+          var o = document.createElement('option'); o.value = m.key; o.textContent = m.key; grp.appendChild(o);
+        });
+        sel.value = current || '';
+      }
+      fill($('#f-model'), a.model);
+      fill($('#f-bg'), a.background_model);
     }).catch(function () {});
     // 自己填的 API：Key 不回显，留空表示沿用已保存的
     var mode = a.api && a.api.key === a.model ? 'own' : 'pick', clearApi = false;
@@ -217,6 +224,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
         patch.model = $('#f-model').value;
         if (clearApi) patch.api = null;
       }
+      patch.background_model = $('#f-bg').value;
       if ($('#f-name')) patch.name = $('#f-name').value;
       if ($('#f-on')) patch.enabled = $('#f-on').checked;
       save(a.id, patch).then(function () { mask.remove(); }).catch(function (e) { alert('保存失败：' + e.message); });

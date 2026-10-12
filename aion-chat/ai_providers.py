@@ -640,6 +640,15 @@ def _openai_chat_completions_url(base_url: str) -> str:
     return f"{base}/v1/chat/completions"
 
 
+# 不认识 stream_options 的中转站（按请求地址记，进程内有效）
+_NO_STREAM_USAGE: set[str] = set()
+
+
+def _mentions_stream_options(body: bytes) -> bool:
+    text = (body or b"")[:4000].decode("utf-8", "replace").lower()
+    return "stream_options" in text or "include_usage" in text
+
+
 # ── 自定义 OpenAI 兼容中转站 ─────────────────────────
 async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, request_timeout: float = 120):
     model = (cfg.get("model") or "").strip()
@@ -666,49 +675,61 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
     reasoning_status_sent = False
     content_started = False
     try:
-        async with httpx.AsyncClient(timeout=request_timeout) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                own_stream(resp)
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    if meta is not None:
-                        meta["provider_error"] = f"HTTP {resp.status_code}: {_decode_relay_body(body)}"
-                    yield _decode_relay_body(body)
-                    return
-                async for line in resp.aiter_lines():
-                    data = _openai_sse_data(line)
-                    if data is None:
-                        continue
-                    if data == "[DONE]":
+        for _attempt in range(2):
+            # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
+            ask_usage = url not in _NO_STREAM_USAGE
+            if ask_usage:
+                payload["stream_options"] = {"include_usage": True}
+            else:
+                payload.pop("stream_options", None)
+            async with httpx.AsyncClient(timeout=request_timeout) as client:
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    own_stream(resp)
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
+                            # 这家中转站不认识 stream_options：记住，去掉再发一次（还没输出任何内容，重发是安全的）
+                            _NO_STREAM_USAGE.add(url)
+                            continue
+                        if meta is not None:
+                            meta["provider_error"] = f"HTTP {resp.status_code}: {_decode_relay_body(body)}"
+                        yield _decode_relay_body(body)
                         return
-                    try:
-                        chunk = json.loads(data)
-                        if isinstance(chunk, dict) and chunk.get("error"):
-                            if meta is not None:
-                                meta["provider_error"] = data
-                            yield data
+                    async for line in resp.aiter_lines():
+                        data = _openai_sse_data(line)
+                        if data is None:
+                            continue
+                        if data == "[DONE]":
                             return
-                        if meta is not None and chunk.get("usage"):
-                            u = chunk["usage"]
-                            meta["prompt_tokens"] = u.get("prompt_tokens", 0)
-                            meta["completion_tokens"] = u.get("completion_tokens", 0)
-                            meta["total_tokens"] = u.get("total_tokens", 0)
-                            meta["raw"] = u
-                        delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
-                        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-                        if reasoning:
-                            if meta is not None:
-                                meta["reasoning_content"] = meta.get("reasoning_content", "") + str(reasoning)
-                            if not reasoning_status_sent and not content_started:
-                                yield f"{CLI_STATUS_PREFIX}正在思考..."
-                                reasoning_status_sent = True
-                            # Reasoning is real stream activity even before visible text.
-                            yield StreamActivity()
-                        if delta.get("content"):
-                            content_started = True
-                            yield delta["content"]
-                    except Exception:
-                        pass
+                        try:
+                            chunk = json.loads(data)
+                            if isinstance(chunk, dict) and chunk.get("error"):
+                                if meta is not None:
+                                    meta["provider_error"] = data
+                                yield data
+                                return
+                            if meta is not None and chunk.get("usage"):
+                                u = chunk["usage"]
+                                meta["prompt_tokens"] = u.get("prompt_tokens", 0)
+                                meta["completion_tokens"] = u.get("completion_tokens", 0)
+                                meta["total_tokens"] = u.get("total_tokens", 0)
+                                meta["raw"] = u
+                            delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
+                            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                            if reasoning:
+                                if meta is not None:
+                                    meta["reasoning_content"] = meta.get("reasoning_content", "") + str(reasoning)
+                                if not reasoning_status_sent and not content_started:
+                                    yield f"{CLI_STATUS_PREFIX}正在思考..."
+                                    reasoning_status_sent = True
+                                # Reasoning is real stream activity even before visible text.
+                                yield StreamActivity()
+                            if delta.get("content"):
+                                content_started = True
+                                yield delta["content"]
+                        except Exception:
+                            pass
+            return
     except httpx.TimeoutException:
         if meta is not None:
             meta["provider_timeout"] = request_timeout

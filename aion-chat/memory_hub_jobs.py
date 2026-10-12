@@ -56,6 +56,24 @@ def own_model(actor: str) -> str:
     return key
 
 
+def background_model(actor: str, usual: str = "") -> str:
+    """后台活动用的模型。名片里选了「后台用的线路」、而且和平时是同一个模型时用它（只是换一家中转站，
+    比如聊天走按次、后台走按量）；否则照旧用平时的（usual，不传就是 TA 自己的模型）。"""
+    from config import same_underlying_model
+    base = usual or own_model(actor)
+    try:
+        import actors
+        chosen = str((actors.get_actor(actor) or {}).get("background_model") or "").strip()
+    except Exception:
+        return base
+    if not chosen or not base or chosen not in MODELS or is_model_deprecated(chosen):
+        return base
+    if same_underlying_model(chosen, base):
+        return chosen
+    log.warning("[后台线路] %s 的后台线路和平时不是同一个模型，这次照旧用平时的", actor)
+    return base
+
+
 def model_label(key: str) -> str:
     return str((MODELS.get(key) or {}).get("model") or key)[:60]
 
@@ -171,7 +189,7 @@ async def write_handoff(actor: str, session_ts: float, *, now: float | None = No
     now = now or time.time()
     cfg = bridge.load_config()
     source_ai = bridge.source_ai_for(actor, cfg)
-    model = own_model(actor)
+    model = background_model(actor)
     if not source_ai or not model:
         _mark_handoff(actor, done_ts=session_ts)
         return "skipped:no_model" if source_ai else "skipped:no_hub_identity"
@@ -252,7 +270,7 @@ def dream_actors() -> list[str]:
 async def dream_for(actor: str) -> str:
     cfg = bridge.load_config()
     source_ai = bridge.source_ai_for(actor, cfg)
-    model = own_model(actor)
+    model = background_model(actor)
     if not source_ai:
         return "skipped:no_hub_identity"
     if not model:
