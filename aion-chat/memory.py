@@ -543,6 +543,12 @@ def _extract_gemini_final_text(data: dict) -> str:
     return "\n".join(text.strip() for text in visible if text.strip()).strip()
 
 
+def _count_sentinel(scfg: dict, data, prompt: str, text: str) -> None:
+    """哨兵不走 stream_ai，单独记用量。"""
+    import usage_log
+    usage_log.record_json(f"哨兵 · {scfg.get('model') or '未设置'}", "哨兵（后台小模型）", data, prompt, text)
+
+
 async def _call_sentinel_text(scfg: dict, prompt: str, timeout: int = 60) -> str | None:
     """统一调用哨兵模型（纯文本），支持 Gemini 原生和 OpenAI 兼容格式"""
     if scfg.get("provider") == "codex":
@@ -568,7 +574,9 @@ async def _call_sentinel_text(scfg: dict, prompt: str, timeout: int = 60) -> str
                 print(f"[Sentinel] OpenAI 兼容调用失败 {resp.status_code}: {resp.text[:500]}")
                 raise Exception(f"Sentinel API {resp.status_code}: {resp.text[:200]}")
             data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
+            text = data["choices"][0]["message"]["content"].strip()
+            _count_sentinel(scfg, data, prompt, text)
+            return text
     else:
         model = scfg["model"]
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={scfg['api_key']}"
@@ -583,7 +591,9 @@ async def _call_sentinel_text(scfg: dict, prompt: str, timeout: int = 60) -> str
             resp = await client.post(url, json={"contents": contents, "safetySettings": safety_settings})
             resp.raise_for_status()
             data = resp.json()
-            return _extract_gemini_final_text(data)
+            text = _extract_gemini_final_text(data)
+            _count_sentinel(scfg, data, prompt, text or "")
+            return text
 
 
 async def _call_sentinel_vision(scfg: dict, prompt: str, img_b64: str, mime_type: str = "image/jpeg", timeout: int = 60) -> str | None:
@@ -616,7 +626,9 @@ async def _call_sentinel_vision(scfg: dict, prompt: str, img_b64: str, mime_type
                 print(f"[Sentinel] OpenAI 兼容 Vision 调用失败 {resp.status_code}: {resp.text[:500]}")
                 raise Exception(f"Sentinel Vision API {resp.status_code}: {resp.text[:200]}")
             data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
+            text = data["choices"][0]["message"]["content"].strip()
+            _count_sentinel(scfg, data, prompt, text)
+            return text
     else:
         model = scfg["model"]
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={scfg['api_key']}"
@@ -634,7 +646,9 @@ async def _call_sentinel_vision(scfg: dict, prompt: str, img_b64: str, mime_type
             resp = await client.post(url, json={"contents": contents, "safetySettings": safety_settings})
             resp.raise_for_status()
             data = resp.json()
-            return _extract_gemini_final_text(data)
+            text = _extract_gemini_final_text(data)
+            _count_sentinel(scfg, data, prompt, text or "")
+            return text
 
 
 # ── 本地前置路由：每次用户发消息后触发（不调用模型） ────

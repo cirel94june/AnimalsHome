@@ -2,6 +2,7 @@
 AI 模型调用：硅基流动 / Gemini 流式 + 多模态消息构建
 """
 
+import sys
 import json, base64, mimetypes, asyncio, shutil, subprocess, os, re, time, uuid
 from functools import lru_cache
 from contextlib import nullcontext
@@ -1610,15 +1611,19 @@ async def simple_ai_call(
     include_device_context: bool = False,
 ) -> str:
     """收集 stream_ai 的全部 chunk并留存三天原始响应，返回过滤状态行后的正文。"""
+    # 用量记到真正发起的功能名下（第一条语句，还在调用方的 await 里，取得到调用方）
+    caller = sys._getframe(1).f_globals.get("__name__", "")
     model_key = resolve_model_key(model_key)
     started_at = time.time()
     full_text = ""
     raw_chunks = []
     error = ""
     try:
-        async for chunk in stream_ai(
+        async for chunk in _stream_ai_counted(
+            caller,
             messages,
             model_key,
+            None,
             temperature=temperature,
             include_device_context=include_device_context,
         ):
@@ -1766,7 +1771,36 @@ def with_current_device_context(
     return prepared
 
 
-async def stream_ai(messages: list, model_key: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, cancel_event=None, *, include_device_context: bool = True, request_timeout: float = 120):
+def stream_ai(messages: list, model_key: str, meta: dict | None = None, *args, **kwargs):
+    """所有模型调用的总入口：照常流式返回，结束时记一笔用量（见 usage_log）。
+
+    用途按调用方所在模块归类，所以这里在调用的那一刻记下调用方。
+    """
+    caller = sys._getframe(1).f_globals.get("__name__", "")
+    return _stream_ai_counted(caller, messages, model_key, meta, *args, **kwargs)
+
+
+async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: dict | None, *args, **kwargs):
+    import usage_log
+    meta = meta if meta is not None else {}
+    resolved = resolve_model_key(model_key)
+    counted = resolved in MODELS and not is_model_deprecated(resolved)
+    before = (meta.get("prompt_tokens"), meta.get("completion_tokens"))
+    output: list[str] = []
+    try:
+        async for chunk in _stream_ai(messages, model_key, meta, *args, **kwargs):
+            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                output.append(chunk)
+            yield chunk
+    finally:
+        if counted:
+            # 同一个 meta 被重复使用时，中转站这次没给用量就不能沿用上一次的数字
+            fresh = meta if (meta.get("prompt_tokens"), meta.get("completion_tokens")) != before else {}
+            usage_log.record_call(resolved, usage_log.kind_for_module(caller), fresh,
+                                  usage_log.messages_text(messages), "".join(output))
+
+
+async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, cancel_event=None, *, include_device_context: bool = True, request_timeout: float = 120):
     if include_device_context:
         messages = with_current_device_context(messages)
     model_key = resolve_model_key(model_key)

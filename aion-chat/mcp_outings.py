@@ -166,7 +166,8 @@ def _endpoint(model_key: str) -> tuple[str, dict[str, str], str]:
     cfg = MODELS[model_key]
     provider = cfg["provider"]
     if provider == "custom_openai":
-        url = cfg["base_url"].rstrip("/") + "/chat/completions"
+        from ai_providers import _openai_chat_completions_url
+        url = _openai_chat_completions_url(cfg["base_url"])  # 和聊天同一套补全：没写 /v1 也能用
         key = cfg.get("api_key", "")
     elif provider == "siliconflow":
         url, key = "https://api.siliconflow.cn/v1/chat/completions", get_key("siliconflow")
@@ -190,7 +191,10 @@ async def call_model(model_key: str, messages: list[dict], tools: list[dict] | N
         resp = await client.post(url, json=payload, headers=headers)
     if resp.status_code != 200:
         raise RuntimeError(f"模型调用失败 [{resp.status_code}]: {resp.text[:300]}")
-    msg = ((resp.json().get("choices") or [{}])[0]).get("message") or {}
+    data = resp.json()
+    msg = ((data.get("choices") or [{}])[0]).get("message") or {}
+    import usage_log
+    usage_log.record_json(model_key, "出门逛", data, usage_log.messages_text(messages), str(msg.get("content") or ""))
     return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls")}
 
 

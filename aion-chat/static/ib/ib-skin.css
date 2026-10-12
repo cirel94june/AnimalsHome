@@ -379,6 +379,7 @@ html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="whis
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="wishes"] .icon-img img { content: url("/static/ib/icons/wishes.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="worldbook"] .icon-img img { content: url("/static/ib/icons/worldbook.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="xhs-lite"] .icon-img img { content: url("/static/ib/icons/xhs-lite.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="usage"] .icon-img img { content: url("/static/ib/icons/usage.svg"); }
 
 /* ══ IB 式页头 ══ */
 html[data-skin="ib"] .top-bar > h2[data-ib-title] {

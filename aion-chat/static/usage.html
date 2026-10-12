@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>用量</title>
+<link rel="stylesheet" href="/static/ib/desk.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); min-height: 100dvh; -webkit-tap-highlight-color: transparent; }
+.page { max-width: 640px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom)); }
+.top-bar { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; }
+.top-bar h2 { font-weight: 400; flex: 1; }
+.panel { border-radius: 22px; padding: 16px; background: rgba(255, 255, 255, 0.5); border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 8px 24px rgba(70, 100, 150, 0.1); margin-bottom: 14px; }
+.seg { display: flex; border: 1px solid var(--ib-line, rgba(120,150,200,.3)); border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--ib-tx2); padding: 9px 4px; font-size: 13.5px; }
+.seg button.on { background: var(--ib-acc); color: #fff; }
+.big { display: flex; gap: 10px; }
+.big div { flex: 1; text-align: center; }
+.big b { display: block; font-size: 24px; font-weight: 600; color: var(--ib-acc); font-variant-numeric: tabular-nums; }
+.big span { font-size: 12px; color: var(--ib-tx2); }
+h3.sec { font-weight: 400; font-size: 15px; margin: 18px 2px 8px; color: var(--ib-tx2); }
+.row { display: flex; align-items: baseline; gap: 8px; padding: 9px 2px; border-bottom: 1px solid var(--ib-line, rgba(120,150,200,.18)); font-size: 14px; }
+.row:last-child { border-bottom: 0; }
+.row .name { flex: 1; min-width: 0; word-break: break-all; }
+.row .name small { display: block; font-size: 11.5px; color: var(--ib-tx3); margin-top: 2px; }
+.row .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.row .num small { display: block; font-size: 11.5px; color: var(--ib-tx3); }
+.bar { height: 4px; border-radius: 2px; background: var(--ib-acc); opacity: .55; margin-top: 4px; }
+.note { font-size: 12px; line-height: 1.7; color: var(--ib-tx3); padding: 2px 4px; }
+.empty { text-align: center; color: var(--ib-tx3); font-size: 13.5px; padding: 24px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top-bar"><button class="back-btn" onclick="location.href='/'">⬅</button><h2>用量</h2></div>
+  <div class="seg" id="range"><button data-d="1" class="on">今天</button><button data-d="7">近 7 天</button><button data-d="30">近 30 天</button></div>
+  <div class="panel">
+    <div class="big">
+      <div><b id="t-req">–</b><span>次请求</span></div>
+      <div><b id="t-in">–</b><span>读入 token</span></div>
+      <div><b id="t-out">–</b><span>写出 token</span></div>
+    </div>
+  </div>
+  <h3 class="sec">花在哪</h3>
+  <div class="panel" id="kinds"></div>
+  <h3 class="sec">哪个模型</h3>
+  <div class="panel" id="models"></div>
+  <h3 class="sec" id="days-title" style="display:none">每天</h3>
+  <div class="panel" id="days" style="display:none"></div>
+  <p class="note">「读入」是每次请求连带发给模型的内容（人设、记忆、最近的聊天），「写出」是模型回的话。
+    按次计费看「次请求」，按量计费主要看读入和写出。
+    中转站没告诉用量时按字数估算（中文约一字一个 token），标「含估算」的只能当量级参考。只记数字，不记聊天内容。</p>
+</div>
+<script>
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+  function fmt(n) {
+    n = Number(n) || 0;
+    if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + '百万';
+    if (n >= 1e4) return (n / 1e4).toFixed(n >= 1e5 ? 0 : 1) + '万';
+    return String(n);
+  }
+  function est(r) { return r.estimated ? (r.estimated >= r.requests ? '（估算）' : '（含估算）') : ''; }
+  function rows(list, sub) {
+    if (!list.length) return '<div class="empty">这段时间还没有用过</div>';
+    var max = Math.max.apply(null, list.map(function (r) { return r.requests; })) || 1;
+    return list.map(function (r) {
+      return '<div class="row"><div class="name">' + esc(r.name) + (sub ? sub(r) : '') +
+        '<div class="bar" style="width:' + Math.max(4, Math.round(r.requests / max * 100)) + '%"></div></div>' +
+        '<div class="num">' + r.requests + ' 次<small>读 ' + fmt(r.prompt) + ' · 写 ' + fmt(r.completion) + est(r) + '</small></div></div>';
+    }).join('');
+  }
+  function load(days) {
+    fetch('/api/usage?days=' + days, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+      $('t-req').textContent = fmt(d.total.requests);
+      $('t-in').textContent = fmt(d.total.prompt);
+      $('t-out').textContent = fmt(d.total.completion);
+      $('kinds').innerHTML = rows(d.by_kind);
+      $('models').innerHTML = rows(d.by_model, function (r) {
+        return r.users && r.users.length ? '<small>' + esc(r.users.join('、')) + ' 在用</small>' : '';
+      });
+      var multi = days > 1;
+      $('days-title').style.display = $('days').style.display = multi ? '' : 'none';
+      if (multi) $('days').innerHTML = rows(d.by_day.slice().reverse());
+    }).catch(function () { $('kinds').innerHTML = '<div class="empty">读取失败，稍后再试</div>'; });
+  }
+  Array.prototype.forEach.call(document.querySelectorAll('#range button'), function (b) {
+    b.onclick = function () {
+      Array.prototype.forEach.call(document.querySelectorAll('#range button'), function (x) { x.classList.toggle('on', x === b); });
+      load(Number(b.getAttribute('data-d')));
+    };
+  });
+  load(1);
+})();
+</script>
+</body>
+</html>

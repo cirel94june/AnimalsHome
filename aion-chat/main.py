@@ -401,6 +401,8 @@ from routes.mcp_tools import router as mcp_tools_router
 app.include_router(mcp_tools_router)
 from routes.travel import router as travel_router
 app.include_router(travel_router)
+from routes.usage import router as usage_router
+app.include_router(usage_router)
 
 
 @app.get("/api/client-assets")
