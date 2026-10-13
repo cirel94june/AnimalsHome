@@ -89,7 +89,7 @@ def env(tmp_path, monkeypatch, fake_hub):
     }})
     prompts: list[tuple[str, list]] = []
 
-    async def fake_complete(model_key, messages):
+    async def fake_complete(model_key, messages, **_):
         prompts.append((model_key, messages))
         return f"由 {model_key} 写的内容"
 
@@ -136,7 +136,7 @@ def test_handoff_skipped_without_own_model(env):
 
 
 def test_handoff_failure_retries_later(env, monkeypatch):
-    async def broken(model_key, messages):
+    async def broken(model_key, messages, **_):
         raise RuntimeError("HTTP 500")
 
     monkeypatch.setattr(jobs, "complete", broken)
@@ -147,7 +147,7 @@ def test_handoff_failure_retries_later(env, monkeypatch):
 
     with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
         conn.execute("UPDATE activity SET handoff_retry_at=0")
-    monkeypatch.setattr(jobs, "complete", lambda m, msgs: asyncio.sleep(0, result="补写的卡"))
+    monkeypatch.setattr(jobs, "complete", lambda m, msgs, **_: asyncio.sleep(0, result="补写的卡"))
     assert asyncio.run(jobs.run_handoffs()) == {"ai3": "saved"}
     assert CALLS[-1][1]["source_ai"] == "jasper" and CALLS[-1][1]["model"] == "gemini-x"
 
@@ -167,7 +167,7 @@ def test_handoff_for_old_session_ignores_a_newer_one(env):
 
 
 def test_cancelled_dream_still_counts_as_an_attempt(env, monkeypatch):
-    async def cancelled(model_key, messages):
+    async def cancelled(model_key, messages, **_):
         raise asyncio.CancelledError()
 
     monkeypatch.setattr(jobs, "complete", cancelled)
@@ -214,7 +214,7 @@ def test_dream_respects_hub_already_dreamed_and_too_few(env):
 
 
 def test_dream_failure_retries_up_to_limit(env, monkeypatch):
-    async def broken(model_key, messages):
+    async def broken(model_key, messages, **_):
         raise RuntimeError("HTTP 429")
 
     monkeypatch.setattr(jobs, "complete", broken)

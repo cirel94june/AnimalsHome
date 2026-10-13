@@ -44,6 +44,40 @@ def test_missing_usage_is_estimated_and_marked(book, monkeypatch):
     assert (t["prompt"], t["completion"], t["estimated"]) == (4, 1, 1)
 
 
+def test_reused_meta_with_identical_real_numbers_counts_both_as_real(book, monkeypatch):
+    """同一个 meta 两次真实用量都是 100/10：两次都是真实数字（Codex 复审 M2 的反例）。"""
+    _fake_provider(monkeypatch, usage={"prompt_tokens": 100, "completion_tokens": 10,
+                                       "raw": {"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 60}}})
+    meta = {}
+    for _ in range(2):
+        asyncio.run(_drain(ai_providers.stream_ai([{"role": "user", "content": "x"}], "测试模型", meta)))
+    t = usage_log.summary(1)["total"]
+    assert (t["requests"], t["prompt"], t["estimated"], t["cache_read"]) == (2, 200, 0, 120)
+
+
+def test_closing_early_waits_for_the_provider_to_clean_up(book, monkeypatch):
+    """提前关闭外层时，下层的清理先跑完，再记账、再返回（Codex 复审 M1）。"""
+    order = []
+
+    async def provider(messages, model_key, meta=None, *a, **k):
+        try:
+            yield "一"
+            yield "二"
+        finally:
+            await asyncio.sleep(0)
+            order.append("provider closed")
+    monkeypatch.setattr(ai_providers, "_stream_ai", provider)
+    monkeypatch.setattr(usage_log, "record_call", lambda *a, **k: order.append("recorded"))
+
+    async def run():
+        gen = ai_providers.stream_ai([{"role": "user", "content": "x"}], "测试模型")
+        await gen.__anext__()
+        await gen.aclose()
+        order.append("returned")
+    asyncio.run(run())
+    assert order == ["provider closed", "recorded", "returned"]
+
+
 def test_reused_meta_does_not_count_the_previous_call_again(book, monkeypatch):
     meta = {"prompt_tokens": 999, "completion_tokens": 9}
     _fake_provider(monkeypatch, text="ab")  # 这次中转站没给用量

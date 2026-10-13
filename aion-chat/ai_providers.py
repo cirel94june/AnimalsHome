@@ -1801,24 +1801,32 @@ def stream_ai(messages: list, model_key: str, meta: dict | None = None, *args, *
     return _stream_ai_counted(caller, messages, model_key, meta, *args, **kwargs)
 
 
+_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "raw")
+
+
 async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: dict | None, *args, **kwargs):
     import usage_log
+    from contextlib import aclosing
     meta = meta if meta is not None else {}
     resolved = resolve_model_key(model_key)
     counted = resolved in MODELS and not is_model_deprecated(resolved)
-    before = (meta.get("prompt_tokens"), meta.get("completion_tokens"))
+    # 同一个 meta 可能被调用方重复用：先把上一次的用量拿走，这次中转站给了才算真实数字
+    previous = {key: meta.pop(key) for key in _USAGE_KEYS if key in meta}
     output: list[str] = []
     try:
-        async for chunk in _stream_ai(messages, model_key, meta, *args, **kwargs):
-            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
-                output.append(chunk)
-            yield chunk
+        # aclosing：被提前关闭时，先等下层的请求真正关掉，再记账、再返回
+        async with aclosing(_stream_ai(messages, model_key, meta, *args, **kwargs)) as inner:
+            async for chunk in inner:
+                if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                    output.append(chunk)
+                yield chunk
     finally:
+        reported = any(key in meta for key in ("prompt_tokens", "completion_tokens"))
         if counted:
-            # 同一个 meta 被重复使用时，中转站这次没给用量就不能沿用上一次的数字
-            fresh = meta if (meta.get("prompt_tokens"), meta.get("completion_tokens")) != before else {}
-            usage_log.record_call(resolved, usage_log.kind_for_module(caller), fresh,
+            usage_log.record_call(resolved, usage_log.kind_for_module(caller), meta if reported else {},
                                   usage_log.messages_text(messages), "".join(output))
+        if not reported:
+            meta.update(previous)  # 这次没报告：调用方看到的仍是原来的值
 
 
 async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, cancel_event=None, *, include_device_context: bool = True, request_timeout: float = 120):

@@ -124,11 +124,17 @@ def cache_tokens(usage: Any) -> tuple[int, int]:
     return read, write
 
 
+def _input_excludes_cache(usage: Any) -> bool:
+    """Claude 原生格式（input_tokens + cache_*_input_tokens，没有 prompt_tokens）里，读入不含缓存部分。
+    OpenAI（prompt_tokens / input_tokens + cached_tokens）和 Gemini 的读入本来就含缓存。"""
+    return (isinstance(usage, dict) and "prompt_tokens" not in usage and "input_tokens" in usage
+            and ("cache_read_input_tokens" in usage or "cache_creation_input_tokens" in usage))
+
+
 def _record_real(model: str, kind: str, prompt: int, completion: int, usage: Any) -> None:
     read, write = cache_tokens(usage)
-    if read + write > prompt:
-        # Claude 原生格式里「读入」不含缓存部分；统一成含缓存的总读入
-        prompt += read + write
+    if _input_excludes_cache(usage):
+        prompt += read + write  # 统一成含缓存的总读入
     record(model, kind, prompt, completion, estimated=False, cache_read=read, cache_write=write)
 
 
@@ -147,6 +153,9 @@ def record_json(model: str, kind: str, data: Any, prompt_text: str, output_text:
     usage = data.get("usage") if isinstance(data, dict) else None
     if isinstance(usage, dict) and (usage.get("prompt_tokens") or usage.get("completion_tokens")):
         _record_real(model, kind, _num(usage.get("prompt_tokens")), _num(usage.get("completion_tokens")), usage)
+        return
+    if isinstance(usage, dict) and (usage.get("input_tokens") or usage.get("output_tokens")):  # Claude 原生
+        _record_real(model, kind, _num(usage.get("input_tokens")), _num(usage.get("output_tokens")), usage)
         return
     gemini = data.get("usageMetadata") if isinstance(data, dict) else None
     if isinstance(gemini, dict) and (gemini.get("promptTokenCount") or gemini.get("candidatesTokenCount")):

@@ -50,9 +50,15 @@ def test_same_underlying_model_ignores_relay_prefix_and_date_suffix(client):
     assert config.same_underlying_model("按次·opus", "按量·opus")
     assert not config.same_underlying_model("按次·opus", "按次·gemini")
     config.MODELS["dated"] = {"provider": "custom_openai", "model": "claude-opus-5-5-20261001"}
+    config.MODELS["dashed"] = {"provider": "custom_openai", "model": "claude-opus-5-5-2026-10-01"}
     config.MODELS["opus-x"] = {"provider": "custom_openai", "model": "claude-opus-5-5-x"}
     assert config.same_underlying_model("dated", "按次·opus")
+    assert config.same_underlying_model("dashed", "按次·opus")
     assert not config.same_underlying_model("opus-x", "按次·opus")
+    # 版本号不同就是不同模型（Codex 复审 H1 的反例）
+    assert not config.same_model_id("claude-sonnet-4", "claude-sonnet-4-5")
+    assert not config.same_model_id("claude-opus-5", "claude-opus-5-5")
+    assert not config.same_model_id("gpt-5", "gpt-5-1")
 
 
 def test_card_refuses_a_background_route_with_a_different_model(client):
@@ -78,6 +84,68 @@ def test_background_model_is_used_only_while_it_matches(client):
     assert memory_hub_jobs.background_model("aion", "按次·gemini") == "按次·gemini"
 
 
+def test_rejected_card_changes_nothing_even_with_a_new_own_api(client):
+    """同一次提交里自己填 API + 不匹配的后台线路：先校验再写，拒绝时线路和名片都不变（Codex 复审 M3）。"""
+    before_routes = json.dumps(config.SETTINGS.get(config.SEAT_ROUTES_KEY), sort_keys=True)
+    bad = client.put("/api/actors/ai3", json={
+        "api": {"base_url": "https://gem.example/v1", "api_key": "sk-x", "model": "gemini-3-pro"},
+        "background_model": "按量·opus"})
+    assert bad.status_code == 400
+    assert json.dumps(config.SETTINGS.get(config.SEAT_ROUTES_KEY), sort_keys=True) == before_routes
+    assert actors.get_actor("ai3")["model"] == "" and actors.api_summary("ai3") is None
+    ok = client.put("/api/actors/ai3", json={
+        "api": {"base_url": "https://op.example/v1", "api_key": "sk-x", "model": "claude-opus-5-5"},
+        "background_model": "按量·opus"})
+    assert ok.status_code == 200 and ok.json()["background_model"] == "按量·opus"
+
+
+def _dream_setup(client, monkeypatch, during_wait):
+    client.put("/api/actors/ai3", json={"model": "按次·opus", "background_model": "按量·opus", "enabled": True})
+    bridge = memory_hub_jobs.bridge
+    monkeypatch.setattr(bridge, "load_config", lambda: {})
+    monkeypatch.setattr(bridge, "source_ai_for", lambda actor, cfg=None: "jasper")
+    written = []
+
+    async def call_tool(cfg, tool, args, sent=None):
+        if args.get("action") == "materials":
+            during_wait()  # 等 Hub 给材料的这几秒里，线路 / 名片被改了
+            return json.dumps({"prompt": "今天的材料"})
+        written.append(args)
+        return json.dumps({"status": "dreamed"})
+    monkeypatch.setattr(bridge, "_call_tool", call_tool)
+
+    async def fake_stream(messages, model_key, meta=None, *a, **k):
+        yield "梦"
+    monkeypatch.setattr(ai_providers, "_stream_ai", fake_stream)
+    return written
+
+
+def test_dream_stops_if_the_background_route_is_edited_while_waiting(client, monkeypatch):
+    def edit_route():
+        config.MODELS["按量·opus"] = dict(config.MODELS["按量·opus"], model="gemini-3-pro")
+    written = _dream_setup(client, monkeypatch, edit_route)
+    with pytest.raises(Exception):
+        asyncio.run(memory_hub_jobs.dream_for("ai3"))
+    assert written == []
+
+
+def test_dream_stops_if_the_ais_own_model_changes_while_waiting(client, monkeypatch):
+    def change_card():
+        data = json.loads(Path(actors.ACTORS_PATH).read_text(encoding="utf-8"))
+        data["seats"]["ai3"]["model"] = "按次·gemini"
+        Path(actors.ACTORS_PATH).write_text(json.dumps(data), encoding="utf-8")
+    written = _dream_setup(client, monkeypatch, change_card)
+    with pytest.raises(RuntimeError, match="换过"):
+        asyncio.run(memory_hub_jobs.dream_for("ai3"))
+    assert written == []
+
+
+def test_dream_is_written_with_the_pinned_background_route(client, monkeypatch):
+    written = _dream_setup(client, monkeypatch, lambda: None)
+    assert asyncio.run(memory_hub_jobs.dream_for("ai3")) == "dreamed"
+    assert written and written[0]["source_ai"] == "jasper"
+
+
 @pytest.fixture
 def book(tmp_path, monkeypatch):
     monkeypatch.setattr(usage_log, "USAGE_DB", tmp_path / "usage.db")
@@ -86,9 +154,11 @@ def book(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("usage, expect", [
     ({"prompt_tokens": 1000, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 800}}, (1000, 800, 0)),
-    # Claude 原生格式：读入不含缓存，统一成含缓存的总数
-    ({"prompt_tokens": 50, "completion_tokens": 10, "cache_read_input_tokens": 900, "cache_creation_input_tokens": 100},
-     (1050, 900, 100)),
+    # Claude 原生格式：读入不含缓存，统一成含缓存的总数（Codex 复审 L1 的反例）
+    ({"input_tokens": 1000, "output_tokens": 10, "cache_read_input_tokens": 900, "cache_creation_input_tokens": 100},
+     (2000, 900, 100)),
+    # OpenAI 格式里即使带了 Claude 的缓存字段，prompt_tokens 也已经是总数
+    ({"prompt_tokens": 2000, "completion_tokens": 1, "cache_read_input_tokens": 900}, (2000, 900, 0)),
     ({"promptTokenCount": 2000, "candidatesTokenCount": 5, "cachedContentTokenCount": 1500}, (2000, 1500, 0)),
 ])
 def test_cache_numbers_are_recorded_from_each_shape(book, usage, expect):

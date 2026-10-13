@@ -253,6 +253,7 @@ async def api_update_actor(actor_id: str, request: Request):
             updates[key] = str(value or "").strip()[:200]
     if actor_id in ("aion", "connor"):
         updates.pop("name", None)  # 前两位改名请在世界书 / 聊天室设置里改，保持单一来源
+    _check_background_model(actor_id, body, updates)  # 任何东西写盘之前先校验，拒绝时什么都不改
     if "api" in body:
         api = body["api"]
         if api is None:
@@ -267,11 +268,6 @@ async def api_update_actor(actor_id: str, request: Request):
             updates["model"] = save_seat_api(actor_id, name, api)
         else:
             raise HTTPException(400, "api 格式不正确")
-    if updates.get("background_model"):
-        from config import same_underlying_model
-        main = updates.get("model", (get_actor(actor_id) or {}).get("model", ""))
-        if main and not same_underlying_model(updates["background_model"], main):
-            raise HTTPException(400, "后台用的线路要和平时是同一个模型（只是换一家中转站），这样做梦、交接卡还是 TA 自己写的")
     data = _load_raw()
     seats = data.setdefault("seats", {})
     seats.setdefault(actor_id, {}).update(updates)
@@ -279,6 +275,27 @@ async def api_update_actor(actor_id: str, request: Request):
     if updates.get("model"):
         _sync_chatroom_model(actor_id, updates["model"])
     return get_actor(actor_id)
+
+
+def _check_background_model(actor_id: str, body: dict, updates: dict) -> None:
+    """后台线路必须和这次保存后的平时模型是同一个模型（只是换一家中转站）。"""
+    # 只在这次设置后台线路时校验；之后改了平时的模型，用的时候会再核一次（对不上就用平时的）
+    background = updates.get("background_model")
+    if not background:
+        return
+    from config import MODELS, same_model_id
+    api = body.get("api") if "api" in body else None
+    if isinstance(api, dict):
+        main_id = str(api.get("model") or "")
+    else:
+        main_key = updates.get("model", (get_actor(actor_id) or {}).get("model", ""))
+        if "api" in body and api is None:
+            own = api_summary(actor_id)
+            if own and main_key == own["key"]:
+                main_key = ""  # 这次会清掉自己填的线路，平时模型随之清空
+        main_id = (MODELS.get(main_key) or {}).get("model", "") if main_key else ""
+    if main_id and not same_model_id((MODELS.get(background) or {}).get("model", ""), main_id):
+        raise HTTPException(400, "后台用的线路要和平时是同一个模型（只是换一家中转站），这样做梦、交接卡还是 TA 自己写的")
 
 
 @router.post("/api/actors/{actor_id}/avatar")

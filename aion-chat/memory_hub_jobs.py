@@ -74,6 +74,18 @@ def background_model(actor: str, usual: str = "") -> str:
     return base
 
 
+def pin_background_model(actor: str) -> tuple[str, dict | None]:
+    """选定这次后台任务用的模型，并当场固定它的线路（等 Hub、等材料的那几秒里线路被改也不认）。"""
+    from config import model_snapshot
+    key = background_model(actor)
+    return key, (model_snapshot(key) if key else None)
+
+
+def still_own_model(actor: str, key: str) -> bool:
+    """生成前再核一次：这个模型现在仍然是这位 AI 自己的（平时的或同模型的后台线路）。"""
+    return bool(key) and background_model(actor) == key
+
+
 def model_label(key: str) -> str:
     return str((MODELS.get(key) or {}).get("model") or key)[:60]
 
@@ -189,8 +201,8 @@ async def write_handoff(actor: str, session_ts: float, *, now: float | None = No
     now = now or time.time()
     cfg = bridge.load_config()
     source_ai = bridge.source_ai_for(actor, cfg)
-    model = background_model(actor)
-    if not source_ai or not model:
+    model, pinned = pin_background_model(actor)
+    if not source_ai or not model or pinned is None:
         _mark_handoff(actor, done_ts=session_ts)
         return "skipped:no_model" if source_ai else "skipped:no_hub_identity"
     if now - session_ts > HANDOFF_GIVE_UP_SECONDS:
@@ -203,7 +215,9 @@ async def write_handoff(actor: str, session_ts: float, *, now: float | None = No
         _mark_handoff(actor, done_ts=session_ts)
         return "skipped:no_turns"
     try:
-        content = await complete(model, _handoff_prompt(actor, turns))
+        if not still_own_model(actor, model):
+            raise RuntimeError("这位 AI 的模型刚刚换过，这次不写")
+        content = await complete(model, _handoff_prompt(actor, turns), snapshot=pinned)
         if not content:
             raise RuntimeError("模型没有返回内容")
         raw = await asyncio.wait_for(
@@ -270,10 +284,10 @@ def dream_actors() -> list[str]:
 async def dream_for(actor: str) -> str:
     cfg = bridge.load_config()
     source_ai = bridge.source_ai_for(actor, cfg)
-    model = background_model(actor)
+    model, pinned = pin_background_model(actor)  # 在等 Hub 之前就固定，等待期间线路被改也不认
     if not source_ai:
         return "skipped:no_hub_identity"
-    if not model:
+    if not model or pinned is None:
         return "skipped:no_model"
     timeout = float(cfg.get("capture_timeout_seconds") or 20.0)
     raw = await asyncio.wait_for(
@@ -286,7 +300,10 @@ async def dream_for(actor: str) -> str:
         return "already_dreamed"
     if materials.get("reason") == "too_few_materials" or not materials.get("prompt"):
         return "skipped:too_few_materials"
-    content = await complete(model, _persona_messages(actor) + [{"role": "user", "content": materials["prompt"]}])
+    if not still_own_model(actor, model):
+        raise RuntimeError("这位 AI 的模型刚刚换过，今晚不用别的模型代写")
+    content = await complete(model, _persona_messages(actor) + [{"role": "user", "content": materials["prompt"]}],
+                             snapshot=pinned)
     if not content:
         raise RuntimeError("模型没有返回内容")
     raw = await asyncio.wait_for(

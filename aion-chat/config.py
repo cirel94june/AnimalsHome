@@ -2,6 +2,7 @@
 全局配置：路径、常量、settings / worldbook / chat_status 读写
 """
 
+import re
 import atexit, json, os, re, shutil, sys, tempfile, time
 from pathlib import Path
 
@@ -539,21 +540,26 @@ def ensure_model_unchanged(model_key: str, snapshot: dict | None) -> None:
         raise ModelChanged(f"模型线路「{key}」刚刚被删除或改动了，这次不生成（不会换成别的模型）")
 
 
-def _model_core(key: str) -> str:
-    """线路里写的模型 ID，去掉中转站常加的厂商前缀（anthropic/、models/），统一小写。"""
-    name = str((MODELS.get(key) or {}).get("model") or "").strip().lower()
-    return name.rsplit("/", 1)[-1]
+_DATE_SUFFIX = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})$")
+
+
+def model_id_core(model_id: str) -> str:
+    """模型 ID 去掉中转站常加的厂商前缀（anthropic/、models/），统一小写。"""
+    return str(model_id or "").strip().lower().rsplit("/", 1)[-1]
+
+
+def same_model_id(x: str, y: str) -> bool:
+    """两个模型 ID 是不是同一个模型。只容许一边多一个完整日期后缀（-20250805 或 -2025-08-05），
+    版本号不同（claude-sonnet-4 和 claude-sonnet-4-5）算不同模型。"""
+    x, y = model_id_core(x), model_id_core(y)
+    if not x or not y:
+        return False
+    return x == y or _DATE_SUFFIX.sub("", x) == y or _DATE_SUFFIX.sub("", y) == x
 
 
 def same_underlying_model(a: str, b: str) -> bool:
-    """两条线路是不是同一个模型（只是走不同的中转站）。允许一边多一个日期后缀，比如 -20250805。"""
-    x, y = _model_core(a), _model_core(b)
-    if not x or not y:
-        return False
-    if x == y:
-        return True
-    short, long = sorted((x, y), key=len)
-    return long.startswith(short + "-") and long[len(short) + 1:].isdigit()
+    """两条线路（模型键）是不是同一个模型，只是走不同的中转站。"""
+    return same_model_id((MODELS.get(a) or {}).get("model", ""), (MODELS.get(b) or {}).get("model", ""))
 
 
 def resolve_model_key(model_key: str | None) -> str:
