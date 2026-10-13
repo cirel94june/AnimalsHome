@@ -253,7 +253,7 @@ async def api_update_actor(actor_id: str, request: Request):
             updates[key] = str(value or "").strip()[:200]
     if actor_id in ("aion", "connor"):
         updates.pop("name", None)  # 前两位改名请在世界书 / 聊天室设置里改，保持单一来源
-    _check_background_model(actor_id, body, updates)  # 任何东西写盘之前先校验，拒绝时什么都不改
+    notice = _check_background_model(actor_id, body, updates)  # 任何东西写盘之前先校验，拒绝时什么都不改
     if "api" in body:
         api = body["api"]
         if api is None:
@@ -274,28 +274,40 @@ async def api_update_actor(actor_id: str, request: Request):
     _save_raw(data)
     if updates.get("model"):
         _sync_chatroom_model(actor_id, updates["model"])
-    return get_actor(actor_id)
+    result = get_actor(actor_id)
+    if notice:
+        result = dict(result or {}, notice=notice)
+    return result
 
 
-def _check_background_model(actor_id: str, body: dict, updates: dict) -> None:
-    """后台线路必须和这次保存后的平时模型是同一个模型（只是换一家中转站）。"""
-    # 只在这次设置后台线路时校验；之后改了平时的模型，用的时候会再核一次（对不上就用平时的）
+def _check_background_model(actor_id: str, body: dict, updates: dict) -> str:
+    """后台线路必须和这次保存后的平时模型是同一个模型（只是换一家中转站）。
+
+    - 这次新选了一条对不上的后台线路：拒绝（400），什么都不改；
+    - 只是换了平时的模型（比如升级到新版本），原来的后台线路对不上了：自动清空后台线路，
+      平时的模型照常保存，返回一句提醒。换模型永远不会被后台线路卡住。
+    """
     background = updates.get("background_model")
     if not background:
-        return
+        return ""
     from config import MODELS, same_model_id
     api = body.get("api") if "api" in body else None
+    current = get_actor(actor_id) or {}
     if isinstance(api, dict):
         main_id = str(api.get("model") or "")
     else:
-        main_key = updates.get("model", (get_actor(actor_id) or {}).get("model", ""))
+        main_key = updates.get("model", current.get("model", ""))
         if "api" in body and api is None:
             own = api_summary(actor_id)
             if own and main_key == own["key"]:
                 main_key = ""  # 这次会清掉自己填的线路，平时模型随之清空
         main_id = (MODELS.get(main_key) or {}).get("model", "") if main_key else ""
-    if main_id and not same_model_id((MODELS.get(background) or {}).get("model", ""), main_id):
-        raise HTTPException(400, "后台用的线路要和平时是同一个模型（只是换一家中转站），这样做梦、交接卡还是 TA 自己写的")
+    if not main_id or same_model_id((MODELS.get(background) or {}).get("model", ""), main_id):
+        return ""
+    if background == current.get("background_model"):
+        updates["background_model"] = ""
+        return "平时的模型换了，原来的后台线路是旧模型，已经清空（后台暂时和平时走同一条）。需要的话再选一条同模型的后台线路。"
+    raise HTTPException(400, "后台用的线路要和平时是同一个模型（只是换一家中转站），这样做梦、交接卡还是 TA 自己写的")
 
 
 @router.post("/api/actors/{actor_id}/avatar")

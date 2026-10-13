@@ -233,3 +233,17 @@ def test_stream_usage_with_cache_reaches_meta(monkeypatch):
             [{"role": "user", "content": "x"}], {"model": "m", "base_url": "https://ok.example"}, meta)]
     asyncio.run(run())
     assert meta["prompt_tokens"] == 3000 and usage_log.cache_tokens(meta["raw"]) == (2500, 0)
+
+
+def test_upgrading_the_usual_model_is_never_blocked_by_an_old_background_route(client):
+    """平时的模型升级（比如换到新版本）时，名片会把旧的后台线路一起提交：照常保存，旧后台线路自动清空并提醒。"""
+    config.MODELS["新版·sonnet"] = {"provider": "custom_openai", "model": "claude-sonnet-9"}
+    assert client.put("/api/actors/aion", json={"model": "按次·opus", "background_model": "按量·opus"}).status_code == 200
+    r = client.put("/api/actors/aion", json={"model": "新版·sonnet", "background_model": "按量·opus"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model"] == "新版·sonnet" and body["background_model"] == "" and "已经清空" in body["notice"]
+    assert memory_hub_jobs.background_model("aion") == "新版·sonnet"
+    # 但这次新选一条对不上的后台线路，仍然拒绝
+    bad = client.put("/api/actors/aion", json={"background_model": "按量·opus"})
+    assert bad.status_code == 400

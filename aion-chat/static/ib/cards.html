@@ -130,7 +130,8 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
   function save(id, patch) {
     return fetch('/api/actors/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
       .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); })
-      .then(function (updated) { data.actors = data.actors.map(function (a) { return a.id === id ? updated : a; }); render(); });
+      .then(function (updated) { if (updated && updated.notice) alert(updated.notice);
+        data.actors = data.actors.map(function (a) { return a.id === id ? updated : a; }); render(); });
   }
 
   function openEdit(a) {
