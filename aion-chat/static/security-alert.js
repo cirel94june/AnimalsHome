@@ -252,27 +252,31 @@
       await post(`/api/security-access/alerts/${encodeURIComponent(alert.alert_id)}/ack`);
     }
 
-    async function trustCurrentDevice() {
-      const alert = activeAlert;
-      if (!alert || !alert.alert_id) return;
-      stopAlertAudio();
-      const response = await post(
-        `/api/security-access/alerts/${encodeURIComponent(alert.alert_id)}/trust-source`,
-        {label: ''},
-      );
-      if (!response || response.ok === false) return;
+    function hideOverlay() {
       const overlay = ensureDom();
       if (overlay) overlay.classList.remove('show');
       activeAlert = null;
     }
 
+    // 两个按钮都先关窗再通知服务器：网络慢或请求卡住时也不会把人困在警报里
+    async function trustCurrentDevice() {
+      const alert = activeAlert;
+      if (!alert || !alert.alert_id) return;
+      stopAlertAudio();
+      hideOverlay();
+      const response = await post(
+        `/api/security-access/alerts/${encodeURIComponent(alert.alert_id)}/trust-source`,
+        {label: ''},
+      );
+      // 来源已经无法信任（比如没有设备身份的命令行请求）：至少把这条警报标记为已知
+      if (!response || response.ok === false) await acknowledge(alert);
+    }
+
     async function dismissCurrentAlert() {
       const alert = activeAlert;
       stopAlertAudio();
+      hideOverlay();
       await acknowledge(alert);
-      const overlay = ensureDom();
-      if (overlay) overlay.classList.remove('show');
-      activeAlert = null;
     }
 
     async function blockCurrentIp() {

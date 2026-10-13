@@ -30,6 +30,11 @@ def _trust_tailscale() -> bool:
     return os.environ.get("AIONSHOME_TRUST_TAILSCALE", "").strip().lower() in {"1", "true", "yes"}
 
 
+# Tailscale 给每台设备两个地址：100.64.0.0/10 和 fd7a:115c:a1e0::/48
+_TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
+_TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+
+
 def classify_ip(ip: str, has_cloudflare_metadata: bool = False) -> str:
     if has_cloudflare_metadata:
         return "cloudflare"
@@ -39,7 +44,7 @@ def classify_ip(ip: str, has_cloudflare_metadata: bool = False) -> str:
         return "public"
     if address.is_loopback:
         return "localhost"
-    if address.version == 4 and address in ipaddress.ip_network("100.64.0.0/10"):
+    if address in _TAILSCALE_V4 or address in _TAILSCALE_V6:
         return "tailscale"
     if address.is_private:
         return "lan"
@@ -720,6 +725,9 @@ class SecurityAccessService:
     def pending_alerts_for(self, observation: AccessObservation) -> list[dict]:
         if observation.trusted:
             visible = self.pending_alerts()
+            if _trust_tailscale():
+                # 私网设备都算自己的：开这个选项之前留下的 Tailscale 来源旧警报不再弹
+                visible = [alert for alert in visible if alert.get("source") != "tailscale"]
         elif observation.set_cookie is None:
             visible = [
                 dict(alert)
@@ -757,7 +765,7 @@ class SecurityAccessService:
             address = ipaddress.ip_address(ip)
         except ValueError:
             return False
-        if address.version == 4 and address in ipaddress.ip_network("100.64.0.0/10"):
+        if address in _TAILSCALE_V4 or address in _TAILSCALE_V6:
             return False
         return address.is_global
 

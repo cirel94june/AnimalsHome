@@ -429,3 +429,21 @@ class SecurityAccessAcknowledgementTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TailscaleTrustExtrasTest(SecurityAccessTestCase):
+    def test_tailscale_ipv6_addresses_are_tailscale(self):
+        self.assertEqual("tailscale", classify_ip("fd7a:115c:a1e0::3c34:e859"))
+        self.assertEqual("lan", classify_ip("fd00::1"))
+
+    def test_old_tailscale_alerts_are_not_shown_once_tailscale_is_trusted(self):
+        # 开信任选项之前留下的旧警报（服务器自己经 Tailscale 地址访问时记下的）
+        self.service._pending_alerts["old"] = {"alert_id": "old", "source": "tailscale", "ip": "100.73.232.88"}
+        self.service._pending_alerts["real"] = {"alert_id": "real", "source": "public", "ip": "8.8.8.8"}
+        with mock.patch.dict(os.environ, {"AIONSHOME_TRUST_TAILSCALE": "1"}):
+            phone = self.service.observe(make_scope("100.89.242.72"), {})
+            self.assertTrue(phone.trusted)
+            self.assertEqual(["real"], [a["alert_id"] for a in self.service.pending_alerts_for(phone)])
+        with mock.patch.dict(os.environ, {"AIONSHOME_TRUST_TAILSCALE": ""}):
+            owner = self.service.observe(make_scope("127.0.0.1"), {})
+            self.assertEqual({"old", "real"}, {a["alert_id"] for a in self.service.pending_alerts_for(owner)})
