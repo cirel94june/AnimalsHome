@@ -252,3 +252,24 @@ def test_actor_model_must_exist(tmp_path, monkeypatch):
     assert client.put("/api/actors/ai3", json={"model": "不存在"}).status_code == 400
     assert client.put("/api/actors/ai3", json={"model": "gemini-relay"}).json()["model"] == "gemini-relay"
     assert client.put("/api/actors/ai3", json={"model": ""}).json()["model"] == ""
+
+
+def test_group_history_names_every_speaker_and_merges_turns(seats):
+    import actors
+    msgs = [
+        {"sender": "user", "content": "今晚吃什么", "created_at": 1},
+        {"sender": "aion", "content": "火锅", "created_at": 2},
+        {"sender": "connor", "content": "烧烤", "created_at": 3},
+        {"sender": "ai3", "content": "本少爷要吃火锅", "created_at": 4},
+        {"sender": "user", "content": "那就火锅", "created_at": 5},
+    ]
+    hist = seat_chat._history("ai3", msgs, 30, group=True, user_name="小猫")
+    assert [h["role"] for h in hist] == ["user", "assistant", "user"]
+    first = hist[0]["content"]
+    assert "【小猫】今晚吃什么" in first and "火锅" in first and "烧烤" in first
+    assert "【" + actors.display_name("aion") + "】" in first
+    assert hist[1]["content"] == "本少爷要吃火锅"
+    # 私聊照旧：只有小猫和自己
+    private = seat_chat._history("ai3", msgs, 30)
+    assert all("【" not in h["content"] for h in private)
+    assert [h["role"] for h in private] == ["user", "assistant", "user"]

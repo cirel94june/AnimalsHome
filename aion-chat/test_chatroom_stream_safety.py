@@ -119,6 +119,7 @@ class ChatroomStreamSafetyTest(unittest.IsolatedAsyncioTestCase):
             patch.object(chatroom_routes, "load_chatroom_config", return_value={"reply_order": "aion"}),
             patch.object(chatroom_routes, "instant_digest", new=AsyncMock(return_value={})),
             patch.object(chatroom_routes, "build_aion_group_context", new=AsyncMock(side_effect=RuntimeError("context unavailable"))),
+            patch.object(chatroom_routes, "_group_seat_members", return_value=[]),  # 只测小克 / Lucien，不让本机座位参与
             patch.object(chatroom_routes, "_save_msg", new=AsyncMock(return_value={"id": "failure"})) as save,
             patch.object(chatroom_routes, "_load_room_and_messages", new=AsyncMock(return_value=({}, []))),
             patch.object(chatroom_routes, "_reply_connor", new=AsyncMock()) as other,

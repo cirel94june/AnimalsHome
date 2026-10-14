@@ -54,8 +54,18 @@ def _persona_text(actor_id: str) -> str:
     return _compile_ai_persona_sections(actors.persona_sections(actor_id))
 
 
-def _history(actor_id: str, msgs: list[dict], limit: int) -> list[dict]:
-    """房间消息 → 对话轮。只保留用户和该座位的发言，失败提示不进上下文。"""
+def _speaker_name(sender: str, user_name: str) -> str:
+    if sender == "user":
+        return user_name
+    try:
+        return actors.display_name(sender) or sender
+    except Exception:
+        return sender
+
+
+def _history(actor_id: str, msgs: list[dict], limit: int, *, group: bool = False, user_name: str = "用户") -> list[dict]:
+    """房间消息 → 对话轮。私聊只保留用户和该座位的发言；群聊里别人（小猫和其他 AI）的话都标上名字、
+    合并成 user 一侧。失败提示不进上下文。"""
     out: list[dict] = []
     for msg in msgs[-max(1, limit):]:
         sender = msg.get("sender")
@@ -68,16 +78,23 @@ def _history(actor_id: str, msgs: list[dict], limit: int) -> list[dict]:
                 content = "[图片]"
             else:
                 continue
-        if sender == "user":
-            out.append({"role": "user", "content": append_message_meta(content, msg.get("created_at"))})
-        elif sender == actor_id:
+        if sender == actor_id:
             out.append({"role": "assistant", "content": content})
+        elif sender == "user" and not group:
+            out.append({"role": "user", "content": append_message_meta(content, msg.get("created_at"))})
+        elif group and sender:
+            line = append_message_meta(f"【{_speaker_name(sender, user_name)}】{content}", msg.get("created_at"))
+            if out and out[-1]["role"] == "user":
+                out[-1]["content"] += "\n" + line  # 连着几个人说话：并成一轮
+            else:
+                out.append({"role": "user", "content": line})
     while out and out[0]["role"] == "assistant":  # 前缀以 assistant 结尾，避免两条 assistant 相连
         out.pop(0)
     return out
 
 
-async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int = 30, chat_id: str = "") -> list[dict]:
+async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int = 30, chat_id: str = "",
+                        group: bool = False) -> list[dict]:
     actor = actors.get_actor(actor_id) or {"name": actor_id}
     wb = load_worldbook()
     user_name = (wb.get("user_name") or "").strip() or "用户"
@@ -101,10 +118,14 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "user", "content": "\n\n".join(b for b in background if b)},
         {"role": "assistant", "content": "收到。"},
         {"role": "user", "content": (
+            f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。下面是最近的聊天记录，"
+            "【】里是说话的人，<meta> 里是发送时间，只供你参考，回复时都不要带。"
+            "轮到你说话了：用你自己的口吻接话，可以回应任何人，不用替别人说话。"
+        ) if group else (
             f"[私聊说明]\n你现在在和{user_name}的私聊窗口里。下面是最近的聊天记录，"
             "<meta> 里是发送时间，只供你参考，回复时不要带。直接用你自己的口吻回复最后一条。"
         )},
         {"role": "assistant", "content": "明白了。"},
     ]
-    messages += _history(actor_id, msgs, context_limit)
+    messages += _history(actor_id, msgs, context_limit, group=group, user_name=user_name)
     return messages

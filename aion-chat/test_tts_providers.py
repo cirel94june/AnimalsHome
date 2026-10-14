@@ -108,7 +108,7 @@ class TTSProviderTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(settings, "SETTINGS", configured), patch.object(settings, "save_settings"):
             result = await settings.update_settings(update)
 
-        self.assertEqual(result, {"ok": True})
+        self.assertTrue(result["ok"])  # 另带中转站列表的版本号 custom_routes_rev
         self.assertEqual(configured["siliconflow_key"], "keep-silicon")
         self.assertEqual(configured["edge_tts_favorites"], ["edge:voice"])
         self.assertEqual(configured["minimax_tts_key"], "sk-cp-plan")

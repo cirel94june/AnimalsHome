@@ -189,3 +189,9 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - **0b64d23**：`config.model_usable` / `iter_selectable_models`：给页面下拉框（`/api/models`）用，中转站总显示，内置 siliconflow / gemini / aipro 要有 Key，codex_cli / gemini_cli / antigravity_cli 要本机装了程序；`iter_visible_models`（兜底选模型）不变。自主活动 `seeky_interaction` 默认关闭；游乐场大厅去掉 Seeky 入口。
 - **a6c15c3**：`data/date_portraits/default.*` 存在时，`scan_date_assets()`（只对默认素材目录）以固定神态列表生成 `kind=portrait` 的状态，不再列出原作者的表情视频；`GET /api/date-theater/portrait` 只读这一个固定位置的文件。页面对 portrait 用 `<img>` + 按 `data-mood` 的 CSS 动画，暂停并清空视频源。
 - 请重点看：`/api/date-theater/portrait` 是否只能读到固定文件；`model_usable` 在导入 `ai_providers` 失败时的行为（返回 False，不影响兜底）。
+
+## 19. 群聊加入座位 AI（狗蛋等）
+
+- `seat_chat._history(..., group=True)`：群聊里除自己外的发言（小猫和其他 AI）标上【名字】，连续的并成一轮 user；`build_context(..., group=True)` 用群聊说明。私聊行为不变。
+- `routes/chatroom._generate_seat_reply` 增加 `actor`、`group` 参数；`_generate_group_replies` 和 `trigger_ai_chat`（AI 之间聊几轮）在小克、Lucien 之后让 `_group_seat_members()`（已启用且 `check_ready` 通过的座位）依次接话，每位接话前重新读消息。群聊回复不单独记入 Memory Hub（与小克、Lucien 的群聊回复一致）。
+- 测试：`test_group_seats.py`、`test_seat_chat.test_group_history_names_every_speaker_and_merges_turns`；更新两处旧测试：`test_chatroom_stream_safety`（隔离本机座位）、`test_tts_providers`（保存响应多了 `custom_routes_rev`）。与 bd1a1d3 基线对比，聊天室相关测试无其他新增失败。

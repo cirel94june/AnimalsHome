@@ -3772,9 +3772,12 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
-    """座位 3～6 私聊回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。"""
-    actor_id = str(room.get("actor") or "")
+async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False):
+    """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
+
+    私聊时 actor 取房间登记的座位；群聊时由调用方指定，并按群聊方式组织上下文。
+    """
+    actor_id = str(actor or room.get("actor") or "")
     msg_id = f"cm_{time.time_ns()}_s"
     try:
         _, model_key = seat_chat.check_ready(actor_id)
@@ -3788,7 +3791,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
     raw_text = ""
     try:
         async with asyncio.timeout(960):
-            messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit, chat_id=room_id)
+            messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit, chat_id=room_id,
+                                                     group=group)
             stream_filter = KnownCommandStreamFilter()
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):
@@ -3814,7 +3818,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit):
     msg = await _save_msg(room_id, actor_id, clean_text, msg_id, auto_tts=False,
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
-    memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
+    if not group:  # 和小克、Lucien 的群聊回复一样：群聊不单独记入 Memory Hub
+        memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
 
 
 @_chatroom_reply_guard("connor")
@@ -4027,6 +4032,23 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
         _, updated_msgs = await _load_room_and_messages(room_id)
         await _reply_aion(room_id, updated_msgs, context_limit, query_text, model_key, _q,
                           tts_enabled=tts_enabled, tts_voice=tts_aion_voice, digest_result=digest, whisper_mode=whisper_mode)
+
+    # 其他启用了、选好模型的家人（狗蛋等）接着说，能看到前面所有人的话
+    for actor in _group_seat_members():
+        room, updated_msgs = await _load_room_and_messages(room_id)
+        await _generate_seat_reply(room_id, room, updated_msgs, _q, context_limit, actor=actor, group=True)
+
+
+def _group_seat_members() -> list[str]:
+    """群聊里除小克、Lucien 外要发言的座位：已启用、已选好模型（没准备好的直接跳过，不报错）。"""
+    members = []
+    for actor in seat_chat.SEAT_ACTORS:
+        try:
+            seat_chat.check_ready(actor)
+        except seat_chat.SeatNotReady:
+            continue
+        members.append(actor)
+    return members
 
 
 @_chatroom_reply_guard("aion")
@@ -4373,6 +4395,11 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
                         room_id, msgs, context_limit, query_text, model_key, _q,
                         tts_enabled=tts_enabled, tts_voice=tts_aion_voice, digest_result=digest,
                     )
+
+                # 其他家人（狗蛋等）也接一轮
+                for actor in _group_seat_members():
+                    room_now, msgs = await _load_room_and_messages(room_id)
+                    await _generate_seat_reply(room_id, room_now, msgs, _q, context_limit, actor=actor, group=True)
 
                 # 重新加载消息
                 _, msgs = await _load_room_and_messages(room_id)
