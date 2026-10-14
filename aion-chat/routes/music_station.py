@@ -186,6 +186,62 @@ async def cache_track(track_id: str):
         raise HTTPException(502, f"歌曲缓存失败：{exc}")
 
 
+class NeteaseAddBody(BaseModel):
+    id: int
+    playlist_id: str = ""
+
+
+@router.get("/netease/search")
+async def netease_search(q: str = "", limit: int = 20):
+    """在点歌台里直接搜网易云；标出哪些已经在曲库里。"""
+    import asyncio
+    from music import search_songs
+    keyword = q.strip()[:100]
+    if not keyword:
+        return {"songs": []}
+    try:
+        songs = await asyncio.wait_for(
+            asyncio.to_thread(search_songs, keyword, max(1, min(int(limit or 20), 30))), timeout=20)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "网易云 20 秒没回应，稍后再试")
+    except Exception:
+        raise HTTPException(502, "网易云暂时搜不到，稍后再试")
+    have = {t.get("external_id") for t in await get_music_station_store().list_tracks()
+            if t.get("source_type") == "netease"}
+    for song in songs:
+        song["in_library"] = str(song.get("id")) in have
+    return {"songs": songs}
+
+
+@router.post("/netease")
+async def netease_add(body: NeteaseAddBody):
+    """把一首网易云歌曲加进曲库（以服务器查到的歌曲信息为准），可顺手放进当前歌单。"""
+    import asyncio
+    import time
+    from config import load_worldbook
+    from music import get_song_detail
+    from music_station import record_music_request
+    try:
+        song = await asyncio.wait_for(asyncio.to_thread(get_song_detail, body.id), timeout=20)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "网易云 20 秒没回应，稍后再试")
+    except Exception:
+        raise HTTPException(502, "网易云暂时连不上，稍后再试")
+    if not song:
+        raise HTTPException(404, "网易云上没有这首歌")
+    user = (load_worldbook().get("user_name") or "我").strip() or "我"
+    track_id = await record_music_request(
+        song, requester_identity="user", requester_name=user, source_type="music_station",
+        source_id="", source_message_id=f"manual:{body.id}:{int(time.time() * 1000)}",
+    )
+    if body.playlist_id:
+        try:
+            await get_music_station_store().add_tracks_to_playlist(body.playlist_id, [track_id])
+        except ValueError:
+            pass  # 歌单刚被删了：歌已经进曲库，不放进歌单就是了
+    return {"track_id": track_id}
+
+
 @router.post("/upload")
 async def upload_track(file: UploadFile = File(...)):
     store = get_music_station_store()

@@ -305,6 +305,91 @@
     }
   }
 
+  // ── 从网易云添加 ──
+  function openNetease() {
+    $('neteaseSheet').hidden = false;
+    setTimeout(() => $('neteaseQuery').focus(), 50);
+  }
+
+  function closeNetease() {
+    const preview = $('neteasePreview');
+    preview.pause();
+    preview.removeAttribute('src');
+    $('neteaseSheet').hidden = true;
+  }
+
+  function formatMs(ms) {
+    const total = Math.round((Number(ms) || 0) / 1000);
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  }
+
+  async function searchNetease() {
+    const q = $('neteaseQuery').value.trim();
+    if (!q) return;
+    $('neteaseStatus').textContent = '正在搜网易云…';
+    $('neteaseResults').replaceChildren();
+    let data;
+    try { data = await api(`/api/music-station/netease/search?q=${encodeURIComponent(q)}`); }
+    catch (error) { $('neteaseStatus').textContent = error.message || '搜索失败'; return; }
+    const songs = data.songs || [];
+    $('neteaseStatus').textContent = songs.length ? `找到 ${songs.length} 首` : '没有找到，换个关键词试试';
+    for (const song of songs) $('neteaseResults').appendChild(neteaseRow(song));
+  }
+
+  function neteaseRow(song) {
+    const row = document.createElement('div');
+    row.className = 'netease-row';
+    const cover = document.createElement('img');
+    cover.alt = '';
+    cover.loading = 'lazy';
+    if (song.cover) cover.src = song.cover;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const title = document.createElement('strong');
+    title.textContent = song.name || '未知歌曲';
+    const sub = document.createElement('span');
+    sub.textContent = [song.artist, song.album, formatMs(song.duration)].filter(Boolean).join(' · ');
+    meta.append(title, sub);
+    const listen = document.createElement('button');
+    listen.type = 'button';
+    listen.textContent = '试听';
+    listen.onclick = () => {
+      const preview = $('neteasePreview');
+      const src = `/api/music/stream/${encodeURIComponent(song.id)}`;
+      if (preview.getAttribute('src') === src && !preview.paused) { preview.pause(); listen.textContent = '试听'; return; }
+      document.querySelectorAll('.netease-row button.listen').forEach(b => { b.textContent = '试听'; });
+      preview.src = src;
+      preview.play().then(() => { listen.textContent = '停'; })
+        .catch(() => { $('neteaseStatus').textContent = '这首放不了（可能要网易云会员）'; });
+    };
+    listen.classList.add('listen');
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.className = 'add';
+    add.textContent = song.in_library ? '已在曲库' : '加入';
+    add.disabled = !!song.in_library;
+    add.onclick = async () => {
+      add.disabled = true;
+      add.textContent = '加入中…';
+      try {
+        await api('/api/music-station/netease', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: song.id, playlist_id: state.activePlaylistId && state.activePlaylistId !== 'all' ? state.activePlaylistId : '' }),
+        });
+        add.textContent = '已加入';
+        await loadTracks();
+        notice(`《${song.name}》已加入`);
+      } catch (error) {
+        add.disabled = false;
+        add.textContent = '加入';
+        $('neteaseStatus').textContent = error.message || '没加进去，稍后再试';
+      }
+    };
+    row.append(cover, meta, listen, add);
+    return row;
+  }
+
   async function loadTracks() {
     try {
       const selected = state.currentTrackId;
@@ -541,7 +626,11 @@
       if (window.parent !== window && typeof window.parent.navigateToHome === 'function') window.parent.navigateToHome();
       else location.href = '/';
     };
-    $('uploadButton').onclick = () => $('audioInput').click();
+    $('uploadButton').onclick = openNetease;
+  $('localUploadButton').onclick = () => { closeNetease(); $('audioInput').click(); };
+  $('neteaseClose').onclick = closeNetease;
+  $('neteaseSheet').onclick = event => { if (event.target === $('neteaseSheet')) closeNetease(); };
+  $('neteaseForm').onsubmit = event => { event.preventDefault(); searchNetease(); };
     $('audioInput').onchange = event => uploadFiles(event.target.files);
     $('refreshButton').onclick = () => Promise.all([loadTracks(), loadPlaylists()]);
     $('manageButton').onclick = () => setManaging(!state.managing);

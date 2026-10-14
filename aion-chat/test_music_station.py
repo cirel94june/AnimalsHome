@@ -328,3 +328,52 @@ class MusicStationApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NeteaseFromStationTests(MusicStationApiTests):
+    """点歌台里直接搜网易云、加进曲库（网易云接口用假数据代替）。"""
+
+    SONG = {"id": 5257138, "name": "晴天", "artist": "周杰伦", "artists": ["周杰伦"], "album": "叶惠美",
+            "cover": "", "duration": 269000}
+
+    def setUp(self):
+        super().setUp()
+        import music
+        from unittest import mock
+        self.patches = [
+            mock.patch.object(music, "search_songs", lambda q, limit=20: [dict(self.SONG)]),
+            mock.patch.object(music, "get_song_detail", lambda song_id: dict(self.SONG) if song_id == 5257138 else None),
+            mock.patch.object(music_station, "spawn_generation_task", lambda coro: coro.close()),
+            mock.patch("config.load_worldbook", lambda: {"user_name": "小猫"}),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        super().tearDown()
+
+    def test_search_marks_songs_already_in_the_library(self):
+        found = self.client.get("/api/music-station/netease/search", params={"q": "晴天"}).json()["songs"]
+        self.assertEqual([False], [s["in_library"] for s in found])
+        self.assertEqual(200, self.client.post("/api/music-station/netease", json={"id": 5257138}).status_code)
+        found = self.client.get("/api/music-station/netease/search", params={"q": "晴天"}).json()["songs"]
+        self.assertEqual([True], [s["in_library"] for s in found])
+
+    def test_added_song_is_recorded_as_requested_by_the_user_and_can_join_a_playlist(self):
+        playlist = self.client.post("/api/music-station/playlists", json={"name": "通勤"}).json()
+        added = self.client.post("/api/music-station/netease", json={"id": 5257138, "playlist_id": playlist["id"]})
+        self.assertEqual(200, added.status_code)
+        tracks = self.client.get(f"/api/music-station/tracks?playlist_id={playlist['id']}").json()["tracks"]
+        self.assertEqual(["晴天"], [t["title"] for t in tracks])
+        self.assertEqual("netease", tracks[0]["source_type"])
+        # 加两次也只有一首
+        self.client.post("/api/music-station/netease", json={"id": 5257138})
+        all_netease = [t for t in self.client.get("/api/music-station/tracks").json()["tracks"]
+                       if t["source_type"] == "netease"]
+        self.assertEqual(1, len(all_netease))
+
+    def test_unknown_song_and_empty_search(self):
+        self.assertEqual(404, self.client.post("/api/music-station/netease", json={"id": 1}).status_code)
+        self.assertEqual([], self.client.get("/api/music-station/netease/search", params={"q": " "}).json()["songs"])

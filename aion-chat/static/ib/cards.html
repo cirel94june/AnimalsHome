@@ -57,6 +57,11 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
 .ib-sheet .row2 img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid #fff; }
 .ib-sheet input[type="color"] { width: 44px; height: 32px; border: 1px solid var(--ib-line); border-radius: 8px; background: none; padding: 2px; }
 .ib-sheet .wrow input[type="checkbox"] { flex: none; }
+.pick-list { margin-top: 8px; max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.pick-list input[type="search"] { margin-bottom: 4px; }
+.pick-item { text-align: left; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--ib-line, rgba(120,150,200,.3)); background: rgba(255, 255, 255, 0.7); color: inherit; font-size: 13.5px; word-break: break-all; }
+.pick-item.added { color: var(--ib-tx3); }
+.pick-item:disabled { opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -148,8 +153,22 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       '<label class="field">相遇的日子<input type="date" id="f-meet"></label>' +
       '<label class="field">Memory Hub 身份（source_ai）<input type="text" id="f-hub" maxlength="40" placeholder="例如 claude / lucien / jasper"></label>' +
       '<div class="wrow" style="margin-top:12px"><span>TA 自己的模型</span>' +
-      '<span class="seg"><button type="button" id="f-mode-pick">选已有线路</button><button type="button" id="f-mode-own">自己填</button></span></div>' +
-      '<div id="f-pick"><label class="field">线路<select id="f-model"><option value="">（未选）</option></select></label></div>' +
+      '<span class="seg"><button type="button" id="f-mode-pick">选中转站</button><button type="button" id="f-mode-own">单独填</button></span></div>' +
+      '<div id="f-pick">' +
+      '<label class="field">中转站<select id="f-route"></select></label>' +
+      '<label class="field">模型<select id="f-model"></select></label>' +
+      '<div id="f-more" class="pick-list" style="display:none"><input type="search" id="f-more-q" placeholder="搜索模型，例如 opus / gemini">' +
+      '<div id="f-more-list"></div></div>' +
+      '<div id="f-new" style="display:none">' +
+      '<label class="field">中转站名字<input type="text" id="f-new-name" maxlength="40" placeholder="例如 红豆沙"></label>' +
+      '<label class="field">地址<input type="text" id="f-new-url" maxlength="300" placeholder="https://中转站地址/v1" autocomplete="off"></label>' +
+      '<label class="field">Key<input type="password" id="f-new-key" maxlength="500" autocomplete="new-password"></label>' +
+      '<div class="acts" style="margin-top:8px"><button type="button" id="f-new-fetch">拉取模型列表</button></div>' +
+      '<input type="search" id="f-new-q" placeholder="搜索模型，例如 opus / gemini" style="display:none;margin-top:8px">' +
+      '<div id="f-new-list" class="pick-list"></div>' +
+      '</div>' +
+      '<div class="hint" id="f-route-hint"></div>' +
+      '</div>' +
       '<div id="f-own" style="display:none">' +
       '<label class="field">API 地址<input type="text" id="f-api-url" maxlength="300" placeholder="https://中转站地址/v1" autocomplete="off"></label>' +
       '<label class="field">Key<input type="password" id="f-api-key" maxlength="500" autocomplete="new-password"></label>' +
@@ -171,22 +190,125 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     $('#f-sign').value = a.sign || ''; $('#f-meet').value = a.meet_since || ''; $('#f-hub').value = a.memory_hub || '';
     $('#f-color').value = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : '#5c86c8';
     if ($('#f-on')) $('#f-on').checked = !!a.enabled;
-    fetch('/api/models', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (models) {
-      var keys = models.map(function (m) { return m.key; });
-      // 按中转站分组：同一个中转站的模型放在一起；已失效的线路也显示出来，方便看清
-      function fill(sel, current) {
-        var groups = {}, list = models.slice();
-        if (current && keys.indexOf(current) < 0) list.unshift({ key: current, route_name: '已失效' });
-        list.forEach(function (m) {
-          var g = m.route_name || '内置', grp = groups[g];
-          if (!grp) { grp = groups[g] = document.createElement('optgroup'); grp.label = g; sel.appendChild(grp); }
-          var o = document.createElement('option'); o.value = m.key; o.textContent = m.key; grp.appendChild(o);
+    // ── 选中转站 → 选模型；模型可以直接从中转站拉；也可以在这里新加一个中转站（Key 只存服务器） ──
+    var models = [];
+    function post(url, body) {
+      return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); });
+    }
+    function opt(sel, value, text) { var o = document.createElement('option'); o.value = value; o.textContent = text; sel.appendChild(o); return o; }
+    function routeOf(m) { return m.route_id || '__builtin'; }
+    function routes() {
+      var seen = {}, list = [];
+      models.forEach(function (m) {
+        var id = routeOf(m);
+        if (id.indexOf('seat_') === 0 && id !== 'seat_' + a.id) return;  // 别的 AI 单独填的线路不给这位选
+        if (!seen[id]) { seen[id] = true; list.push({ id: id, name: m.route_id ? (m.route_name || '中转站') : '内置 / 其他' }); }
+      });
+      // 自己的中转站排前面，内置的放最后
+      return list.filter(function (r) { return r.id !== '__builtin'; }).concat(list.filter(function (r) { return r.id === '__builtin'; }));
+    }
+    function fillBackground(current) {
+      var sel = $('#f-bg'), groups = {};
+      sel.innerHTML = ''; opt(sel, '', '和上面一样');
+      var list = models.slice(), keys = models.map(function (m) { return m.key; });
+      if (current && keys.indexOf(current) < 0) list.unshift({ key: current, route_name: '已失效' });
+      list.forEach(function (m) {
+        var g = m.route_name || '内置', grp = groups[g];
+        if (!grp) { grp = groups[g] = document.createElement('optgroup'); grp.label = g; sel.appendChild(grp); }
+        opt(grp, m.key, m.key);
+      });
+      sel.value = current || '';
+    }
+    function fillModels(routeId, current) {
+      var sel = $('#f-model');
+      sel.innerHTML = '';
+      $('#f-more').style.display = 'none'; $('#f-new').style.display = routeId === '__new' ? '' : 'none';
+      $('#f-model').parentNode.style.display = routeId === '__new' ? 'none' : '';
+      if (routeId === '__new') { $('#f-route-hint').textContent = '填好地址和 Key，拉取模型后点一个，就会存成一个新的中转站。'; return; }
+      opt(sel, '', '（未选）');
+      models.filter(function (m) { return routeOf(m) === routeId; }).forEach(function (m) {
+        opt(sel, m.key, m.model && m.model !== m.key ? m.key + '（' + m.model + '）' : m.key);
+      });
+      if (current && !models.some(function (m) { return m.key === current; })) opt(sel, current, current + '（已失效）');
+      if (routeId !== '__builtin') opt(sel, '__more', '＋ 从这个中转站拉取更多模型…');
+      sel.value = current || '';
+      $('#f-route-hint').textContent = routeId === '__builtin' ? '' : '没看到想要的模型？选最下面的「拉取更多」。';
+    }
+    function fillRoutes(selectRoute, selectModel) {
+      var sel = $('#f-route');
+      sel.innerHTML = '';
+      routes().forEach(function (r) { opt(sel, r.id, r.name); });
+      opt(sel, '__new', '＋ 新加一个中转站');
+      var current = models.filter(function (m) { return m.key === selectModel; })[0];
+      var routeId = selectRoute || (current ? routeOf(current) : (routes()[0] || { id: '__new' }).id);
+      sel.value = routeId;
+      fillModels(routeId, selectModel);
+    }
+    function reload(selectRoute, selectModel) {
+      return fetch('/api/models', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (list) {
+        models = list;
+        fillRoutes(selectRoute, selectModel);
+        fillBackground($('#f-bg').value || a.background_model);
+      });
+    }
+    function showPickList(box, ids, onPick) {
+      box.innerHTML = '';
+      ids.forEach(function (item) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'pick-item' + (item.added ? ' added' : '');
+        b.textContent = item.id + (item.added ? '（已添加）' : '');
+        b.setAttribute('data-q', item.id.toLowerCase());
+        b.onclick = function () { onPick(item.id, b); };
+        box.appendChild(b);
+      });
+      if (!ids.length) box.textContent = '这个中转站没有返回模型';
+    }
+    $('#f-route').onchange = function () { fillModels(this.value, ''); };
+    $('#f-model').onchange = function () {
+      if (this.value !== '__more') { $('#f-more').style.display = 'none'; return; }
+      var routeId = $('#f-route').value, sel = this;
+      sel.value = '';
+      $('#f-route-hint').textContent = '正在问中转站有哪些模型…';
+      post('/api/custom-routes/' + encodeURIComponent(routeId) + '/models').then(function (res) {
+        $('#f-route-hint').textContent = '点一个就选它（会顺手存进这个中转站）。';
+        $('#f-more').style.display = '';
+        showPickList($('#f-more-list'), res.models || [], function (id, btn) {
+          btn.disabled = true;
+          post('/api/custom-routes/' + encodeURIComponent(routeId) + '/add-model', { model: id })
+            .then(function (r) { return reload(routeId, r.key); })
+            .catch(function (e) { btn.disabled = false; alert('没加上：' + e.message); });
         });
-        sel.value = current || '';
-      }
-      fill($('#f-model'), a.model);
-      fill($('#f-bg'), a.background_model);
-    }).catch(function () {});
+      }).catch(function (e) { $('#f-route-hint').textContent = e.message; });
+    };
+    $('#f-more-q').oninput = function () {
+      var q = this.value.trim().toLowerCase();
+      Array.prototype.forEach.call(box.querySelectorAll('#f-more-list .pick-item'), function (b) {
+        b.style.display = !q || b.getAttribute('data-q').indexOf(q) >= 0 ? '' : 'none';
+      });
+    };
+    $('#f-new-q').oninput = function () {
+      var q = this.value.trim().toLowerCase();
+      Array.prototype.forEach.call(box.querySelectorAll('#f-new-list .pick-item'), function (b) {
+        b.style.display = !q || b.getAttribute('data-q').indexOf(q) >= 0 ? '' : 'none';
+      });
+    };
+    $('#f-new-fetch').onclick = function () {
+      var url = $('#f-new-url').value.trim(), key = $('#f-new-key').value.trim(), btn = this;
+      if (!url) { alert('先填中转站地址'); return; }
+      btn.disabled = true; btn.textContent = '正在问中转站…';
+      post('/api/custom-routes/models', { base_url: url, api_key: key }).then(function (res) {
+        $('#f-new-q').style.display = '';
+        showPickList($('#f-new-list'), (res.models || []).map(function (id) { return { id: id }; }), function (id, b) {
+          b.disabled = true;
+          post('/api/custom-routes', { name: $('#f-new-name').value.trim(), base_url: url, api_key: key, model: id })
+            .then(function (r) { $('#f-new-key').value = ''; return reload(r.route_id, r.key); })
+            .catch(function (e) { b.disabled = false; alert('没存上：' + e.message); });
+        });
+      }).catch(function (e) { alert(e.message); })
+        .then(function () { btn.disabled = false; btn.textContent = '拉取模型列表'; });
+    };
+    reload('', a.model).catch(function () {});
     // 自己填的 API：Key 不回显，留空表示沿用已保存的
     var mode = a.api && a.api.key === a.model ? 'own' : 'pick', clearApi = false;
     function setMode(m) {
@@ -222,7 +344,9 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
         if (!url || !model) { alert('请填 API 地址和模型名'); return; }
         patch.api = { base_url: url, api_key: $('#f-api-key').value.trim(), model: model };
       } else {
-        patch.model = $('#f-model').value;
+        // 正在新加中转站、还没选好模型时，不动原来的模型
+        var picked = $('#f-route').value === '__new' ? a.model : $('#f-model').value;
+        patch.model = picked === '__more' ? a.model : picked;
         if (clearApi) patch.api = null;
       }
       patch.background_model = $('#f-bg').value;

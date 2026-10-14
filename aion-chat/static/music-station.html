@@ -16,7 +16,7 @@
       <h1>点歌台</h1>
       <p id="trackSummary">正在整理点过的歌…</p>
     </div>
-    <button class="upload-button" id="uploadButton" aria-label="上传本地歌曲" title="上传本地歌曲" type="button">＋</button>
+    <button class="upload-button" id="uploadButton" aria-label="从网易云添加歌曲" title="从网易云添加歌曲" type="button">＋</button>
     <input id="audioInput" type="file" accept="audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/flac,audio/ogg,.mp3,.m4a,.aac,.wav,.flac,.ogg" multiple hidden>
   </header>
 
@@ -81,7 +81,20 @@
     </aside>
   </main>
 
-  <footer class="station-player" id="stationPlayer">
+  <div class="netease-mask" id="neteaseSheet" hidden>
+  <section class="netease-sheet" role="dialog" aria-label="从网易云添加歌曲">
+    <div class="netease-head"><strong>从网易云添加</strong><button class="icon-button" id="neteaseClose" type="button" aria-label="关闭">×</button></div>
+    <form class="netease-search" id="neteaseForm">
+      <input id="neteaseQuery" type="search" placeholder="歌名、歌手都可以" autocomplete="off" enterkeyhint="search">
+      <button class="primary-button" type="submit">搜索</button>
+    </form>
+    <div class="netease-status" id="neteaseStatus"></div>
+    <div class="netease-results" id="neteaseResults"></div>
+    <button class="netease-local" id="localUploadButton" type="button">或者上传手机里的歌曲文件</button>
+  </section>
+</div>
+<audio id="neteasePreview" preload="none"></audio>
+<footer class="station-player" id="stationPlayer">
     <div class="now-playing">
       <div class="now-cover" id="nowCover">♫</div>
       <div class="now-copy"><strong id="nowTitle">尚未播放</strong><span id="nowArtist">从歌单里选一首吧</span></div>

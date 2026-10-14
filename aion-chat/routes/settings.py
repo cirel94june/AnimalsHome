@@ -45,6 +45,8 @@ async def list_models():
             "provider": v["provider"],
             "custom": v.get("provider") == "custom_openai",
             "route_name": v.get("route_name", ""),
+            "route_id": v.get("route_id", ""),
+            "model": v.get("model", "") if v.get("provider") == "custom_openai" else "",
             "transport_mode": resolve_model_transport_mode(k),
             "supports_safe_live": model_supports_safe_live(k),
         }
@@ -65,6 +67,97 @@ async def fetch_route_models(body: RouteModelsQuery):
         return {"models": await relay_models.fetch(body.base_url, body.api_key)}
     except relay_models.RelayModelsError as error:
         raise HTTPException(400, str(error))
+
+
+# ── 在 AI 名片里直接用中转站：拉模型、加模型、新建中转站（Key 只留在服务器） ──
+class RouteAddModel(BaseModel):
+    model: str = ""
+
+
+class RouteCreate(BaseModel):
+    name: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
+def _clean_model_id(value: str) -> str:
+    model = str(value or "").strip()
+    if not model or len(model) > 200 or any(ord(ch) < 32 for ch in model):
+        raise HTTPException(400, "模型名不对")
+    return model
+
+
+def _find_route(route_id: str) -> dict:
+    for key in ("custom_model_routes", SEAT_ROUTES_KEY):
+        for route in SETTINGS.get(key) or []:
+            if isinstance(route, dict) and route.get("id") == route_id:
+                return route
+    raise HTTPException(404, "找不到这个中转站，可能刚被删了")
+
+
+def _free_model_key(model: str, route_name: str) -> str:
+    """模型在下拉框里的名字：优先用模型名本身，和别的线路撞了就加上中转站名。"""
+    from config import MODELS
+    taken = set(MODELS) | route_model_keys(SETTINGS.get("custom_model_routes")) | route_model_keys(SETTINGS.get(SEAT_ROUTES_KEY))
+    for candidate in (model, f"{route_name}·{model}"):
+        if candidate not in taken:
+            return candidate
+    n = 2
+    while f"{route_name}·{model}·{n}" in taken:
+        n += 1
+    return f"{route_name}·{model}·{n}"
+
+
+@router.post("/api/custom-routes/{route_id}/models")
+async def fetch_saved_route_models(route_id: str):
+    """用已保存的中转站（地址和 Key 都在服务器上）拉它的模型列表。"""
+    route = _find_route(route_id)
+    try:
+        ids = await relay_models.fetch(route.get("base_url", ""), route.get("api_key", ""))
+    except relay_models.RelayModelsError as error:
+        raise HTTPException(400, str(error))
+    have = {str(m.get("model") if isinstance(m, dict) else m) for m in route.get("models") or []}
+    return {"models": [{"id": i, "added": i in have} for i in ids]}
+
+
+@router.post("/api/custom-routes/{route_id}/add-model")
+async def add_model_to_route(route_id: str, body: RouteAddModel):
+    """把一个模型加进已保存的中转站（只限设置页里的中转站）；已经有了就直接返回它。"""
+    model = _clean_model_id(body.model)
+    route = next((r for r in SETTINGS.get("custom_model_routes") or []
+                  if isinstance(r, dict) and r.get("id") == route_id), None)
+    if route is None:
+        raise HTTPException(404, "找不到这个中转站，可能刚被删了")
+    for item in route.get("models") or []:
+        if isinstance(item, dict) and str(item.get("model") or "").strip() == model:
+            return {"key": str(item.get("key") or model)}
+    key = _free_model_key(model, str(route.get("name") or "中转站"))
+    route.setdefault("models", []).append({"key": key, "model": model})
+    save_settings(SETTINGS)
+    refresh_custom_models()
+    return {"key": key}
+
+
+@router.post("/api/custom-routes")
+async def create_route(body: RouteCreate):
+    """在名片里新加一个中转站：地址、Key、选好的一个模型一起存进设置。"""
+    import uuid
+    model = _clean_model_id(body.model)
+    try:
+        relay_models.models_url(body.base_url)  # 和拉列表同一套地址检查
+    except relay_models.RelayModelsError as error:
+        raise HTTPException(400, str(error))
+    name = (body.name or "").strip()[:40] or "新中转站"
+    route_id = f"custom_route_{uuid.uuid4().hex[:12]}"
+    key = _free_model_key(model, name)
+    routes = [r for r in SETTINGS.get("custom_model_routes") or [] if isinstance(r, dict)]
+    routes.append({"id": route_id, "name": name, "base_url": body.base_url.strip().rstrip("/"),
+                   "api_key": body.api_key.strip(), "models": [{"key": key, "model": model}]})
+    SETTINGS["custom_model_routes"] = routes
+    save_settings(SETTINGS)
+    refresh_custom_models()
+    return {"key": key, "route_id": route_id}
 
 
 # ── 设置 ──────────────────────────────────────────
