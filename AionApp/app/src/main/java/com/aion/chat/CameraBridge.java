@@ -59,6 +59,32 @@ public class CameraBridge {
         this.webView = webView;
     }
 
+    private static final int REQ_CAMERA_FROM_BRIDGE = 3101;
+
+    /** 有相机权限返回 true；没有就在界面线程里弹一次系统授权框，返回 false。 */
+    private boolean ensureCameraPermission() {
+        android.content.Context context = webView.getContext();
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.CAMERA)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return true;
+        }
+        if (context instanceof android.app.Activity) {
+            android.app.Activity activity = (android.app.Activity) context;
+            activity.runOnUiThread(() -> androidx.core.app.ActivityCompat.requestPermissions(
+                    activity, new String[]{android.Manifest.permission.CAMERA}, REQ_CAMERA_FROM_BRIDGE));
+        }
+        return false;
+    }
+
+    /** 当前是否有相机权限（页面据此提示用户去设置里打开）。 */
+    @JavascriptInterface
+    public boolean hasPermission() {
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+                webView.getContext(), android.Manifest.permission.CAMERA)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
     /** 设置视频录制桥接，录制时自动推送预览帧 */
     public void setVideoBridge(VideoBridge vb) {
         this.videoBridge = vb;
@@ -94,6 +120,9 @@ public class CameraBridge {
 
         int camId = findCameraId(facing);
         if (camId < 0) return false;
+
+        // 没有相机权限时 Camera.open 会直接失败：先弹系统的授权框，用户允许后页面会自动重试
+        if (!ensureCameraPermission()) return false;
 
         try {
             camera = Camera.open(camId);

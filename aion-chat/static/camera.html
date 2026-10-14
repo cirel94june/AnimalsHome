@@ -304,6 +304,7 @@ async function syncCamModalState() {
     if (bridgeEl) bridgeEl.style.display = (status.esp32_bridge_active && _activeSource === "esp32") ? "" : "none";
     updatePhoneArmState(status.phone_camera || {});
     updateCamStatusText(status);
+    await hideUnavailableSources(status);
     if (_activeSource === "local") await camRefreshList2();
     if (_activeSource === "phone") {
       loadPhoneCameraCapabilities(status.phone_camera || {});
@@ -575,7 +576,10 @@ function schedulePhonePreviewRestart() {
 function phonePreviewNow() {
   if (!phonePreviewDemanded()) return;
   const bridge = phoneBridge();
-  if (!bridge) return;
+  if (!bridge) {
+    $("camNoSignal").textContent = "手机摄像头要在 AionsHome App 里打开（浏览器里用不了）";
+    return;
+  }
   const now = Date.now();
   if (now < _phonePreviewRestartAt) return;
   const facing = $("phoneFacing").value;
@@ -603,7 +607,10 @@ function phonePreviewNow() {
           || window.AionCamera.getFacing() !== legacyFacing) {
         if (!window.AionCamera.start(legacyFacing)) {
           schedulePhonePreviewRestart();
-          $("camNoSignal").textContent = "摄像头正被其他应用使用，返回后会自动恢复";
+          const noPermission = typeof window.AionCamera.hasPermission === "function" && !window.AionCamera.hasPermission();
+          $("camNoSignal").textContent = noPermission
+            ? "需要相机权限：在弹出的框里点「允许」，之后会自动打开；没弹框就去 手机设置 → 应用 → AionsHome → 权限 → 相机"
+            : "相机没打开：可能是没给 AionsHome 相机权限（手机设置 → 应用 → AionsHome → 权限 → 相机 → 允许），也可能是别的应用正在用相机";
           return;
         }
         _phonePreviewStartedAt = now;
@@ -698,6 +705,22 @@ async function togglePhoneCameraArm() {
 }
 
 // ── ESP32-CAM 画面源切换 ───────────────────────────
+// 服务器上没有接摄像头、也没配 ESP32 时（比如放在机房的 VPS），电脑摄像头和 ESP32 两栏用不上：藏起来，直接用手机
+let _sourcesChecked = false;
+async function hideUnavailableSources(status) {
+  if (_sourcesChecked) return;
+  _sourcesChecked = true;
+  let cameras = [];
+  try { cameras = (await api("GET", "/api/cam/cameras")).cameras || []; } catch(e) { return; }
+  if (cameras.length || status.esp32_cam_url) return;
+  $("srcTabLocal").style.display = "none";
+  $("srcTabEsp32").style.display = "none";
+  if (_activeSource !== "phone") {
+    _sourcesChecked = true;
+    setTimeout(() => switchSourceTab("phone"), 0);
+  }
+}
+
 function updateSourceTabs(source) {
   if (source !== "phone") stopPhonePreview();
   _activeSource = source;
