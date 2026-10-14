@@ -4033,9 +4033,11 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
         await _reply_aion(room_id, updated_msgs, context_limit, query_text, model_key, _q,
                           tts_enabled=tts_enabled, tts_voice=tts_aion_voice, digest_result=digest, whisper_mode=whisper_mode)
 
-    # 其他启用了、选好模型的家人（狗蛋等）接着说，能看到前面所有人的话
+    # 其他启用了、选好模型的家人（狗蛋等）接着说，能看到前面所有人的话。只在群聊房间里
     for actor in _group_seat_members():
         room, updated_msgs = await _load_room_and_messages(room_id)
+        if (room or {}).get("type") != "group":
+            break
         await _generate_seat_reply(room_id, room, updated_msgs, _q, context_limit, actor=actor, group=True)
 
 
@@ -4340,10 +4342,13 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
 @router.post("/rooms/{room_id}/ai-chat")
 @cancellable("chatroom", _save_cancelled_reply)
 async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
-    """触发 AI 互聊（Aion 和 Connor 轮流对话）"""
+    """触发 AI 互聊（Aion 和 Connor 轮流对话，其他家人跟着接话）。只在群聊里可以用。"""
     room, msgs = await _load_room_and_messages(room_id)
     if not room:
         return {"error": "房间不存在"}
+    if room.get("type") != "group":
+        # 页面只在群聊里显示这个按钮；服务器这边也拦住，私聊记录不会被拉给别的 AI
+        raise HTTPException(409, "只有群聊可以让 AI 们互相聊天")
 
     max_rounds = body.rounds or room.get("ai_chat_rounds", 1)
     model_key = body.model
@@ -4399,6 +4404,8 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
                 # 其他家人（狗蛋等）也接一轮
                 for actor in _group_seat_members():
                     room_now, msgs = await _load_room_and_messages(room_id)
+                    if (room_now or {}).get("type") != "group":
+                        break
                     await _generate_seat_reply(room_id, room_now, msgs, _q, context_limit, actor=actor, group=True)
 
                 # 重新加载消息
