@@ -311,7 +311,8 @@ app.mount("/uploads/album", StaticFiles(directory=str(ALBUM_IMAGES_DIR)), name="
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 app.mount("/songs", StaticFiles(directory=str(SONGS_DIR)), name="songs")
 app.mount("/cr-uploads", StaticFiles(directory=str(CODEX_UPLOADS_DIR)), name="cr-uploads")
-app.mount("/public", StaticFiles(directory=str(PUBLIC_DIR)), name="public")
+from public_overrides import OverridableStaticFiles  # 原作者的几张图可换成服务器上自己的
+app.mount("/public", OverridableStaticFiles(directory=str(PUBLIC_DIR)), name="public")
 app.mount("/screenshots", StaticFiles(directory=str(SCREENSHOTS_DIR)), name="screenshots")
 app.mount("/aion-pet", StaticFiles(directory=str(BASE_DIR.parent / "AionPet")), name="aion-pet")
 

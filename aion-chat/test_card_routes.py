@@ -114,3 +114,26 @@ def test_stale_settings_page_cannot_erase_what_the_card_just_added(client):
     assert "gpt-5-5" in config.MODELS
     # 只改别的设置、不带中转站列表时不需要版本号
     assert asyncio.run(rs.update_settings(rs.SettingsUpdate(tavily_api_key="x")))["ok"]
+
+
+def test_save_returns_its_own_version_even_if_the_list_changes_while_it_waits(client, monkeypatch):
+    """保存过程中（断开 MCP 的 await 期间）名片又加了模型：页面拿回的是自己那份列表的版本号（Codex 复查 B2）。"""
+    import asyncio
+    import mcp_client
+    from fastapi import HTTPException
+    c, settings, _, _ = client
+    page = asyncio.run(rs.get_settings())
+
+    async def disconnect_while_card_adds(name):
+        await rs.add_model_to_route("r1", rs.RouteAddModel(model="gpt-5-5"))  # 名片在这时加了模型
+    monkeypatch.setattr(mcp_client.mcp_manager, "disconnect", disconnect_while_card_adds)
+    settings["luckin_mcp_enabled"] = False
+    result = asyncio.run(rs.update_settings(rs.SettingsUpdate(
+        custom_model_routes=page["custom_model_routes"], custom_routes_rev=page["custom_routes_rev"],
+        luckin_mcp_enabled=True)))
+    assert result["custom_routes_rev"] == page["custom_routes_rev"] + 1   # 不是加完模型后的 +2
+    assert "gpt-5-5" in config.MODELS
+    with pytest.raises(HTTPException) as err:   # 页面带着旧列表再保存：拒绝，名片加的模型保留
+        asyncio.run(rs.update_settings(rs.SettingsUpdate(
+            custom_model_routes=page["custom_model_routes"], custom_routes_rev=result["custom_routes_rev"])))
+    assert err.value.status_code == 409 and "gpt-5-5" in config.MODELS

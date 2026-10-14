@@ -412,9 +412,12 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["luckin_default_latitude"] = body.luckin_default_latitude
     if body.luckin_default_shop_keyword is not None:
         SETTINGS["luckin_default_shop_keyword"] = body.luckin_default_shop_keyword
+    committed_rev = routes_rev()
     if new_routes is not None:
         SETTINGS["custom_model_routes"] = new_routes
-        bump_routes_rev()
+        # 记下这次提交对应的版本号：后面还有 await（断开 MCP），等待期间别处再改列表时，
+        # 返回给页面的仍是「这份列表」的版本，页面下次带旧列表保存会被 409 拦下
+        committed_rev = bump_routes_rev()
         refresh_custom_models()
     if body.model_transport_modes is not None:
         SETTINGS["model_transport_modes"] = normalize_model_transport_modes(body.model_transport_modes)
@@ -437,7 +440,7 @@ async def update_settings(body: SettingsUpdate):
             await mcp_manager.disconnect(LUCKIN_SERVER_NAME)
         except Exception:
             pass
-    return {"ok": True, "custom_routes_rev": routes_rev()}
+    return {"ok": True, "custom_routes_rev": committed_rev}
 
 # ── 温度设置 ──────────────────────────────────────
 class TempUpdate(BaseModel):

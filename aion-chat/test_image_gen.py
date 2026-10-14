@@ -89,7 +89,8 @@ class ImageGenerationModelTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(kwargs["json"]["contents"][0]["parts"], [{"text": "draw a tiny lantern"}])
 
-    async def test_connor_selfie_uses_secondary_reference_image(self):
+    async def test_connor_selfie_uses_his_own_reference_image(self):
+        # 每位 AI 用服务器 data/selfie/ 里自己的参考照（不再用仓库里原作者的「生图锚点」）
         clients = []
 
         def client_factory(*args, **kwargs):
@@ -99,16 +100,15 @@ class ImageGenerationModelTests(unittest.IsolatedAsyncioTestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            default_ref = tmp_path / "default.jpg"
-            secondary_ref = tmp_path / "secondary.jpg"
+            default_ref = tmp_path / "aion.jpg"
+            secondary_ref = tmp_path / "connor.jpg"
             default_ref.write_bytes(b"default reference")
             secondary_ref.write_bytes(b"secondary reference")
 
             with (
                 patch("image_gen.get_key", return_value="test-key"),
                 patch("album.get_album_store", return_value=AlbumStore(tmp_path)),
-                patch("image_gen.REFERENCE_IMAGE_PATH", default_ref),
-                patch("image_gen.SECONDARY_REFERENCE_IMAGE_PATH", secondary_ref),
+                patch("public_overrides.SELFIE_DIR", tmp_path),
                 patch("image_gen.httpx.AsyncClient", new=client_factory),
             ):
                 await image_gen.generate_image(

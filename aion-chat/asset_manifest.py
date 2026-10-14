@@ -111,7 +111,9 @@ def _iter_client_assets():
         relative = path.relative_to(PUBLIC_DIR).as_posix()
         if relative.startswith("wallpaper/"):
             continue
-        yield "/public/" + relative, path, "visual"
+        # 服务器上换过的图：清单按实际返回的那份算，App 缓存才不会留着原作者的图
+        from public_overrides import override_for
+        yield "/public/" + relative, override_for(relative) or path, "visual"
 
 
 def _signature(items) -> tuple[tuple[str, int, int], ...]:

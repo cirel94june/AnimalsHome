@@ -19,10 +19,12 @@ IMAGE_GEN_TIMEOUT = 120  # 生图超时秒数
 
 
 def _selfie_reference_path(source_identity: str = "") -> Path:
-    """Return the SELFIE anchor by stable internal actor identity, not display name."""
-    if str(source_identity or "").strip().lower() == "connor":
-        return SECONDARY_REFERENCE_IMAGE_PATH
-    return REFERENCE_IMAGE_PATH
+    """每位 AI 自己的自拍参考照（服务器 data/selfie/<id>.jpg）。
+
+    没放就不带参考图——不再退回仓库里原作者那张「生图锚点」，免得画成别人的脸。
+    """
+    from public_overrides import SELFIE_DIR, selfie_reference
+    return selfie_reference(source_identity) or (SELFIE_DIR / "__none__.jpg")
 
 
 def _openai_image_source(data: dict) -> str | None:
