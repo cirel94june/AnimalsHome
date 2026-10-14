@@ -88,3 +88,29 @@ def test_create_route_from_the_card(client):
     assert config.MODELS[body["key"]]["base_url"] == "https://b.example/v1"
     assert "sk-b" not in r.text
     assert c.post("/api/custom-routes", json={"base_url": "https://u:p@b.example", "model": "m"}).status_code == 400
+
+
+def test_stale_settings_page_cannot_erase_what_the_card_just_added(client):
+    """设置页开着旧数据时，名片里刚加的模型 / 中转站不会被整份保存悄悄覆盖（Codex 审查 B2）。"""
+    import asyncio
+    from fastapi import HTTPException
+    c, settings, _, _ = client
+    page = asyncio.run(rs.get_settings())  # 设置页打开时拿到的数据和版本号
+    stale_routes = page["custom_model_routes"]
+    assert c.post("/api/custom-routes/r1/add-model", json={"model": "gpt-5-5"}).status_code == 200
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(rs.update_settings(rs.SettingsUpdate(
+            custom_model_routes=stale_routes, custom_routes_rev=page["custom_routes_rev"], tavily_api_key="probe")))
+    assert err.value.status_code == 409
+    assert "gpt-5-5" in config.MODELS and settings.get("tavily_api_key") != "probe"
+    # 没带版本号的旧页面同样拒绝
+    with pytest.raises(HTTPException):
+        asyncio.run(rs.update_settings(rs.SettingsUpdate(custom_model_routes=stale_routes)))
+    # 刷新后（拿到新版本号）可以正常保存，保存后版本号前进
+    fresh = asyncio.run(rs.get_settings())
+    result = asyncio.run(rs.update_settings(rs.SettingsUpdate(
+        custom_model_routes=fresh["custom_model_routes"], custom_routes_rev=fresh["custom_routes_rev"])))
+    assert result["custom_routes_rev"] == fresh["custom_routes_rev"] + 1
+    assert "gpt-5-5" in config.MODELS
+    # 只改别的设置、不带中转站列表时不需要版本号
+    assert asyncio.run(rs.update_settings(rs.SettingsUpdate(tavily_api_key="x")))["ok"]

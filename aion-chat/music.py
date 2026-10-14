@@ -17,6 +17,21 @@ _last_login_time = 0.0
 _SESSION_TTL = 2 * 3600  # 会话有效期：2小时
 
 
+# pyncm 的每个网络请求默认都没有时限：统一给一个（连接 5 秒、每次读 15 秒），网易云卡住时请求自己会结束
+NETEASE_TIMEOUT = (5, 15)
+import pyncm as _pyncm
+
+if not getattr(_pyncm.Session.request, "_aion_timeout", False):
+    _original_request = _pyncm.Session.request
+
+    def _request_with_timeout(self, method, url, *args, **kwargs):
+        kwargs.setdefault("timeout", NETEASE_TIMEOUT)
+        return _original_request(self, method, url, *args, **kwargs)
+
+    _request_with_timeout._aion_timeout = True
+    _pyncm.Session.request = _request_with_timeout
+
+
 def _ensure_login():
     """确保已登录且会话未过期（优先 MUSIC_U Cookie，否则匿名）"""
     global _inited, _last_login_time

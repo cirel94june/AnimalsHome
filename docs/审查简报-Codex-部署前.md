@@ -164,3 +164,10 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
   - `POST /api/custom-routes/{route_id}/add-model`：只限设置页的中转站（不能往别的 AI 的专属线路里加），模型名校验长度与控制字符；已有则直接返回；显示名撞了加中转站名前缀；
   - `POST /api/custom-routes`：新建中转站（地址检查同 `relay_models.models_url`，不能带账号密码），写进 `custom_model_routes`。
   - 请重点看：这些写设置的接口与设置页整份保存 `custom_model_routes` 之间的覆盖关系（设置页开着旧页面再保存会覆盖名片里刚加的模型——这是原有的整份保存模式），以及 Key 是否在任何响应里出现。
+
+## 15. b405ea0 审查（B1 / B2）的修复
+
+| 编号 | 修法 | 位置 | 测试 |
+|---|---|---|---|
+| B1 线程不随超时结束 | ① pyncm 的每个网络请求默认 `timeout=(5, 15)`（包装 `pyncm.Session.request`，调用方显式给的不覆盖），网易云卡住时底层请求自己结束；② 点歌台的网易云调用走专用 3 线程池，同时在跑最多 3 个，名额在底层调用真正结束的 done 回调里才归还；超过上限直接 503，不排队、不占全局默认线程池；网页仍 20 秒得到 504 | `music.py`、`routes/music_station._run_netease` | `test_netease_limits.py`：卡住的调用超时后仍占名额，第 4 个立刻 503 且未被执行；放行后名额归零；pyncm 请求带默认时限 |
+| B2 旧设置页覆盖 | 中转站列表加版本号 `custom_routes_rev`：设置页 GET 时拿到，整份保存时带回；不一致（或没带）返回 409、整次保存都不写；名片的新增模型 / 新建中转站、设置页成功保存都会让版本号前进；设置页收到 409 时提示刷新 | `routes/settings.py`、`static/settings.html` | `test_card_routes.test_stale_settings_page_cannot_erase_what_the_card_just_added`：名片加模型后旧页面保存 409 且其他字段也没写；刷新后可保存；只改别的设置不需要版本号 |

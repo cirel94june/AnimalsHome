@@ -70,6 +70,22 @@ async def fetch_route_models(body: RouteModelsQuery):
 
 
 # ── 在 AI 名片里直接用中转站：拉模型、加模型、新建中转站（Key 只留在服务器） ──
+ROUTES_REV_KEY = "custom_routes_rev"
+
+
+def routes_rev() -> int:
+    try:
+        return int(SETTINGS.get(ROUTES_REV_KEY) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def bump_routes_rev() -> int:
+    """中转站列表每改一次加一：设置页带着旧版本号整份保存时据此拒绝，不会悄悄覆盖。"""
+    SETTINGS[ROUTES_REV_KEY] = routes_rev() + 1
+    return SETTINGS[ROUTES_REV_KEY]
+
+
 class RouteAddModel(BaseModel):
     model: str = ""
 
@@ -134,6 +150,7 @@ async def add_model_to_route(route_id: str, body: RouteAddModel):
             return {"key": str(item.get("key") or model)}
     key = _free_model_key(model, str(route.get("name") or "中转站"))
     route.setdefault("models", []).append({"key": key, "model": model})
+    bump_routes_rev()
     save_settings(SETTINGS)
     refresh_custom_models()
     return {"key": key}
@@ -155,6 +172,7 @@ async def create_route(body: RouteCreate):
     routes.append({"id": route_id, "name": name, "base_url": body.base_url.strip().rstrip("/"),
                    "api_key": body.api_key.strip(), "models": [{"key": key, "model": model}]})
     SETTINGS["custom_model_routes"] = routes
+    bump_routes_rev()
     save_settings(SETTINGS)
     refresh_custom_models()
     return {"key": key, "route_id": route_id}
@@ -196,6 +214,7 @@ class SettingsUpdate(BaseModel):
     luckin_default_latitude: Optional[str] = None
     luckin_default_shop_keyword: Optional[str] = None
     custom_model_routes: Optional[list[Dict[str, Any]]] = None
+    custom_routes_rev: Optional[int] = None
     model_transport_modes: Optional[Dict[str, str]] = None
 
 class HomeLayoutUpdate(BaseModel):
@@ -274,6 +293,7 @@ async def get_settings():
         "luckin_default_latitude": SETTINGS.get("luckin_default_latitude", ""),
         "luckin_default_shop_keyword": SETTINGS.get("luckin_default_shop_keyword", ""),
         "custom_model_routes": normalize_custom_model_routes(SETTINGS.get("custom_model_routes")),
+        "custom_routes_rev": routes_rev(),
         "model_transport_modes": normalize_model_transport_modes(SETTINGS.get("model_transport_modes")),
         "gemini_key_masked": mask(SETTINGS.get("gemini_key", "")),
         "siliconflow_key_masked": mask(SETTINGS.get("siliconflow_key", "")),
@@ -289,6 +309,9 @@ async def get_settings():
 @router.put("/api/settings")
 async def update_settings(body: SettingsUpdate):
     new_routes = None
+    if body.custom_model_routes is not None and body.custom_routes_rev != routes_rev():
+        # 打开设置页之后，中转站在别处（比如 AI 名片）改过：整次保存都不写，请刷新后再改
+        raise HTTPException(409, "中转站设置在别处改过了（比如刚在 AI 名片里加了模型），请刷新设置页再保存")
     if body.custom_model_routes is not None:
         # 每位 AI 自己的线路另存（seat_model_routes），这里不接收、也不会被覆盖
         new_routes = [
@@ -391,6 +414,7 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["luckin_default_shop_keyword"] = body.luckin_default_shop_keyword
     if new_routes is not None:
         SETTINGS["custom_model_routes"] = new_routes
+        bump_routes_rev()
         refresh_custom_models()
     if body.model_transport_modes is not None:
         SETTINGS["model_transport_modes"] = normalize_model_transport_modes(body.model_transport_modes)
@@ -413,7 +437,7 @@ async def update_settings(body: SettingsUpdate):
             await mcp_manager.disconnect(LUCKIN_SERVER_NAME)
         except Exception:
             pass
-    return {"ok": True}
+    return {"ok": True, "custom_routes_rev": routes_rev()}
 
 # ── 温度设置 ──────────────────────────────────────
 class TempUpdate(BaseModel):

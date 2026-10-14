@@ -186,6 +186,49 @@ async def cache_track(track_id: str):
         raise HTTPException(502, f"歌曲缓存失败：{exc}")
 
 
+# 网易云调用（同步的 pyncm）放在专用的小线程池里，并限制同时在跑的数量。
+# 名额要等底层调用真正结束才归还：网页那边 20 秒超时返回了，卡住的那次仍然占着名额，
+# 所以网易云卡死时最多卡住这几个线程，不会越堆越多，也不占用全局的默认线程池。
+NETEASE_WAIT_SECONDS = 20
+NETEASE_MAX_IN_FLIGHT = 3
+_netease_pool = None
+_netease_lock = __import__("threading").Lock()
+_netease_in_flight = 0
+
+
+def _netease_executor():
+    global _netease_pool
+    if _netease_pool is None:
+        from concurrent.futures import ThreadPoolExecutor
+        _netease_pool = ThreadPoolExecutor(max_workers=NETEASE_MAX_IN_FLIGHT, thread_name_prefix="netease")
+    return _netease_pool
+
+
+async def _run_netease(fn, *args):
+    import asyncio
+    global _netease_in_flight
+    with _netease_lock:
+        if _netease_in_flight >= NETEASE_MAX_IN_FLIGHT:
+            raise HTTPException(503, "网易云那边还有请求没回来，等一下再试")
+        _netease_in_flight += 1
+    try:
+        future = _netease_executor().submit(fn, *args)
+    except BaseException:
+        with _netease_lock:
+            _netease_in_flight -= 1
+        raise
+
+    def release(_):
+        global _netease_in_flight
+        with _netease_lock:
+            _netease_in_flight -= 1
+    future.add_done_callback(release)
+    try:
+        return await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), timeout=NETEASE_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "网易云 20 秒没回应，稍后再试")
+
+
 class NeteaseAddBody(BaseModel):
     id: int
     playlist_id: str = ""
@@ -200,10 +243,9 @@ async def netease_search(q: str = "", limit: int = 20):
     if not keyword:
         return {"songs": []}
     try:
-        songs = await asyncio.wait_for(
-            asyncio.to_thread(search_songs, keyword, max(1, min(int(limit or 20), 30))), timeout=20)
-    except asyncio.TimeoutError:
-        raise HTTPException(504, "网易云 20 秒没回应，稍后再试")
+        songs = await _run_netease(search_songs, keyword, max(1, min(int(limit or 20), 30)))
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(502, "网易云暂时搜不到，稍后再试")
     have = {t.get("external_id") for t in await get_music_station_store().list_tracks()
@@ -222,9 +264,9 @@ async def netease_add(body: NeteaseAddBody):
     from music import get_song_detail
     from music_station import record_music_request
     try:
-        song = await asyncio.wait_for(asyncio.to_thread(get_song_detail, body.id), timeout=20)
-    except asyncio.TimeoutError:
-        raise HTTPException(504, "网易云 20 秒没回应，稍后再试")
+        song = await _run_netease(get_song_detail, body.id)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(502, "网易云暂时连不上，稍后再试")
     if not song:

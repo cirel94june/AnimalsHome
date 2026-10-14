@@ -1054,6 +1054,8 @@ function normalizeRoutesForUi(routes, collapsedState) {
   });
 }
 
+var customRoutesRev = 0;  // 中转站列表的版本号：在别处改过时服务器会拒绝这次整份保存
+
 function renderCustomRoutes() {
   var list = $("customRoutesList");
   if (!list) return;
@@ -1391,6 +1393,7 @@ function updateAsrProviderUi(usePreset) {
   $("luckinLatitudeInput").value = s.luckin_default_latitude || "";
   $("luckinShopKeywordInput").value = s.luckin_default_shop_keyword || "";
   customModelRoutes = normalizeRoutesForUi(s.custom_model_routes || []);
+  customRoutesRev = s.custom_routes_rev || 0;
   renderCustomRoutes();
   renderModelTransportModes();
   refreshPhoneScreenStatus();
@@ -1466,7 +1469,9 @@ async function saveSettings() {
     return;
   }
   var collapsedState = currentRouteCollapsedState();
-  await api("PUT", "/api/settings", {
+  var saved;
+  try {
+  saved = await api("PUT", "/api/settings", {
     ...asrConfig,
     gemini_key: $("geminiKeyInput").value.trim(),
     gemini_free_key: $("geminiFreeKeyInput").value.trim(),
@@ -1494,8 +1499,14 @@ async function saveSettings() {
     luckin_default_latitude: $("luckinLatitudeInput").value.trim(),
     luckin_default_shop_keyword: $("luckinShopKeywordInput").value.trim(),
     custom_model_routes: customRoutes,
+    custom_routes_rev: customRoutesRev,
     model_transport_modes: collectModelTransportModes()
   });
+  } catch (err) {
+    showToast(err.message || "保存失败");
+    return;
+  }
+  if (saved && typeof saved.custom_routes_rev === "number") customRoutesRev = saved.custom_routes_rev;
   customModelRoutes = normalizeRoutesForUi(customRoutes, collapsedState);
   renderCustomRoutes();
   showToast("✅ 已保存，模型列表刷新后可选择新模型");

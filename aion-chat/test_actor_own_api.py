@@ -78,7 +78,7 @@ def test_seat_key_never_in_settings_response_and_survives_stale_settings_page(cl
               "models": [{"key": "原有模型", "model": "m0"}]},
              {"id": "seat_ai3", "name": "伪造", "base_url": "https://evil.example/v1", "api_key": "x",
               "models": [{"key": "伪造", "model": "x"}]}]
-    asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(custom_model_routes=stale)))
+    asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(custom_model_routes=stale, custom_routes_rev=page["custom_routes_rev"])))
     assert config.MODELS["Jasper专属·g"]["base_url"] == "https://gem.example/v1"  # 座位线路没被覆盖
     assert "伪造" not in config.MODELS
     assert actors.api_summary("ai3")["has_key"] is True
@@ -96,7 +96,7 @@ def test_name_clash_is_refused_in_both_directions(client, monkeypatch):
     clash = [{"id": "ordinary", "name": "普通", "base_url": "https://other.example/v1", "api_key": "x",
               "models": [{"key": "Jasper专属·test", "model": "test"}]}]
     with pytest.raises(HTTPException) as err:
-        asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(custom_model_routes=clash, tavily_api_key="probe")))
+        asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(custom_model_routes=clash, tavily_api_key="probe", custom_routes_rev=settings_routes.routes_rev())))
     assert err.value.status_code == 400
     assert json.dumps(config.SETTINGS["custom_model_routes"], sort_keys=True) == before
     assert config.SETTINGS.get("tavily_api_key") != "probe"  # 同一次请求里的其他设置也没写
