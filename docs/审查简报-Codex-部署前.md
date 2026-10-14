@@ -183,3 +183,9 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - `CameraBridge`：`permissionRequestInFlight`（授权框显示中不再请求）、`permissionDenied`（拒绝后不再自动请求）；`WebViewActivity.onRequestPermissionsResult` 收到 3101 时调用 `cameraBridge.onPermissionResult(granted)`，并通过 `window.onAionCameraPermissionResult` 通知页面；不影响启动时逐项授权的流程。新增 `isPermissionDenied()`、`requestPermissionAgain()`（只在用户点按钮时调用）。
 - `camera.html`：start 失败且 `isPermissionDenied()` 时不再安排自动重试，显示「重新允许相机」按钮和去设置的说明；授权成功回调后自动打开预览。
 - 测试 `test_camera_permission_retry.py`：Node 跑页面真实脚本，假相机一直拒绝：跑完所有排队的重试后 start 只调用 1 次、按钮出现、用户点击才再问 1 次、授权后自动启动。
+
+## 18. 用不上的模型与 Seeky、约会立绘（0b64d23、a6c15c3）
+
+- **0b64d23**：`config.model_usable` / `iter_selectable_models`：给页面下拉框（`/api/models`）用，中转站总显示，内置 siliconflow / gemini / aipro 要有 Key，codex_cli / gemini_cli / antigravity_cli 要本机装了程序；`iter_visible_models`（兜底选模型）不变。自主活动 `seeky_interaction` 默认关闭；游乐场大厅去掉 Seeky 入口。
+- **a6c15c3**：`data/date_portraits/default.*` 存在时，`scan_date_assets()`（只对默认素材目录）以固定神态列表生成 `kind=portrait` 的状态，不再列出原作者的表情视频；`GET /api/date-theater/portrait` 只读这一个固定位置的文件。页面对 portrait 用 `<img>` + 按 `data-mood` 的 CSS 动画，暂停并清空视频源。
+- 请重点看：`/api/date-theater/portrait` 是否只能读到固定文件；`model_usable` 在导入 `ai_providers` 失败时的行为（返回 False，不影响兜底）。
