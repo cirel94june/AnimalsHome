@@ -512,9 +512,39 @@ def is_model_deprecated(model_key: str | dict | None) -> bool:
     return (MODELS.get(key) or {}).get("provider", "") in DEPRECATED_MODEL_PROVIDERS
 
 
+def model_usable(cfg: dict) -> bool:
+    """这条线路在这台服务器上用不用得了：中转站总能用；内置线路要有对应的 Key，
+    命令行线路（Codex / Gemini CLI / Antigravity）要本机装了那个程序。用不了的就不出现在模型列表里。"""
+    provider = (cfg or {}).get("provider", "")
+    if provider == "custom_openai":
+        return True
+    if provider in ("siliconflow", "gemini", "aipro"):
+        return bool(str(get_key(provider) or "").strip())
+    try:
+        if provider == "codex_cli":
+            import ai_providers
+            return bool(ai_providers._CODEX_SCRIPT)
+        if provider == "gemini_cli":
+            import ai_providers
+            return bool(ai_providers._GEMINI_SCRIPT)
+        if provider == "antigravity_cli":
+            import shutil
+            return bool(shutil.which("agy") or shutil.which("agy.exe"))
+    except Exception:
+        return False
+    return True
+
+
 def iter_visible_models():
     for key, cfg in MODELS.items():
         if not is_model_deprecated(key):
+            yield key, cfg
+
+
+def iter_selectable_models():
+    """给页面下拉框用：在可见的基础上，再去掉这台服务器上用不了的内置线路。"""
+    for key, cfg in iter_visible_models():
+        if model_usable(cfg):
             yield key, cfg
 
 

@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from config import SEAT_ROUTE_PREFIX, SEAT_ROUTES_KEY, route_model_keys, SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, resolve_model_transport_mode, model_supports_safe_live
+from config import SEAT_ROUTE_PREFIX, SEAT_ROUTES_KEY, route_model_keys, SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, iter_selectable_models, resolve_model_transport_mode, model_supports_safe_live
 from tts import cleanup_tts_cache_dir, _request_tts_audio, EDGE_VOICES, MINIMAX_TTS_MODELS, MINIMAX_VOICE_PREFIX
 from ws import manager
 import elevenlabs_tts
@@ -50,7 +50,7 @@ async def list_models():
             "transport_mode": resolve_model_transport_mode(k),
             "supports_safe_live": model_supports_safe_live(k),
         }
-        for k, v in iter_visible_models()
+        for k, v in iter_selectable_models()
     ]
     return sorted(rows, key=lambda item: 1 if item["provider"] in RELAY_MODEL_PROVIDERS else 0)
 

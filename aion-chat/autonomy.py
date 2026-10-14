@@ -55,6 +55,8 @@ ACTION_DEFS = {
 }
 
 # 座位 3～6 目前能做的事；其余活动按座位核对过再逐个放开（见 docs/功能盘点）
+# 默认关闭：翻相册（原作者设定）、和宠物鲸鱼 Seeky 互动（小猫不要 Seeky）
+DEFAULT_OFF_ACTIONS = {"album_browse", "seeky_interaction"}
 SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel"}
 
 SEEKY_ACTIONS = {
@@ -81,7 +83,7 @@ SEEKY_EVENT_PHRASES = {
 def get_idle_config() -> dict[str, Any]:
     actions = SETTINGS.get("idle_autonomy_actions")
     if not isinstance(actions, dict):
-        actions = {key: key != "album_browse" for key in ACTION_DEFS}
+        actions = {key: key not in DEFAULT_OFF_ACTIONS for key in ACTION_DEFS}
     old_interval = max(5, int(SETTINGS.get("idle_autonomy_interval_minutes", 120) or 120))
     min_minutes = max(5, int(SETTINGS.get("idle_autonomy_interval_min_minutes", old_interval) or old_interval))
     max_minutes = max(5, int(SETTINGS.get("idle_autonomy_interval_max_minutes", old_interval) or old_interval))
@@ -96,7 +98,7 @@ def get_idle_config() -> dict[str, Any]:
         "interval_min_minutes": min_minutes,
         "interval_max_minutes": max_minutes,
         "next_delay_minutes": next_delay,
-        "actions": {key: bool(actions.get(key, key != "album_browse")) for key in ACTION_DEFS},
+        "actions": {key: bool(actions.get(key, key not in DEFAULT_OFF_ACTIONS)) for key in ACTION_DEFS},
     }
 
 
