@@ -247,3 +247,15 @@ def test_upgrading_the_usual_model_is_never_blocked_by_an_old_background_route(c
     # 但这次新选一条对不上的后台线路，仍然拒绝
     bad = client.put("/api/actors/aion", json={"background_model": "按量·opus"})
     assert bad.status_code == 400
+
+
+def test_model_only_update_also_clears_a_stale_background_route(client):
+    """不经名片页、只提交 model 时，对不上的旧后台线路同样清空。"""
+    config.MODELS["新版·sonnet"] = {"provider": "custom_openai", "model": "claude-sonnet-9"}
+    client.put("/api/actors/aion", json={"model": "按次·opus", "background_model": "按量·opus"})
+    r = client.put("/api/actors/aion", json={"model": "新版·sonnet"})
+    assert r.status_code == 200 and r.json()["background_model"] == "" and r.json().get("notice")
+    # 平时模型不变、只改签名：后台线路保留
+    client.put("/api/actors/aion", json={"model": "按次·opus", "background_model": "按量·opus"})
+    r = client.put("/api/actors/aion", json={"sign": "嗨"})
+    assert r.json()["background_model"] == "按量·opus" and "notice" not in r.json()

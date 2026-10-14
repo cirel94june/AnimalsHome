@@ -1859,47 +1859,46 @@ async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, t
         yield f"{CLI_STATUS_PREFIX}哨兵模型正在识别图片内容..."
         normalized = await _sentinel_describe_images(normalized)
         yield f"{CLI_STATUS_PREFIX}图片处理完成，正在等待模型回复..."
-    async def _raw_chunks():
-        if cfg["provider"] == "siliconflow":
-            async for chunk in call_siliconflow(normalized, cfg["model"], meta, temperature, max_tokens):
-                yield chunk
-        elif cfg["provider"] == "gemini":
-            async for chunk in call_gemini(
-                normalized, cfg["model"], meta, temperature, max_tokens,
-                include_audio=bool(cfg.get("audio", False)),
-            ):
-                yield chunk
-        elif cfg["provider"] == "aipro":
-            async for chunk in call_aipro(normalized, cfg["model"], meta, temperature, max_tokens):
-                yield chunk
-        elif cfg["provider"] == "custom_openai":
-            async for chunk in call_custom_openai(normalized, cfg, meta, temperature, max_tokens, request_timeout=request_timeout):
-                yield chunk
-        elif cfg["provider"] == "gemini_cli":
-            async for chunk in call_gemini_cli(normalized, cfg["model"], meta, temperature, max_tokens):
-                yield chunk
-        elif cfg["provider"] == "antigravity_cli":
-            async for chunk in call_antigravity_cli(normalized, cfg["model"], meta, temperature, max_tokens):
-                yield chunk
-        elif cfg["provider"] == "codex_cli":
-            async for chunk in call_codex_cli(normalized, cfg["model"], meta, temperature, max_tokens):
-                yield chunk
-        else:
-            yield f"[閿欒] 鏈煡 provider: {cfg.get('provider')}"
+    def _provider_stream():
+        provider = cfg["provider"]
+        if provider == "siliconflow":
+            return call_siliconflow(normalized, cfg["model"], meta, temperature, max_tokens)
+        if provider == "gemini":
+            return call_gemini(normalized, cfg["model"], meta, temperature, max_tokens,
+                               include_audio=bool(cfg.get("audio", False)))
+        if provider == "aipro":
+            return call_aipro(normalized, cfg["model"], meta, temperature, max_tokens)
+        if provider == "custom_openai":
+            return call_custom_openai(normalized, cfg, meta, temperature, max_tokens, request_timeout=request_timeout)
+        if provider == "gemini_cli":
+            return call_gemini_cli(normalized, cfg["model"], meta, temperature, max_tokens)
+        if provider == "antigravity_cli":
+            return call_antigravity_cli(normalized, cfg["model"], meta, temperature, max_tokens)
+        if provider == "codex_cli":
+            return call_codex_cli(normalized, cfg["model"], meta, temperature, max_tokens)
+        return None
+
+    from contextlib import aclosing
+    provider_stream = _provider_stream()
+    if provider_stream is None:
+        yield f"[错误] 未知 provider: {cfg.get('provider')}"
+        return
 
     think_filter = ThinkTagReasoningFilter(meta)
-    async for chunk in _raw_chunks():
-        if cancel_event and cancel_event.is_set():
-            return
-        if isinstance(chunk, StreamActivity):
-            yield chunk
-            continue
-        if isinstance(chunk, str) and chunk.startswith(CLI_STATUS_PREFIX):
-            yield chunk
-            continue
-        visible = think_filter.feed(chunk)
-        if visible:
-            yield visible
+    # aclosing：上层提前关闭时，一路关到底层的 HTTP 响应 / 子进程，关完才返回
+    async with aclosing(provider_stream) as raw:
+        async for chunk in raw:
+            if cancel_event and cancel_event.is_set():
+                return
+            if isinstance(chunk, StreamActivity):
+                yield chunk
+                continue
+            if isinstance(chunk, str) and chunk.startswith(CLI_STATUS_PREFIX):
+                yield chunk
+                continue
+            visible = think_filter.feed(chunk)
+            if visible:
+                yield visible
 
     tail = think_filter.flush()
     if tail and not (cancel_event and cancel_event.is_set()):

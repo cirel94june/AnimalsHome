@@ -141,3 +141,82 @@ def test_old_days_are_pruned(book):
     conn = sqlite3.connect(usage_log.USAGE_DB)
     assert conn.execute("SELECT COUNT(*) FROM usage WHERE day='2000-01-01'").fetchone()[0] == 0
     conn.close()
+
+
+class _TrackedBody:
+    """模拟中转站的流式正文：给一块后一直等；记录它什么时候被关掉。"""
+
+    def __init__(self, order):
+        self.order = order
+
+    async def __aiter__(self):
+        yield b'data: {"choices":[{"delta":{"content":"\xe4\xbd\xa0"}}]}\n\n'
+        await asyncio.sleep(3600)
+        yield b""
+
+    async def aclose(self):
+        self.order.append("http closed")
+
+
+def _real_chain(monkeypatch, order):
+    import httpx
+    real_client = httpx.AsyncClient
+
+    def handle(request):
+        return httpx.Response(200, stream=_Wrapped(_TrackedBody(order)))
+    monkeypatch.setattr(ai_providers.httpx, "AsyncClient",
+                        lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw))
+    monkeypatch.setitem(ai_providers.MODELS, "真实链", {"provider": "custom_openai", "model": "m",
+                                                      "base_url": "https://relay.test/v1"})
+    monkeypatch.setattr(usage_log, "record_call", lambda *a, **k: order.append("recorded"))
+
+
+import httpx as _httpx
+
+
+class _Wrapped(_httpx.AsyncByteStream):
+    def __init__(self, body):
+        self.body = body
+
+    def __aiter__(self):
+        return self.body.__aiter__()
+
+    async def aclose(self):
+        await self.body.aclose()
+
+
+def test_closing_early_closes_the_real_http_response_first(book, monkeypatch):
+    """真实调用链：外层提前关闭时 HTTP 响应先关掉，再记账，再返回（Codex 复查 M1）。"""
+    import httpx
+    order = []
+    _real_chain(monkeypatch, order)
+
+    async def run():
+        gen = ai_providers.stream_ai([{"role": "user", "content": "x"}], "真实链", include_device_context=False)
+        assert await gen.__anext__() == "你"
+        await gen.aclose()
+        order.append("returned")
+        await gen.aclose()  # 重复关闭不再记账
+    asyncio.run(run())
+    assert order == ["http closed", "recorded", "returned"]
+
+
+def test_cancelling_the_task_also_closes_the_http_response(book, monkeypatch):
+    order = []
+    _real_chain(monkeypatch, order)
+
+    async def consume():
+        async for _ in ai_providers.stream_ai([{"role": "user", "content": "x"}], "真实链", include_device_context=False):
+            pass
+
+    async def run():
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        order.append("returned")
+    asyncio.run(run())
+    assert order == ["http closed", "recorded", "returned"]

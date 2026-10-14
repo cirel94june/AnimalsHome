@@ -286,13 +286,17 @@ def _check_background_model(actor_id: str, body: dict, updates: dict) -> str:
     - 这次新选了一条对不上的后台线路：拒绝（400），什么都不改；
     - 只是换了平时的模型（比如升级到新版本），原来的后台线路对不上了：自动清空后台线路，
       平时的模型照常保存，返回一句提醒。换模型永远不会被后台线路卡住。
+      请求里带不带后台字段都一样处理。
     """
-    background = updates.get("background_model")
-    if not background:
-        return ""
     from config import MODELS, same_model_id
-    api = body.get("api") if "api" in body else None
     current = get_actor(actor_id) or {}
+    stored = current.get("background_model", "")
+    requested = updates.get("background_model")
+    changing_main = "model" in updates or "api" in body
+    if not requested and not (stored and changing_main and "background_model" not in updates):
+        return ""
+    background = requested or stored
+    api = body.get("api") if "api" in body else None
     if isinstance(api, dict):
         main_id = str(api.get("model") or "")
     else:
@@ -304,7 +308,7 @@ def _check_background_model(actor_id: str, body: dict, updates: dict) -> str:
         main_id = (MODELS.get(main_key) or {}).get("model", "") if main_key else ""
     if not main_id or same_model_id((MODELS.get(background) or {}).get("model", ""), main_id):
         return ""
-    if background == current.get("background_model"):
+    if background == stored:
         updates["background_model"] = ""
         return "平时的模型换了，原来的后台线路是旧模型，已经清空（后台暂时和平时走同一条）。需要的话再选一条同模型的后台线路。"
     raise HTTPException(400, "后台用的线路要和平时是同一个模型（只是换一家中转站），这样做梦、交接卡还是 TA 自己写的")

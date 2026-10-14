@@ -191,6 +191,8 @@ class RelayProviderErrorPassthroughTests(unittest.IsolatedAsyncioTestCase):
             "stream": True,
             "temperature": 0.7,
             "max_tokens": 123,
+            # 请中转站在流式回复最后报告用量（用量小本本），不认识的中转站会自动去掉
+            "stream_options": {"include_usage": True},
         })
 
     async def test_custom_openai_sends_selected_reasoning_effort_only_when_overridden(self):
