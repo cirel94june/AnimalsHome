@@ -201,3 +201,11 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - `trigger_ai_chat`：读取房间后若 `type != "group"` 直接 `HTTPException(409)`，不进入后台任务、不读其他座位、不写消息。
 - 纵深防御：`_generate_group_replies` 与 `trigger_ai_chat` 的座位循环在每位接话前重新读房间，类型不是 group 就停止。
 - 测试：`test_group_seats.test_ai_chat_is_refused_outside_group_rooms`（seat_1v1 / connor_1v1 / 其他类型都 409，座位零调用）、`test_group_seat_loop_stops_if_the_room_is_not_a_group`。
+
+## 21. Claude 缓存标记（每个中转站可开关，默认开）
+
+- `config.normalize_custom_model_routes` 保留线路的 `cache_marker`（缺省 True），写进 MODELS 配置。
+- `ai_providers._with_cache_breakpoint`：在第一条以「系统当前的准确时间是」或「[当前时间]」开头的消息之前那一条（即不变的人设 / 规则 / 能力说明的最后一条）上，把内容转成文本片段并加 `cache_control: {"type": "ephemeral"}`；找不到分界就原样不加；不修改原列表。
+- `call_custom_openai`：最多三次尝试；中转站 400/422 且错误提到 cache_control 时，记住该地址、去掉标记重发（此时尚未输出任何内容），与 stream_options 回退相互独立。
+- 设置页每条线路有「缓存标记」勾选框。测试 `test_cache_marker.py`。
+- 另：按小猫选择在线上关闭了智能家居、手环纸条、瑞幸、密语玩具、拜访 AI 好友、桌宠动作六项能力（工具能力开关，数据层操作，无代码改动）。

@@ -1013,7 +1013,7 @@ function newCustomModel() {
 }
 
 function newCustomRoute() {
-  return { id: makeRouteId(), name: "", base_url: "", api_key: "", models: [newCustomModel()], collapsed: false };
+  return { id: makeRouteId(), name: "", base_url: "", api_key: "", cache_marker: true, models: [newCustomModel()], collapsed: false };
 }
 
 function currentRouteCollapsedState() {
@@ -1034,6 +1034,7 @@ function normalizeRoutesForUi(routes, collapsedState) {
       name: route.name || "",
       base_url: route.base_url || "",
       api_key: route.api_key || "",
+      cache_marker: route.cache_marker !== false,
       collapsed: hasSavedState ? !!collapsedState[id] : true,
       models: Array.isArray(route.models) && route.models.length
         ? route.models.map(function(model) {
@@ -1130,6 +1131,10 @@ function renderCustomRoutes() {
               '<input class="form-input mono-input" type="text" value="' + escAttr(route.api_key) + '" placeholder="可留空；填写后作为 Bearer Token" oninput="updateCustomRoute(' + routeIndex + ', \'api_key\', this.value)">' +
             '</label>' +
           '</div>' +
+          '<label class="vision-toggle" style="margin:8px 0 2px" title="在不变的人设和规则末尾加 Claude 的缓存标记，重复的部分按缓存价计费；中转站不认会自动去掉">' +
+            '<input type="checkbox" ' + (route.cache_marker !== false ? "checked" : "") + ' onchange="updateCustomRoute(' + routeIndex + ', \'cache_marker\', this.checked)">' +
+            '缓存标记（省 token，中转站不支持会自动关掉）' +
+          '</label>' +
           '<div class="route-models">' +
             '<div class="model-row-head">' +
               '<div class="route-title">模型配置</div>' +
@@ -1309,6 +1314,7 @@ function collectCustomRoutes() {
       name: name || "自定义线路 " + (routeIndex + 1),
       base_url: baseUrl,
       api_key: apiKey,
+      cache_marker: route.cache_marker !== false,
       models: models
     });
   });

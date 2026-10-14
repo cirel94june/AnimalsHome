@@ -642,6 +642,54 @@ def _openai_chat_completions_url(base_url: str) -> str:
 
 # 不认识 stream_options 的中转站（按请求地址记，进程内有效）
 _NO_STREAM_USAGE: set[str] = set()
+# 不认识缓存标记（cache_control）的中转站
+_NO_CACHE_MARKER: set[str] = set()
+
+# 每次都会变的内容从这里开始（当前时间 → 记忆 → 聊天记录）；它之前的人设、规则、能力说明不变
+_DYNAMIC_START_MARKERS = ("系统当前的准确时间是", "[当前时间]")
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(p.get("text") or "") for p in content if isinstance(p, dict))
+    return ""
+
+
+def _with_cache_breakpoint(messages: list) -> list:
+    """在「不变的部分」最后一条消息上加 cache_control（Anthropic 的缓存标记，OpenAI 兼容格式里放在内容片段上）。
+    找不到分界（比如没有时间块的简单请求）就原样返回，不加。"""
+    boundary = next((i for i, m in enumerate(messages)
+                     if any(_message_text(m).lstrip().startswith(x) for x in _DYNAMIC_START_MARKERS)), -1)
+    if boundary <= 0:
+        return messages
+    marked = list(messages)
+    target = dict(marked[boundary - 1])
+    content = target.get("content")
+    if isinstance(content, str):
+        if not content.strip():
+            return messages
+        target["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+    elif isinstance(content, list) and content:
+        parts = [dict(p) if isinstance(p, dict) else p for p in content]
+        for i in range(len(parts) - 1, -1, -1):
+            if isinstance(parts[i], dict) and parts[i].get("type") == "text":
+                parts[i]["cache_control"] = {"type": "ephemeral"}
+                break
+        else:
+            return messages
+        target["content"] = parts
+    else:
+        return messages
+    marked[boundary - 1] = target
+    return marked
+
+
+def _mentions_cache_control(body: bytes) -> bool:
+    text = (body or b"")[:4000].decode("utf-8", "replace").lower()
+    return "cache_control" in text or "cache control" in text
 
 
 def _mentions_stream_options(body: bytes) -> bool:
@@ -674,14 +722,18 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
         payload["reasoning_effort"] = cfg.get("reasoning_effort", "high")
     reasoning_status_sent = False
     content_started = False
+    plain_messages = payload["messages"]
+    want_cache_marker = cfg.get("cache_marker", True) is not False
     try:
-        for _attempt in range(2):
+        for _attempt in range(3):
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
             ask_usage = url not in _NO_STREAM_USAGE
             if ask_usage:
                 payload["stream_options"] = {"include_usage": True}
             else:
                 payload.pop("stream_options", None)
+            mark_cache = want_cache_marker and url not in _NO_CACHE_MARKER
+            payload["messages"] = _with_cache_breakpoint(plain_messages) if mark_cache else plain_messages
             async with httpx.AsyncClient(timeout=request_timeout) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     own_stream(resp)
@@ -690,6 +742,11 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                         if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
                             # 这家中转站不认识 stream_options：记住，去掉再发一次（还没输出任何内容，重发是安全的）
                             _NO_STREAM_USAGE.add(url)
+                            continue
+                        if (mark_cache and payload["messages"] is not plain_messages
+                                and resp.status_code in (400, 422) and _mentions_cache_control(body)):
+                            # 这家中转站不认识缓存标记：记住，去掉再发一次
+                            _NO_CACHE_MARKER.add(url)
                             continue
                         if meta is not None:
                             meta["provider_error"] = f"HTTP {resp.status_code}: {_decode_relay_body(body)}"
