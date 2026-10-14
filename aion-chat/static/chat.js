@@ -292,9 +292,15 @@ function onMicSourceChange() {
   $('voiceStatus').textContent = '未开启';
 }
 
+// 语音唤醒词默认用 AI 的名字（世界书里的 ai_name）
+function defaultWakeWord() {
+  const name = String((worldBook && worldBook.ai_name) || '').trim();
+  return name && name !== 'AI' ? name : '在吗';
+}
+
 async function toggleVoice() {
   const enabled = $('voiceToggle').checked;
-  const wakeWord = $('voiceWakeWord').value.trim() || '老公';
+  const wakeWord = $('voiceWakeWord').value.trim() || defaultWakeWord();
   localStorage.setItem('aion_voice_enabled', enabled);
   localStorage.setItem('aion_voice_wakeword', wakeWord);
 
@@ -330,7 +336,7 @@ function voiceHangup() {
   } else {
     fetch('/api/voice/toggle', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ enabled: true, wake_word: $('voiceWakeWord').value.trim() || '老公' })
+      body: JSON.stringify({ enabled: true, wake_word: $('voiceWakeWord').value.trim() || defaultWakeWord() })
     });
   }
 }
@@ -387,7 +393,7 @@ function updateVoiceUI(data) {
       break;
     case 'waiting':
       ind.className = 'voice-indicator active waiting';
-      txt.textContent = '🎙 等待唤醒词「' + (data.wake_word || '老公') + '」...';
+      txt.textContent = '🎙 等待唤醒词「' + (data.wake_word || defaultWakeWord()) + '」...';
       btn.style.display = 'none';
       voiceInCall = false;
       if (status) status.textContent = '监听中';
@@ -452,7 +458,7 @@ const remoteVoice = {
   enabled: false,
   inCall: false,
   aiSpeaking: false,
-  wakeWord: '老公',
+  wakeWord: '',  // 用的时候取 defaultWakeWord()（AI 的名字）
   _stream: null,
   _ctx: null,
   _processor: null,
@@ -815,7 +821,9 @@ const remoteVoice = {
 
 // 初始化语音设置
 (function initVoice() {
-  const ww = localStorage.getItem('aion_voice_wakeword') || '老公';
+  // 原作者存过的旧默认值不沿用；默认唤醒词是 AI 的名字
+  const saved = localStorage.getItem('aion_voice_wakeword');
+  const ww = saved && saved !== '老公' ? saved : defaultWakeWord();
   $('voiceWakeWord').value = ww;
   // 自动检测：App 内或移动端默认用手机麦克风
   const ua = navigator.userAgent;

@@ -40,7 +40,7 @@ class VoiceWakeup:
 
     def __init__(self):
         self.enabled = False
-        self.wake_word = "老公"
+        self.wake_word = ""
         self.in_call = False
         self.ai_speaking = False
 
@@ -59,10 +59,14 @@ class VoiceWakeup:
 
     # ── 外部控制 ──────────────────────────────────
 
-    def start(self, wake_word: str = "老公"):
+    def start(self, wake_word: str = ""):
         """开启语音监听"""
         if self._thread and self._thread.is_alive():
             return
+        if not wake_word.strip():  # 默认唤醒词是 AI 的名字
+            from config import load_worldbook
+            name = str(load_worldbook().get("ai_name") or "").strip()
+            wake_word = name if name and name != "AI" else "在吗"
         self.wake_word = wake_word
         self.enabled = True
         self.in_call = False

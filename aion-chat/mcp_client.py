@@ -74,16 +74,9 @@ def _is_known_tool_transport_failure(error: Exception) -> bool:
     return False
 
 # ── 默认配置 ──────────────────────────────────────
+# 默认不连任何外部 MCP 服务（原作者默认开着一个公开的 AI 聊天室，这里去掉）；需要的自己在页面里加
 _DEFAULT_CONFIG = {
-    "servers": [
-        {
-            "name": "AI小镇",
-            "type": "http",
-            "url": "https://aisay.top/chatroom/mcp",
-            "headers": {},
-            "enabled": True
-        }
-    ]
+    "servers": []
 }
 
 

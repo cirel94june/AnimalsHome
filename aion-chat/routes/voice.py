@@ -12,7 +12,7 @@ router = APIRouter()
 
 class VoiceToggle(BaseModel):
     enabled: bool
-    wake_word: str = "老公"
+    wake_word: str = ""  # 空 = 用 AI 的名字（见 chat.js defaultWakeWord）
 
 
 class AISpeakingNotify(BaseModel):
