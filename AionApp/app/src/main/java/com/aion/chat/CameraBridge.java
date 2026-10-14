@@ -59,30 +59,64 @@ public class CameraBridge {
         this.webView = webView;
     }
 
-    private static final int REQ_CAMERA_FROM_BRIDGE = 3101;
+    static final int REQ_CAMERA_FROM_BRIDGE = 3101;
+    /** 授权框正在显示：不再重复请求。 */
+    private volatile boolean permissionRequestInFlight = false;
+    /** 用户刚拒绝过：页面停止自动请求，等用户主动点「重新授权」或去设置里打开。 */
+    private volatile boolean permissionDenied = false;
 
-    /** 有相机权限返回 true；没有就在界面线程里弹一次系统授权框，返回 false。 */
+    private boolean cameraGranted() {
+        return androidx.core.content.ContextCompat.checkSelfPermission(
+                webView.getContext(), android.Manifest.permission.CAMERA)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** 有相机权限返回 true；没有时最多弹一次授权框（拒绝过就不再自动弹），返回 false。 */
     private boolean ensureCameraPermission() {
-        android.content.Context context = webView.getContext();
-        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                context, android.Manifest.permission.CAMERA)
-                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        if (cameraGranted()) {
+            permissionDenied = false;
             return true;
         }
-        if (context instanceof android.app.Activity) {
-            android.app.Activity activity = (android.app.Activity) context;
-            activity.runOnUiThread(() -> androidx.core.app.ActivityCompat.requestPermissions(
-                    activity, new String[]{android.Manifest.permission.CAMERA}, REQ_CAMERA_FROM_BRIDGE));
-        }
+        if (!permissionRequestInFlight && !permissionDenied) requestCameraPermission();
         return false;
+    }
+
+    private void requestCameraPermission() {
+        android.content.Context context = webView.getContext();
+        if (!(context instanceof android.app.Activity)) return;
+        android.app.Activity activity = (android.app.Activity) context;
+        permissionRequestInFlight = true;
+        activity.runOnUiThread(() -> androidx.core.app.ActivityCompat.requestPermissions(
+                activity, new String[]{android.Manifest.permission.CAMERA}, REQ_CAMERA_FROM_BRIDGE));
+    }
+
+    /** Activity 收到 3101 的授权结果后调用：记下结果并告诉页面。 */
+    public void onPermissionResult(boolean granted) {
+        permissionRequestInFlight = false;
+        permissionDenied = !granted;
+        webView.post(() -> webView.evaluateJavascript(
+                "window.onAionCameraPermissionResult && window.onAionCameraPermissionResult("
+                        + (granted ? "true" : "false") + ")", null));
     }
 
     /** 当前是否有相机权限（页面据此提示用户去设置里打开）。 */
     @JavascriptInterface
     public boolean hasPermission() {
-        return androidx.core.content.ContextCompat.checkSelfPermission(
-                webView.getContext(), android.Manifest.permission.CAMERA)
-                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        return cameraGranted();
+    }
+
+    /** 用户拒绝过相机权限、页面已停止自动请求。 */
+    @JavascriptInterface
+    public boolean isPermissionDenied() {
+        return permissionDenied && !cameraGranted();
+    }
+
+    /** 用户在页面上主动点「重新授权」：再弹一次（系统设为「不再询问」时不会弹，页面会提示去设置）。 */
+    @JavascriptInterface
+    public void requestPermissionAgain() {
+        if (cameraGranted() || permissionRequestInFlight) return;
+        permissionDenied = false;
+        requestCameraPermission();
     }
 
     /** 设置视频录制桥接，录制时自动推送预览帧 */

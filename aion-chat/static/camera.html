@@ -132,6 +132,7 @@
           <button class="cam-btn" onclick="phonePreviewNow()">📐 刷新预览</button>
           <button class="cam-btn phone-arm-btn" id="phoneArmBtn" onclick="togglePhoneCameraArm()">开始外出监控</button>
         </div>
+        <button class="cam-btn" id="phonePermBtn" style="display:none;margin-top:8px" onclick="askCameraPermissionAgain()">重新允许相机</button>
         <div class="phone-camera-note" id="phoneCameraNote">
           预览只在本页打开时本地实时刷新，不会上传；离开本页或锁屏后会立即释放摄像头，监控事件触发时才拍摄并上传一张。
         </div>
@@ -573,6 +574,29 @@ function schedulePhonePreviewRestart() {
   _phonePreviewFailures++;
 }
 
+// ── 相机权限：被拒绝后停止自动请求，由用户主动点按钮再问一次 ──
+function showCameraPermissionDenied() {
+  $("camNoSignal").textContent = "没有相机权限，摄像头打不开。点下面的「重新允许相机」；如果没弹框，去 手机设置 → 应用 → AionsHome → 权限 → 相机 → 允许";
+  $("phonePermBtn").style.display = "";
+}
+
+function askCameraPermissionAgain() {
+  if (!window.AionCamera || typeof window.AionCamera.requestPermissionAgain !== "function") return;
+  $("phonePermBtn").style.display = "none";
+  $("camNoSignal").textContent = "请在弹出的框里点「允许」";
+  window.AionCamera.requestPermissionAgain();
+}
+
+window.onAionCameraPermissionResult = function(granted) {
+  if (granted) {
+    $("phonePermBtn").style.display = "none";
+    _phonePreviewRestartAt = 0;
+    phonePreviewNow();
+  } else {
+    showCameraPermissionDenied();
+  }
+};
+
 function phonePreviewNow() {
   if (!phonePreviewDemanded()) return;
   const bridge = phoneBridge();
@@ -606,10 +630,17 @@ function phonePreviewNow() {
       if (!window.AionCamera.isRunning()
           || window.AionCamera.getFacing() !== legacyFacing) {
         if (!window.AionCamera.start(legacyFacing)) {
-          schedulePhonePreviewRestart();
           const noPermission = typeof window.AionCamera.hasPermission === "function" && !window.AionCamera.hasPermission();
+          const denied = noPermission && typeof window.AionCamera.isPermissionDenied === "function"
+            && window.AionCamera.isPermissionDenied();
+          if (denied) {
+            // 刚被拒绝：不再自动重试（否则会一直弹授权框），等用户主动点按钮
+            showCameraPermissionDenied();
+            return;
+          }
+          schedulePhonePreviewRestart();
           $("camNoSignal").textContent = noPermission
-            ? "需要相机权限：在弹出的框里点「允许」，之后会自动打开；没弹框就去 手机设置 → 应用 → AionsHome → 权限 → 相机"
+            ? "需要相机权限：在弹出的框里点「允许」，之后会自动打开"
             : "相机没打开：可能是没给 AionsHome 相机权限（手机设置 → 应用 → AionsHome → 权限 → 相机 → 允许），也可能是别的应用正在用相机";
           return;
         }

@@ -829,6 +829,15 @@ public class WebViewActivity extends AppCompatActivity
             }
         }
 
+        if (code == CameraBridge.REQ_CAMERA_FROM_BRIDGE) {
+            // 监控页打开相机时要的权限：把结果交回相机桥接，不影响启动时的逐项授权流程
+            if (cameraBridge != null) {
+                cameraBridge.onPermissionResult(results.length > 0
+                        && results[0] == PackageManager.PERMISSION_GRANTED);
+            }
+            return;
+        }
+
         // 根据 requestCode 继续下一步
         switch (code) {
             case 2001: // POST_NOTIFICATIONS

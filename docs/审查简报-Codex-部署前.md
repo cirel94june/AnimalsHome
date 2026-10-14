@@ -177,3 +177,9 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - **B2 补齐（441299d）**：`update_settings` 在写入本次列表时记下 `committed_rev = bump_routes_rev()`，返回它，而不是 await（断开 MCP）之后再读的最新版本。测试按复查给的反例：await 期间名片加模型，返回 N+1，页面再带旧列表保存得到 409，名片加的模型保留。
 - **图片替换（441299d）**：`public_overrides.OverridableStaticFiles` 替代 `/public` 的 StaticFiles；只有名单内的 7 个文件（原作者 AI / 本人头像、群聊头像、视频来电图）在 `data/public_overrides/` 有同名文件时用它；离线清单按实际返回的文件算哈希。自拍参考改为 `data/selfie/<actor>.jpg`，路径只接受字母数字下划线；没有就不带参考图（不再退回原作者的「生图锚点」）。
 - **监控页（0eb0ac1）**：服务器没有本地摄像头、也没配 ESP32 时隐藏这两栏并切到手机摄像头；App 的 `CameraBridge` 在 `Camera.open` 前检查相机权限，没有就请求系统授权并返回 false，新增 `hasPermission()` 供页面提示。
+
+## 17. 0eb0ac1 复查 Low C1（相机权限重复请求）的修复
+
+- `CameraBridge`：`permissionRequestInFlight`（授权框显示中不再请求）、`permissionDenied`（拒绝后不再自动请求）；`WebViewActivity.onRequestPermissionsResult` 收到 3101 时调用 `cameraBridge.onPermissionResult(granted)`，并通过 `window.onAionCameraPermissionResult` 通知页面；不影响启动时逐项授权的流程。新增 `isPermissionDenied()`、`requestPermissionAgain()`（只在用户点按钮时调用）。
+- `camera.html`：start 失败且 `isPermissionDenied()` 时不再安排自动重试，显示「重新允许相机」按钮和去设置的说明；授权成功回调后自动打开预览。
+- 测试 `test_camera_permission_retry.py`：Node 跑页面真实脚本，假相机一直拒绝：跑完所有排队的重试后 start 只调用 1 次、按钮出现、用户点击才再问 1 次、授权后自动启动。
