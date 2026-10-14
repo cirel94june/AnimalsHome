@@ -1061,3 +1061,36 @@ input[type="range"] {
     padding: 11px;
   }
 }
+
+/* 立绘模式：一张立绘 + 按神态的小动画 */
+.date-portrait {
+  position: absolute;
+  bottom: 0;
+  width: min(86vw, 480px);
+  max-height: min(78dvh, 820px);
+  object-fit: contain;
+  /* 四边淡出，让立绘融进房间里，不像贴上去的照片 */
+  -webkit-mask-image: radial-gradient(ellipse closest-side at 50% 50%, #000 62%, transparent 100%);
+  mask-image: radial-gradient(ellipse closest-side at 50% 50%, #000 62%, transparent 100%);
+  transform-origin: 50% 100%;
+  animation: datePortraitIn 620ms ease both, datePortraitBreathe 5.5s ease-in-out 620ms infinite;
+}
+.date-portrait[hidden] { display: none; }
+.date-portrait[data-mood="高兴"], .date-portrait[data-mood="得意"] { animation: datePortraitHop 680ms ease both, datePortraitBreathe 5.5s ease-in-out 680ms infinite; }
+.date-portrait[data-mood="害羞"], .date-portrait[data-mood="撒娇"] { animation: datePortraitTilt 900ms ease both; transform: rotate(-2deg); filter: drop-shadow(0 20px 32px rgba(0,0,0,.42)) saturate(1.08) brightness(1.04); }
+.date-portrait[data-mood="过来"] { animation: datePortraitNear 900ms ease both; transform: scale(1.06); }
+.date-portrait[data-mood="使坏"], .date-portrait[data-mood="审视"], .date-portrait[data-mood="怀疑"] { animation: datePortraitLean 900ms ease both; transform: translateX(-10px) rotate(-1.2deg); }
+.date-portrait[data-mood="惊讶"] { animation: datePortraitPop 520ms ease both; }
+.date-portrait[data-mood="尴尬"], .date-portrait[data-mood="无奈"] { animation: datePortraitSag 900ms ease both; transform: translateY(6px); filter: drop-shadow(0 20px 32px rgba(0,0,0,.42)) saturate(.9); }
+.date-portrait[data-mood="生气"] { animation: datePortraitShake 520ms ease both; filter: drop-shadow(0 20px 32px rgba(0,0,0,.42)) contrast(1.06) saturate(1.1); }
+.date-portrait[data-mood="严肃"] { animation: datePortraitIn 620ms ease both; filter: drop-shadow(0 20px 32px rgba(0,0,0,.42)) saturate(.85) contrast(1.05); }
+@keyframes datePortraitIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes datePortraitBreathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.012); } }
+@keyframes datePortraitHop { 0% { transform: translateY(0); } 35% { transform: translateY(-14px); } 65% { transform: translateY(2px); } 100% { transform: translateY(0); } }
+@keyframes datePortraitTilt { from { transform: rotate(0); } to { transform: rotate(-2deg); } }
+@keyframes datePortraitNear { from { transform: scale(1); } to { transform: scale(1.06); } }
+@keyframes datePortraitLean { from { transform: none; } to { transform: translateX(-10px) rotate(-1.2deg); } }
+@keyframes datePortraitPop { 0% { transform: scale(1); } 40% { transform: scale(1.05); } 100% { transform: scale(1); } }
+@keyframes datePortraitSag { from { transform: none; } to { transform: translateY(6px); } }
+@keyframes datePortraitShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(3px); } }
+@media (prefers-reduced-motion: reduce) { .date-portrait { animation: none !important; } }

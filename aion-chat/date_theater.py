@@ -9,6 +9,19 @@ from config import DATA_DIR, DEFAULT_MODEL, PUBLIC_DIR, load_worldbook
 DATE_ASSET_DIR_NAME = "去约会小剧场素材"
 DATE_ASSET_DIR = PUBLIC_DIR / DATE_ASSET_DIR_NAME
 DATE_ASSET_PUBLIC_PREFIX = f"/public/{DATE_ASSET_DIR_NAME}"
+# 自己的立绘（服务器 data/date_portraits/，私人图片不进仓库）。有立绘时用它代替原作者角色的表情视频
+DATE_PORTRAIT_DIR = DATA_DIR / "date_portraits"
+PORTRAIT_URL = "/api/date-theater/portrait"
+# 立绘模式下可选的神态（页面按神态做不同的小动画）
+PORTRAIT_STATES = ["平静", "高兴", "得意", "害羞", "撒娇", "过来", "使坏", "审视", "怀疑", "惊讶", "尴尬", "无奈", "生气", "严肃"]
+
+
+def portrait_path() -> Path | None:
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        path = DATE_PORTRAIT_DIR / f"default{ext}"
+        if path.is_file():
+            return path
+    return None
 DATE_CONFIG_PATH = DATA_DIR / "date_theater_config.json"
 DATE_THEATER_TTS_CACHE_DIR = DATA_DIR / "date_theater_tts_cache"
 DATE_THEATER_TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -162,8 +175,14 @@ def scan_date_assets(root: Path | str | None = None, public_prefix: str | None =
             })
 
     states: list[dict] = []
+    portrait = portrait_path() if root == DATE_ASSET_DIR else None
+    if portrait is not None:
+        version = int(portrait.stat().st_mtime)
+        for name in PORTRAIT_STATES:
+            states.append({"id": name, "name": name, "url": f"{PORTRAIT_URL}?v={version}",
+                           "mime": "image", "kind": "portrait", "loop": True})
     transparent_dir = root / "透明视频"
-    if transparent_dir.exists():
+    if portrait is None and transparent_dir.exists():
         for path in transparent_dir.glob("*.webm"):
             states.append({
                 "id": path.stem,
@@ -173,7 +192,7 @@ def scan_date_assets(root: Path | str | None = None, public_prefix: str | None =
                 "kind": "transparent",
                 "loop": True,
             })
-    if root.exists():
+    if portrait is None and root.exists():
         for path in root.glob("*.mp4"):
             states.append({
                 "id": path.stem,

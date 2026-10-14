@@ -779,3 +779,18 @@ class DateTheaterDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_portrait_replaces_the_original_expression_videos(tmp_path, monkeypatch):
+    """服务器上放了自己的立绘时，用它代替原作者角色的表情视频；没放时照旧。"""
+    import date_theater as dt
+    monkeypatch.setattr(dt, "DATE_PORTRAIT_DIR", tmp_path / "portraits")
+    before = dt.scan_date_assets()
+    assert all(s["kind"] != "portrait" for s in before["states"])
+    (tmp_path / "portraits").mkdir()
+    (tmp_path / "portraits" / "default.jpg").write_bytes(b"jpg")
+    after = dt.scan_date_assets()
+    assert after["states"] and all(s["kind"] == "portrait" for s in after["states"])
+    assert {s["id"] for s in after["states"]} == set(dt.PORTRAIT_STATES)
+    assert after["default_state"] == "平静"
+    assert after["backgrounds"] == before["backgrounds"]  # 房间背景照旧

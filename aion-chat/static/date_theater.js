@@ -191,9 +191,32 @@
     requestAnimationFrame(step);
   }
 
+  // 立绘模式：同一张立绘，神态用小动画表现（不放原作者角色的表情视频）
+  function showPortrait(item) {
+    const img = $("datePortrait");
+    [$("dateActorA"), $("dateActorB")].forEach((video) => {
+      video.pause();
+      video.removeAttribute("src");
+      video.classList.remove("active");
+    });
+    if (img.getAttribute("src") !== item.url) img.src = item.url;
+    img.hidden = false;
+    img.dataset.mood = "";
+    void img.offsetWidth;  // 重新触发动画
+    img.dataset.mood = item.id;
+    updateStageTitle();
+    renderActionPicker();
+  }
+
   async function switchState(id, instant = false) {
     const item = findStageState(id);
+    if (!item) return;
     state.currentState = item.id;
+    if (item.kind === "portrait") {
+      showPortrait(item);
+      return;
+    }
+    $("datePortrait").hidden = true;
     const videos = [$("dateActorA"), $("dateActorB")];
     const next = videos[state.actorLayer ? 0 : 1];
     const prev = videos[state.actorLayer ? 1 : 0];

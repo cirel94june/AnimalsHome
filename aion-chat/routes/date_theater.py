@@ -253,6 +253,18 @@ async def update_config(body: DateConfigUpdate):
     return {"config": cfg, "models": _model_rows(), "chatroom_model": load_chatroom_config().get("aion_model") or ""}
 
 
+@router.get("/portrait")
+async def date_portrait():
+    """约会里显示的立绘（服务器 data/date_portraits/default.*）。"""
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+    from date_theater import portrait_path
+    path = portrait_path()
+    if path is None:
+        raise HTTPException(404, "还没有立绘")
+    return FileResponse(path, headers={"Cache-Control": "private, max-age=86400"})
+
+
 @router.get("/assets")
 async def get_assets():
     return scan_date_assets()
