@@ -155,3 +155,12 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - **M1 补齐**：`_stream_ai` 不再用内部转发生成器；直接拿到 provider 的流（`_provider_stream()`），用 `aclosing` 包住消费，外层 `_stream_ai_counted` 也用 `aclosing`。真实链测试（httpx MockTransport + 可追踪关闭的流式正文）：提前 aclose 的顺序为 HTTP closed → recorded → returned；重复 aclose 不再记账；任务取消同样先关 HTTP。该测试在修复前的代码上失败（recorded 先于 HTTP closed）、修复后通过。
 - **可选建议已做**：只提交 `model`（不带后台字段）的调用方式，对不上的旧后台线路同样自动清空并返回提醒；只改签名等不动模型时保留后台线路。
 - **补一处我之前漏掉的回归**：924c84c 给自定义中转站请求加了 `stream_options` 后，`test_relay_provider_errors` 里断言完整请求体的测试会失败，当时的前后对比没有发现。已把测试更新为预期请求体。另核对：`test_english_corner`、`test_deprecated_cli_models`、`test_model_transport_mode` 的失败在 a270bb7 之前的代码上同样失败，属于原有问题。
+
+## 14. b405ea0：点歌台搜网易云、名片里直接用中转站
+
+- **点歌台**：`GET /api/music-station/netease/search`（pyncm 搜索放线程里跑，20 秒超时，标出已在曲库的）、`POST /api/music-station/netease {id, playlist_id}`（以服务器重新查到的歌曲信息为准，按「小猫点的歌」记入曲库，可放进歌单；歌单不存在时只入曲库）。前端只用 textContent 渲染搜索结果。
+- **名片里的中转站**（`routes/settings.py`）：
+  - `POST /api/custom-routes/{route_id}/models`：用服务器上已存的地址和 Key 调 `relay_models.fetch`（沿用第 10 节的公网限制、总时限、不解压），响应不含 Key；
+  - `POST /api/custom-routes/{route_id}/add-model`：只限设置页的中转站（不能往别的 AI 的专属线路里加），模型名校验长度与控制字符；已有则直接返回；显示名撞了加中转站名前缀；
+  - `POST /api/custom-routes`：新建中转站（地址检查同 `relay_models.models_url`，不能带账号密码），写进 `custom_model_routes`。
+  - 请重点看：这些写设置的接口与设置页整份保存 `custom_model_routes` 之间的覆盖关系（设置页开着旧页面再保存会覆盖名片里刚加的模型——这是原有的整份保存模式），以及 Key 是否在任何响应里出现。
