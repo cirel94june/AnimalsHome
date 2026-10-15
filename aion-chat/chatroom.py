@@ -1125,7 +1125,7 @@ async def build_aion_group_context(
 
     # 3. 构建 recent_messages 用于本地前置路由
     # 群聊窗口共享历史，合并所有群聊与该角色私聊后按配置取最新条数。
-    merged = await fetch_merged_timeline("aion", context_limit)
+    merged = await fetch_merged_timeline("aion", context_limit, stable_window=True)
 
     recent_for_digest = []
     for msg in merged[-6:]:
@@ -1222,7 +1222,7 @@ async def build_connor_group_context(
 
     # 2. 构建 recent_messages 用于本地前置路由
     # 群聊窗口共享历史，合并所有群聊与该角色私聊后按配置取最新条数。
-    merged = await fetch_merged_timeline("connor", context_limit)
+    merged = await fetch_merged_timeline("connor", context_limit, stable_window=True)
 
     recent_for_digest = []
     for msg in merged[-6:]:
@@ -1316,7 +1316,7 @@ async def build_connor_1v1_context(
     ability_block = await build_ability_block(user_name, who="connor", whisper_mode=whisper_mode)
     if ability_block:
         messages.append({"role": "user", "content": ability_block})
-    merged = await fetch_merged_timeline("connor", context_limit)
+    merged = await fetch_merged_timeline("connor", context_limit, stable_window=True)
     if ability_block:
         messages.append({"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
 

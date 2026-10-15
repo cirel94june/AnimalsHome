@@ -802,6 +802,31 @@ async def _load_model_visible_merged_timeline(
     return results
 
 
+# 聊天记录分批丢：每段对话记住这次从哪条开始，新消息往后加，攒到「上限 + 一批」才一次删回上限。
+# 开头那条不变，「人设 + 聊天记录」才是每轮相同的开头、能走缓存。只在进程内记，重启后重新起头。
+CACHE_WINDOW_STEP = 10
+_WINDOW_STARTS: dict[tuple, tuple] = {}
+
+
+def _message_key(message: dict) -> tuple:
+    return (message.get("source"), message.get("id"), message.get("created_at"))
+
+
+def _stable_window(results: list[dict], limit: int, key: tuple) -> list[dict]:
+    """results 是最近 limit+批量 条（时间升序）。上次的起点还在里面就从它开始，否则删回最近 limit 条、换新起点。"""
+    start = _WINDOW_STARTS.get(key)
+    keys = [_message_key(m) for m in results]
+    if start in keys:
+        window = results[keys.index(start):]
+    else:
+        window = results[-limit:]
+    if window:
+        _WINDOW_STARTS[key] = _message_key(window[0])
+        if len(_WINDOW_STARTS) > 200:  # 只留最近用过的
+            _WINDOW_STARTS.pop(next(iter(_WINDOW_STARTS)))
+    return window
+
+
 @timed("timeline")
 async def fetch_merged_timeline(
     who: str,
@@ -811,29 +836,34 @@ async def fetch_merged_timeline(
     room_id: str = None,
     since_ts: float = None,
     until_ts: float = None,
+    stable_window: bool = False,
 ) -> list[dict]:
     """
     从私聊和群聊同时获取最近的模型可见消息，按时间升序返回。
 
     System-message eligibility is applied before the global latest-N limit,
     and since/until bounds describe one stable learning-day snapshot.
+    stable_window=True（聊天回复用）：条数在 limit 到 limit+CACHE_WINDOW_STEP 之间，开头尽量保持不变。
     """
     normalized_limit = max(0, int(limit))
     if normalized_limit == 0:
         return []
+    fetch_limit = normalized_limit + (CACHE_WINDOW_STEP if stable_window else 0)
     results = await _load_model_visible_merged_timeline(
         who,
         conv_id=conv_id,
         room_id=room_id,
         since_ts=since_ts,
         until_ts=until_ts,
-        limit=normalized_limit,
+        limit=fetch_limit,
     )
     results = (
-        results[-normalized_limit:]
-        if len(results) > normalized_limit
+        results[-fetch_limit:]
+        if len(results) > fetch_limit
         else results
     )
+    if stable_window:
+        results = _stable_window(results, normalized_limit, (who, conv_id, room_id, normalized_limit))
     cards = [(message, trip_card(_parse_timeline_attachments(message.get("attachments", []))))
              for message in results if message.get("sender") == "system"]
     trip_ids = {card["trip_id"] for _, card in cards if card and card.get("trip_id")}

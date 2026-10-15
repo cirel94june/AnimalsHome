@@ -126,7 +126,7 @@ def test_live_state_inside_the_ability_block_is_left_out_of_the_cache():
 
     a, idx = ai_providers._cache_breakpoint(build("电脑：3 秒前有键鼠输入"))
     b, _ = ai_providers._cache_breakpoint(build("电脑：40 秒前有键鼠输入"))
-    assert idx == 2
+    assert idx == [2]
     assert _cached_prefix(a) == _cached_prefix(b)
     assert "点歌" in _cached_prefix(a) and LIVE not in _cached_prefix(a)
     # 切开后文字一字不差
@@ -137,7 +137,7 @@ def test_separate_device_message_ends_the_cached_part():
     msgs = STABLE + [{"role": "user", "content": "【设备当前状态】\n电脑：刚刚有键鼠输入"},
                      {"role": "assistant", "content": "收到，我会结合当前设备状态判断。"}] + DYNAMIC
     marked, idx = ai_providers._cache_breakpoint(msgs)
-    assert idx == 3
+    assert idx == [3]
     assert "设备" not in _cached_prefix(marked)
 
 
@@ -194,3 +194,112 @@ def test_type_error_on_another_message_is_not_blamed_on_the_marker(monkeypatch):
     assert "valid string" in out
     assert sent == [True]
     assert not ai_providers._NO_CACHE_MARKER
+
+
+def _chat_turn(history_lines, device, now, memory):
+    """仿照私聊的组装顺序：人设 → 能力（含实时状态）→ 时间+背景记忆 → 相关记忆 → 聊天记录（最后一条是这句）。"""
+    msgs = [
+        {"role": "user", "content": "[系统设定 - 小克人设]\n你是小克"},
+        {"role": "assistant", "content": "收到"},
+        {"role": "user", "content": f"[系统能力]\n点歌……\n\n{LIVE}\n【设备当前状态】\n{device}"},
+        {"role": "assistant", "content": "好的，需要时我会使用这些指令。"},
+        {"role": "user", "content": f"系统当前的准确时间是 {now}"},
+        {"role": "assistant", "content": "收到，我会在合适的时候自然提及。"},
+        {"role": "user", "content": f"[相关记忆]\n{memory}"},
+        {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"},
+        {"role": "user", "content": "[历史记录说明]\n以下消息按时间线排列"},
+    ]
+    msgs += [{"role": "user", "content": f"历史消息 - {line}"} for line in history_lines[:-1]]
+    msgs.append({"role": "user", "content": f"当前用户消息 - {history_lines[-1]}"})
+    return msgs
+
+
+def _full_text(messages):
+    return "".join(p["text"] if isinstance(m["content"], list) else m["content"]
+                   for m in messages for p in (m["content"] if isinstance(m["content"], list) else [None]))
+
+
+def test_history_moves_ahead_of_the_changing_background():
+    msgs = _chat_turn(["小猫：在吗", "小克：在", "小猫：吃饭没"], "电脑：3 秒前", "10:00", "她爱吃辣")
+    ordered = ai_providers._cache_friendly_order(msgs)
+    texts = [ai_providers._message_text(m) for m in ordered]
+    assert texts[-1].startswith("当前用户消息")
+    h = next(i for i, t in enumerate(texts) if t.startswith("[历史记录说明]"))
+    assert all(not t.startswith(("系统当前", "[相关记忆]", LIVE)) for t in texts[:h])
+    assert texts[h + 1].startswith("历史消息 - 小猫：在吗") and texts[h + 2].startswith("历史消息 - 小克：在")
+    assert texts[h + 3].startswith(LIVE) and "3 秒前" in texts[h + 3]
+    assert any(t.startswith("系统当前") for t in texts[h:]) and any(t.startswith("[相关记忆]") for t in texts[h:])
+    assert "点歌" in texts[2] and LIVE not in texts[2]
+    assert sorted("".join(_full_text(msgs).split())) == sorted("".join(_full_text(ordered).split()))  # 只挪位置，字一个不少
+    assert msgs[2]["content"].endswith("3 秒前")  # 不改原列表
+
+
+def test_next_turn_reuses_the_whole_cached_opening():
+    turn1 = ai_providers._cache_friendly_order(
+        _chat_turn(["小猫：在吗", "小克：在", "小猫：吃饭没"], "电脑：3 秒前", "10:00", "她爱吃辣"))
+    turn2 = ai_providers._cache_friendly_order(
+        _chat_turn(["小猫：在吗", "小克：在", "小猫：吃饭没", "小克：还没", "小猫：去吃"], "电脑：50 秒前", "10:01", "楼下有面馆"))
+    m1, idx1 = ai_providers._cache_breakpoint(turn1)
+    m2, idx2 = ai_providers._cache_breakpoint(turn2)
+    assert len(idx1) == 2 and len(idx2) == 2
+    cached1 = _cached_prefix_through(m1, idx1[-1])
+    assert cached1.endswith("小克：在")
+    # 上一轮缓存的整段（人设到聊天记录），正好是这一轮的开头
+    assert _full_text(m2).startswith(cached1)
+    # 第一个标记在聊天记录前：记录被分批删掉时，人设和能力说明仍能命中
+    assert _cached_prefix_through(m1, idx1[0]).endswith("好的，需要时我会使用这些指令。")
+
+
+def _cached_prefix_through(messages, index):
+    return _full_text(messages[:index + 1])
+
+
+def test_requests_without_history_or_ending_with_ai_are_left_alone():
+    plain = STABLE + DYNAMIC
+    assert ai_providers._cache_friendly_order(plain) is plain
+    msgs = _chat_turn(["小猫：在吗", "小克：在"], "电脑", "10:00", "x") + [{"role": "assistant", "content": "嗯"}]
+    assert ai_providers._cache_friendly_order(msgs) is msgs
+
+
+def test_relay_receives_history_before_the_background(monkeypatch):
+    seen = []
+
+    def handle(request):
+        seen.append(json.loads(request.content)["messages"])
+        return _ok()
+    ai_providers._NO_CACHE_MARKER.clear()
+    ai_providers._NO_STREAM_USAGE.clear()
+    msgs = _chat_turn(["小猫：在吗", "小克：在", "小猫：吃饭没"], "电脑：3 秒前", "10:00", "她爱吃辣")
+    monkeypatch.setattr(ai_providers.httpx, "AsyncClient",
+                        lambda **kw: REAL_CLIENT(transport=httpx.MockTransport(handle), **kw))
+
+    async def go(cfg):
+        return [c async for c in ai_providers.call_custom_openai(msgs, cfg, {})]
+    asyncio.run(go({"model": "claude-x", "base_url": "https://order.example/v1"}))
+    asyncio.run(go({"model": "claude-x", "base_url": "https://order.example/v1", "cache_marker": False}))
+    texts = [ai_providers._message_text(m) for m in seen[0]]
+    assert texts.index(next(t for t in texts if t.startswith("系统当前"))) > texts.index(
+        next(t for t in texts if t.startswith("历史消息 - 小克：在")))
+    # 线路关了缓存：顺序原样
+    assert [ai_providers._message_text(m) for m in seen[1]] == [m["content"] for m in msgs]
+
+
+def test_history_window_is_trimmed_in_batches():
+    import context_builder
+    step = context_builder.CACHE_WINDOW_STEP
+    limit = 3
+    key = ("aion", "conv-test", None, limit)
+    context_builder._WINDOW_STARTS.pop(key, None)
+    all_msgs = [{"source": "private", "id": f"m{i}", "created_at": i} for i in range(200)]
+
+    def window(upto):
+        recent = all_msgs[max(0, upto - (limit + step)):upto]
+        return [m["id"] for m in context_builder._stable_window(recent, limit, key)]
+
+    first = window(20)
+    assert first == ["m17", "m18", "m19"]
+    starts = [window(n)[0] for n in range(21, 20 + step + 1)]
+    assert set(starts) == {"m17"}  # 一批之内开头不变
+    assert len(window(20 + step)) == limit + step
+    trimmed = window(21 + step)
+    assert len(trimmed) == limit and trimmed[-1] == f"m{20 + step}"  # 满了一次删回上限

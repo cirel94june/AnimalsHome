@@ -201,3 +201,60 @@ def summary(days: int) -> dict:
     by_day = {d["name"]: d for d in group(0)}
     return {"days": days, "since": since, "total": total, "by_kind": group(1), "by_model": group(2),
             "by_day": [by_day[k] for k in sorted(by_day)]}
+
+
+# ── 价格与每日花费提醒 ──────────────────────────────
+# 价格存在服务器上（以前只存在手机浏览器里），这样首页也能算出「今天大约花了多少」。
+PRICES_FILE = DATA_DIR / "usage_prices.json"
+PRICE_FIELDS = ("call", "inp", "out", "cache", "daily_limit")
+
+
+def _price(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def load_prices() -> dict:
+    """{call: 每次几元, inp/out/cache: 每百万几元, daily_limit: 每天提醒线（元）}；没填的是 None。"""
+    try:
+        import json
+        raw = json.loads(PRICES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    return {key: _price(raw.get(key)) for key in PRICE_FIELDS}
+
+
+def save_prices(data: dict) -> dict:
+    import json
+    prices = {key: _price((data or {}).get(key)) for key in PRICE_FIELDS}
+    tmp = PRICES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(prices, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(PRICES_FILE)
+    return prices
+
+
+def estimate_cost(total: dict, prices: dict) -> float | None:
+    """按填好的价格粗算花费（元）。按量的读入、写出都填了就按量算，否则只填了按次就按次算；都没填返回 None。"""
+    inp, out, call = prices.get("inp"), prices.get("out"), prices.get("call")
+    if inp is not None and out is not None:
+        cache = prices.get("cache")
+        cache = inp if cache is None else cache
+        cache_read = min(total.get("cache_read", 0), total.get("prompt", 0))
+        plain = total.get("prompt", 0) - cache_read
+        return (plain * inp + cache_read * cache + total.get("completion", 0) * out) / 1e6
+    if call is not None:
+        return total.get("requests", 0) * call
+    return None
+
+
+def today_spend() -> dict:
+    """今天大约花了多少、提醒线是多少、超没超。"""
+    prices = load_prices()
+    cost = estimate_cost(summary(1)["total"], prices)
+    limit = prices.get("daily_limit")
+    return {"cost": None if cost is None else round(cost, 4), "limit": limit,
+            "over": cost is not None and limit is not None and limit > 0 and cost >= limit}

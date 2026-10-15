@@ -1,6 +1,6 @@
-"""用量小本本：页面 + 数据接口（只读）。"""
+"""用量小本本：页面 + 数据接口；价格和每日提醒线可以改。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Body
 from fastapi.responses import FileResponse
 
 import usage_log
@@ -29,3 +29,19 @@ async def usage_data(days: int = 1):
     for row in data["by_model"]:
         row["users"] = users.get(row["name"], [])
     return data
+
+
+@router.get("/api/usage/prices")
+async def usage_prices():
+    return usage_log.load_prices()
+
+
+@router.put("/api/usage/prices")
+async def save_usage_prices(data: dict = Body(...)):
+    return usage_log.save_prices(data)
+
+
+@router.get("/api/usage/today")
+async def usage_today():
+    """首页提醒用：今天大约花了多少、超没超自己设的线。"""
+    return usage_log.today_spend()

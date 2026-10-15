@@ -665,11 +665,69 @@ def _live_state_at(text: str) -> int:
     return min(found) if found else -1
 
 
-def _cache_breakpoint(messages: list) -> tuple[list, int]:
+# 每轮都会变的背景消息（时间+背景记忆、设备状态、相关记忆）
+_MOVABLE_PREFIXES = _DYNAMIC_START_MARKERS + ("【设备当前状态】", "[相关记忆]")
+# render_merged_timeline 生成的聊天记录从这一条开始
+_HISTORY_HEADER = "[历史记录说明]"
+
+
+def _cache_friendly_order(messages: list) -> list:
+    """把每轮都会变的背景挪到聊天记录之后、最新一句之前：
+    人设 / 规则 / 能力说明 / 聊天记录 → 实时状态 / 时间 / 记忆 → 最新一句。
+    这样「人设到聊天记录」是每轮相同的开头，可以整体走缓存。
+    只处理有聊天记录、最后一条是用户消息的请求，其余原样返回；不修改原列表。"""
+    if len(messages) < 3 or messages[-1].get("role") != "user":
+        return messages
+    header = next((i for i, m in enumerate(messages) if _message_text(m).startswith(_HISTORY_HEADER)), -1)
+    if header < 0:
+        return messages
+    kept, moved = [], []
+    i = 0
+    while i < header:
+        m = messages[i]
+        text = _message_text(m)
+        cut = text.find(LIVE_STATE_HEADING) if isinstance(m.get("content"), str) else -1
+        if m.get("role") == "user" and text.lstrip().startswith(_MOVABLE_PREFIXES):
+            moved.append(m)
+            if i + 1 < header and messages[i + 1].get("role") == "assistant":
+                moved.append(messages[i + 1])
+                i += 1
+        elif m.get("role") == "user" and cut > 0 and text[:cut].strip():
+            kept.append({**m, "content": text[:cut].rstrip()})
+            moved.append({"role": "user", "content": text[cut:]})
+        else:
+            kept.append(m)
+        i += 1
+    if not moved:
+        return messages
+    return kept + list(messages[header:-1]) + moved + [messages[-1]]
+
+
+def _mark_cacheable(message: dict) -> dict | None:
+    """给一条消息的最后一个文字片段加 cache_control；加不了返回 None。"""
+    target = dict(message)
+    content = target.get("content")
+    if isinstance(content, str):
+        if not content.strip():
+            return None
+        target["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        return target
+    if isinstance(content, list) and content:
+        parts = [dict(p) if isinstance(p, dict) else p for p in content]
+        for i in range(len(parts) - 1, -1, -1):
+            if isinstance(parts[i], dict) and parts[i].get("type") == "text":
+                parts[i]["cache_control"] = {"type": "ephemeral"}
+                target["content"] = parts
+                return target
+    return None
+
+
+def _cache_breakpoint(messages: list) -> tuple[list, list[int]]:
     """在「不变的部分」末尾加 cache_control（Anthropic 的缓存标记，OpenAI 兼容格式里放在内容片段上），
-    返回 (新列表, 被改成片段数组的那条消息下标)。
+    返回 (新列表, 被改成片段数组的消息下标)。
     不变的部分到第一条「当前时间」消息为止；若更早的消息里出现实时状态小标题，就在小标题处把那条消息切成两段，
-    标记打在前一段。找不到分界（比如没有时间块的简单请求）就原样返回，不加，下标为 -1。"""
+    标记打在前一段。聊天记录在这段里面时，再在聊天记录前（人设 / 规则 / 能力说明末尾）加一个标记，
+    聊天记录变了也还能命中前面那段。找不到分界（比如没有时间块的简单请求）就原样返回，不加。"""
     boundary = -1
     for i, m in enumerate(messages):
         text = _message_text(m)
@@ -684,31 +742,24 @@ def _cache_breakpoint(messages: list) -> tuple[list, int]:
                     {"type": "text", "text": text[:cut], "cache_control": {"type": "ephemeral"}},
                     {"type": "text", "text": text[cut:]},
                 ]}
-                return marked, i
+                return marked, [i]
             boundary = i
             break
     if boundary <= 0:
-        return messages, -1
+        return messages, []
+    target = _mark_cacheable(messages[boundary - 1])
+    if target is None:
+        return messages, []
     marked = list(messages)
-    target = dict(marked[boundary - 1])
-    content = target.get("content")
-    if isinstance(content, str):
-        if not content.strip():
-            return messages, -1
-        target["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
-    elif isinstance(content, list) and content:
-        parts = [dict(p) if isinstance(p, dict) else p for p in content]
-        for i in range(len(parts) - 1, -1, -1):
-            if isinstance(parts[i], dict) and parts[i].get("type") == "text":
-                parts[i]["cache_control"] = {"type": "ephemeral"}
-                break
-        else:
-            return messages, -1
-        target["content"] = parts
-    else:
-        return messages, -1
     marked[boundary - 1] = target
-    return marked, boundary - 1
+    indices = [boundary - 1]
+    header = next((i for i, m in enumerate(messages[:boundary]) if _message_text(m).startswith(_HISTORY_HEADER)), -1)
+    if 0 < header < boundary - 1:
+        stable_end = _mark_cacheable(messages[header - 1])
+        if stable_end is not None:
+            marked[header - 1] = stable_end
+            indices.insert(0, header - 1)
+    return marked, indices
 
 
 def _with_cache_breakpoint(messages: list) -> list:
@@ -723,12 +774,11 @@ def _mentions_cache_control(body: bytes) -> bool:
 _STRING_TYPE_ERROR = r".{0,120}?(valid string|must be (a |of type )?string|expected (a )?string|str type)"
 
 
-def _rejects_list_content(body: bytes, index: int) -> bool:
+def _rejects_list_content(body: bytes, indices: list[int]) -> bool:
     """只收字符串 content 的兼容中转站，报的是「messages.<被改成数组的那条>.content 应该是字符串」。"""
-    if index < 0:
-        return False
     text = (body or b"")[:4000].decode("utf-8", "replace")
-    return re.search(rf"messages\W{{1,6}}{index}\W{{1,6}}content" + _STRING_TYPE_ERROR, text, re.I | re.S) is not None
+    return any(re.search(rf"messages\W{{1,6}}{index}\W{{1,6}}content" + _STRING_TYPE_ERROR, text, re.I | re.S)
+               for index in indices if index >= 0)
 
 
 def _mentions_stream_options(body: bytes) -> bool:
@@ -761,8 +811,9 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
         payload["reasoning_effort"] = cfg.get("reasoning_effort", "high")
     reasoning_status_sent = False
     content_started = False
-    plain_messages = payload["messages"]
     want_cache_marker = cfg.get("cache_marker", True) is not False
+    # 线路开着缓存时，把会变的背景挪到聊天记录之后（中转站不认标记、退回纯文本时也保持这个顺序，对自动缓存同样有利）
+    plain_messages = _cache_friendly_order(payload["messages"]) if want_cache_marker else payload["messages"]
     try:
         for _attempt in range(3):
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
@@ -772,7 +823,7 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
             else:
                 payload.pop("stream_options", None)
             mark_cache = want_cache_marker and url not in _NO_CACHE_MARKER
-            payload["messages"], marked_index = _cache_breakpoint(plain_messages) if mark_cache else (plain_messages, -1)
+            payload["messages"], marked_index = _cache_breakpoint(plain_messages) if mark_cache else (plain_messages, [])
             async with httpx.AsyncClient(timeout=request_timeout) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     own_stream(resp)

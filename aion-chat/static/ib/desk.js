@@ -31,6 +31,7 @@
   var people = { user: { name: '你', avatar: '/public/UserIcon.png' }, actors: [] };
   var notes = null;
   var schedules = null;
+  var spend = null;  // 今天的模型花费：超过「用量」页设的提醒线时首页显示一行
   var root = null;
 
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
@@ -249,6 +250,12 @@
     root.dataset.material = desk.material;
     var hero = el('div', 'wgt full ib-hero', heroHtml());
     root.appendChild(hero);
+    if (spend && spend.over) {
+      var warn = el('a', 'wgt full ib-spend', '今天模型大约花了 ¥' + esc(Number(spend.cost).toFixed(2)) +
+        '，超过你设的 ¥' + esc(spend.limit) + ' · 去看用量');
+      warn.href = '/usage';
+      root.appendChild(warn);
+    }
     var pendingHalf = null;  // 落单的半宽挂件拉成整行，不留空位
     desk.widgets.forEach(function (key) {
       var w = BUILD[key] && BUILD[key]();
@@ -463,6 +470,17 @@
       .catch(function () { notes = []; render(); });
   }
 
+  function loadSpend() {
+    fetch('/api/usage/today', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var was = !!(spend && spend.over);
+        spend = d;
+        if (was !== !!(d && d.over)) render();
+      })
+      .catch(function () {});
+  }
+
   function loadSchedules() {
     fetch('/api/schedules?status=active', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : []; })
@@ -511,8 +529,9 @@
       .then(function (data) { if (data) { people = data; render(); } })
       .catch(function () {});
     loadNotes();
-    setInterval(loadNotes, 60000);
-    document.addEventListener('visibilitychange', function () { if (!document.hidden) loadNotes(); });
+    loadSpend();
+    setInterval(function () { loadNotes(); loadSpend(); }, 60000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) { loadNotes(); loadSpend(); } });
     fetch('/api/skin', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) { if (s) { skin = s; desk = normalizeDesk(s.desk); render(); loadForWidgets(); } })

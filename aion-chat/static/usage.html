@@ -53,6 +53,7 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
       <div><b id="t-out">–</b><span>写出 token</span></div>
     </div>
     <div class="cache-line" id="t-cache"></div>
+    <div class="cache-line" id="t-spend"></div>
   </div>
   <h3 class="sec">按次还是按量更划算</h3>
   <div class="panel">
@@ -61,6 +62,7 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
       <label>按量：读入 元 / 百万<input type="number" min="0" step="0.01" inputmode="decimal" id="p-in" placeholder="例如 15"></label>
       <label>按量：写出 元 / 百万<input type="number" min="0" step="0.01" inputmode="decimal" id="p-out" placeholder="例如 75"></label>
       <label class="wide">按量：命中缓存的读入 元 / 百万（不填就按读入价算）<input type="number" min="0" step="0.01" inputmode="decimal" id="p-cache" placeholder="Claude 一般是读入价的十分之一"></label>
+      <label class="wide">每天花到多少提醒我（元，不填就不提醒）<input type="number" min="0" step="0.5" inputmode="decimal" id="p-limit" placeholder="例如 5"></label>
     </div>
     <div id="cmp"></div>
   </div>
@@ -70,7 +72,7 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
   <div class="panel" id="models"></div>
   <h3 class="sec" id="days-title" style="display:none">每天</h3>
   <div class="panel" id="days" style="display:none"></div>
-  <p class="note">价格只存在这台手机上，换个中转站就改一下数字。「后台」是聊天以外的全部（自主活动、做梦、交接卡、旅行、哨兵等）。
+  <p class="note">价格存在服务器上，手机和电脑看到的一样；换个中转站就改一下数字。超过每天的提醒线，首页会显示一行提醒。「后台」是聊天以外的全部（自主活动、做梦、交接卡、旅行、哨兵等）。
     这里只是粗算：写缓存的加价、各家的零头规则都没算进去。</p>
   <p class="note">「读入」是每次请求连带发给模型的内容（人设、记忆、最近的聊天），「写出」是模型回的话。
     按次计费看「次请求」，按量计费主要看读入和写出。
@@ -97,11 +99,30 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
         ' · 写 ' + fmt(r.completion) + est(r) + '</small></div></div>';
     }).join('');
   }
-  var last = null, PRICE_KEY = 'aion_usage_prices';
-  function readPrices() {
+  var last = null, PRICE_KEY = 'aion_usage_prices', saveTimer = null, pricesReady = false;
+  var FIELDS = { call: 'p-call', inp: 'p-in', out: 'p-out', cache: 'p-cache', daily_limit: 'p-limit' };
+  function readLocalPrices() {
     try { return JSON.parse(localStorage.getItem(PRICE_KEY) || '{}') || {}; } catch (e) { return {}; }
   }
-  function savePrices(v) { try { localStorage.setItem(PRICE_KEY, JSON.stringify(v)); } catch (e) {} }
+  function currentPrices() {
+    var v = {};
+    Object.keys(FIELDS).forEach(function (k) { var x = $(FIELDS[k]).value.trim(); v[k] = x === '' ? null : Number(x); });
+    return v;
+  }
+  function savePrices() {
+    if (!pricesReady) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      fetch('/api/usage/prices', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(currentPrices()) })
+        .then(function () { loadSpend(); }).catch(function () {});
+    }, 600);
+  }
+  function loadSpend() {
+    fetch('/api/usage/today', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.cost == null) { $('t-spend').textContent = ''; return; }
+      $('t-spend').textContent = '今天大约花了 ¥' + money(d.cost) + (d.limit ? '，提醒线 ¥' + d.limit + (d.over ? '（已超过）' : '') : '');
+    }).catch(function () {});
+  }
   function money(n) { return n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(3); }
   function sumRows(list) {
     return list.reduce(function (a, r) {
@@ -112,7 +133,6 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
   function compare() {
     if (!last) return;
     var p = { call: parseFloat($('p-call').value), inp: parseFloat($('p-in').value), out: parseFloat($('p-out').value), cache: parseFloat($('p-cache').value) };
-    savePrices({ call: $('p-call').value, inp: $('p-in').value, out: $('p-out').value, cache: $('p-cache').value });
     var hasCall = !isNaN(p.call), hasTok = !isNaN(p.inp) && !isNaN(p.out);
     if (!hasCall && !hasTok) { $('cmp').innerHTML = ''; return; }
     var cachePrice = isNaN(p.cache) ? p.inp : p.cache;
@@ -133,9 +153,19 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
       line('聊天', chat) + line('后台', bg) + line('合计', sumRows(last.by_kind)) + '</table>';
   }
   (function initPrices() {
-    var v = readPrices();
-    $('p-call').value = v.call || ''; $('p-in').value = v.inp || ''; $('p-out').value = v.out || ''; $('p-cache').value = v.cache || '';
-    ['p-call', 'p-in', 'p-out', 'p-cache'].forEach(function (id) { $(id).oninput = compare; });
+    Object.keys(FIELDS).forEach(function (k) { $(FIELDS[k]).oninput = function () { compare(); savePrices(); }; });
+    fetch('/api/usage/prices', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+      var empty = Object.keys(FIELDS).every(function (k) { return v[k] == null; });
+      var local = readLocalPrices();  // 以前存在手机里的价格：服务器还没有时搬过去一次
+      Object.keys(FIELDS).forEach(function (k) {
+        var x = v[k] != null ? v[k] : (empty && k !== 'daily_limit' ? local[k] : null);
+        $(FIELDS[k]).value = x == null ? '' : x;
+      });
+      pricesReady = true;
+      if (empty && Object.keys(local).some(function (k) { return local[k]; })) savePrices();
+      compare();
+      loadSpend();
+    }).catch(function () { pricesReady = false; });
   })();
   function load(days) {
     fetch('/api/usage?days=' + days, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {

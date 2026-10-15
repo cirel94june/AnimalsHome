@@ -223,3 +223,21 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - L1：置顶状态从 admin_hint 移出，组成 `pin_state_dynamic` 追加到动态段；admin_hint 原位置改为固定的一句「见最后『此刻的背景』里的置顶状态」。
 - L2：全局布尔改为 `_CACHE_MARKER_REJECTED_AT`（按中转站地址的集合），`_anthropic_system(..., api_base)` 只对被拒绝过的那一家发纯文本。
 - 测试 `tests/test_prompt_cache.py`（三仓相同）：拒绝发生在第 19 秒 → 重发读超时 ≤1 秒；第 21 秒 → 不重发、转备用；422 system 字符串错误 → 退回一次、只记主线路、备用仍带标记；无关 400 不重发；置顶 111/222 时缓存段相同。三仓全部测试通过（68 / 78 / 96）。
+
+## 23. 聊天记录也能走缓存（调整顺序 + 分批删）、每日花费提醒
+
+**调整顺序**（`ai_providers._cache_friendly_order`，只在线路 `cache_marker` 开着时、`call_custom_openai` 里用）
+- 条件：有 `[历史记录说明]`（render_merged_timeline 的开头）、最后一条是 user；否则原样返回。不修改原列表。
+- 只看聊天记录之前的消息：以「系统当前的准确时间是 / [当前时间] / 【设备当前状态】 / [相关记忆]」开头的 user 消息连同紧跟的 assistant 回执，挪到聊天记录之后、最后一句之前；能力块里 `LIVE_STATE_HEADING` 之后的部分切出来一起挪（前半段原位，去掉尾部空白）。其他消息（人设、规则、群聊说明）不动。
+- 结果：人设 / 规则 / 能力 → 聊天记录（除最后一句）→ 实时状态 / 时间 / 记忆 → 最后一句。线路关了缓存时顺序原样；中转站拒绝标记退回纯文本时保持新顺序（对 OpenAI 类自动前缀缓存同样有利）。
+- `_cache_breakpoint` 返回下标列表：主断点仍是第一条动态消息之前（现在即聊天记录末尾）；若聊天记录在缓存段内，再在 `[历史记录说明]` 前一条加第二个断点（记录分批删时人设和能力仍可命中）。共最多 2 个，Anthropic 上限 4。`_rejects_list_content` 改为接受下标列表。
+
+**分批删**（`context_builder.fetch_merged_timeline(..., stable_window=True)`）
+- 多取 `CACHE_WINDOW_STEP=10` 条；进程内 `_WINDOW_STARTS[(who, conv_id, room_id, limit)]` 记起点（source, id, created_at）。起点还在取到的范围内就从它开始（条数 limit～limit+10），不在就删回最近 limit 条、换新起点。最多记 200 个，超出删最早的。重启后重新起头。
+- 只在 routes/chat.py 三处（发送、重发、重新生成）和 chatroom.py 三处（小克群聊、Lucien 群聊 / 私聊）启用；其他调用（自主、监控、定位、日程等）不变。
+
+**每日花费提醒**
+- `usage_log`：价格存 `data/usage_prices.json`（call / inp / out / cache / daily_limit，非数字、负数、NaN 存 None，原子替换写入）；`estimate_cost` 按量优先、否则按次；`today_spend()` 返回 cost / limit / over。
+- 路由：`GET/PUT /api/usage/prices`、`GET /api/usage/today`（在现有访问控制之后，与其他设置接口相同）。
+- `usage.html`：价格从服务器读写（输入后 600ms 保存）；服务器还没有价格时把手机里旧的 localStorage 价格搬过去一次；新增「每天花到多少提醒我」和「今天大约花了」一行。`ib/desk.js`：每分钟和回到前台时读 `/api/usage/today`，超过时首页 hero 下面显示一行提醒（链到 /usage），数值经 esc。
+- 测试：`test_cache_marker.py` 新增 5 项（顺序、下一轮前缀完全复用、不该动的不动、发到中转站的顺序 / 关缓存时原样、分批删）；`test_usage_log.py` 新增 3 项。相关测试与改动前基线对比，无新增失败。

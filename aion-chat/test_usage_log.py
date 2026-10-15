@@ -220,3 +220,32 @@ def test_cancelling_the_task_also_closes_the_http_response(book, monkeypatch):
         order.append("returned")
     asyncio.run(run())
     assert order == ["http closed", "recorded", "returned"]
+
+
+def test_cost_uses_token_prices_and_cheaper_cache_reads():
+    total = {"requests": 10, "prompt": 1_000_000, "completion": 100_000, "cache_read": 800_000}
+    prices = {"inp": 20, "out": 100, "cache": 2, "call": 0.5}
+    # 20 万原价读入 ×20 + 80 万缓存 ×2 + 10 万写出 ×100（元/百万）
+    assert usage_log.estimate_cost(total, prices) == pytest.approx(4 + 1.6 + 10)
+    assert usage_log.estimate_cost(total, {"inp": 20, "out": 100}) == pytest.approx(20 + 10)  # 没填缓存价按读入价
+    assert usage_log.estimate_cost(total, {"call": 0.5}) == pytest.approx(5)
+    assert usage_log.estimate_cost(total, {}) is None
+
+
+def test_prices_live_on_the_server_and_bad_values_are_dropped(book, monkeypatch):
+    monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
+    assert usage_log.load_prices() == {k: None for k in usage_log.PRICE_FIELDS}
+    saved = usage_log.save_prices({"inp": "15", "out": 75, "cache": -1, "daily_limit": "abc", "call": float("nan"), "x": 1})
+    assert saved == {"call": None, "inp": 15.0, "out": 75.0, "cache": None, "daily_limit": None}
+    assert usage_log.load_prices() == saved
+
+
+def test_today_spend_flags_when_over_the_line(book, monkeypatch):
+    monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
+    usage_log.record("测试模型", "聊天", 2_000_000, 0, estimated=False)
+    usage_log.save_prices({"inp": 1, "out": 1, "daily_limit": 5})
+    assert usage_log.today_spend() == {"cost": 2.0, "limit": 5.0, "over": False}
+    usage_log.save_prices({"inp": 3, "out": 1, "daily_limit": 5})
+    assert usage_log.today_spend()["over"] is True
+    usage_log.save_prices({"inp": 3, "out": 1})
+    assert usage_log.today_spend()["over"] is False  # 没设提醒线就不提醒

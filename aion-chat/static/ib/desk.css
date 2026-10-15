@@ -328,3 +328,6 @@ html[data-skin="ib"] .dock { padding: 12px 24px; margin-bottom: calc(18px + env(
 #ib-desk::-webkit-scrollbar { display: none; }
 /* 图标区至少放得下两整排（82px 一排、行距 14px、上下留白 24px） */
 html[data-skin="ib"] .app-pages { flex-shrink: 0; min-height: calc(2 * 82px + 14px + 24px); }
+
+/* 今天花费超过提醒线 */
+.ib-spend { display: block; padding: 10px 14px; font-size: 13px; line-height: 1.5; color: #b45309; background: rgba(255, 243, 224, 0.9); text-decoration: none; }
