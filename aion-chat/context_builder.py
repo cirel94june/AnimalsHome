@@ -9,7 +9,7 @@ from datetime import datetime
 
 import aiosqlite
 
-from config import load_worldbook
+from config import LIVE_STATE_HEADING, load_worldbook
 from database import get_db
 from taobao_context import trip_card, load_trip_products, render_trip_context
 from schedule import get_active_schedules, build_schedule_prompt
@@ -235,6 +235,13 @@ async def build_ability_block(
     if abilities:
         parts.append(format_ability_block(abilities))
 
+    cli_file_text = build_cli_file_storage_text(model_key)
+    if cli_file_text:
+        parts.append(cli_file_text.strip())
+
+    # 以下每轮都可能变（日程、位置、设备、画像），放在小标题后面；缓存标记只盖到小标题之前
+    static_parts, parts = parts, []
+
     if is_capability_enabled("schedule"):
         schedules = await get_active_schedules()
         schedule_text = build_schedule_prompt(schedules)
@@ -255,10 +262,6 @@ async def build_ability_block(
     if device_context_text:
         parts.append(device_context_text)
 
-    cli_file_text = build_cli_file_storage_text(model_key)
-    if cli_file_text:
-        parts.append(cli_file_text.strip())
-
     if "post_sentinel" not in (excluded_capabilities or set()):
         try:
             from post_sentinel import build_context as build_profile_context
@@ -268,7 +271,9 @@ async def build_ability_block(
         except Exception:
             pass
 
-    return "\n\n".join(parts)
+    if parts:
+        static_parts.append(LIVE_STATE_HEADING + "\n" + "\n\n".join(parts))
+    return "\n\n".join(static_parts)
 
 
 def _memory_debug_item(mem: dict, max_content: int | None = None) -> dict:

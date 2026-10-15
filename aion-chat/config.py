@@ -575,6 +575,9 @@ def ensure_model_unchanged(model_key: str, snapshot: dict | None) -> None:
 
 _DATE_SUFFIX = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})$")
 
+# 能力块里「每轮都可能变」的部分（日程、位置、设备、画像）从这个小标题开始；缓存标记只盖到它之前
+LIVE_STATE_HEADING = "【实时状态（每轮可能变化）】"
+
 
 def model_id_core(model_id: str) -> str:
     """模型 ID 去掉中转站常加的厂商前缀（anthropic/、models/），统一小写。"""

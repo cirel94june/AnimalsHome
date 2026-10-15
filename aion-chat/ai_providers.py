@@ -13,7 +13,7 @@ from generation_control import own_stream, own_process
 import httpx
 import tempfile
 
-from config import get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated
+from config import get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated, LIVE_STATE_HEADING
 from codex_app_server import (
     CodexAppServerEvent,
     build_codex_app_server_command,
@@ -647,6 +647,8 @@ _NO_CACHE_MARKER: set[str] = set()
 
 # 每次都会变的内容从这里开始（当前时间 → 记忆 → 聊天记录）；它之前的人设、规则、能力说明不变
 _DYNAMIC_START_MARKERS = ("系统当前的准确时间是", "[当前时间]")
+# 消息中间出现这些小标题，说明后面是每轮会变的状态（日程、位置、设备、画像）
+_LIVE_STATE_HEADINGS = (LIVE_STATE_HEADING, "【设备当前状态】")
 
 
 def _message_text(message: dict) -> str:
@@ -658,19 +660,41 @@ def _message_text(message: dict) -> str:
     return ""
 
 
-def _with_cache_breakpoint(messages: list) -> list:
-    """在「不变的部分」最后一条消息上加 cache_control（Anthropic 的缓存标记，OpenAI 兼容格式里放在内容片段上）。
-    找不到分界（比如没有时间块的简单请求）就原样返回，不加。"""
-    boundary = next((i for i, m in enumerate(messages)
-                     if any(_message_text(m).lstrip().startswith(x) for x in _DYNAMIC_START_MARKERS)), -1)
+def _live_state_at(text: str) -> int:
+    found = [i for i in (text.find(h) for h in _LIVE_STATE_HEADINGS) if i >= 0]
+    return min(found) if found else -1
+
+
+def _cache_breakpoint(messages: list) -> tuple[list, int]:
+    """在「不变的部分」末尾加 cache_control（Anthropic 的缓存标记，OpenAI 兼容格式里放在内容片段上），
+    返回 (新列表, 被改成片段数组的那条消息下标)。
+    不变的部分到第一条「当前时间」消息为止；若更早的消息里出现实时状态小标题，就在小标题处把那条消息切成两段，
+    标记打在前一段。找不到分界（比如没有时间块的简单请求）就原样返回，不加，下标为 -1。"""
+    boundary = -1
+    for i, m in enumerate(messages):
+        text = _message_text(m)
+        if any(text.lstrip().startswith(x) for x in _DYNAMIC_START_MARKERS):
+            boundary = i
+            break
+        cut = _live_state_at(text)
+        if cut >= 0:
+            if cut > 0 and text[:cut].strip() and isinstance(m.get("content"), str):
+                marked = list(messages)
+                marked[i] = {**m, "content": [
+                    {"type": "text", "text": text[:cut], "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": text[cut:]},
+                ]}
+                return marked, i
+            boundary = i
+            break
     if boundary <= 0:
-        return messages
+        return messages, -1
     marked = list(messages)
     target = dict(marked[boundary - 1])
     content = target.get("content")
     if isinstance(content, str):
         if not content.strip():
-            return messages
+            return messages, -1
         target["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
     elif isinstance(content, list) and content:
         parts = [dict(p) if isinstance(p, dict) else p for p in content]
@@ -679,17 +703,32 @@ def _with_cache_breakpoint(messages: list) -> list:
                 parts[i]["cache_control"] = {"type": "ephemeral"}
                 break
         else:
-            return messages
+            return messages, -1
         target["content"] = parts
     else:
-        return messages
+        return messages, -1
     marked[boundary - 1] = target
-    return marked
+    return marked, boundary - 1
+
+
+def _with_cache_breakpoint(messages: list) -> list:
+    return _cache_breakpoint(messages)[0]
 
 
 def _mentions_cache_control(body: bytes) -> bool:
     text = (body or b"")[:4000].decode("utf-8", "replace").lower()
     return "cache_control" in text or "cache control" in text
+
+
+_STRING_TYPE_ERROR = r".{0,120}?(valid string|must be (a |of type )?string|expected (a )?string|str type)"
+
+
+def _rejects_list_content(body: bytes, index: int) -> bool:
+    """只收字符串 content 的兼容中转站，报的是「messages.<被改成数组的那条>.content 应该是字符串」。"""
+    if index < 0:
+        return False
+    text = (body or b"")[:4000].decode("utf-8", "replace")
+    return re.search(rf"messages\W{{1,6}}{index}\W{{1,6}}content" + _STRING_TYPE_ERROR, text, re.I | re.S) is not None
 
 
 def _mentions_stream_options(body: bytes) -> bool:
@@ -733,7 +772,7 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
             else:
                 payload.pop("stream_options", None)
             mark_cache = want_cache_marker and url not in _NO_CACHE_MARKER
-            payload["messages"] = _with_cache_breakpoint(plain_messages) if mark_cache else plain_messages
+            payload["messages"], marked_index = _cache_breakpoint(plain_messages) if mark_cache else (plain_messages, -1)
             async with httpx.AsyncClient(timeout=request_timeout) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     own_stream(resp)
@@ -744,8 +783,9 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                             _NO_STREAM_USAGE.add(url)
                             continue
                         if (mark_cache and payload["messages"] is not plain_messages
-                                and resp.status_code in (400, 422) and _mentions_cache_control(body)):
-                            # 这家中转站不认识缓存标记：记住，去掉再发一次
+                                and resp.status_code in (400, 422)
+                                and (_mentions_cache_control(body) or _rejects_list_content(body, marked_index))):
+                            # 这家中转站不认识缓存标记（或只收字符串内容）：记住，去掉再发一次
                             _NO_CACHE_MARKER.add(url)
                             continue
                         if meta is not None:

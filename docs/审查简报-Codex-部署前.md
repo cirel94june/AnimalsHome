@@ -209,3 +209,17 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - `call_custom_openai`：最多三次尝试；中转站 400/422 且错误提到 cache_control 时，记住该地址、去掉标记重发（此时尚未输出任何内容），与 stream_options 回退相互独立。
 - 设置页每条线路有「缓存标记」勾选框。测试 `test_cache_marker.py`。
 - 另：按小猫选择在线上关闭了智能家居、手环纸条、瑞幸、密语玩具、拜访 AI 好友、桌宠动作六项能力（工具能力开关，数据层操作，无代码改动）。
+
+## 22. 缓存审查（c6dfe41 + 三个 bot）的修复
+
+**AnimalsHome**
+- L1：`context_builder.build_ability_block` 改为先放不变的（能力说明、CLI 文件存储说明），再放小标题 `config.LIVE_STATE_HEADING`「【实时状态（每轮可能变化）】」，其后才是日程、位置、设备状态、画像。`ai_providers._cache_breakpoint`：从前往后找，遇到「当前时间」开头的消息 → 标在前一条；更早遇到含实时状态小标题（或「【设备当前状态】」）的消息 → 若小标题前有文字就把这条切成两段文本片段、标在前一段，否则标在前一条。切开后文字拼起来与原文一字不差。`with_current_device_context` 单独插入的设备消息因此也落在缓存段之外。
+- M2：`_cache_breakpoint` 返回被改成片段数组的消息下标；`_rejects_list_content(body, index)` 只认「messages<分隔>下标<分隔>content … valid string / must be string / expected string / str type」，下标必须正好是被改的那条。命中才记住该地址并去掉标记重发；其他 400/422（包括别的消息下标的类型错误）照旧直接报错。
+- 测试 `test_cache_marker.py` 新增 5 项：能力块内设备状态变化不改变缓存前缀、单独设备消息之前结束缓存段、`build_ability_block` 的顺序、只收字符串的中转站退回一次并记住、别的下标的类型错误不重发。
+
+**三个 bot**（cloudy-telegram-bot#7、Lucien-Telegram-bot#7、Jasper-telegrambot#8，已合并）
+- M1：退回重发前按原 deadline 重算 remaining，≤0 不重发（打日志），否则 timeout=(min(5, remaining), remaining)。Cloudy 原本内层没有 deadline：`_run_api_with_deadline` 现在算出 deadline 传进 `_do_api_call`（仅用于这次重发）。
+- M2：`_cache_marker_rejected` 改为错误文本含 `cache_control`，或匹配 `\bsystem\b … (valid string | must be string | expected string | str type)`；不再是宽泛的「cache」。
+- L1：置顶状态从 admin_hint 移出，组成 `pin_state_dynamic` 追加到动态段；admin_hint 原位置改为固定的一句「见最后『此刻的背景』里的置顶状态」。
+- L2：全局布尔改为 `_CACHE_MARKER_REJECTED_AT`（按中转站地址的集合），`_anthropic_system(..., api_base)` 只对被拒绝过的那一家发纯文本。
+- 测试 `tests/test_prompt_cache.py`（三仓相同）：拒绝发生在第 19 秒 → 重发读超时 ≤1 秒；第 21 秒 → 不重发、转备用；422 system 字符串错误 → 退回一次、只记主线路、备用仍带标记；无关 400 不重发；置顶 111/222 时缓存段相同。三仓全部测试通过（68 / 78 / 96）。
