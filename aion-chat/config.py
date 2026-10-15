@@ -404,6 +404,8 @@ def normalize_custom_model_routes(value) -> list[dict]:
                 "models": models,
                 # 缓存标记（默认开）：在不变的人设 / 规则末尾标一下，Claude 能缓存这一段；中转站不认会自动去掉
                 "cache_marker": item.get("cache_marker") is not False,
+                # 缓存保留多久：1h（默认，断断续续聊也能命中；写入价约为读入的 2 倍）或 5m（写入约 1.25 倍）
+                "cache_ttl": "5m" if item.get("cache_ttl") == "5m" else "1h",
             })
     return routes
 
@@ -462,6 +464,7 @@ def refresh_custom_models() -> None:
                 "route_id": route["id"],
                 "route_name": route["name"],
                 "cache_marker": route.get("cache_marker", True) is not False,
+                "cache_ttl": route.get("cache_ttl", "1h"),
             }
 
 

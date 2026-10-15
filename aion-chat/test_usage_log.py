@@ -222,30 +222,70 @@ def test_cancelling_the_task_also_closes_the_http_response(book, monkeypatch):
     assert order == ["http closed", "recorded", "returned"]
 
 
-def test_cost_uses_token_prices_and_cheaper_cache_reads():
-    total = {"requests": 10, "prompt": 1_000_000, "completion": 100_000, "cache_read": 800_000}
-    prices = {"inp": 20, "out": 100, "cache": 2, "call": 0.5}
-    # 20 万原价读入 ×20 + 80 万缓存 ×2 + 10 万写出 ×100（元/百万）
-    assert usage_log.estimate_cost(total, prices) == pytest.approx(4 + 1.6 + 10)
-    assert usage_log.estimate_cost(total, {"inp": 20, "out": 100}) == pytest.approx(20 + 10)  # 没填缓存价按读入价
-    assert usage_log.estimate_cost(total, {"call": 0.5}) == pytest.approx(5)
-    assert usage_log.estimate_cost(total, {}) is None
+def test_token_cost_counts_cache_reads_and_writes_at_their_own_price():
+    total = {"requests": 10, "prompt": 1_000_000, "completion": 100_000, "cache_read": 600_000, "cache_write": 200_000}
+    # 20 万原价 ×20 + 60 万读缓存 ×2 + 20 万写缓存 ×40（没填按读入 2 倍）+ 10 万写出 ×100
+    assert usage_log.token_cost(total, {"inp": 20, "out": 100, "cache": 2}) == pytest.approx(4 + 1.2 + 8 + 10)
+    assert usage_log.token_cost(total, {"inp": 20, "out": 100, "cache": 2}, long_cache=False) == pytest.approx(4 + 1.2 + 5 + 10)
+    assert usage_log.token_cost(total, {"inp": 20, "out": 100, "cache": 2, "write": 25}) == pytest.approx(4 + 1.2 + 5 + 10)
+    assert usage_log.token_cost(total, {"call": 1}) is None
+    assert usage_log.call_cost(total, {"call": 0.5}) == pytest.approx(5)
 
 
-def test_prices_live_on_the_server_and_bad_values_are_dropped(book, monkeypatch):
+def test_each_relay_has_its_own_prices_and_billing():
+    by_model = [
+        {"name": "甲-claude", "requests": 10, "prompt": 1_000_000, "completion": 0, "cache_read": 0, "cache_write": 0},
+        {"name": "甲-haiku", "requests": 10, "prompt": 1_000_000, "completion": 0, "cache_read": 0, "cache_write": 0},
+        {"name": "乙-claude", "requests": 4, "prompt": 1_000_000, "completion": 0, "cache_read": 0, "cache_write": 0},
+        {"name": "哨兵 · x", "requests": 3, "prompt": 1_000_000, "completion": 0, "cache_read": 0, "cache_write": 0},
+    ]
+    route_of = lambda m: ({"甲": ("a", "甲站", True), "乙": ("b", "乙站", True)}.get(m[0]) or ("other", "其他", False))
+    prices = usage_log._clean_prices({"routes": {
+        "a": {"inp": 3, "out": 15, "call": 0.2},                      # 两种都填、没选：按量
+        "b": {"inp": 3, "out": 15, "call": 0.1, "billing": "call"},  # 选了按次
+    }})
+    routes = {r["id"]: r for r in usage_log.route_costs(by_model, prices, route_of)}
+    assert routes["a"]["requests"] == 20 and routes["a"]["cost"] == pytest.approx(6)
+    assert routes["a"]["cost_call"] == pytest.approx(4)
+    assert routes["b"]["cost"] == pytest.approx(0.4) and routes["b"]["cost_token"] == pytest.approx(3)
+    assert routes["other"]["cost"] is None  # 没填价不算
+    assert usage_log.total_cost(list(routes.values())) == pytest.approx(6.4)
+
+
+def test_prices_are_cleaned_and_saved_on_the_server(book, monkeypatch):
     monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
-    assert usage_log.load_prices() == {k: None for k in usage_log.PRICE_FIELDS}
-    saved = usage_log.save_prices({"inp": "15", "out": 75, "cache": -1, "daily_limit": "abc", "call": float("nan"), "x": 1})
-    assert saved == {"call": None, "inp": 15.0, "out": 75.0, "cache": None, "daily_limit": None}
+    assert usage_log.load_prices() == {"daily_limit": None, "routes": {}}
+    saved = usage_log.save_prices({"daily_limit": "abc", "routes": {"a": {
+        "inp": "15", "out": 75, "cache": -1, "call": float("nan"), "billing": "free", "x": 1}}, "junk": 1})
+    assert saved == {"daily_limit": None, "routes": {"a": {
+        "call": None, "inp": 15.0, "out": 75.0, "cache": None, "write": None, "billing": ""}}}
     assert usage_log.load_prices() == saved
+    assert usage_log.save_prices({"routes": "bad"}) == {"daily_limit": None, "routes": {}}
 
 
 def test_today_spend_flags_when_over_the_line(book, monkeypatch):
     monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
     usage_log.record("测试模型", "聊天", 2_000_000, 0, estimated=False)
-    usage_log.save_prices({"inp": 1, "out": 1, "daily_limit": 5})
-    assert usage_log.today_spend() == {"cost": 2.0, "limit": 5.0, "over": False}
-    usage_log.save_prices({"inp": 3, "out": 1, "daily_limit": 5})
-    assert usage_log.today_spend()["over"] is True
-    usage_log.save_prices({"inp": 3, "out": 1})
-    assert usage_log.today_spend()["over"] is False  # 没设提醒线就不提醒
+    route_of = lambda m: ("a", "甲站", True)
+    usage_log.save_prices({"daily_limit": 5, "routes": {"a": {"inp": 1, "out": 1}}})
+    assert usage_log.today_spend(route_of) == {"cost": 2.0, "limit": 5.0, "over": False}
+    usage_log.save_prices({"daily_limit": 5, "routes": {"a": {"inp": 3, "out": 1}}})
+    assert usage_log.today_spend(route_of)["over"] is True
+    usage_log.save_prices({"routes": {"a": {"inp": 3, "out": 1}}})
+    assert usage_log.today_spend(route_of)["over"] is False  # 没设提醒线就不提醒
+
+
+def test_price_page_lists_every_relay_and_other(book, monkeypatch):
+    from routes import usage as usage_routes
+    monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
+    import config
+    monkeypatch.setitem(config.MODELS, "甲-claude", {"provider": "custom_openai", "route_id": "a", "route_name": "甲站", "cache_ttl": "1h"})
+    monkeypatch.setitem(config.MODELS, "乙-claude", {"provider": "custom_openai", "route_id": "b", "route_name": "乙站", "cache_ttl": "5m"})
+    usage_log.save_prices({"routes": {"a": {"inp": 3, "out": 15}}})
+    data = asyncio.run(usage_routes.usage_prices())
+    rows = {r["id"]: r for r in data["routes"]}
+    assert rows["a"]["name"] == "甲站" and rows["a"]["long_cache"] is True and rows["a"]["prices"]["inp"] == 3
+    assert rows["b"]["long_cache"] is False and rows["b"]["prices"]["inp"] is None
+    assert "other" in rows
+    assert usage_routes._route_of("甲-claude") == ("a", "甲站", True)
+    assert usage_routes._route_of("哨兵 · x")[0] == "other"

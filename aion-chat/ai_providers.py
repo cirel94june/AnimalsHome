@@ -644,6 +644,8 @@ def _openai_chat_completions_url(base_url: str) -> str:
 _NO_STREAM_USAGE: set[str] = set()
 # 不认识缓存标记（cache_control）的中转站
 _NO_CACHE_MARKER: set[str] = set()
+# 不认「缓存保留 1 小时」（ttl）的中转站：退回默认的 5 分钟
+_NO_LONG_CACHE: set[str] = set()
 
 # 每次都会变的内容从这里开始（当前时间 → 记忆 → 聊天记录）；它之前的人设、规则、能力说明不变
 _DYNAMIC_START_MARKERS = ("系统当前的准确时间是", "[当前时间]")
@@ -703,26 +705,31 @@ def _cache_friendly_order(messages: list) -> list:
     return kept + list(messages[header:-1]) + moved + [messages[-1]]
 
 
-def _mark_cacheable(message: dict) -> dict | None:
+def _cache_control(ttl: str = "5m") -> dict:
+    """Anthropic 的缓存标记。默认保留 5 分钟；ttl="1h" 保留 1 小时（写入更贵，隔得久也能命中）。"""
+    return {"type": "ephemeral", "ttl": "1h"} if ttl == "1h" else {"type": "ephemeral"}
+
+
+def _mark_cacheable(message: dict, ttl: str = "5m") -> dict | None:
     """给一条消息的最后一个文字片段加 cache_control；加不了返回 None。"""
     target = dict(message)
     content = target.get("content")
     if isinstance(content, str):
         if not content.strip():
             return None
-        target["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        target["content"] = [{"type": "text", "text": content, "cache_control": _cache_control(ttl)}]
         return target
     if isinstance(content, list) and content:
         parts = [dict(p) if isinstance(p, dict) else p for p in content]
         for i in range(len(parts) - 1, -1, -1):
             if isinstance(parts[i], dict) and parts[i].get("type") == "text":
-                parts[i]["cache_control"] = {"type": "ephemeral"}
+                parts[i]["cache_control"] = _cache_control(ttl)
                 target["content"] = parts
                 return target
     return None
 
 
-def _cache_breakpoint(messages: list) -> tuple[list, list[int]]:
+def _cache_breakpoint(messages: list, ttl: str = "5m") -> tuple[list, list[int]]:
     """在「不变的部分」末尾加 cache_control（Anthropic 的缓存标记，OpenAI 兼容格式里放在内容片段上），
     返回 (新列表, 被改成片段数组的消息下标)。
     不变的部分到第一条「当前时间」消息为止；若更早的消息里出现实时状态小标题，就在小标题处把那条消息切成两段，
@@ -739,7 +746,7 @@ def _cache_breakpoint(messages: list) -> tuple[list, list[int]]:
             if cut > 0 and text[:cut].strip() and isinstance(m.get("content"), str):
                 marked = list(messages)
                 marked[i] = {**m, "content": [
-                    {"type": "text", "text": text[:cut], "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": text[:cut], "cache_control": _cache_control(ttl)},
                     {"type": "text", "text": text[cut:]},
                 ]}
                 return marked, [i]
@@ -747,7 +754,7 @@ def _cache_breakpoint(messages: list) -> tuple[list, list[int]]:
             break
     if boundary <= 0:
         return messages, []
-    target = _mark_cacheable(messages[boundary - 1])
+    target = _mark_cacheable(messages[boundary - 1], ttl)
     if target is None:
         return messages, []
     marked = list(messages)
@@ -755,15 +762,19 @@ def _cache_breakpoint(messages: list) -> tuple[list, list[int]]:
     indices = [boundary - 1]
     header = next((i for i, m in enumerate(messages[:boundary]) if _message_text(m).startswith(_HISTORY_HEADER)), -1)
     if 0 < header < boundary - 1:
-        stable_end = _mark_cacheable(messages[header - 1])
+        stable_end = _mark_cacheable(messages[header - 1], ttl)
         if stable_end is not None:
             marked[header - 1] = stable_end
             indices.insert(0, header - 1)
     return marked, indices
 
 
-def _with_cache_breakpoint(messages: list) -> list:
-    return _cache_breakpoint(messages)[0]
+def _with_cache_breakpoint(messages: list, ttl: str = "5m") -> list:
+    return _cache_breakpoint(messages, ttl)[0]
+
+
+def _mentions_ttl(body: bytes) -> bool:
+    return re.search(r"\bttl\b", (body or b"")[:4000].decode("utf-8", "replace"), re.I) is not None
 
 
 def _mentions_cache_control(body: bytes) -> bool:
@@ -815,7 +826,7 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
     # 线路开着缓存时，把会变的背景挪到聊天记录之后（中转站不认标记、退回纯文本时也保持这个顺序，对自动缓存同样有利）
     plain_messages = _cache_friendly_order(payload["messages"]) if want_cache_marker else payload["messages"]
     try:
-        for _attempt in range(3):
+        for _attempt in range(4):
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
             ask_usage = url not in _NO_STREAM_USAGE
             if ask_usage:
@@ -823,7 +834,8 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
             else:
                 payload.pop("stream_options", None)
             mark_cache = want_cache_marker and url not in _NO_CACHE_MARKER
-            payload["messages"], marked_index = _cache_breakpoint(plain_messages) if mark_cache else (plain_messages, [])
+            ttl = "1h" if cfg.get("cache_ttl", "1h") == "1h" and url not in _NO_LONG_CACHE else "5m"
+            payload["messages"], marked_index = _cache_breakpoint(plain_messages, ttl) if mark_cache else (plain_messages, [])
             async with httpx.AsyncClient(timeout=request_timeout) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     own_stream(resp)
@@ -832,6 +844,11 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                         if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
                             # 这家中转站不认识 stream_options：记住，去掉再发一次（还没输出任何内容，重发是安全的）
                             _NO_STREAM_USAGE.add(url)
+                            continue
+                        if (mark_cache and ttl == "1h" and payload["messages"] is not plain_messages
+                                and resp.status_code in (400, 422) and _mentions_ttl(body)):
+                            # 这家中转站不认「保留 1 小时」：记住，退回 5 分钟再发一次
+                            _NO_LONG_CACHE.add(url)
                             continue
                         if (mark_cache and payload["messages"] is not plain_messages
                                 and resp.status_code in (400, 422)

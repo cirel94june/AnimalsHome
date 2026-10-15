@@ -1013,7 +1013,7 @@ function newCustomModel() {
 }
 
 function newCustomRoute() {
-  return { id: makeRouteId(), name: "", base_url: "", api_key: "", cache_marker: true, models: [newCustomModel()], collapsed: false };
+  return { id: makeRouteId(), name: "", base_url: "", api_key: "", cache_marker: true, cache_ttl: "1h", models: [newCustomModel()], collapsed: false };
 }
 
 function currentRouteCollapsedState() {
@@ -1035,6 +1035,7 @@ function normalizeRoutesForUi(routes, collapsedState) {
       base_url: route.base_url || "",
       api_key: route.api_key || "",
       cache_marker: route.cache_marker !== false,
+      cache_ttl: route.cache_ttl === "5m" ? "5m" : "1h",
       collapsed: hasSavedState ? !!collapsedState[id] : true,
       models: Array.isArray(route.models) && route.models.length
         ? route.models.map(function(model) {
@@ -1134,6 +1135,13 @@ function renderCustomRoutes() {
           '<label class="vision-toggle" style="margin:8px 0 2px" title="在不变的人设和规则末尾加 Claude 的缓存标记，重复的部分按缓存价计费；中转站不认会自动去掉">' +
             '<input type="checkbox" ' + (route.cache_marker !== false ? "checked" : "") + ' onchange="updateCustomRoute(' + routeIndex + ', \'cache_marker\', this.checked)">' +
             '缓存标记（省 token，中转站不支持会自动关掉）' +
+          '</label>' +
+          '<label class="route-field" style="margin:4px 0 2px">' +
+            '<span>缓存保留多久</span>' +
+            '<select class="form-input" onchange="updateCustomRoute(' + routeIndex + ', \'cache_ttl\', this.value)">' +
+              '<option value="1h"' + (route.cache_ttl !== "5m" ? " selected" : "") + '>1 小时：断断续续地聊也能命中（存一次稍贵）</option>' +
+              '<option value="5m"' + (route.cache_ttl === "5m" ? " selected" : "") + '>5 分钟：一直连着聊时更便宜</option>' +
+            '</select>' +
           '</label>' +
           '<div class="route-models">' +
             '<div class="model-row-head">' +
@@ -1315,6 +1323,7 @@ function collectCustomRoutes() {
       base_url: baseUrl,
       api_key: apiKey,
       cache_marker: route.cache_marker !== false,
+      cache_ttl: route.cache_ttl === "5m" ? "5m" : "1h",
       models: models
     });
   });

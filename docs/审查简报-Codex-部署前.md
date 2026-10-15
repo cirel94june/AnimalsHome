@@ -241,3 +241,19 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - 路由：`GET/PUT /api/usage/prices`、`GET /api/usage/today`（在现有访问控制之后，与其他设置接口相同）。
 - `usage.html`：价格从服务器读写（输入后 600ms 保存）；服务器还没有价格时把手机里旧的 localStorage 价格搬过去一次；新增「每天花到多少提醒我」和「今天大约花了」一行。`ib/desk.js`：每分钟和回到前台时读 `/api/usage/today`，超过时首页 hero 下面显示一行提醒（链到 /usage），数值经 esc。
 - 测试：`test_cache_marker.py` 新增 5 项（顺序、下一轮前缀完全复用、不该动的不动、发到中转站的顺序 / 关缓存时原样、分批删）；`test_usage_log.py` 新增 3 项。相关测试与改动前基线对比，无新增失败。
+
+## 24. 每个中转站各自的价格、缓存保留 1 小时（在 704f98e 之上，一起审）
+
+**缓存保留时长**
+- 线路新增 `cache_ttl`：`"1h"`（默认）或 `"5m"`；`normalize_custom_model_routes` 只认 `"5m"`，其余一律 `"1h"`；写进 MODELS。设置页每条线路加选择框。
+- `_cache_control(ttl)`：1h 时 `{"type":"ephemeral","ttl":"1h"}`，否则 `{"type":"ephemeral"}`；两个断点用同一个 ttl（不出现长短混排）。
+- `call_custom_openai`：尝试次数 3→4。带 1h 标记收到 400/422 且错误含单词 `ttl` 时，先记 `_NO_LONG_CACHE[url]` 退回 5 分钟重发（标记保留）；之后若再被拒才走原来的「去掉标记」回退。其余回退规则不变。
+- 原因：小猫回复断断续续，5 分钟缓存常常过期，每轮反而付 1.25 倍写入；1 小时缓存写入约 2 倍、一小时内再聊即可按一成读。
+
+**每个中转站各自的价格**（取代 23 节里的单一价格，23 节未部署，服务器上没有旧格式文件）
+- `data/usage_prices.json`：`{"daily_limit", "routes": {线路id: {billing, call, inp, out, cache, write}}}`；`_clean_prices` 只保留非负有限数字，billing 只认 token / call，线路最多 200 条、id 截到 120 字。
+- 用量行按模型名记；`routes/usage._route_of` 用 MODELS 的 `route_id / route_name / cache_ttl` 归到线路，不属于线路的（内置模型、哨兵等）归 `other`。
+- `usage_log.route_costs`：按线路汇总并分别算按次、按量、实际（选了按选的；没选时有按量价按量、否则按次）。按量：原价读入 = prompt − 读缓存 − 写缓存；写缓存没填价时按读入 ×2（1h）或 ×1.25（5m）。没填价格的线路不计入合计。
+- 接口：`GET /api/usage` 多返回 `by_route` 和 `cost`；`GET /api/usage/prices` 列出当前所有线路（含没用过的）+ other 及其价格；`PUT` 整份保存；`GET /api/usage/today` 用同一算法。
+- `usage.html`：「花了多少」表（每条线路：按次 / 按量 / 实际，两种都能算时便宜的高亮）+ 每日提醒线；每条线路一张价格卡（按量 / 按次切换 + 五个价格）。服务器还没有任何价格时，把手机里旧的一套价格套到每条线路上一次。
+- 测试：`test_cache_marker.py` 新增 3 项（默认 1h / 选 5m、拒绝 1h 只退到 5m 并记住、ttl 规范化）；`test_usage_log.py` 改为 5 项（缓存读写各自计价、每站价格与计费方式、清洗与保存、提醒线、价格接口列出线路）。相关测试与改动前对比，无新增失败。

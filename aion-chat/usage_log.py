@@ -204,9 +204,12 @@ def summary(days: int) -> dict:
 
 
 # ── 价格与每日花费提醒 ──────────────────────────────
-# 价格存在服务器上（以前只存在手机浏览器里），这样首页也能算出「今天大约花了多少」。
+# 价格存在服务器上，每条线路（中转站）各填各的；内置模型、哨兵等不属于任何线路的算「其他」。
+# 文件格式：{"daily_limit": 元, "routes": {线路 id: {billing, call, inp, out, cache, write}}}
 PRICES_FILE = DATA_DIR / "usage_prices.json"
-PRICE_FIELDS = ("call", "inp", "out", "cache", "daily_limit")
+OTHER_ROUTE = "other"
+ROUTE_PRICE_FIELDS = ("call", "inp", "out", "cache", "write")
+BILLINGS = ("token", "call")
 
 
 def _price(value) -> float | None:
@@ -217,44 +220,99 @@ def _price(value) -> float | None:
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def _clean_route_prices(raw) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    out = {key: _price(raw.get(key)) for key in ROUTE_PRICE_FIELDS}
+    out["billing"] = raw.get("billing") if raw.get("billing") in BILLINGS else ""
+    return out
+
+
+def _clean_prices(raw) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    routes = raw.get("routes") if isinstance(raw.get("routes"), dict) else {}
+    return {
+        "daily_limit": _price(raw.get("daily_limit")),
+        "routes": {str(rid)[:120]: _clean_route_prices(v) for rid, v in list(routes.items())[:200]},
+    }
+
+
 def load_prices() -> dict:
-    """{call: 每次几元, inp/out/cache: 每百万几元, daily_limit: 每天提醒线（元）}；没填的是 None。"""
     try:
         import json
         raw = json.loads(PRICES_FILE.read_text(encoding="utf-8"))
     except Exception:
         raw = {}
-    raw = raw if isinstance(raw, dict) else {}
-    return {key: _price(raw.get(key)) for key in PRICE_FIELDS}
+    return _clean_prices(raw)
 
 
 def save_prices(data: dict) -> dict:
     import json
-    prices = {key: _price((data or {}).get(key)) for key in PRICE_FIELDS}
+    prices = _clean_prices(data)
     tmp = PRICES_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(prices, ensure_ascii=False), encoding="utf-8")
     tmp.replace(PRICES_FILE)
     return prices
 
 
-def estimate_cost(total: dict, prices: dict) -> float | None:
-    """按填好的价格粗算花费（元）。按量的读入、写出都填了就按量算，否则只填了按次就按次算；都没填返回 None。"""
-    inp, out, call = prices.get("inp"), prices.get("out"), prices.get("call")
-    if inp is not None and out is not None:
-        cache = prices.get("cache")
-        cache = inp if cache is None else cache
-        cache_read = min(total.get("cache_read", 0), total.get("prompt", 0))
-        plain = total.get("prompt", 0) - cache_read
-        return (plain * inp + cache_read * cache + total.get("completion", 0) * out) / 1e6
-    if call is not None:
-        return total.get("requests", 0) * call
-    return None
+def token_cost(total: dict, prices: dict, *, long_cache: bool = True) -> float | None:
+    """按量粗算（元）。读入、写出价都填了才算。写入缓存没填价时按读入价 ×2（缓存 1 小时）或 ×1.25（5 分钟）。"""
+    inp, out = prices.get("inp"), prices.get("out")
+    if inp is None or out is None:
+        return None
+    cache = prices.get("cache")
+    cache = inp if cache is None else cache
+    write = prices.get("write")
+    write = inp * (2 if long_cache else 1.25) if write is None else write
+    prompt = total.get("prompt", 0)
+    read = min(total.get("cache_read", 0), prompt)
+    written = min(total.get("cache_write", 0), prompt - read)
+    plain = prompt - read - written
+    return (plain * inp + read * cache + written * write + total.get("completion", 0) * out) / 1e6
 
 
-def today_spend() -> dict:
-    """今天大约花了多少、提醒线是多少、超没超。"""
+def call_cost(total: dict, prices: dict) -> float | None:
+    call = prices.get("call")
+    return None if call is None else total.get("requests", 0) * call
+
+
+def chosen_cost(token: float | None, call: float | None, billing: str) -> float | None:
+    """实际按哪种算：选了就按选的；没选时有按量价就按量，否则按次。"""
+    if billing == "call":
+        return call
+    if billing == "token":
+        return token
+    return token if token is not None else call
+
+
+def route_costs(by_model: list[dict], prices: dict, route_of) -> list[dict]:
+    """把按模型的用量合到线路上，并算出每条线路按次、按量、实际各多少钱。
+    route_of(模型) -> (线路 id, 线路名, 缓存是否 1 小时)。"""
+    routes: dict[str, dict] = {}
+    for row in by_model:
+        rid, name, long_cache = route_of(row["name"])
+        item = routes.setdefault(rid, {"id": rid, "name": name, "long_cache": long_cache, "models": [],
+                                       "requests": 0, "prompt": 0, "completion": 0, "cache_read": 0, "cache_write": 0})
+        item["models"].append(row["name"])
+        for key in ("requests", "prompt", "completion", "cache_read", "cache_write"):
+            item[key] += row.get(key, 0) or 0
+    for item in routes.values():
+        p = prices["routes"].get(item["id"]) or _clean_route_prices({})
+        item["prices"] = p
+        item["cost_token"] = token_cost(item, p, long_cache=item["long_cache"])
+        item["cost_call"] = call_cost(item, p)
+        item["cost"] = chosen_cost(item["cost_token"], item["cost_call"], p["billing"])
+    return sorted(routes.values(), key=lambda r: (r["id"] == OTHER_ROUTE, -r["requests"], r["name"]))
+
+
+def total_cost(routes: list[dict]) -> float | None:
+    known = [r["cost"] for r in routes if r["cost"] is not None]
+    return round(sum(known), 4) if known else None
+
+
+def today_spend(route_of) -> dict:
+    """今天大约花了多少（没填价格的线路不算在内）、提醒线是多少、超没超。"""
     prices = load_prices()
-    cost = estimate_cost(summary(1)["total"], prices)
+    cost = total_cost(route_costs(summary(1)["by_model"], prices, route_of))
     limit = prices.get("daily_limit")
-    return {"cost": None if cost is None else round(cost, 4), "limit": limit,
+    return {"cost": cost, "limit": limit,
             "over": cost is not None and limit is not None and limit > 0 and cost >= limit}

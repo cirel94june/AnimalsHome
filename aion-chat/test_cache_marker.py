@@ -303,3 +303,51 @@ def test_history_window_is_trimmed_in_batches():
     assert len(window(20 + step)) == limit + step
     trimmed = window(21 + step)
     assert len(trimmed) == limit and trimmed[-1] == f"m{20 + step}"  # 满了一次删回上限
+
+
+def _ttls(body: dict) -> list:
+    return [p["cache_control"].get("ttl") for m in body["messages"] if isinstance(m["content"], list)
+            for p in m["content"] if isinstance(p, dict) and "cache_control" in p]
+
+
+def test_cache_is_kept_an_hour_by_default_and_five_minutes_on_request(monkeypatch):
+    seen = []
+
+    def handle(request):
+        seen.append(_ttls(json.loads(request.content)))
+        return _ok()
+    ai_providers._NO_CACHE_MARKER.clear()
+    ai_providers._NO_LONG_CACHE.clear()
+    _run(monkeypatch, handle, {"model": "claude-x", "base_url": "https://ttl.example/v1"})
+    _run(monkeypatch, handle, {"model": "claude-x", "base_url": "https://ttl.example/v1", "cache_ttl": "5m"})
+    assert seen == [["1h"], [None]]
+
+
+def test_relay_that_rejects_the_hour_falls_back_to_five_minutes(monkeypatch):
+    seen = []
+
+    def handle(request):
+        ttls = _ttls(json.loads(request.content))
+        seen.append(ttls)
+        if "1h" in ttls:
+            return httpx.Response(400, stream=_Stream(b'{"error":"messages.3.content.0.cache_control.ttl: Extra inputs are not permitted"}'))
+        return _ok()
+    ai_providers._NO_CACHE_MARKER.clear()
+    ai_providers._NO_LONG_CACHE.clear()
+    ai_providers._NO_STREAM_USAGE.clear()
+    cfg = {"model": "claude-x", "base_url": "https://no-hour.example/v1"}
+    assert _run(monkeypatch, handle, cfg) == "嗯"
+    assert seen == [["1h"], [None]]  # 只退到 5 分钟，缓存标记还在
+    seen.clear()
+    assert _run(monkeypatch, handle, cfg) == "嗯"
+    assert seen == [[None]]
+    assert not ai_providers._NO_CACHE_MARKER
+
+
+def test_route_ttl_survives_normalization():
+    routes = config.normalize_custom_model_routes([
+        {"id": "a", "base_url": "https://a.example", "models": ["m"]},
+        {"id": "b", "base_url": "https://b.example", "models": ["n"], "cache_ttl": "5m"},
+        {"id": "c", "base_url": "https://c.example", "models": ["o"], "cache_ttl": "forever"},
+    ])
+    assert [r["cache_ttl"] for r in routes] == ["1h", "5m", "1h"]
