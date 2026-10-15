@@ -70,20 +70,34 @@ def _connect() -> sqlite3.Connection:
     conn.execute(f"CREATE TABLE IF NOT EXISTS usage ({_COLUMNS})")
     have = {row[1] for row in conn.execute("PRAGMA table_info(usage)")}
     if "route" not in have:
-        # 旧表（按 日/用途/模型 记，没有线路）：换成新表，旧行的线路记成空 = 「未知线路（旧记录）」，不按现在的配置猜
-        with conn:
-            for column in ("cache_read", "cache_write"):
-                if column not in have:
-                    conn.execute(f"ALTER TABLE usage ADD COLUMN {column} INTEGER DEFAULT 0")
+        try:
+            _migrate_add_route(conn)
+        except Exception:
+            conn.close()
+            raise
+    return conn
+
+
+def _migrate_add_route(conn: sqlite3.Connection) -> None:
+    """旧表（按 日/用途/模型 记，没有线路）换成新表，旧行的线路记成空 = 「未知线路（旧记录）」，不按现在的配置猜。
+    整个过程在一个 BEGIN IMMEDIATE 事务里：任何一步失败都完整回滚，旧表原样留着，下次再试。"""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        have = {row[1] for row in conn.execute("PRAGMA table_info(usage)")}
+        if "route" not in have:  # 拿到写锁后再看一次：别的连接可能刚迁移完
+            cache_cols = [c if c in have else "0" for c in ("cache_read", "cache_write")]
             conn.execute("ALTER TABLE usage RENAME TO usage_old")
             conn.execute(f"CREATE TABLE usage ({_COLUMNS})")
             conn.execute(
                 "INSERT INTO usage (day, kind, route, model, requests, prompt, completion, estimated, cache_read, cache_write) "
-                "SELECT day, kind, '', model, requests, prompt, completion, estimated, "
-                "COALESCE(cache_read, 0), COALESCE(cache_write, 0) FROM usage_old"
+                f"SELECT day, kind, '', model, requests, prompt, completion, estimated, "
+                f"COALESCE({cache_cols[0]}, 0), COALESCE({cache_cols[1]}, 0) FROM usage_old"
             )
             conn.execute("DROP TABLE usage_old")
-    return conn
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def route_for_model(model: str) -> str:
@@ -187,20 +201,22 @@ def record_call(model: str, kind: str, meta: dict | None, prompt_text: str, outp
         record(model, kind, estimate_tokens(prompt_text), estimate_tokens(output_text), estimated=True, route=route)
 
 
-def record_json(model: str, kind: str, data: Any, prompt_text: str, output_text: str) -> None:
-    """非流式调用用：OpenAI 的 usage 或 Gemini 的 usageMetadata。"""
+def record_json(model: str, kind: str, data: Any, prompt_text: str, output_text: str,
+                route: str | None = None) -> None:
+    """非流式调用用：OpenAI 的 usage 或 Gemini 的 usageMetadata。route 是发请求时定下的线路。"""
     usage = data.get("usage") if isinstance(data, dict) else None
     if isinstance(usage, dict) and (usage.get("prompt_tokens") or usage.get("completion_tokens")):
-        _record_real(model, kind, _num(usage.get("prompt_tokens")), _num(usage.get("completion_tokens")), usage)
+        _record_real(model, kind, _num(usage.get("prompt_tokens")), _num(usage.get("completion_tokens")), usage, route=route)
         return
     if isinstance(usage, dict) and (usage.get("input_tokens") or usage.get("output_tokens")):  # Claude 原生
-        _record_real(model, kind, _num(usage.get("input_tokens")), _num(usage.get("output_tokens")), usage)
+        _record_real(model, kind, _num(usage.get("input_tokens")), _num(usage.get("output_tokens")), usage, route=route)
         return
     gemini = data.get("usageMetadata") if isinstance(data, dict) else None
     if isinstance(gemini, dict) and (gemini.get("promptTokenCount") or gemini.get("candidatesTokenCount")):
-        _record_real(model, kind, _num(gemini.get("promptTokenCount")), _num(gemini.get("candidatesTokenCount")), gemini)
+        _record_real(model, kind, _num(gemini.get("promptTokenCount")), _num(gemini.get("candidatesTokenCount")), gemini,
+                     route=route)
         return
-    record(model, kind, estimate_tokens(prompt_text), estimate_tokens(output_text), estimated=True)
+    record(model, kind, estimate_tokens(prompt_text), estimate_tokens(output_text), estimated=True, route=route)
 
 
 def summary(days: int) -> dict:
@@ -299,8 +315,12 @@ def load_prices() -> dict:
 
 
 def save_prices(data: dict) -> dict:
+    """保存价格。这次没带上的线路（比如已经删掉、页面没列出来的）保留原来的价格，旧账照样能算；
+    要清掉某条线路的价格，就把它带上、各项填空。"""
     import json
     prices = _clean_prices(data)
+    kept = {rid: p for rid, p in load_prices()["routes"].items() if rid not in prices["routes"]}
+    prices["routes"] = dict(list({**kept, **prices["routes"]}.items())[:200])
     tmp = PRICES_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(prices, ensure_ascii=False), encoding="utf-8")
     tmp.replace(PRICES_FILE)

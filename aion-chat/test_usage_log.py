@@ -310,7 +310,7 @@ def test_prices_are_cleaned_and_saved_on_the_server(book, monkeypatch):
     assert saved == {"daily_limit": None, "routes": {
         "a": {**empty, "inp": 15.0, "out": 75.0}, "b": empty}}
     assert usage_log.load_prices() == saved
-    assert usage_log.save_prices({"routes": "bad"}) == {"daily_limit": None, "routes": {}}
+    assert usage_log.save_prices({"routes": "bad"}) == saved  # 格式不对：一条也不改、也不删
 
 
 def test_huge_but_allowed_numbers_never_crash_the_total():
@@ -349,3 +349,100 @@ def test_price_page_lists_every_relay_and_names_old_ones(book, monkeypatch):
     assert usage_routes._route_name("gone") == "gone（已删除）"
     assert "未知" in usage_routes._route_name("") and "其他" in usage_routes._route_name("other")
     assert usage_log.route_for_model("甲-claude") == "a" and usage_log.route_for_model("哨兵 · x") == "other"
+
+
+def test_route_is_fixed_before_the_request_even_if_rebound_midway(book, monkeypatch):
+    """Codex M3：请求途中把同名模型改绑到别的线路 / 删掉，这一笔仍算发请求时的线路。"""
+    import config
+    monkeypatch.setitem(config.MODELS, "途中改绑", {"provider": "custom_openai", "model": "m", "route_id": "A"})
+
+    async def fake(messages, model_key, meta=None, *args, **kwargs):
+        config.MODELS["途中改绑"] = {"provider": "custom_openai", "model": "m", "route_id": "B"}
+        meta.update({"prompt_tokens": 100, "completion_tokens": 1})
+        yield "好"
+    monkeypatch.setattr(ai_providers, "_stream_ai", fake)
+    asyncio.run(_drain(ai_providers.stream_ai([{"role": "user", "content": "嗨"}], "途中改绑")))
+    assert _rows(book)[0][:2] == ("A", "途中改绑")
+
+
+def test_tool_outings_fix_the_route_before_the_request(book, monkeypatch):
+    import httpx
+    import config
+    import mcp_outings
+    monkeypatch.setitem(config.MODELS, "逛街模型", {"provider": "custom_openai", "model": "m",
+                                                "base_url": "https://a.invalid/v1", "route_id": "A"})
+    real = httpx.AsyncClient
+
+    def handle(request):
+        config.MODELS.pop("逛街模型", None)  # 等回复的时候模型被删了
+        return httpx.Response(200, json={"choices": [{"message": {"content": "好"}}],
+                                         "usage": {"prompt_tokens": 10, "completion_tokens": 1}})
+    monkeypatch.setattr(mcp_outings.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handle), **kw))
+    asyncio.run(mcp_outings.call_model("逛街模型", [{"role": "user", "content": "去逛逛"}]))
+    assert _rows(book)[0][:2] == ("A", "逛街模型")
+
+
+def _old_table(book):
+    with sqlite3.connect(book / "usage.db") as c:
+        c.execute("CREATE TABLE usage (day TEXT, kind TEXT, model TEXT, requests INTEGER, prompt INTEGER, "
+                  "completion INTEGER, estimated INTEGER, PRIMARY KEY (day, kind, model))")
+        c.execute("INSERT INTO usage VALUES (date('now','localtime'), '聊天', '旧模型', 3, 300, 30, 0)")
+
+
+def _tables(book):
+    with sqlite3.connect(book / "usage.db") as c:
+        names = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        cols = {r[1] for r in c.execute("PRAGMA table_info(usage)")}
+        rows = c.execute("SELECT model, requests FROM usage").fetchall()
+    return names, "route" in cols, rows
+
+
+def test_failed_migration_rolls_back_completely_and_retries_later(book, monkeypatch):
+    """Codex M5：迁移任何一步失败，旧表原样留着（不出现半迁移），下次连接再迁移成功。"""
+    _old_table(book)
+    real_connect = sqlite3.connect
+    for failing_step in ("ALTER", "CREATE", "INSERT", "DROP"):
+        def connect(*args, **kwargs):
+            conn = real_connect(*args, **kwargs)
+
+            def deny(action, arg1, arg2, dbname, source):
+                if failing_step == "ALTER" and action == sqlite3.SQLITE_ALTER_TABLE:
+                    return sqlite3.SQLITE_DENY
+                if failing_step == "CREATE" and action == sqlite3.SQLITE_CREATE_TABLE:
+                    return sqlite3.SQLITE_DENY
+                if failing_step == "INSERT" and action == sqlite3.SQLITE_INSERT and arg1 == "usage":
+                    return sqlite3.SQLITE_DENY
+                if failing_step == "DROP" and action == sqlite3.SQLITE_DROP_TABLE:
+                    return sqlite3.SQLITE_DENY
+                return sqlite3.SQLITE_OK
+            conn.set_authorizer(deny)
+            return conn
+        monkeypatch.setattr(usage_log.sqlite3, "connect", connect)
+        with pytest.raises(sqlite3.DatabaseError):
+            usage_log._connect()
+        assert _tables(book) == ({"usage"}, False, [("旧模型", 3)]), failing_step
+    monkeypatch.setattr(usage_log.sqlite3, "connect", real_connect)
+    usage_log._connect().close()
+    assert _tables(book) == ({"usage"}, True, [("旧模型", 3)])
+    assert usage_log.summary(1)["total"]["requests"] == 3
+
+
+def test_deleted_relay_keeps_its_price_when_the_page_saves_again(book, monkeypatch):
+    """Codex M6：删掉线路后改提醒线保存，旧线路的价格不丢，旧花费照算；价格页也列出它。"""
+    from routes import usage as usage_routes
+    import config
+    monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
+    monkeypatch.setitem(config.MODELS, "甲-claude", {"provider": "custom_openai", "route_id": "A", "route_name": "甲站"})
+    usage_log.record("甲-claude", "聊天", 100, 1, estimated=False, route="A")
+    usage_log.save_prices({"daily_limit": 5, "routes": {"A": {"call": 1}}})
+    monkeypatch.delitem(config.MODELS, "甲-claude")
+    page = asyncio.run(usage_routes.usage_prices())
+    listed = {r["id"]: r for r in page["routes"]}
+    assert listed["A"]["name"] == "A（已删除）" and listed["A"]["prices"]["call"] == 1
+    # 旧页面只带上现在的线路、把提醒线改成 6
+    asyncio.run(usage_routes.save_usage_prices({"daily_limit": 6, "routes": {"other": listed["other"]["prices"]}}))
+    assert usage_log.load_prices()["routes"]["A"]["call"] == 1
+    assert asyncio.run(usage_routes.usage_today())["cost"] == 1
+    # 想清掉：带上它、各项填空
+    asyncio.run(usage_routes.save_usage_prices({"daily_limit": 6, "routes": {"A": {}}}))
+    assert usage_log.load_prices()["routes"]["A"]["call"] is None

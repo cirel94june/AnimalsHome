@@ -28,13 +28,18 @@ def _route_name(route_id: str) -> str:
 
 
 def _all_routes() -> list[dict]:
-    """当前所有线路，价格页按这个列（还没用过的线路也能先填价）。"""
+    """价格页列哪些线路：现在的所有线路（还没用过的也能先填价）+ 已删除但还存着价格或用量的线路
+    （标「已删除」，原 id 不变，旧账照样按它算）+ 其他。"""
     from config import MODELS
     seen: dict[str, dict] = {}
     for info in MODELS.values():
         if info.get("route_id") and info["route_id"] not in seen:
             seen[info["route_id"]] = {"id": info["route_id"], "name": info.get("route_name") or info["route_id"],
                                       "long_cache": info.get("cache_ttl", "1h") == "1h"}
+    old = list(usage_log.load_prices()["routes"]) + [r["name"] for r in usage_log.summary(usage_log.KEEP_DAYS)["by_route"]]
+    for rid in old:
+        if rid not in seen and rid not in (usage_log.OTHER_ROUTE, usage_log.UNKNOWN_ROUTE):
+            seen[rid] = {"id": rid, "name": _route_name(rid), "long_cache": False}
     return list(seen.values()) + [{"id": usage_log.OTHER_ROUTE, "name": "其他（内置模型、哨兵等）", "long_cache": False}]
 
 

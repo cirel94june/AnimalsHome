@@ -1983,6 +1983,8 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
     meta = meta if meta is not None else {}
     resolved = resolve_model_key(model_key)
     counted = resolved in MODELS and not is_model_deprecated(resolved)
+    # 发请求之前就定下这次算哪条线路；请求途中改绑 / 删掉模型也不影响这一笔
+    route = usage_log.route_for_model(resolved)
     # 同一个 meta 可能被调用方重复用：先把上一次的用量拿走，这次中转站给了才算真实数字
     previous = {key: meta.pop(key) for key in _USAGE_KEYS if key in meta}
     output: list[str] = []
@@ -1997,8 +1999,7 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
         reported = any(key in meta for key in ("prompt_tokens", "completion_tokens"))
         if counted:
             usage_log.record_call(resolved, usage_log.kind_for_module(caller), meta if reported else {},
-                                  usage_log.messages_text(messages), "".join(output),
-                                  route=usage_log.route_for_model(resolved))
+                                  usage_log.messages_text(messages), "".join(output), route=route)
         if not reported:
             meta.update(previous)  # 这次没报告：调用方看到的仍是原来的值
 

@@ -269,3 +269,10 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - **回退顺序**：错误分支改为 ttl → cache_control / 字符串内容 → stream_options；同一条错误同时提到 stream_options 和 cache_control.ttl 时先退 1 小时。复合错误测试：恰好四次，顺序 1h → 5m → 去标记 → 去 stream_options。
 - 未改：固定 `.tmp` 文件名（单进程单 worker，同步写入）。
 - 测试：`test_cache_marker.py` 22 项、`test_usage_log.py` 22 项全过；相关测试集 832 项与改动前逐条对比，27 个失败完全相同（均为既有失败）。
+
+## 26. 469ae3f 复审（M3 余项、M5、M6）的修复
+
+- **M3 发请求前定线路**：`_stream_ai_counted` 在进入 `_stream_ai` 之前就 `route = usage_log.route_for_model(resolved)`，finally 记账用这个值，不再在完成时查全局 MODELS。`mcp_outings.call_model` 在发 HTTP 之前取 route，传给 `record_json(..., route=route)`；`record_json` 新增 route 参数并传到 `_record_real` / `record`。其余 `record_json` 调用只有哨兵（固定 other）。测试：流式途中改绑到 B → 记 A；出门逛等回复时删掉模型 → 记 A。
+- **M5 迁移真正在一个事务里**：`_migrate_add_route` 先 `BEGIN IMMEDIATE`，拿到写锁后再查一次有没有 route 列（别的连接可能刚迁完），然后改名 / 建表 / 复制 / 删旧表，`COMMIT`；任何异常 `ROLLBACK` 并关闭连接再抛出。旧表缺 cache_read / cache_write 时直接按 0 复制，不再先 ALTER。测试：用 SQLite authorizer 分别让 ALTER、CREATE、INSERT、DROP 失败，每次失败后都只剩原 `usage` 表（旧结构、原 3 次请求，无 usage_old）；恢复后再连接迁移成功，统计 3 次。
+- **M6 已删除线路的价格不丢**：`save_prices` 把这次没带上的线路原价保留（合并后最多 200 条）；要清某条线路，就带上它、各项为空。`_all_routes` 额外列出已存价格里、以及最近 KEEP_DAYS 天用量里出现过的线路（不含 other 和未知），名字经 `_route_name` 显示「…（已删除）」，id 不变。测试：删线路 → 价格页仍列出 → 只带 other 改提醒线保存 → 旧价格和今天花费都在 → 带上它清空才清掉。
+- `test_usage_log.py` 共 27 项、`test_cache_marker.py` 22 项全过。相关测试集与改动前逐条对比无新增失败（`test_calendar_memory_compression` 的并发用例在整组跑时偶发失败，单独跑通过，与改动前一致；`test_taobao_native_mcp` 4 项为既有失败）。

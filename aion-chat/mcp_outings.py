@@ -183,7 +183,9 @@ def _endpoint(model_key: str) -> tuple[str, dict[str, str], str]:
 
 async def call_model(model_key: str, messages: list[dict], tools: list[dict] | None = None) -> dict[str, Any]:
     """非流式调用；返回 {"content": str|None, "tool_calls": list|None}。"""
+    import usage_log
     url, headers, model = _endpoint(model_key)
+    route = usage_log.route_for_model(model_key)  # 发请求之前定下线路
     payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0.8}
     if tools:
         payload["tools"] = tools
@@ -193,8 +195,8 @@ async def call_model(model_key: str, messages: list[dict], tools: list[dict] | N
         raise RuntimeError(f"模型调用失败 [{resp.status_code}]: {resp.text[:300]}")
     data = resp.json()
     msg = ((data.get("choices") or [{}])[0]).get("message") or {}
-    import usage_log
-    usage_log.record_json(model_key, "出门逛", data, usage_log.messages_text(messages), str(msg.get("content") or ""))
+    usage_log.record_json(model_key, "出门逛", data, usage_log.messages_text(messages), str(msg.get("content") or ""),
+                          route=route)
     return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls")}
 
 
