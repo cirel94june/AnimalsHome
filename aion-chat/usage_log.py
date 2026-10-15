@@ -273,6 +273,11 @@ UNKNOWN_ROUTE = ""  # 加线路记录之前的旧用量：不知道是哪家，�
 ROUTE_PRICE_FIELDS = ("call", "inp", "out", "cache", "write")
 BILLINGS = ("token", "call")
 MAX_PRICE = 1_000_000  # 每百万 / 每次 / 每天提醒线都不会超过这个数；超过当没填
+MAX_PRICED_ROUTES = 200  # 最多存多少条线路的价格
+
+
+class PriceLimitError(ValueError):
+    """价格存不下：明确拒绝，不假装保存成功。"""
 
 
 def _price(value) -> float | None:
@@ -301,7 +306,7 @@ def _clean_prices(raw) -> dict:
     routes = raw.get("routes") if isinstance(raw.get("routes"), dict) else {}
     return {
         "daily_limit": _price(raw.get("daily_limit")),
-        "routes": {str(rid)[:120]: _clean_route_prices(v) for rid, v in list(routes.items())[:200]},
+        "routes": {str(rid)[:120]: _clean_route_prices(v) for rid, v in routes.items()},
     }
 
 
@@ -318,9 +323,17 @@ def save_prices(data: dict) -> dict:
     """保存价格。这次没带上的线路（比如已经删掉、页面没列出来的）保留原来的价格，旧账照样能算；
     要清掉某条线路的价格，就把它带上、各项填空。"""
     import json
+    raw_routes = (data or {}).get("routes") if isinstance(data, dict) else None
+    if isinstance(raw_routes, dict) and len(raw_routes) > MAX_PRICED_ROUTES * 5:
+        raise PriceLimitError("一次带的线路太多了")
     prices = _clean_prices(data)
     kept = {rid: p for rid, p in load_prices()["routes"].items() if rid not in prices["routes"]}
-    prices["routes"] = dict(list({**kept, **prices["routes"]}.items())[:200])
+    # 各项都空的线路不占名额（清空 = 真正删掉这条价格）
+    merged = {rid: p for rid, p in {**kept, **prices["routes"]}.items()
+              if p["billing"] or any(p[k] is not None for k in ROUTE_PRICE_FIELDS)}
+    if len(merged) > MAX_PRICED_ROUTES:
+        raise PriceLimitError(f"最多存 {MAX_PRICED_ROUTES} 条线路的价格，先把不用的线路价格清空再保存")
+    prices["routes"] = merged
     tmp = PRICES_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(prices, ensure_ascii=False), encoding="utf-8")
     tmp.replace(PRICES_FILE)

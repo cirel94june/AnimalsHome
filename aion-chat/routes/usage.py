@@ -1,6 +1,6 @@
 """用量小本本：页面 + 数据接口；价格和每日提醒线可以改。"""
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import FileResponse
 
 import usage_log
@@ -72,7 +72,10 @@ async def usage_prices():
 
 @router.put("/api/usage/prices")
 async def save_usage_prices(data: dict = Body(...)):
-    return usage_log.save_prices(data)
+    try:
+        return usage_log.save_prices(data)
+    except usage_log.PriceLimitError as error:
+        raise HTTPException(400, str(error))
 
 
 @router.get("/api/usage/today")

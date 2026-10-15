@@ -308,7 +308,7 @@ def test_prices_are_cleaned_and_saved_on_the_server(book, monkeypatch):
         "b": {"inp": 1e308, "out": 2e6}}, "junk": 1})
     empty = {"call": None, "inp": None, "out": None, "cache": None, "write": None, "billing": ""}
     assert saved == {"daily_limit": None, "routes": {
-        "a": {**empty, "inp": 15.0, "out": 75.0}, "b": empty}}
+        "a": {**empty, "inp": 15.0, "out": 75.0}}}  # b 全被清洗成空：不占名额
     assert usage_log.load_prices() == saved
     assert usage_log.save_prices({"routes": "bad"}) == saved  # 格式不对：一条也不改、也不删
 
@@ -445,4 +445,21 @@ def test_deleted_relay_keeps_its_price_when_the_page_saves_again(book, monkeypat
     assert asyncio.run(usage_routes.usage_today())["cost"] == 1
     # 想清掉：带上它、各项填空
     asyncio.run(usage_routes.save_usage_prices({"daily_limit": 6, "routes": {"A": {}}}))
-    assert usage_log.load_prices()["routes"]["A"]["call"] is None
+    assert "A" not in usage_log.load_prices()["routes"]  # 各项都空 = 删掉这条价格
+
+
+def test_price_slots_are_limited_loudly_and_freed_by_clearing(book, monkeypatch):
+    """Codex L2：满 200 条后新增要明确拒绝；清空一条就腾出名额。"""
+    from fastapi import HTTPException
+    from routes import usage as usage_routes
+    monkeypatch.setattr(usage_log, "PRICES_FILE", book / "usage_prices.json")
+    usage_log.save_prices({"routes": {f"old{i}": {"call": 1} for i in range(usage_log.MAX_PRICED_ROUTES)}})
+    with pytest.raises(usage_log.PriceLimitError):
+        usage_log.save_prices({"routes": {"NEW": {"call": 2}}})
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(usage_routes.save_usage_prices({"routes": {"NEW": {"call": 2}}}))
+    assert err.value.status_code == 400 and "200" in err.value.detail
+    assert "NEW" not in usage_log.load_prices()["routes"]
+    saved = usage_log.save_prices({"routes": {"old0": {}, "NEW": {"call": 2}}})
+    assert "old0" not in saved["routes"] and saved["routes"]["NEW"]["call"] == 2
+    assert len(usage_log.load_prices()["routes"]) == usage_log.MAX_PRICED_ROUTES

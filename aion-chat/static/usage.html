@@ -146,7 +146,10 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
       var body = { daily_limit: num($('p-limit').value), routes: {} };
       routes.forEach(function (r) { body.routes[r.id] = r.prices; });
       fetch('/api/usage/prices', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-        .then(function () { load(currentDays); }).catch(function () {});
+        .then(function (r) {
+          if (r.ok) { load(currentDays); return; }
+          return r.json().then(function (d) { $('t-spend').textContent = '价格没存上：' + (d.detail || '请稍后再试'); });
+        }).catch(function () { $('t-spend').textContent = '价格没存上：连不上服务器'; });
     }, 600);
   }
   function loadSpend() {
