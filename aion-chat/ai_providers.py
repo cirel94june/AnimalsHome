@@ -13,7 +13,7 @@ from generation_control import own_stream, own_process
 import httpx
 import tempfile
 
-from config import get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated, LIVE_STATE_HEADING
+from config import get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated, LIVE_STATE_HEADING, CUSTOM_OPENAI_PROVIDER
 from codex_app_server import (
     CodexAppServerEvent,
     build_codex_app_server_command,
@@ -667,9 +667,13 @@ def _live_state_at(text: str) -> int:
     return min(found) if found else -1
 
 
-# 每轮都会变的背景消息（时间+背景记忆、设备状态、相关记忆）
-_MOVABLE_PREFIXES = _DYNAMIC_START_MARKERS + ("【设备当前状态】", "[相关记忆]")
-# render_merged_timeline 生成的聊天记录从这一条开始
+# 构造上下文时给消息打的内部标签（发给模型前去掉）：
+#   "abilities" 能力说明（里面 LIVE_STATE_HEADING 之后是每轮会变的状态）
+#   "live" / "live_ack" 每轮会变的背景（时间+背景记忆、设备状态、相关记忆）及它的回执
+#   "history" 聊天记录从这一条开始
+# 只认标签，不从正文猜：聊天内容里出现同样的字也不会被挪动。
+CONTEXT_TAG = "_context"
+# render_merged_timeline 生成的聊天记录说明（只用来决定第二个缓存标记放哪，不影响顺序）
 _HISTORY_HEADER = "[历史记录说明]"
 
 
@@ -677,32 +681,32 @@ def _cache_friendly_order(messages: list) -> list:
     """把每轮都会变的背景挪到聊天记录之后、最新一句之前：
     人设 / 规则 / 能力说明 / 聊天记录 → 实时状态 / 时间 / 记忆 → 最新一句。
     这样「人设到聊天记录」是每轮相同的开头，可以整体走缓存。
-    只处理有聊天记录、最后一条是用户消息的请求，其余原样返回；不修改原列表。"""
+    只处理构造器标了 "history" 的请求、且最后一条是用户消息；只挪标了 live / live_ack 的消息和
+    能力说明里实时状态那一段。其余原样返回；不修改原列表。"""
     if len(messages) < 3 or messages[-1].get("role") != "user":
         return messages
-    header = next((i for i, m in enumerate(messages) if _message_text(m).startswith(_HISTORY_HEADER)), -1)
-    if header < 0:
+    header = next((i for i, m in enumerate(messages) if m.get(CONTEXT_TAG) == "history"), -1)
+    if header < 0 or header >= len(messages) - 1:
         return messages
     kept, moved = [], []
-    i = 0
-    while i < header:
-        m = messages[i]
-        text = _message_text(m)
-        cut = text.find(LIVE_STATE_HEADING) if isinstance(m.get("content"), str) else -1
-        if m.get("role") == "user" and text.lstrip().startswith(_MOVABLE_PREFIXES):
+    for m in messages[:header]:
+        tag = m.get(CONTEXT_TAG)
+        content = m.get("content")
+        cut = content.find(LIVE_STATE_HEADING) if tag == "abilities" and isinstance(content, str) else -1
+        if tag in ("live", "live_ack"):
             moved.append(m)
-            if i + 1 < header and messages[i + 1].get("role") == "assistant":
-                moved.append(messages[i + 1])
-                i += 1
-        elif m.get("role") == "user" and cut > 0 and text[:cut].strip():
-            kept.append({**m, "content": text[:cut].rstrip()})
-            moved.append({"role": "user", "content": text[cut:]})
+        elif cut > 0 and content[:cut].strip():
+            kept.append({**m, "content": content[:cut].rstrip()})
+            moved.append({"role": "user", "content": content[cut:]})
         else:
             kept.append(m)
-        i += 1
     if not moved:
         return messages
     return kept + list(messages[header:-1]) + moved + [messages[-1]]
+
+
+def _without_context_tags(messages: list) -> list:
+    return [{k: v for k, v in m.items() if k != CONTEXT_TAG} if CONTEXT_TAG in m else m for m in messages]
 
 
 def _cache_control(ttl: str = "5m") -> dict:
@@ -823,8 +827,7 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
     reasoning_status_sent = False
     content_started = False
     want_cache_marker = cfg.get("cache_marker", True) is not False
-    # 线路开着缓存时，把会变的背景挪到聊天记录之后（中转站不认标记、退回纯文本时也保持这个顺序，对自动缓存同样有利）
-    plain_messages = _cache_friendly_order(payload["messages"]) if want_cache_marker else payload["messages"]
+    plain_messages = payload["messages"]
     try:
         for _attempt in range(4):
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
@@ -841,10 +844,8 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                     own_stream(resp)
                     if resp.status_code != 200:
                         body = await resp.aread()
-                        if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
-                            # 这家中转站不认识 stream_options：记住，去掉再发一次（还没输出任何内容，重发是安全的）
-                            _NO_STREAM_USAGE.add(url)
-                            continue
+                        # 回退顺序固定：1 小时 → 5 分钟 → 去掉缓存标记 → 去掉 stream_options。
+                        # 还没输出任何内容，重发是安全的；每样只退一次，最多 4 次
                         if (mark_cache and ttl == "1h" and payload["messages"] is not plain_messages
                                 and resp.status_code in (400, 422) and _mentions_ttl(body)):
                             # 这家中转站不认「保留 1 小时」：记住，退回 5 分钟再发一次
@@ -856,10 +857,16 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                             # 这家中转站不认识缓存标记（或只收字符串内容）：记住，去掉再发一次
                             _NO_CACHE_MARKER.add(url)
                             continue
+                        if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
+                            # 这家中转站不认识 stream_options：记住，去掉再发一次
+                            _NO_STREAM_USAGE.add(url)
+                            continue
                         if meta is not None:
                             meta["provider_error"] = f"HTTP {resp.status_code}: {_decode_relay_body(body)}"
                         yield _decode_relay_body(body)
                         return
+                    if meta is not None and payload["messages"] is not plain_messages:
+                        meta["cache_ttl"] = ttl  # 这次真正发出去的缓存时长（写缓存按它计价）
                     async for line in resp.aiter_lines():
                         data = _openai_sse_data(line)
                         if data is None:
@@ -1940,11 +1947,12 @@ def with_current_device_context(
 
     if insert_at is not None:
         index = max(0, min(len(prepared), int(insert_at)))
-        prepared.insert(index, {"role": "user", "content": device_context})
+        prepared.insert(index, {"role": "user", "content": device_context, "_context": "live"})
         if add_acknowledgement:
             prepared.insert(index + 1, {
                 "role": "assistant",
                 "content": "收到，我会结合当前设备状态判断。",
+                "_context": "live_ack",
             })
         return prepared
 
@@ -1966,7 +1974,7 @@ def stream_ai(messages: list, model_key: str, meta: dict | None = None, *args, *
     return _stream_ai_counted(caller, messages, model_key, meta, *args, **kwargs)
 
 
-_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "raw")
+_USAGE_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens", "raw", "cache_ttl")
 
 
 async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: dict | None, *args, **kwargs):
@@ -1989,7 +1997,8 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
         reported = any(key in meta for key in ("prompt_tokens", "completion_tokens"))
         if counted:
             usage_log.record_call(resolved, usage_log.kind_for_module(caller), meta if reported else {},
-                                  usage_log.messages_text(messages), "".join(output))
+                                  usage_log.messages_text(messages), "".join(output),
+                                  route=usage_log.route_for_model(resolved))
         if not reported:
             meta.update(previous)  # 这次没报告：调用方看到的仍是原来的值
 
@@ -2013,6 +2022,11 @@ async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, t
     if is_model_deprecated(model_key):
         yield f"[错误] 模型线路已停用: {model_key}"
         return
+    # 开着缓存的中转站线路：把会变的背景挪到聊天记录之后（中转站不认标记退回纯文本时也保持这个顺序，
+    # 对自动前缀缓存同样有利）。其他线路顺序不变。内部标签一律去掉再往下传
+    if cfg.get("provider") == CUSTOM_OPENAI_PROVIDER and cfg.get("cache_marker", True) is not False:
+        normalized = _cache_friendly_order(normalized)
+    normalized = _without_context_tags(normalized)
 
     normalized = filter_audio_attachments_for_model(
         normalized,

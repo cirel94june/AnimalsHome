@@ -1114,7 +1114,7 @@ async def build_aion_group_context(
         include_private_whisper=True,
     )
     if ability_block:
-        history.append({"role": "user", "content": ability_block})
+        history.append({"role": "user", "content": ability_block, "_context": "abilities"})
         history.append({"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
 
     history = with_current_device_context(
@@ -1145,12 +1145,12 @@ async def build_aion_group_context(
         memory_hub_chat_id=room_id,
     )
 
-    history.append({"role": "user", "content": mem_result["time_block"]})
-    history.append({"role": "assistant", "content": "收到，我会在合适的时候自然提及。"})
+    history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
+    history.append({"role": "assistant", "content": "收到，我会在合适的时候自然提及。", "_context": "live_ack"})
 
     if mem_result["memory_block"]:
-        history.append({"role": "user", "content": mem_result["memory_block"]})
-        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
+        history.append({"role": "user", "content": mem_result["memory_block"], "_context": "live"})
+        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
 
     # 5. 群聊说明
     history.append({"role": "user", "content": (
@@ -1211,7 +1211,7 @@ async def build_connor_group_context(
         include_private_whisper=True,
     )
     if ability_block:
-        history.append({"role": "user", "content": ability_block})
+        history.append({"role": "user", "content": ability_block, "_context": "abilities"})
         history.append({"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
 
     history = with_current_device_context(
@@ -1254,12 +1254,12 @@ async def build_connor_group_context(
         memory_hub_chat_id=room_id,
     )
 
-    history.append({"role": "user", "content": mem_result["time_block"]})
-    history.append({"role": "assistant", "content": "收到。"})
+    history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
+    history.append({"role": "assistant", "content": "收到。", "_context": "live_ack"})
 
     if mem_result["memory_block"]:
-        history.append({"role": "user", "content": mem_result["memory_block"]})
-        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
+        history.append({"role": "user", "content": mem_result["memory_block"], "_context": "live"})
+        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
 
     # 4. 群聊说明
     history.append({"role": "user", "content": (
@@ -1315,7 +1315,7 @@ async def build_connor_1v1_context(
 
     ability_block = await build_ability_block(user_name, who="connor", whisper_mode=whisper_mode)
     if ability_block:
-        messages.append({"role": "user", "content": ability_block})
+        messages.append({"role": "user", "content": ability_block, "_context": "abilities"})
     merged = await fetch_merged_timeline("connor", context_limit, stable_window=True)
     if ability_block:
         messages.append({"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
@@ -1357,12 +1357,12 @@ async def build_connor_1v1_context(
         memory_hub_chat_id=room_id,
     )
 
-    messages.append({"role": "user", "content": mem_result["time_block"]})
-    messages.append({"role": "assistant", "content": "收到。"})
+    messages.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
+    messages.append({"role": "assistant", "content": "收到。", "_context": "live_ack"})
 
     if mem_result["memory_block"]:
-        messages.append({"role": "user", "content": mem_result["memory_block"]})
-        messages.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。"})
+        messages.append({"role": "user", "content": mem_result["memory_block"], "_context": "live"})
+        messages.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
 
     messages.append({"role": "user", "content": (
         "[私聊说明]\n"

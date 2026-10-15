@@ -816,9 +816,9 @@ def _stable_window(results: list[dict], limit: int, key: tuple) -> list[dict]:
     """results 是最近 limit+批量 条（时间升序）。上次的起点还在里面就从它开始，否则删回最近 limit 条、换新起点。"""
     start = _WINDOW_STARTS.get(key)
     keys = [_message_key(m) for m in results]
-    if start in keys:
-        window = results[keys.index(start):]
-    else:
+    window = results[keys.index(start):] if start in keys else []
+    if len(window) < min(limit, len(results)):
+        # 起点没了，或删除 / 编辑重发后从起点算不够 limit 条：删回最近 limit 条、换新起点
         window = results[-limit:]
     if window:
         _WINDOW_STARTS[key] = _message_key(window[0])
@@ -927,6 +927,7 @@ def render_merged_timeline(
 
     history: list[dict] = [{
         "role": "user",
+        "_context": "history",  # 聊天记录从这里开始（给缓存排序用，发送前去掉）
         "content": (
             "[历史记录说明]\n"
             "以下消息按时间线排列，格式为“历史消息 - 说话人：内容”或“当前用户消息 - 说话人：内容”。"

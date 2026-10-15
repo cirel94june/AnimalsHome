@@ -14,13 +14,17 @@ async def usage_page():
     return FileResponse(BASE_DIR / "static" / "usage.html", headers={"Cache-Control": "no-cache"})
 
 
-def _route_of(model: str) -> tuple[str, str, bool]:
-    """模型属于哪条线路（中转站）。不是中转站的（内置模型、哨兵等）归「其他」。"""
+def _route_name(route_id: str) -> str:
+    """线路的显示名：用现在的名字；线路已经删掉的标「已删除」；旧记录标「未知」。归属不随这里变。"""
     from config import MODELS
-    info = MODELS.get(model) or {}
-    if info.get("route_id"):
-        return info["route_id"], info.get("route_name") or info["route_id"], info.get("cache_ttl", "1h") == "1h"
-    return usage_log.OTHER_ROUTE, "其他（内置模型、哨兵等）", False
+    if route_id == usage_log.UNKNOWN_ROUTE:
+        return "未知线路（旧记录，不计价）"
+    if route_id == usage_log.OTHER_ROUTE:
+        return "其他（内置模型、哨兵等）"
+    for info in MODELS.values():
+        if info.get("route_id") == route_id:
+            return info.get("route_name") or route_id
+    return f"{route_id}（已删除）"
 
 
 def _all_routes() -> list[dict]:
@@ -48,7 +52,7 @@ async def usage_data(days: int = 1):
         pass
     for row in data["by_model"]:
         row["users"] = users.get(row["name"], [])
-    data["by_route"] = usage_log.route_costs(data["by_model"], usage_log.load_prices(), _route_of)
+    data["by_route"] = usage_log.route_costs(data["by_route"], usage_log.load_prices(), _route_name)
     data["cost"] = usage_log.total_cost(data["by_route"])
     return data
 
@@ -69,4 +73,4 @@ async def save_usage_prices(data: dict = Body(...)):
 @router.get("/api/usage/today")
 async def usage_today():
     """首页提醒用：今天大约花了多少、超没超自己设的线。"""
-    return usage_log.today_spend(_route_of)
+    return usage_log.today_spend(_route_name)

@@ -196,18 +196,21 @@ def test_type_error_on_another_message_is_not_blamed_on_the_marker(monkeypatch):
     assert not ai_providers._NO_CACHE_MARKER
 
 
+TAG = ai_providers.CONTEXT_TAG
+
+
 def _chat_turn(history_lines, device, now, memory):
-    """仿照私聊的组装顺序：人设 → 能力（含实时状态）→ 时间+背景记忆 → 相关记忆 → 聊天记录（最后一条是这句）。"""
+    """仿照私聊的组装顺序和构造器打的标签：人设 → 能力（含实时状态）→ 时间+背景记忆 → 相关记忆 → 聊天记录。"""
     msgs = [
         {"role": "user", "content": "[系统设定 - 小克人设]\n你是小克"},
         {"role": "assistant", "content": "收到"},
-        {"role": "user", "content": f"[系统能力]\n点歌……\n\n{LIVE}\n【设备当前状态】\n{device}"},
+        {"role": "user", "content": f"[系统能力]\n点歌……\n\n{LIVE}\n【设备当前状态】\n{device}", TAG: "abilities"},
         {"role": "assistant", "content": "好的，需要时我会使用这些指令。"},
-        {"role": "user", "content": f"系统当前的准确时间是 {now}"},
-        {"role": "assistant", "content": "收到，我会在合适的时候自然提及。"},
-        {"role": "user", "content": f"[相关记忆]\n{memory}"},
-        {"role": "assistant", "content": "收到，我会自然地参考这些记忆。"},
-        {"role": "user", "content": "[历史记录说明]\n以下消息按时间线排列"},
+        {"role": "user", "content": f"系统当前的准确时间是 {now}", TAG: "live"},
+        {"role": "assistant", "content": "收到，我会在合适的时候自然提及。", TAG: "live_ack"},
+        {"role": "user", "content": f"[相关记忆]\n{memory}", TAG: "live"},
+        {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", TAG: "live_ack"},
+        {"role": "user", "content": "[历史记录说明]\n以下消息按时间线排列", TAG: "history"},
     ]
     msgs += [{"role": "user", "content": f"历史消息 - {line}"} for line in history_lines[:-1]]
     msgs.append({"role": "user", "content": f"当前用户消息 - {history_lines[-1]}"})
@@ -261,27 +264,54 @@ def test_requests_without_history_or_ending_with_ai_are_left_alone():
     assert ai_providers._cache_friendly_order(msgs) is msgs
 
 
-def test_relay_receives_history_before_the_background(monkeypatch):
+def _sent_through_stream_ai(monkeypatch, msgs, cfg):
+    """走 _stream_ai 的真实路径，看最后交给中转站函数的是什么。"""
     seen = []
 
-    def handle(request):
-        seen.append(json.loads(request.content)["messages"])
-        return _ok()
-    ai_providers._NO_CACHE_MARKER.clear()
-    ai_providers._NO_STREAM_USAGE.clear()
-    msgs = _chat_turn(["小猫：在吗", "小克：在", "小猫：吃饭没"], "电脑：3 秒前", "10:00", "她爱吃辣")
-    monkeypatch.setattr(ai_providers.httpx, "AsyncClient",
-                        lambda **kw: REAL_CLIENT(transport=httpx.MockTransport(handle), **kw))
+    async def fake_custom(messages, c, meta=None, *a, **k):
+        seen.append(messages)
+        yield "嗯"
+    monkeypatch.setattr(ai_providers, "call_custom_openai", fake_custom)
+    monkeypatch.setitem(ai_providers.MODELS, "缓存测试", cfg)
 
-    async def go(cfg):
-        return [c async for c in ai_providers.call_custom_openai(msgs, cfg, {})]
-    asyncio.run(go({"model": "claude-x", "base_url": "https://order.example/v1"}))
-    asyncio.run(go({"model": "claude-x", "base_url": "https://order.example/v1", "cache_marker": False}))
-    texts = [ai_providers._message_text(m) for m in seen[0]]
+    async def go():
+        return [c async for c in ai_providers._stream_ai(msgs, "缓存测试", {}, include_device_context=False)]
+    asyncio.run(go())
+    return seen[0]
+
+
+def test_relay_receives_history_before_the_background_and_no_tags(monkeypatch):
+    msgs = _chat_turn(["小猫：在吗", "小克：在", "小猫：吃饭没"], "电脑：3 秒前", "10:00", "她爱吃辣")
+    base = {"provider": "custom_openai", "model": "claude-x", "base_url": "https://order.example/v1"}
+    sent = _sent_through_stream_ai(monkeypatch, msgs, base)
+    texts = [ai_providers._message_text(m) for m in sent]
     assert texts.index(next(t for t in texts if t.startswith("系统当前"))) > texts.index(
         next(t for t in texts if t.startswith("历史消息 - 小克：在")))
-    # 线路关了缓存：顺序原样
-    assert [ai_providers._message_text(m) for m in seen[1]] == [m["content"] for m in msgs]
+    assert all(TAG not in m for m in sent)
+    # 线路关了缓存：顺序原样，标签照样去掉
+    sent = _sent_through_stream_ai(monkeypatch, msgs, {**base, "cache_marker": False})
+    assert [m["content"] for m in sent] == [m["content"] for m in msgs]
+    assert all(TAG not in m for m in sent)
+
+
+def test_chat_text_that_looks_like_control_blocks_is_never_moved():
+    """Codex M1 的反例：用户自己发「[相关记忆] …」「[历史记录说明] …」，没有构造器标签，顺序不动。"""
+    msgs = [
+        {"role": "user", "content": "[当前时间] 10:00"},
+        {"role": "user", "content": "[相关记忆] QUESTION_A"},
+        {"role": "assistant", "content": "ANSWER_A"},
+        {"role": "user", "content": "[历史记录说明] QUESTION_B"},
+        {"role": "assistant", "content": "ANSWER_B"},
+        {"role": "user", "content": "系统当前的准确时间是 QUESTION_C"},
+    ]
+    assert ai_providers._cache_friendly_order(msgs) is msgs
+    # 有构造器的聊天记录标签时，聊天记录里这样的字也只是普通记录，原位不动
+    turn = _chat_turn(["小猫：[相关记忆] 我编的", "小克：好", "小猫：系统当前的准确时间是 假的"], "电脑", "10:00", "x")
+    ordered = ai_providers._cache_friendly_order(turn)
+    texts = [ai_providers._message_text(m) for m in ordered]
+    h = next(i for i, m in enumerate(ordered) if m.get(TAG) == "history")
+    assert texts[h + 1] == "历史消息 - 小猫：[相关记忆] 我编的"
+    assert texts[-1] == "当前用户消息 - 小猫：系统当前的准确时间是 假的"
 
 
 def test_history_window_is_trimmed_in_batches():
@@ -303,6 +333,18 @@ def test_history_window_is_trimmed_in_batches():
     assert len(window(20 + step)) == limit + step
     trimmed = window(21 + step)
     assert len(trimmed) == limit and trimmed[-1] == f"m{20 + step}"  # 满了一次删回上限
+
+
+def test_window_tops_up_when_messages_after_the_start_are_deleted():
+    """Codex M2：编辑重发删掉后面的消息，从起点算不够 limit 条时，退回最近 limit 条。"""
+    import context_builder
+    limit, key = 3, ("aion", "conv-topup", None, 3)
+    context_builder._WINDOW_STARTS.pop(key, None)
+    msgs = [{"source": "private", "id": f"m{i}", "created_at": i} for i in range(20)]
+    assert [m["id"] for m in context_builder._stable_window(msgs[7:20], limit, key)] == ["m17", "m18", "m19"]
+    edited = msgs[6:18]  # m18 被编辑重发、m19 被删（m17 这个起点还在）
+    assert [m["id"] for m in context_builder._stable_window(edited, limit, key)] == ["m15", "m16", "m17"]
+    assert [m["id"] for m in context_builder._stable_window(msgs[:2], limit, ("aion", "short", None, 3))] == ["m0", "m1"]
 
 
 def _ttls(body: dict) -> list:
@@ -336,6 +378,16 @@ def test_relay_that_rejects_the_hour_falls_back_to_five_minutes(monkeypatch):
     ai_providers._NO_LONG_CACHE.clear()
     ai_providers._NO_STREAM_USAGE.clear()
     cfg = {"model": "claude-x", "base_url": "https://no-hour.example/v1"}
+    meta = {}
+    monkeypatch.setattr(ai_providers.httpx, "AsyncClient",
+                        lambda **kw: REAL_CLIENT(transport=httpx.MockTransport(handle), **kw))
+
+    async def go():
+        return [c async for c in ai_providers.call_custom_openai(STABLE + DYNAMIC, cfg, meta)]
+    asyncio.run(go())
+    assert meta["cache_ttl"] == "5m"  # 记账按实际发出去的 5 分钟算
+    ai_providers._NO_LONG_CACHE.clear()
+    seen.clear()
     assert _run(monkeypatch, handle, cfg) == "嗯"
     assert seen == [["1h"], [None]]  # 只退到 5 分钟，缓存标记还在
     seen.clear()
@@ -351,3 +403,36 @@ def test_route_ttl_survives_normalization():
         {"id": "c", "base_url": "https://c.example", "models": ["o"], "cache_ttl": "forever"},
     ])
     assert [r["cache_ttl"] for r in routes] == ["1h", "5m", "1h"]
+
+
+def test_fallback_order_is_fixed_even_when_one_error_mentions_several_things(monkeypatch):
+    sent = []
+
+    def handle(request):
+        body = json.loads(request.content)
+        state = (tuple(_ttls(body)), "stream_options" in body)
+        sent.append(state)
+        if "1h" in state[0] or (state[0] and state[1]):
+            return httpx.Response(400, stream=_Stream(
+                b'{"error":"unknown fields: stream_options, cache_control.ttl"}' if "1h" in state[0]
+                else b'{"error":"unknown fields: stream_options, cache_control"}'))
+        if state[1]:
+            return httpx.Response(400, stream=_Stream(b'{"error":"unknown field stream_options"}'))
+        return _ok()
+    for s_ in (ai_providers._NO_CACHE_MARKER, ai_providers._NO_LONG_CACHE, ai_providers._NO_STREAM_USAGE):
+        s_.clear()
+    assert _run(monkeypatch, handle, {"model": "claude-x", "base_url": "https://mixed.example/v1"}) == "嗯"
+    # 1 小时 → 5 分钟 → 去掉标记 → 去掉 stream_options，正好四次
+    assert sent == [(("1h",), True), ((None,), True), ((), True), ((), False)]
+
+
+def test_builders_tag_what_may_be_moved(monkeypatch):
+    import activity
+    import context_builder
+    monkeypatch.setattr(activity, "get_device_context_for_prompt", lambda: "【设备当前状态】\n电脑：刚刚")
+    out = ai_providers.with_current_device_context([{"role": "user", "content": "hi"}], insert_at=0, add_acknowledgement=True)
+    assert [m.get(TAG) for m in out] == ["live", "live_ack", None]
+    rendered = context_builder.render_merged_timeline(
+        [{"source": "private", "sender": "user", "content": "在吗", "created_at": 1_700_000_000, "attachments": "[]"}], "aion")
+    assert rendered[0].get(TAG) == "history" and rendered[0]["content"].startswith("[历史记录说明]")
+    assert all(TAG not in m for m in rendered[1:])

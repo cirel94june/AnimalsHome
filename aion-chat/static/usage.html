@@ -107,7 +107,7 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
     ['inp', '按量：读入 元 / 百万', '例如 15', ''],
     ['out', '按量：写出 元 / 百万', '例如 75', ''],
     ['cache', '命中缓存的读入 元 / 百万（不填按读入价）', 'Claude 一般是读入价的十分之一', 'wide'],
-    ['write', '写入缓存 元 / 百万（不填按读入价的 2 倍算）', '缓存 1 小时约 2 倍，5 分钟约 1.25 倍', 'wide']
+    ['write', '写入缓存 元 / 百万（不填：保留 1 小时的按读入价 2 倍，5 分钟的按 1.25 倍）', '一般不用填', 'wide']
   ];
   function money(n) { return n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(3); }
   function yuan(n) { return n == null ? '–' : '¥' + money(n); }

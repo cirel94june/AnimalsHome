@@ -257,3 +257,15 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - 接口：`GET /api/usage` 多返回 `by_route` 和 `cost`；`GET /api/usage/prices` 列出当前所有线路（含没用过的）+ other 及其价格；`PUT` 整份保存；`GET /api/usage/today` 用同一算法。
 - `usage.html`：「花了多少」表（每条线路：按次 / 按量 / 实际，两种都能算时便宜的高亮）+ 每日提醒线；每条线路一张价格卡（按量 / 按次切换 + 五个价格）。服务器还没有任何价格时，把手机里旧的一套价格套到每条线路上一次。
 - 测试：`test_cache_marker.py` 新增 3 项（默认 1h / 选 5m、拒绝 1h 只退到 5m 并记住、ttl 规范化）；`test_usage_log.py` 改为 5 项（缓存读写各自计价、每站价格与计费方式、清洗与保存、提醒线、价格接口列出线路）。相关测试与改动前对比，无新增失败。
+
+## 25. 704f98e + 35b18cb 审查（M1–M4、L1、回退顺序）的修复
+
+- **M1 只认构造器标签**：消息上的内部键 `ai_providers.CONTEXT_TAG = "_context"`：`abilities`（能力块）、`live` / `live_ack`（时间+背景记忆、相关记忆、设备状态及其回执）、`history`（`render_merged_timeline` 的说明条）。打标签的位置：routes/chat.py 能力块 1 处、背景 5 处（含快速模式两处）、相关记忆 3 处；chatroom.py 小克 / Lucien 群聊 / Lucien 私聊三处的能力、时间、记忆；`with_current_device_context(insert_at=...)` 插入的设备消息和回执；`render_merged_timeline` 说明条。`_cache_friendly_order` 只看标签：必须有 `history`、最后一条是 user；只挪 `history` 之前的 live / live_ack，以及 abilities 里 `LIVE_STATE_HEADING` 之后那段（该标题由 build_ability_block 生成）。不再从正文识别任何前缀；Codex 的 seat_chat 反例和聊天记录里相同字样的正文都原位不动（有测试）。
+- 重排从 `call_custom_openai` 挪到 `_stream_ai`：只对 `provider == custom_openai` 且 `cache_marker` 开着的线路重排；之后对所有线路统一 `_without_context_tags` 去掉内部键，任何 provider 都收不到它（有测试走 `_stream_ai` 真实路径验证）。第二个断点仍按「[历史记录说明]」正文定位，只影响标记位置、不影响顺序。
+- **M2**：`_stable_window` 从起点算不足 `min(limit, len(results))` 条时，退回最近 limit 条并换起点（编辑重发 / 删除的反例有测试）。
+- **M3 记账时固化线路**：用量表改为 `(day, kind, route, model)` 主键，新增 `route`、`cache_write_1h` 列。`_connect` 发现旧表（无 route）时在一个事务里改名 → 建新表 → 旧行 route 记 `''` → 删旧表。`_stream_ai_counted` 记账时传 `route_for_model(resolved)`（当时 MODELS 的 route_id，非线路记 `other`）；`record` 其他调用也在记账时解析。`summary` 新增按记账线路的 `by_route`；`route_costs` 只按记下的 route 配价，`''` 显示「未知线路（旧记录，不计价）」、cost=None；线路已删显示「…（已删除）」但仍用原 id 配价。改绑 / 删除模型不改旧账（有测试）。
+- **M4 写缓存按实际时长计价**：`call_custom_openai` 收到 200 时把这次真正发出的 ttl 写进 `meta["cache_ttl"]`（`_USAGE_KEYS` 加入，复用 meta 不串）；`usage_log.cache_write_1h` 优先用中转站返回的 `cache_creation.ephemeral_1h/5m_input_tokens` 明细，没有就按实际 ttl，都没有按 5 分钟。`token_cost`：填了统一写缓存价就用它；否则 1h 部分 ×2、其余 ×1.25。Codex 的 20 元反例现在算 12.5 元（有测试）。
+- **L1**：`_price` 捕获 OverflowError、拒绝 bool、超过 1e6 视为没填；`token_cost` / `call_cost` / `total_cost` 结果非有限数时返回 None（10**400、1e308、超大用量都有测试）。
+- **回退顺序**：错误分支改为 ttl → cache_control / 字符串内容 → stream_options；同一条错误同时提到 stream_options 和 cache_control.ttl 时先退 1 小时。复合错误测试：恰好四次，顺序 1h → 5m → 去标记 → 去 stream_options。
+- 未改：固定 `.tmp` 文件名（单进程单 worker，同步写入）。
+- 测试：`test_cache_marker.py` 22 项、`test_usage_log.py` 22 项全过；相关测试集 832 项与改动前逐条对比，27 个失败完全相同（均为既有失败）。
