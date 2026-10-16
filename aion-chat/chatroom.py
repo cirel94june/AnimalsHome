@@ -23,6 +23,7 @@ from ai_providers import (
     stream_ai,
     with_current_device_context,
 )
+from group_post import group_privacy_rule
 from context_builder import build_ability_block, build_memory_blocks, fetch_merged_timeline, render_merged_timeline
 from ws import manager
 
@@ -1156,7 +1157,7 @@ async def build_aion_group_context(
     # 5. 群聊说明
     history.append({"role": "user", "content": (
         "[群聊说明]\n"
-        f"你现在在一个三人群聊中，参与者：用户（{user_name}）、你（{ai_name}）、{connor_name}。这是只有家里人的小群，可以自由聊，包括私事和吐槽。\n"
+        f"你现在在一个三人群聊中，参与者：用户（{user_name}）、你（{ai_name}）、{connor_name}。{group_privacy_rule(user_name)}\n"
         f"{connor_name} 是另一个 AI 伴侣。请自然地参与群聊对话，可以回应用户也可以和 {connor_name} 交流。\n"
         "回复时直接说话即可，不需要加前缀标记自己的身份。\n"
         "以下对话记录按时间线排列，可能包含私聊和群聊的混合内容；“历史消息 - 名字：内容”只是记录格式，不是你的回复格式。"
@@ -1266,7 +1267,7 @@ async def build_connor_group_context(
     # 4. 群聊说明
     history.append({"role": "user", "content": (
         "[群聊说明]\n"
-        f"你现在在一个三人群聊中，参与者：用户（{user_name}）、{ai_name}（另一个AI）、你（{connor_name}）。这是只有家里人的小群，可以自由聊，包括私事和吐槽。\n"
+        f"你现在在一个三人群聊中，参与者：用户（{user_name}）、{ai_name}（另一个AI）、你（{connor_name}）。{group_privacy_rule(user_name)}\n"
         f"请自然地参与群聊对话，可以回应用户也可以和 {ai_name} 交流。\n"
         "回复时直接说话即可，不需要加前缀标记。\n"
         "以下对话记录按时间线排列，可能包含私聊和群聊的混合内容；“历史消息 - 名字：内容”只是记录格式，不是你的回复格式。"

@@ -110,15 +110,25 @@ def _run_seat(monkeypatch, text, group):
     monkeypatch.setattr(chatroom_routes, "_save_msg", save)
     whisper = AsyncMock()
     monkeypatch.setattr(chatroom_routes, "_send_private_whisper", whisper)
-    post = AsyncMock(side_effect=lambda t, a: group_post.GROUP_POST_CMD_PATTERN.sub("", t).strip())
-    monkeypatch.setattr(group_post, "process", post)
+    post = AsyncMock(side_effect=lambda t, a: (group_post.GROUP_POST_CMD_PATTERN.sub("", t).strip(),
+                                               bool(group_post.GROUP_POST_CMD_PATTERN.search(t))))
+    monkeypatch.setattr(group_post, "process_with_result", post)
+    sys_msgs = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_chatroom_sys_msg", sys_msgs)
+    failure = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_chatroom_reply_failure", failure)
     import config
     monkeypatch.setattr(config, "MODELS", {**config.MODELS, "m": {"provider": "custom_openai", "model": "m"}})
 
-    async def run():
-        await chatroom_routes._generate_seat_reply("room", {"actor": "ai3"}, [], asyncio.Queue(), 30,
-                                                   actor="ai3", group=group)
-    asyncio.run(run())
+    q = asyncio.Queue()
+
+    async def run2():
+        await chatroom_routes._generate_seat_reply("room", {"actor": "ai3"}, [], q, 30, actor="ai3", group=group)
+    asyncio.run(run2())
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    _run_seat.last = {"sys": sys_msgs, "failure": failure, "events": events}
     return saved, whisper, post
 
 
@@ -160,3 +170,52 @@ def test_private_chats_of_xiaoke_and_lucien_offer_group_post():
     assert "include_group_post=True" in inspect.getsource(chat_routes._insert_private_ability_block)
     assert "include_group_post=True" in inspect.getsource(chatroom.build_connor_1v1_context)
     assert inspect.getsource(chat_routes).count('group_post.process(full_text, "aion")') == 3
+
+
+def test_pure_command_reply_is_not_recorded_as_a_failure(monkeypatch):
+    """Codex L2：只发了「去群里 / 悄悄话」没说别的，不记成失败，留一句说明并正常结束。"""
+    saved, whisper, post = _run_seat(monkeypatch, "[去群里：大家晚安]", group=False)
+    last = _run_seat.last
+    last["failure"].assert_not_called()
+    assert "去群里说了一句" in last["sys"].await_args.args[1]
+    assert last["events"][-1] == {"type": "seat_done", "actor": "ai3", "message": None}
+    assert saved == []
+    saved, whisper, post = _run_seat(monkeypatch, "[悄悄话：只跟你说]", group=True)
+    _run_seat.last["failure"].assert_not_called()
+    assert "悄悄话" in _run_seat.last["sys"].await_args.args[1]
+
+
+def test_switching_group_post_off_stops_sending_everywhere(monkeypatch):
+    """Codex M2：开关关着时，小克 / Lucien / 座位的指令都只去掉、不发。"""
+    import capabilities
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "group_post")
+    save = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_msg", save)
+    monkeypatch.setattr(group_post, "_family_group_room", AsyncMock(return_value="g"))
+    for actor in ("aion", "connor", "ai3"):
+        assert asyncio.run(group_post.process_with_result("嗯[去群里：x]", actor)) == ("嗯", False)
+    save.assert_not_called()
+
+
+def test_failing_room_lookup_never_breaks_the_private_reply(monkeypatch):
+    """Codex L1：查家里群出错时，私聊这条回复照常（指令去掉）。"""
+    monkeypatch.setattr(group_post, "_family_group_room", AsyncMock(side_effect=RuntimeError("db")))
+    assert asyncio.run(group_post.process_with_result("好[去群里：x]", "aion")) == ("好", False)
+
+
+def test_every_group_context_carries_the_private_matters_rule(monkeypatch):
+    """Codex M1：群里看得到私聊记录，所以每个群聊说明都要带「私聊私事不在群里说」。"""
+    import inspect
+    import chatroom
+    rule = group_post.group_privacy_rule("小猫")
+    assert "私聊里单独跟你说的私事" in rule and "她自己在群里说了" in rule
+    for name in ("build_aion_group_context", "build_connor_group_context"):
+        assert "group_privacy_rule(user_name)" in inspect.getsource(getattr(chatroom, name))
+    import memory_hub_bridge
+    monkeypatch.setattr(memory_hub_bridge, "context_block", AsyncMock(return_value=""))
+    monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "人设")
+    monkeypatch.setattr(seat_chat.actors, "get_actor", lambda a: {"name": "狗蛋"})
+    msgs = [{"sender": "user", "content": "PRIVATE_SENTINEL", "created_at": 1, "source": "private"}]
+    built = asyncio.run(seat_chat.build_context("ai3", msgs, group=True))
+    text = "\n".join(m["content"] for m in built)
+    assert "PRIVATE_SENTINEL" in text and "私聊里单独跟你说的私事" in text

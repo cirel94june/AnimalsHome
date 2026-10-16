@@ -17,6 +17,7 @@ import actors
 import memory_hub_bridge
 from config import MODELS, is_model_deprecated, load_worldbook
 from context_builder import append_message_meta
+from group_post import group_privacy_rule
 
 SEAT_ROOM_TYPE = "seat_1v1"
 SEAT_ACTORS = tuple(a for a in actors.SEAT_IDS if a not in ("aion", "connor"))
@@ -154,7 +155,8 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "user", "content": "\n\n".join(b for b in background if b)},
         {"role": "assistant", "content": "收到。"},
         {"role": "user", "content": (
-            f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。这是只有家里人的小群，可以自由聊，包括私事和吐槽。下面是最近的聊天记录，"
+            f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。"
+            f"{group_privacy_rule(user_name)}下面是最近的聊天记录，"
             "【】里是说话的人，<meta> 里是发送时间，只供你参考，回复时都不要带。"
             "轮到你说话了：用你自己的口吻接话，可以回应任何人，不用替别人说话。"
         ) if group else (

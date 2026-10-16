@@ -3828,18 +3828,26 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         await _save_chatroom_reply_failure(room_id, actor_id, _q, reason, partial_text=raw_text, msg_id=msg_id)
         return
     command_text = await process_note_commands(raw_text, actor_id)
+    side_effect_notice = ""  # 只发了指令、没说别的话时，在房间里留一句说明，不记成回复失败
     if group:
         whispers = PRIVATE_WHISPER_CMD_PATTERN.findall(command_text)
         command_text = PRIVATE_WHISPER_CMD_PATTERN.sub("", command_text)
         for whisper_text in whispers if is_capability_enabled("private_whisper") else []:
             try:
                 await _send_private_whisper(actor_id, whisper_text)
+                side_effect_notice = f"（{seat_chat.actors.display_name(actor_id)}发了一条悄悄话）"
             except Exception as e:
                 print(f"[CHATROOM_WHISPER] 发送失败: {e}")
-    elif is_capability_enabled("group_post"):
-        command_text = await group_post.process(command_text, actor_id)
+    else:
+        command_text, posted = await group_post.process_with_result(command_text, actor_id)
+        if posted:
+            side_effect_notice = f"（{seat_chat.actors.display_name(actor_id)}去群里说了一句）"
     clean_text = _visible_chatroom_text(command_text).strip()
     if not clean_text:
+        if side_effect_notice:
+            await _chatroom_sys_msg(room_id, side_effect_notice, _q)
+            await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
+            return
         await _save_chatroom_reply_failure(room_id, actor_id, _q, "empty_response", msg_id=msg_id)
         return
     msg = await _save_msg(room_id, actor_id, clean_text, msg_id, auto_tts=False,
