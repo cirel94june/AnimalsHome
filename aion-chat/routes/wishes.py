@@ -143,7 +143,7 @@ async def _mark_wish_mentioned(wish_id: str) -> None:
 @router.get("")
 async def api_list_wishes(
     status: str = Query("all", pattern="^(all|active|fulfilled|released)$"),
-    author: str = Query("all", pattern="^(all|user|aion|connor)$"),
+    author: str = Query("all", pattern="^(all|user|aion|connor|ai3|ai4|ai5|ai6)$"),
 ):
     return await list_wishes(status=status, author=author)
 
@@ -168,8 +168,8 @@ async def api_create_wish(body: WishCreate):
 
 @router.post("/draw")
 async def api_draw_wish(
-    author: str = Query("all", pattern="^(all|user|aion|connor)$"),
-    drawer: str = Query("", pattern="^(|user|aion|connor)$"),
+    author: str = Query("all", pattern="^(all|user|aion|connor|ai3|ai4|ai5|ai6)$"),
+    drawer: str = Query("", pattern="^(|user|aion|connor|ai3|ai4|ai5|ai6)$"),
 ):
     wish = await draw_wish(author=author, drawer=drawer)
     return {"ok": True, "wish": wish}

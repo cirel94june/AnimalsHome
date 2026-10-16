@@ -336,3 +336,9 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **M3 只有动作时的完成**：许愿成功插「🌠 狗蛋往许愿池里投了一个愿望」，生图触发插「📸 狗蛋在拍照……」/「🎨 狗蛋在画图……」；座位生图失败（返回空或异常）插「（狗蛋的图没生成出来）」（小克 / Lucien 行为不变）。前端 `seat_done` 无条件移除 `.typing-indicator`。
 - **L1 点歌卡片锚点**：座位消息保存时带 `_music_attachments_from_triggered`（同小克 / Lucien）；只点了歌时用「🎵 《歌名》- 歌手」作为 TA 的这条消息，music 事件的 msg_id 就是这条已保存消息的 id。
 - 测试 `test_seat_abilities.py` 11 项（原「只点歌」测试由新的卡片锚点测试取代）；`test_group_post` + `test_seat_chat` 一起 38 项通过；相关测试与改动前对比无新增失败。
+
+## 33. 03973d3 已部署；补充 Low：愿望 HTTP 接口认得座位
+
+- 03973d3 经 Codex 批准已部署（自动更新仍关闭）。
+- `routes/wishes.py`：`GET /api/wishes` 的 author、`POST /api/wishes/draw` 的 author / drawer 校验加入 ai3～ai6（与 `wish_pool.VALID_AUTHORS` 一致）。创建接口对陌生作者原本就把 ValueError 转成 400。
+- 测试 `test_wish_http_filters_accept_seats`：真实 FastAPI TestClient，四个座位按作者列出只出自己、抽取 200，陌生作者创建 400。

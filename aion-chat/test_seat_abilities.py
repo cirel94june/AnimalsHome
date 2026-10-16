@@ -226,3 +226,27 @@ def test_seat_picture_failure_is_visible_but_main_ais_unchanged(monkeypatch):
     notes.reset_mock()
     asyncio.run(chatroom_routes._chatroom_image_gen("room", "aion", "a cat", False))
     notes.assert_not_called()
+
+
+def test_wish_http_filters_accept_seats(tmp_path, monkeypatch):
+    """Codex 补充 Low：愿望页的筛选 / 抽取接口也认得 ai3～ai6；陌生作者创建返回 400。"""
+    import aiosqlite
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import wish_pool
+    from routes import wishes as wish_routes
+    monkeypatch.setattr(wish_pool, "get_db", lambda: aiosqlite.connect(tmp_path / "w.db"))
+    monkeypatch.setattr(wish_pool.manager, "broadcast", AsyncMock())
+    app = FastAPI()
+    app.include_router(wish_routes.router)
+    client = TestClient(app)
+    prefix = wish_routes.router.prefix or ""
+    for seat in ("ai3", "ai4", "ai5", "ai6"):
+        asyncio.run(wish_pool.create_wish(author=seat, content=f"{seat} 想要"))
+        listed = client.get(f"{prefix}/api/wishes" if not prefix else prefix, params={"author": seat})
+        assert listed.status_code == 200 and [w["author"] for w in listed.json()["items"]] == [seat]
+        drawn = client.post(f"{prefix}/api/wishes/draw" if not prefix else f"{prefix}/draw",
+                            params={"author": seat, "drawer": seat})
+        assert drawn.status_code == 200
+    bad = client.post(f"{prefix}/api/wishes" if not prefix else prefix, json={"content": "x", "author": "stranger"})
+    assert bad.status_code == 400
