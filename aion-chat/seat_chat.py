@@ -101,7 +101,8 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
     query_text = str((msgs[-1] if msgs else {}).get("content") or "")
 
     # 新对话开头的交接卡由 context_block 自己判断并附上
-    hub_task = asyncio.create_task(memory_hub_bridge.context_block(actor_id, query_text, chat_id))
+    hub_task = asyncio.create_task(memory_hub_bridge.context_block(
+        actor_id, query_text, chat_id, "private_group" if group else "private"))
 
     messages: list[dict] = [
         {"role": "user", "content": f"[你的角色设定]\n你是{actor['name']}。\n\n{_persona_text(actor_id)}"},

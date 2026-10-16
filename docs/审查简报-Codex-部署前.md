@@ -283,3 +283,14 @@ Tailscale 信任的前提已记下：tailnet 里只有小猫自己的设备；�
 - `save_prices`：合并后先去掉各项全空（且没选计费方式）的线路——「清空」即真正删掉这条价格、释放名额；剩下的超过 `MAX_PRICED_ROUTES=200` 时抛 `PriceLimitError`，`PUT /api/usage/prices` 返回 400 和原因，不再静默截断。一次请求带的线路超过 1000 条也直接拒绝。`_clean_prices` 不再在读入时截 200。
 - 页面保存失败时在「今天大约花了」那一行显示「价格没存上：原因」。
 - 测试 `test_price_slots_are_limited_loudly_and_freed_by_clearing`：满 200 条加新的 → 拒绝（函数和接口都测）、新线路没写入；清空 old0 同时加 NEW → 成功、总数仍 200。原有两处断言改为「全空的线路不再保存」。
+
+## 28. 接 Memory Hub 跨端接续（memory-hub #85，审查中）
+
+Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 `chat_type`；交接卡改为 `context(mode="handoff", max_chars=1500, chat_type, include_objective=false)`；群聊务必 `private_group`。
+
+- `memory_hub_bridge.context_block(actor, message, chat_id="", chat_type="private")`：`chat_type` 只认 `private` / `private_group`，其余按 `private`。incremental 总是带 `chat_type`。
+- **群聊不读交接卡**：`chat_type != "private"` 时即使是新一段也只调 incremental。交接卡是写给和小猫一对一的自己看的；之前群聊新一段会读交接卡，可能把私聊带进群里（Hub 也在 #85 里从服务端去掉）。
+- `handoff_block(actor, chat_type)` 带 `chat_type` 和 `include_objective=False`（原话由 incremental 的接续块给）。
+- 调用方：`build_memory_blocks(..., memory_hub_chat_type)`；chatroom.py 小克群聊、Lucien 群聊传 `private_group`，Lucien 私聊传 `private`；seat_chat 按 `group` 传；routes/chat.py 私聊三处用默认 `private`。
+- 兼容：本地假 Hub（FastMCP）在不认识这些参数时会忽略，不报错（改前的测试即如此通过），所以在 Hub #85 合并前部署也不会出错，只是 Hub 暂不提供接续块。
+- 测试：`test_memory_hub_bridge.py` 假 Hub 记录 chat_type / include_objective；新增群聊不读交接卡、私聊交接卡参数、不认识的类型按私聊、三个聊天室函数传的类型。`test_seat_chat` 期望多一个 `"private"`。`test_slow_hub_times_out_without_blocking_chat` 在本机改前改后都因 MCP 握手慢偶发超时，与改动无关。

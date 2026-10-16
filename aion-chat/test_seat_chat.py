@@ -75,7 +75,7 @@ def test_context_has_persona_user_info_and_hub_memory(seats, monkeypatch):
     joined = "\n".join(m["content"] for m in messages)
     assert "我是 Jasper" in joined and "喜欢猫" in joined
     assert "上次聊到一半的电影" in joined and "最近在搬家" in joined
-    ctx.assert_awaited_once_with("ai3", "我回来了", "cr_1_ai3")
+    ctx.assert_awaited_once_with("ai3", "我回来了", "cr_1_ai3", "private")
     assert messages[-1]["role"] == "user" and messages[-1]["content"].startswith("我回来了")
 
 

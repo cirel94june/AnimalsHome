@@ -1143,6 +1143,7 @@ async def build_aion_group_context(
         always_include_recalled=True,
         memory_hub_actor="aion",
         memory_hub_chat_id=room_id,
+        memory_hub_chat_type="private_group",
     )
 
     history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
@@ -1252,6 +1253,7 @@ async def build_connor_group_context(
         always_include_recalled=True,
         memory_hub_actor="connor",
         memory_hub_chat_id=room_id,
+        memory_hub_chat_type="private_group",
     )
 
     history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
@@ -1355,6 +1357,7 @@ async def build_connor_1v1_context(
         always_include_recalled=True,
         memory_hub_actor="connor",
         memory_hub_chat_id=room_id,
+        memory_hub_chat_type="private",
     )
 
     messages.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})

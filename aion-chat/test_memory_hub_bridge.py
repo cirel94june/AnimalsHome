@@ -35,10 +35,14 @@ def fake_hub():
 
     @hub.tool()
     def context(source_ai: str = "claude", message: str = "", mode: str = "full", max_chars: int = 3000,
-                chat_id: str = "") -> str:
+                chat_id: str = "", chat_type: str = "", include_objective: bool = True) -> str:
         args = {"source_ai": source_ai, "message": message, "mode": mode, "max_chars": max_chars}
         if chat_id:
             args["chat_id"] = chat_id
+        if chat_type:
+            args["chat_type"] = chat_type
+        if not include_objective:
+            args["include_objective"] = False
         CALLS.append(("context", args))
         if message in ("slow", "很慢"):
             time.sleep(2)
@@ -106,7 +110,8 @@ def test_context_block_injects_hub_text_for_mapped_actor(fake_hub, isolated_conf
     block = asyncio.run(bridge.context_block("connor", "今天怎么样"))
     assert "[跨端记忆]" in block  # 第一次聊也算新对话，前面还会附交接卡
     assert "lucien 在 TG 上陪小猫聊了蜡烛" in block
-    assert ("context", {"source_ai": "lucien", "message": "今天怎么样", "mode": "incremental", "max_chars": 2500}) in CALLS
+    assert ("context", {"source_ai": "lucien", "message": "今天怎么样", "mode": "incremental", "max_chars": 2500,
+                        "chat_type": "private"}) in CALLS
 
 
 def test_context_block_passes_chat_id_to_incremental_only(fake_hub, isolated_config):
@@ -121,7 +126,8 @@ def test_handoff_block_reads_own_card_and_hides_empty(fake_hub, isolated_config)
     _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude", "ai3": "jasper"})
     block = asyncio.run(bridge.handoff_block("aion"))
     assert block.startswith("[交接卡]") and "claude 说到一半" in block
-    assert CALLS[-1] == ("context", {"source_ai": "claude", "message": "", "mode": "handoff", "max_chars": 1500})
+    assert CALLS[-1] == ("context", {"source_ai": "claude", "message": "", "mode": "handoff", "max_chars": 1500,
+                                     "chat_type": "private", "include_objective": False})
     assert asyncio.run(bridge.handoff_block("ai3")) == ""
 
 
@@ -501,3 +507,31 @@ def test_hub_id_keeps_ipv6_brackets_apart_from_port():
     other_host = bridge.hub_id({"url": "http://[2001:db8::1:8080]/mcp"})
     assert with_port != other_host
     assert bridge.hub_id({"url": "http://[2001:DB8::1]:8080/mcp"}) == with_port
+
+
+def test_continuity_chat_type_is_sent_and_groups_never_read_handoff(fake_hub, isolated_config):
+    """Hub 跨端接续（memory-hub #85）：带上私聊 / 群聊；群聊即使是新一段也不读交接卡（交接卡写给一对一的自己）。"""
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude"})
+    CALLS.clear()
+    group = asyncio.run(bridge.context_block("aion", "大家好", "room_1", "private_group"))
+    assert "[交接卡]" not in group and "[跨端记忆]" in group
+    assert [c[1]["mode"] for c in CALLS] == ["incremental"] and CALLS[0][1]["chat_type"] == "private_group"
+    CALLS.clear()
+    private = asyncio.run(bridge.context_block("aion", "我回来了", "conv_1"))
+    assert private.startswith("[交接卡]")
+    modes = {c[1]["mode"]: c[1] for c in CALLS}
+    assert modes["incremental"]["chat_type"] == "private"
+    assert modes["handoff"]["chat_type"] == "private" and modes["handoff"]["include_objective"] is False
+    CALLS.clear()
+    asyncio.run(bridge.context_block("aion", "x", "conv_1", "weird"))  # 不认识的按私聊
+    assert all(c[1]["chat_type"] == "private" for c in CALLS)
+
+
+def test_chatrooms_tell_hub_which_rooms_are_groups(monkeypatch):
+    import chatroom
+    import inspect
+    src = {name: inspect.getsource(getattr(chatroom, name)) for name in
+           ("build_aion_group_context", "build_connor_group_context", "build_connor_1v1_context")}
+    assert 'memory_hub_chat_type="private_group"' in src["build_aion_group_context"]
+    assert 'memory_hub_chat_type="private_group"' in src["build_connor_group_context"]
+    assert 'memory_hub_chat_type="private"' in src["build_connor_1v1_context"]

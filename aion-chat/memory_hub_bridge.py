@@ -193,32 +193,47 @@ def _unwrap_text(raw: str) -> str:
     return raw.strip() if isinstance(raw, str) else ""
 
 
-async def context_block(actor: str, message: str, chat_id: str = "") -> str:
+# 告诉 Hub 这是私聊还是群聊（Hub 跨端接续，memory-hub #85）：私聊才会拿到「刚才在别的端聊的」原话，
+# 群聊里 Hub 会去掉私聊内容
+CHAT_TYPES = ("private", "private_group")
+
+
+def _chat_type(chat_type: str) -> str:
+    return chat_type if chat_type in CHAT_TYPES else "private"
+
+
+async def context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private") -> str:
     """生成前调用：返回可直接拼进背景注入的文本块；不可用时返回空串。
 
     chat_id：对话 / 房间编号，同一个对话保持不变。Hub 据此做「三轮内想起过的只提一句」
     和「『后来呢』接上一个话题」（Hub PR #82）；不传也能用，只是没有这两项。
+    chat_type："private"（和小猫一对一）或 "private_group"（群聊房间）。
 
-    这位 AI 在本服务里安静满 30 分钟（或从没聊过）时，算一段新对话，同时读交接卡放在最前面。
+    私聊里这位 AI 在本服务安静满 30 分钟（或从没聊过）时，算一段新对话，同时读交接卡放在最前面。
+    群聊不读交接卡：交接卡是写给和小猫一对一时的自己看的，不该带进群里。
     """
     cfg = load_config()
     if not _is_active(cfg) or _in_cooldown("read"):
         return ""
     if not source_ai_for(actor, cfg):
         return ""
-    if not is_new_session(last_activity(actor)):
-        return await _incremental_block(cfg, actor, message, chat_id)
-    handoff, incremental = await asyncio.gather(handoff_block(actor), _incremental_block(cfg, actor, message, chat_id))
+    chat_type = _chat_type(chat_type)
+    if chat_type != "private" or not is_new_session(last_activity(actor)):
+        return await _incremental_block(cfg, actor, message, chat_id, chat_type)
+    handoff, incremental = await asyncio.gather(handoff_block(actor, chat_type),
+                                                _incremental_block(cfg, actor, message, chat_id, chat_type))
     return "\n\n".join(block for block in (handoff, incremental) if block)
 
 
-async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat_id: str = "") -> str:
+async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat_id: str = "",
+                             chat_type: str = "private") -> str:
     source_ai = source_ai_for(actor, cfg)
     arguments = {
         "source_ai": source_ai,
         "message": str(message or "")[:2000],
         "mode": "incremental",
         "max_chars": int(cfg.get("context_max_chars") or 2500),
+        "chat_type": _chat_type(chat_type),
     }
     if chat_id:
         arguments["chat_id"] = str(chat_id)[:200]
@@ -253,15 +268,17 @@ def is_new_session(previous_ts: float | None, now: float | None = None) -> bool:
     return (now or time.time()) - float(previous_ts) >= NEW_SESSION_GAP_SECONDS
 
 
-async def handoff_block(actor: str) -> str:
-    """新对话开头调用一次：读该 AI 的交接卡。不可用或没有卡时返回空串。"""
+async def handoff_block(actor: str, chat_type: str = "private") -> str:
+    """新对话开头调用一次：读该 AI 的交接卡。不可用或没有卡时返回空串。
+    只要 AI 自己写的主观那一半（include_objective=False）：原话由 incremental 的接续块给。"""
     cfg = load_config()
     if not _is_active(cfg) or _in_cooldown("read"):
         return ""
     source_ai = source_ai_for(actor, cfg)
     if not source_ai:
         return ""
-    arguments = {"source_ai": source_ai, "mode": "handoff", "max_chars": int(cfg.get("handoff_max_chars") or 1500)}
+    arguments = {"source_ai": source_ai, "mode": "handoff", "max_chars": int(cfg.get("handoff_max_chars") or 1500),
+                 "chat_type": _chat_type(chat_type), "include_objective": False}
     try:
         raw = await asyncio.wait_for(
             _call_tool(cfg, "context", arguments),
