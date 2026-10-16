@@ -3885,6 +3885,15 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
                                     _q, after_msg_id=msg_id)
             triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
 
+    # ── 闹铃 / 日程（第三批）：记在座位名下；定时监督要用摄像头，座位暂不支持；只能删自己设的 ──
+    full_text = MONITOR_CMD.sub("", full_text)
+    if any(p.search(full_text) for p in (ALARM_CMD, REMINDER_CMD, SCHEDULE_DEL_CMD, SCHEDULE_LIST_CMD)):
+        if is_capability_enabled("schedule"):
+            full_text = await _seat_schedule_commands(full_text, room_id, actor_id, label, msg_id, _q, triggered)
+        else:
+            for pat in (ALARM_CMD, REMINDER_CMD, SCHEDULE_DEL_CMD, SCHEDULE_LIST_CMD):
+                full_text = pat.sub("", full_text)
+
     # ── 自拍 / 画画 ──
     selfie_match = SELFIE_CMD_PATTERN.search(full_text)
     draw_match = DRAW_CMD_PATTERN.search(full_text)
@@ -3895,6 +3904,39 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
         await _chatroom_sys_msg(room_id, f"📸 {label}在拍照……" if selfie_match else f"🎨 {label}在画图……",
                                 _q, after_msg_id=msg_id)
     return full_text, triggered
+
+
+async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, label: str, msg_id: str,
+                                  _q: asyncio.Queue, triggered: dict) -> str:
+    """座位设闹铃 / 日程：在房间里插提示，记到 schedules（origin=座位、origin_room_id=这个房间）。
+    删除只认 TA 自己设的；别人的 id 只去掉指令，不删。"""
+    from schedule import _del_schedule
+    for match in list(SCHEDULE_DEL_CMD.finditer(full_text)):
+        sid = match.group(1).strip()
+        full_text = full_text.replace(match.group(0), "", 1)
+        async with get_db() as db:
+            cur = await db.execute("SELECT origin, type, trigger_at, content FROM schedules WHERE id=? AND status='active'",
+                                   (sid,))
+            row = await cur.fetchone()
+        if not row or row[0] != actor_id:
+            continue
+        if await _del_schedule(sid):
+            kind = {"alarm": "闹铃", "reminder": "日程"}.get(row[1], "日程")
+            await _chatroom_sys_msg(room_id, f"🗑 【{label}】取消了 {row[2].replace('T', ' ')} 的{kind}：{row[3]}", _q,
+                                    after_msg_id=msg_id)
+            triggered["schedule"] = True
+    for pattern, icon, kind in ((ALARM_CMD, "⏰", "闹铃"), (REMINDER_CMD, "📅", "日程")):
+        for match in pattern.finditer(full_text):
+            try:
+                dt = _parse_dt(match.group(1))
+                content = match.group(2).strip()
+            except Exception:
+                continue
+            if dt and content and not _is_schedule_time_stale(dt):
+                await _chatroom_sys_msg(room_id, f"{icon} 【{label}】设定了{kind}：{dt.replace('T', ' ')}，内容：{content}",
+                                        _q, after_msg_id=msg_id)
+                triggered["schedule"] = True
+    return await process_schedule_commands(full_text, None, origin=actor_id, origin_room_id=room_id)
 
 
 def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered: dict,
@@ -3909,7 +3951,8 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
                                                    pinned=pinned))
 
 
-async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False):
+async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
+                               extra_prompt: str = ""):
     """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
 
     私聊时 actor 取房间登记的座位；群聊时由调用方指定，并按群聊方式组织上下文。
@@ -3936,6 +3979,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
                 merged = []
             messages = await seat_chat.build_context(actor_id, merged or msgs, context_limit=context_limit,
                                                      chat_id=room_id, group=group)
+            if extra_prompt:  # 系统叫 TA 来说话（比如闹铃到点），不是有人发了消息
+                messages.append({"role": "user", "content": extra_prompt})
             stream_filter = KnownCommandStreamFilter()
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):
@@ -3987,7 +4032,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
     _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
-    if not group:  # 和小克、Lucien 的群聊回复一样：群聊不单独记入 Memory Hub
+    if not group and not extra_prompt:  # 群聊、闹铃这类系统叫来的话不单独记入 Memory Hub
         memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
 
 

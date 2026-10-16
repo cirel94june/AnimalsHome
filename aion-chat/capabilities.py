@@ -565,6 +565,12 @@ def seat_ability_texts(user_name: str) -> list[str]:
         texts.append(image_gen_ability_text(user_name))
     if is_capability_enabled("wish"):
         texts.append(wish_ability_text())
+    if is_capability_enabled("schedule"):
+        texts.extend([
+            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会叫你来提醒用户。日期时间用ISO格式。",
+            "[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。",
+            "[SCHEDULE_DEL:日程id] — 删除你自己设的日程/闹铃（别人设的删不了）。",
+        ])
     return texts
 
 

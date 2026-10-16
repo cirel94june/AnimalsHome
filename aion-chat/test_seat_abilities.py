@@ -109,7 +109,7 @@ def test_search_followup_speaks_as_the_seat_with_its_own_model(monkeypatch):
 def test_seat_and_main_ais_get_the_same_instruction_text(monkeypatch):
     monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: True)
     monkeypatch.setattr(capabilities, "_is_web_search_available", lambda: True)
-    texts = capabilities.seat_ability_texts("小猫")
+    texts = capabilities.seat_ability_texts("小猫")[:4]
     assert texts == [capabilities.music_ability_text(), capabilities.web_search_ability_text(),
                      capabilities.image_gen_ability_text("小猫"), capabilities.wish_ability_text()]
     monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "image_gen")

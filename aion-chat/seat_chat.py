@@ -151,6 +151,13 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         ]
     now = datetime.now().strftime("%Y-%m-%d %H:%M（%A）")
     background = [f"[当前时间] {now}", await hub_task]
+    from capabilities import is_capability_enabled
+    if is_capability_enabled("schedule"):  # 日程不会自己响，要在提示词里看得到才能「合适时机自然提起」
+        try:
+            from schedule import build_schedule_prompt, get_active_schedules
+            background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules()))
+        except Exception:
+            pass
     messages += [
         {"role": "user", "content": "\n\n".join(b for b in background if b)},
         {"role": "assistant", "content": "收到。"},

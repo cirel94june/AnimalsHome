@@ -208,6 +208,12 @@ def get_schedule_origin_name(origin: str | None) -> str:
             return "AI"
     if origin == "user":
         return (wb.get("user_name") or "用户").strip() or "用户"
+    if origin in ("ai3", "ai4", "ai5", "ai6"):
+        try:
+            import actors
+            return actors.display_name(origin) or origin
+        except Exception:
+            return origin
     return (wb.get("ai_name") or "AI").strip() or "AI"
 
 
@@ -521,6 +527,31 @@ class ScheduleManager:
                   "reasoning_content": reasoning_content}
         await manager.broadcast({"type": "chatroom_msg_created", "data": ai_msg}, expressive_autoplay=True)
 
+    async def _fire_seat_alarm(self, item: dict):
+        """座位的闹铃到点：回到设闹铃的房间（没有就去 TA 的私聊），用 TA 自己的人设和模型提醒。
+        TA 没启用 / 没模型时房间里会留一条「没能回复」的记录，不换别人来提醒。"""
+        import routes.chatroom as chatroom_routes
+        import seat_chat
+        origin = item.get("origin")
+        room_id = item.get("origin_room_id") or ""
+        room_type = ""
+        if room_id:
+            async with get_db() as db:
+                cur = await db.execute("SELECT type, actor FROM chatroom_rooms WHERE id=?", (room_id,))
+                row = await cur.fetchone()
+            if row and (row[0] == "group" or (row[0] == seat_chat.SEAT_ROOM_TYPE and row[1] == origin)):
+                room_type = row[0]
+            else:
+                room_id = ""
+        if not room_id:
+            room_id = await chatroom_routes._get_or_create_seat_room(origin)
+            room_type = seat_chat.SEAT_ROOM_TYPE
+        user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
+        prompt = (f"[闹铃到点] 现在是 {item['trigger_at'].replace('T', ' ')}，你之前设的闹铃到了：{item['content']}。"
+                  f"用你自己的口吻提醒{user_name}，就像你刚好想起来。不要再设同一个闹铃。")
+        await chatroom_routes._generate_seat_reply(room_id, {"actor": origin}, [], asyncio.Queue(), 30,
+                                                   actor=origin, group=room_type == "group", extra_prompt=prompt)
+
     # ── 触发闹铃 ─────────────────────────────────
     async def _fire_alarm(self, item: dict):
         sid = item["id"]
@@ -554,6 +585,11 @@ class ScheduleManager:
                 "data": {"id": sid, "content": content, "trigger_at": trigger_at, "origin": origin, "origin_name": origin_name},
             })
             await manager.broadcast({"type": "schedule_changed"})
+
+        # 座位 3～6 设的闹铃：由 TA 自己在设闹铃的房间里提醒，不走小克 / Lucien 的流程
+        if origin in ("ai3", "ai4", "ai5", "ai6") and not is_proactive and not is_app_checkpoint:
+            await self._fire_seat_alarm(item)
+            return
 
         # ── 确定响应目标 ──
         target = self._resolve_target(item)
