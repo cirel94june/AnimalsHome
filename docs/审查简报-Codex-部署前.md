@@ -294,3 +294,14 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 调用方：`build_memory_blocks(..., memory_hub_chat_type)`；chatroom.py 小克群聊、Lucien 群聊传 `private_group`，Lucien 私聊传 `private`；seat_chat 按 `group` 传；routes/chat.py 私聊三处用默认 `private`。
 - 兼容：本地假 Hub（FastMCP）在不认识这些参数时会忽略，不报错（改前的测试即如此通过），所以在 Hub #85 合并前部署也不会出错，只是 Hub 暂不提供接续块。
 - 测试：`test_memory_hub_bridge.py` 假 Hub 记录 chat_type / include_objective；新增群聊不读交接卡、私聊交接卡参数、不认识的类型按私聊、三个聊天室函数传的类型。`test_seat_chat` 期望多一个 `"private"`。`test_slow_hub_times_out_without_blocking_chat` 在本机改前改后都因 MCP 握手慢偶发超时，与改动无关。
+
+## 29. 狗蛋补能力第一批：私聊 ↔ 群聊互通、去群里说、座位悄悄话
+
+小猫要求（2026-10-16）：像 TG bot 一样私聊和群聊互通；AI 觉得有必要可以自己去群里说，但不能随意泄露私聊私事。座位 4～6 与狗蛋同一套代码。施工方案在 `docs/功能盘点-按小猫实际使用改造.md` 末尾。
+
+- **座位合并时间线**：`seat_chat.merged_messages(actor, limit)` 取该座位自己的 seat_1v1 房间 + 所有 group 房间（排除 `billiards_*`、排除 system 消息），按时间倒序取 `limit*2` 条再正序。`_history` 对带 `source` 的消息按每条来源渲染（群聊标说话人），发送时间 meta 后标「群聊 / 私聊」；前面加一条「[聊天记录说明]」。`_generate_seat_reply` 读合并记录失败时退回本房间消息（打日志），不阻断回复。
+- **去群里说**：新模块 `group_post.py`。指令 `[去群里：内容]`；能力开关 `group_post`（默认开，只在私聊注入）。规则文字：只说适合全家知道的，私聊私事（心事、身体情绪、工作吐槽、对别人的看法、亲密的话）不带过去，除非小猫明确让说；拿不准不说或先问；用自己的口吻。`process(text, actor)`：去掉所有该指令，只发第一条（截 500 字）到 `updated_at` 最新的 group 房间（不含 billiards），sender 为该 AI，`auto_tts=False`；没有家里群只去掉；发送异常只打日志。接入：小克私聊三个回复入口（`_process_private_wechat_commands` 之后）、Lucien 私聊（`_process_chatroom_commands` 里仅 connor_1v1 房间）、座位私聊（`_generate_seat_reply` 非群聊）。流式过滤和 `_ALL_CMD_PATTERNS` 加入该指令。
+- **座位悄悄话**：`_send_private_whisper` 支持座位（发到该座位的 seat_1v1 房间）；座位群聊回复里解析 `[悄悄话：]`（开关 private_whisper），正文去掉。
+- 座位提示词新增「[你能用的指令]」：群聊给悄悄话、私聊给去群里说。其他能力在第二批。
+- **家里群自由聊**：小克群聊、Lucien 群聊、座位群聊的「群聊说明」加一句「这是只有家里人的小群，可以自由聊，包括私事和吐槽。」（参考 bot 私密群）。
+- 测试 `test_group_post.py` 11 项：合并时间线范围（不含别的座位 / Lucien 私聊 / 台球房 / 系统消息）、标签、发到最新家里群且只发一条、无群只去掉、规则文字、流式隐藏、座位群聊悄悄话、座位私聊去群里、悄悄话进座位私聊房间、座位指令随场合、小克 / Lucien 私聊接入。`test_seat_chat` 22 项通过；其余相关测试与改动前相同（均为既有失败）。

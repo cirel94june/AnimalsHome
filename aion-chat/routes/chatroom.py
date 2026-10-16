@@ -97,6 +97,7 @@ from lounge_visit_commands import (
     is_chat_visit_friend_allowed,
 )
 from capabilities import is_capability_enabled
+import group_post
 from active_memory_search import (
     continue_memory_search,
     MemorySearchRequest,
@@ -780,6 +781,11 @@ async def _send_connor_private_whisper(content: str):
 async def _send_private_whisper(who_identity: str, content: str):
     if who_identity == "connor":
         await _send_connor_private_whisper(content)
+    elif who_identity in seat_chat.SEAT_ACTORS:
+        content = content.strip()
+        if content:
+            await _save_msg(await _get_or_create_seat_room(who_identity), who_identity, content,
+                            msg_id=f"cm_{time.time_ns()}_w")
     else:
         await _send_aion_private_whisper(content)
 
@@ -836,6 +842,10 @@ async def _process_chatroom_commands(
             queue=_q,
         ),
     )
+
+    # ── 私聊里「去群里说」：只在 Lucien 私聊（connor_1v1）生效 ──
+    if who_identity == "connor" and await _get_room_type(room_id) == "connor_1v1":
+        full_text = await group_post.process(full_text, "connor")
 
     # ── 群聊悄悄话：只在 group 房间生效，内容投递到各自私聊窗口 ──
     private_whispers = PRIVATE_WHISPER_CMD_PATTERN.findall(full_text)
@@ -3791,8 +3801,14 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
     raw_text = ""
     try:
         async with asyncio.timeout(960):
-            messages = await seat_chat.build_context(actor_id, msgs, context_limit=context_limit, chat_id=room_id,
-                                                     group=group)
+            # 和小克、Lucien 一样：自己的私聊 + 所有家里群合成一条时间线
+            try:
+                merged = await seat_chat.merged_messages(actor_id, context_limit)
+            except Exception as exc:  # 读不出合并记录时退回本房间的记录，不耽误回复
+                print(f"[SEAT] 合并时间线读取失败，只用本房间记录: {type(exc).__name__}")
+                merged = []
+            messages = await seat_chat.build_context(actor_id, merged or msgs, context_limit=context_limit,
+                                                     chat_id=room_id, group=group)
             stream_filter = KnownCommandStreamFilter()
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):
@@ -3811,7 +3827,18 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         reason = "timeout" if isinstance(exc, (TimeoutError, httpx.TimeoutException)) else (str(exc) or type(exc).__name__)
         await _save_chatroom_reply_failure(room_id, actor_id, _q, reason, partial_text=raw_text, msg_id=msg_id)
         return
-    clean_text = _visible_chatroom_text(await process_note_commands(raw_text, actor_id)).strip()
+    command_text = await process_note_commands(raw_text, actor_id)
+    if group:
+        whispers = PRIVATE_WHISPER_CMD_PATTERN.findall(command_text)
+        command_text = PRIVATE_WHISPER_CMD_PATTERN.sub("", command_text)
+        for whisper_text in whispers if is_capability_enabled("private_whisper") else []:
+            try:
+                await _send_private_whisper(actor_id, whisper_text)
+            except Exception as e:
+                print(f"[CHATROOM_WHISPER] 发送失败: {e}")
+    elif is_capability_enabled("group_post"):
+        command_text = await group_post.process(command_text, actor_id)
+    clean_text = _visible_chatroom_text(command_text).strip()
     if not clean_text:
         await _save_chatroom_reply_failure(room_id, actor_id, _q, "empty_response", msg_id=msg_id)
         return

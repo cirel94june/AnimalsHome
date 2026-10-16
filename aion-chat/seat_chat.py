@@ -63,13 +63,44 @@ def _speaker_name(sender: str, user_name: str) -> str:
         return sender
 
 
+async def merged_messages(actor_id: str, limit: int) -> list[dict]:
+    """这位座位自己的私聊 + 所有家里群（不含台球等小游戏房间），合成一条时间线（同小克、Lucien）。
+    每条带 source：private / group。系统消息不放进来。"""
+    import json
+    from database import get_db
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT m.sender, m.content, m.created_at, m.attachments, r.type FROM chatroom_messages m "
+            "JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE m.sender != 'system' AND r.id NOT GLOB 'billiards_*' "
+            "AND (r.type = 'group' OR (r.type = ? AND r.actor = ?)) "
+            "ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?",
+            (SEAT_ROOM_TYPE, actor_id, max(1, int(limit)) * 2),
+        )
+        rows = await cur.fetchall()
+    out = []
+    for sender, content, created_at, attachments, room_type in reversed(rows):
+        try:
+            atts = json.loads(attachments) if attachments else []
+        except ValueError:
+            atts = []
+        out.append({"sender": sender, "content": content, "created_at": created_at,
+                    "attachments": atts if isinstance(atts, list) else [],
+                    "source": "group" if room_type == "group" else "private"})
+    return out
+
+
 def _history(actor_id: str, msgs: list[dict], limit: int, *, group: bool = False, user_name: str = "用户") -> list[dict]:
     """房间消息 → 对话轮。私聊只保留用户和该座位的发言；群聊里别人（小猫和其他 AI）的话都标上名字、
-    合并成 user 一侧。失败提示不进上下文。"""
+    合并成 user 一侧。失败提示不进上下文。
+    消息带 source（私聊 + 群聊合并的时间线）时按每条自己的来源处理，并在发送时间后标「群聊 / 私聊」。"""
     out: list[dict] = []
     for msg in msgs[-max(1, limit):]:
         sender = msg.get("sender")
         atts = msg.get("attachments") or []
+        source = msg.get("source")
+        in_group = source == "group" if source else group
+        label = ("群聊" if in_group else "私聊") if source else ""
         if any(isinstance(a, dict) and a.get("type") == "chatroom_reply_failure" for a in atts):
             continue
         content = str(msg.get("content") or "").strip()
@@ -80,10 +111,14 @@ def _history(actor_id: str, msgs: list[dict], limit: int, *, group: bool = False
                 continue
         if sender == actor_id:
             out.append({"role": "assistant", "content": content})
-        elif sender == "user" and not group:
-            out.append({"role": "user", "content": append_message_meta(content, msg.get("created_at"))})
-        elif group and sender:
-            line = append_message_meta(f"【{_speaker_name(sender, user_name)}】{content}", msg.get("created_at"))
+        elif sender == "user" and not in_group:
+            line = append_message_meta(content, msg.get("created_at"), label)
+            if out and out[-1]["role"] == "user":
+                out[-1]["content"] += "\n" + line
+            else:
+                out.append({"role": "user", "content": line})
+        elif in_group and sender:
+            line = append_message_meta(f"【{_speaker_name(sender, user_name)}】{content}", msg.get("created_at"), label)
             if out and out[-1]["role"] == "user":
                 out[-1]["content"] += "\n" + line  # 连着几个人说话：并成一轮
             else:
@@ -119,7 +154,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "user", "content": "\n\n".join(b for b in background if b)},
         {"role": "assistant", "content": "收到。"},
         {"role": "user", "content": (
-            f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。下面是最近的聊天记录，"
+            f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。这是只有家里人的小群，可以自由聊，包括私事和吐槽。下面是最近的聊天记录，"
             "【】里是说话的人，<meta> 里是发送时间，只供你参考，回复时都不要带。"
             "轮到你说话了：用你自己的口吻接话，可以回应任何人，不用替别人说话。"
         ) if group else (
@@ -128,5 +163,32 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         )},
         {"role": "assistant", "content": "明白了。"},
     ]
+    abilities = _ability_lines(user_name, group)
+    if abilities:
+        messages += [
+            {"role": "user", "content": "[你能用的指令]\n" + "\n\n".join(abilities)},
+            {"role": "assistant", "content": "好的，需要时我会用。"},
+        ]
+    if any(m.get("source") for m in msgs):
+        messages += [
+            {"role": "user", "content": "[聊天记录说明]\n下面的记录把你和" + user_name
+             + "的私聊、家里群聊按时间排在一起，<meta> 里标了每条是「群聊」还是「私聊」。"},
+            {"role": "assistant", "content": "明白了。"},
+        ]
     messages += _history(actor_id, msgs, context_limit, group=group, user_name=user_name)
     return messages
+
+
+def _ability_lines(user_name: str, group: bool) -> list[str]:
+    """座位目前能用的指令（第一批）：群里说悄悄话、私聊里去群里说。其余能力在后续批次补上。"""
+    from capabilities import is_capability_enabled
+    lines = []
+    if group and is_capability_enabled("private_whisper"):
+        lines.append(
+            f"[悄悄话：内容] — 当你想私下和{user_name}说悄悄话，不让别人听见时用。"
+            f"内容会发到你和{user_name}的私聊窗口。不要在群聊正文里重复这段悄悄话。"
+        )
+    if not group and is_capability_enabled("group_post"):
+        import group_post
+        lines.append(group_post.ability_text(user_name))
+    return lines

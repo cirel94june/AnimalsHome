@@ -55,6 +55,7 @@ BAND_NOTE_CMD_PATTERN = re.compile(
 )
 TRANSFER_CMD_PATTERN = re.compile(r'\[转账[：:]\s*(-?\d+(?:\.\d+)?)\s*元\]')
 PRIVATE_WHISPER_CMD_PATTERN = re.compile(r'\[悄悄话[：:]\s*([^\]]+)\]')
+from group_post import GROUP_POST_CMD_PATTERN
 VIDEO_CALL_CMD = '[视频电话]'
 META_TAG_PATTERN = re.compile(r'\s*<meta\b[^>]*>.*?</meta\s*>', re.DOTALL | re.IGNORECASE)
 MEMORY_SEARCH_CMD_PATTERN = re.compile(
@@ -69,7 +70,7 @@ _ALL_CMD_PATTERNS = [
     HOME_CMD_PATTERN, BAND_VIBRATE_CMD_PATTERN, BAND_NOTE_CMD_PATTERN,
     LUCKIN_CMD_PATTERN, TRANSFER_CMD_PATTERN, PRIVATE_WHISPER_CMD_PATTERN,
     WECHAT_MESSAGE_PATTERN, WEB_SEARCH_CMD_PATTERN, WEB_EXTRACT_CMD_PATTERN,
-    APP_COMMAND_PATTERN, MEMORY_SEARCH_CMD_PATTERN, PAT_COMMAND_PATTERN,
+    APP_COMMAND_PATTERN, MEMORY_SEARCH_CMD_PATTERN, PAT_COMMAND_PATTERN, GROUP_POST_CMD_PATTERN,
 ]
 
 def strip_tool_commands(text: str) -> str:
@@ -215,6 +216,7 @@ async def build_ability_block(
     *,
     whisper_mode: bool = False,
     include_private_whisper: bool = False,
+    include_group_post: bool = False,
     include_video_call: bool = True,
     include_image_gen: bool = True,
     who: str = "aion",
@@ -227,6 +229,7 @@ async def build_ability_block(
         user_name,
         whisper_mode=whisper_mode,
         include_private_whisper=include_private_whisper,
+        include_group_post=include_group_post,
         include_video_call=include_video_call,
         include_image_gen=include_image_gen,
         who=who,

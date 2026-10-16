@@ -184,6 +184,7 @@ async def _insert_private_ability_block(
         user_name,
         whisper_mode=whisper_mode,
         model_key=model_key,
+        include_group_post=True,
     )
     if ability_block:
         history.insert(cap_idx + inject_offset, {"role": "user", "content": ability_block, "_context": "abilities"})
@@ -197,6 +198,8 @@ async def _insert_private_ability_block(
         add_acknowledgement=True,
     )
     return inject_offset + (len(history) - before_count)
+
+import group_post
 
 router = APIRouter()
 
@@ -1624,6 +1627,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             full_text = await _process_home_commands(full_text)
             full_text, luckin_results = await handle_luckin_commands(full_text)
             full_text = await _process_private_wechat_commands(full_text, conv_id, ai_msg_id)
+            full_text = await group_post.process(full_text, "aion")
             full_text, _lounge_visits = await handle_lounge_visit_commands(
                 full_text,
                 actor_id="aion",
@@ -2304,6 +2308,7 @@ async def send_message(conv_id: str, body: MsgCreate):
             full_text = await _process_home_commands(full_text)
             full_text, luckin_results = await handle_luckin_commands(full_text)
             full_text = await _process_private_wechat_commands(full_text, conv_id, ai_msg_id)
+            full_text = await group_post.process(full_text, "aion")
             full_text, _lounge_visits = await handle_lounge_visit_commands(
                 full_text,
                 actor_id="aion",
@@ -3807,6 +3812,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             full_text = await _process_home_commands(full_text)
             full_text, luckin_results = await handle_luckin_commands(full_text)
             full_text = await _process_private_wechat_commands(full_text, conv_id, ai_msg_id)
+            full_text = await group_post.process(full_text, "aion")
             full_text, _lounge_visits = await handle_lounge_visit_commands(
                 full_text,
                 actor_id="aion",

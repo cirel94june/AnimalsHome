@@ -102,6 +102,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
     CapabilityDef("friend_visit", "拜访 AI 好友", "social", "注入 [LOUNGE_VISIT:好友 ID|话题]，让模型可在用户明确要求时拜访已配置好友。"),
     CapabilityDef("transfer", "钱包转账", "life", "注入 [转账：n元]，让模型可以在余额足够时转账。"),
     CapabilityDef("private_whisper", "群聊悄悄话", "special", "注入 [悄悄话：内容]，让群聊角色可以向私聊窗口发送悄悄话。", runtime_note="仅群聊上下文会注入。"),
+    CapabilityDef("group_post", "去群里说", "special", "注入 [去群里：内容]，让私聊里的角色可以自己去家里群说一句（不能带出私聊私事）。", runtime_note="仅私聊上下文会注入。"),
     CapabilityDef("toy", "SOSEXY · 密语玩具", "special", "注入 [TOY:1]~[TOY:9] / [TOY:STOP]，让密语模式下可以控制玩具。", runtime_note="仅选用 SOSEXY 且在密语模式时注入。"),
     CapabilityDef("ankni", "ANKNI MX · AI 编排", "life", "按每段持续时间编排十种内置模式和停止，只有选中 ANKNI 时生效。", default_enabled=False),
     CapabilityDef("svakom", "SVAKOM SL278H · AI 循环编排", "life", "独立控制 SL278H 的主体模式、主体震动力度和小部件拍打；关闭会停止 AI 编排，不影响手动控制。", default_enabled=False, runtime_note="仅选用 SVAKOM 且开启时注入；不要求连接或密语模式，与玩具页开关同步。"),
@@ -538,6 +539,7 @@ async def build_capability_prompt_items(
     include_image_gen: bool = True,
     who: str = "aion",
     excluded_capabilities: set[str] | None = None,
+    include_group_post: bool = False,
 ) -> list[str]:
     import toy_profiles
     toy_profiles.capture_permission(legacy_enabled=whisper_mode and is_capability_enabled("toy") and "toy" not in (excluded_capabilities or set()))
@@ -608,6 +610,10 @@ async def build_capability_prompt_items(
 
     if "pat" not in excluded_capabilities and is_capability_enabled("pat"):
         abilities.append(build_pat_ability_text(user_name))
+
+    if include_group_post and is_capability_enabled("group_post"):
+        import group_post
+        abilities.append(group_post.ability_text(user_name))
 
     if include_private_whisper and is_capability_enabled("private_whisper"):
         abilities.append(
