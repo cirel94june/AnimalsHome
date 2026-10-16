@@ -30,7 +30,7 @@ AionsHome 原本跑在 Windows 电脑上。这里的脚本让它在一台小 VPS
 - 给服务加内存护栏（默认软上限 450M、硬上限 600M，可用 `MEMORY_HIGH` / `MEMORY_MAX` 调整）：
   超过硬上限只会重启 AionsHome，不会拖垮同机的 Memory Hub；
 - 全站请求体上限 64MB（`AIONSHOME_MAX_BODY_MB` 可调，音乐站上传单独放宽），超大上传在进入接口前就被拒绝；
-- 注册 `aionshome-update.timer`：每 5 分钟检查一次 GitHub，有新提交时：
+- 注册更新服务 `aionshome-update`。**默认不自动更新**（先审后上线）：需要更新时手动运行 `systemctl start aionshome-update`；安装时加 `AUTO_UPDATE=1` 才会启用每 5 分钟检查 GitHub 的 `aionshome-update.timer`。每次更新：
   1. 先备份 `aion-chat/data/` 里的数据库和设置到 `/var/lib/aionshome/backups/`（保留最近 3 份）；
   2. 快进拉取代码；依赖有变化时装进**新的**虚拟环境，旧环境原样保留；
   3. 语法检查通过才重启，重启后等 `/ops/healthz` 报告新版本真的跑起来了；

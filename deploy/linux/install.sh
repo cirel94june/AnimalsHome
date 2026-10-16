@@ -197,7 +197,14 @@ $STATE_DIR/logs/*.log {
 }
 EOF
 systemctl daemon-reload
-systemctl enable --now aionshome.service aionshome-update.timer aionshome-restart.path
+systemctl enable --now aionshome.service aionshome-restart.path
+# 自动更新默认关：小猫的规则是 Codex 审过才上线，由人手动 systemctl start aionshome-update。
+# 想要每 5 分钟自动跟进 GitHub，安装时加 AUTO_UPDATE=1
+if [ "${AUTO_UPDATE:-0}" = 1 ]; then
+  systemctl enable --now aionshome-update.timer
+else
+  systemctl disable --now aionshome-update.timer 2>/dev/null || true
+fi
 systemctl restart aionshome.service
 
 say "7/7 Tailscale（只让你自己的设备访问）"
