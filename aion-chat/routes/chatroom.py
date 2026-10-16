@@ -1758,6 +1758,10 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         prefix_msgs.append({"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"})
         prefix_msgs.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
 
+    is_seat = sender in seat_chat.SEAT_ACTORS
+    if is_seat:
+        prefix_msgs.insert(0, {"role": "assistant", "content": "收到，我会按照设定做自己。"})
+        prefix_msgs.insert(0, {"role": "user", "content": f"[你的角色设定]\n你是{sender_label}。\n\n{seat_chat._persona_text(sender)}"})
     web_prompt = (
         f"{sender_label}刚才为了回答{user_name}发起了联网搜索或网页读取，系统已经完成。以下是结果：\n\n"
         f"{web_context}\n\n"
@@ -1771,7 +1775,12 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     full_text = ""
     tts_from_model = True
     try:
-        if sender == "aion":
+        if is_seat:
+            async for chunk in stream_ai(messages, model_key):
+                if chunk.startswith(CLI_STATUS_PREFIX):
+                    continue
+                full_text += chunk
+        elif sender == "aion":
             _temp = SETTINGS.get("temperature")
             async for chunk in stream_ai(messages, model_key, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
@@ -1790,8 +1799,13 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     if not full_text.strip():
         return
 
-    from schedule import _process_background_reply_commands
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
+    if is_seat:  # 座位的后台指令还没逐条接好身份：这里只去掉指令，不执行
+        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(clean_web_command_text(full_text)), model_key)
+        if full_text.strip():
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
+        return
+    from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
         full_text,
         target={"type": "chatroom", "room_id": room_id},
@@ -3782,6 +3796,88 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, msg_id: str,
+                                 _q: asyncio.Queue) -> tuple[str, dict]:
+    """座位 3～6 回复里的聊天内指令（第二批）：点歌、许愿当场做；自拍 / 画画、联网搜索记下来，回复存好后再做。
+    都按这位座位自己的身份记：歌记在 TA 名下、愿望是 TA 的、自拍用 TA 的参考照。开关关着的只去掉不做。"""
+    from ws import manager as ws_manager
+    triggered: dict = {}
+    label = _name_for_identity(actor_id)
+
+    # ── 点歌 ──
+    music_matches = MUSIC_CMD_PATTERN.findall(full_text)
+    if music_matches:
+        full_text = MUSIC_CMD_PATTERN.sub("", full_text)
+    music_cards = []
+    for keyword in music_matches if is_capability_enabled("music") else []:
+        try:
+            results = await asyncio.to_thread(search_songs, keyword.strip(), limit=5)
+            if results:
+                song = results[0]
+                song["audio_url"] = await asyncio.to_thread(get_audio_url, song["id"])
+                song["candidates"] = results[1:4]
+                music_cards.append(song)
+        except Exception:
+            pass
+    if music_cards:
+        parts = [f"《{s['name']}》- {s['artist']}" for s in music_cards]
+        await _chatroom_sys_msg(room_id, f"🎵 {label}点了一首{' / '.join(parts)}", _q, after_msg_id=msg_id)
+        music_data = {"type": "music", "msg_id": msg_id, "cards": music_cards, "autoplay": True}
+        triggered["music_cards"] = music_cards
+        await _q.put(music_data)
+        await ws_manager.broadcast({"type": "music", "data": {**music_data, "source": "chatroom"}})
+        for song in music_cards:
+            try:
+                await record_music_request(song, requester_identity=actor_id, requester_name=label,
+                                           source_type="chatroom", source_id=room_id, source_message_id=msg_id)
+            except Exception as exc:
+                print(f"[music_station] 座位点歌记录失败: {exc}")
+
+    # ── 许愿 ──
+    wish_matches = WISH_CMD_PATTERN.findall(full_text)
+    if wish_matches:
+        full_text = WISH_CMD_PATTERN.sub("", full_text)
+    if wish_matches and is_capability_enabled("wish"):
+        try:
+            from wish_pool import create_wish
+            for wish_content in wish_matches:
+                if wish_content.strip():
+                    await create_wish(author=actor_id, author_name=label, content=wish_content.strip(),
+                                      visibility="shared", origin="chat_command",
+                                      source_type="chatroom_command", source_ref=f"{room_id}:{msg_id}")
+                    triggered["wish"] = True
+        except Exception as e:
+            print(f"[SEAT_WISH] 许愿失败: {e}")
+
+    # ── 联网搜索 / 网页读取 ──
+    web_search_matches = WEB_SEARCH_CMD_PATTERN.findall(full_text)
+    web_extract_matches = WEB_EXTRACT_CMD_PATTERN.findall(full_text)
+    if web_search_matches or web_extract_matches:
+        full_text = clean_web_command_text(full_text)
+        if is_capability_enabled("web_search"):
+            await _chatroom_sys_msg(room_id, format_web_system_message(label, web_search_matches, web_extract_matches),
+                                    _q, after_msg_id=msg_id)
+            triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
+
+    # ── 自拍 / 画画 ──
+    selfie_match = SELFIE_CMD_PATTERN.search(full_text)
+    draw_match = DRAW_CMD_PATTERN.search(full_text)
+    full_text = DRAW_CMD_PATTERN.sub("", SELFIE_CMD_PATTERN.sub("", full_text))
+    if (selfie_match or draw_match) and is_capability_enabled("image_gen"):
+        match = selfie_match or draw_match
+        triggered["image_gen"] = {"prompt": match.group(1).strip(), "is_selfie": bool(selfie_match)}
+    return full_text, triggered
+
+
+def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered: dict) -> None:
+    """座位回复存好以后：生图、联网搜索在后台做，做完以 TA 的名义追加到房间里。"""
+    if triggered.get("image_gen"):
+        ig = triggered["image_gen"]
+        spawn_generation_task(_chatroom_image_gen(room_id, actor_id, ig["prompt"], ig["is_selfie"]))
+    if triggered.get("web_search"):
+        spawn_generation_task(_chatroom_web_search(room_id, actor_id, model_key, triggered["web_search"]))
+
+
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False):
     """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
 
@@ -3842,17 +3938,23 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         command_text, posted = await group_post.process_with_result(command_text, actor_id)
         if posted:
             side_effect_notice = f"（{seat_chat.actors.display_name(actor_id)}去群里说了一句）"
+    command_text, triggered = await _process_seat_commands(command_text, room_id, actor_id, msg_id, _q)
+    if triggered and not side_effect_notice:
+        side_effect_notice = "acted"  # 点了歌 / 许了愿 / 要发图 / 要去搜：系统提示已经插过了
     clean_text = _visible_chatroom_text(command_text).strip()
     if not clean_text:
         if side_effect_notice:
-            await _chatroom_sys_msg(room_id, side_effect_notice, _q)
+            if side_effect_notice != "acted":
+                await _chatroom_sys_msg(room_id, side_effect_notice, _q)
             await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
+            _spawn_seat_followups(room_id, actor_id, model_key, triggered)
             return
         await _save_chatroom_reply_failure(room_id, actor_id, _q, "empty_response", msg_id=msg_id)
         return
     msg = await _save_msg(room_id, actor_id, clean_text, msg_id, auto_tts=False,
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
+    _spawn_seat_followups(room_id, actor_id, model_key, triggered)
     if not group:  # 和小克、Lucien 的群聊回复一样：群聊不单独记入 Memory Hub
         memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
 

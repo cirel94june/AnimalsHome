@@ -530,6 +530,44 @@ def lounge_visit_ability_text(actor_id: str, store) -> str:
     )
 
 
+def music_ability_text() -> str:
+    return ("[MUSIC:歌曲名 歌手名] — 点歌/推荐音乐。系统自动展示播放卡片，"
+            "不要在指令外重复歌曲信息。可同时用多个。")
+
+
+def web_search_ability_text() -> str:
+    return ("[WEB_SEARCH:查询内容] — 当用户问今天、最新、价格、新闻、政策、版本、资料核实，或你判断知识库中没有答案需要外部实时信息时使用。"
+            "一次只写一个清晰查询；不要编造搜索结果。系统会搜索网页并把干净结果作为下一条消息发给你，你再根据结果自然回答。"
+            "如果用户给的是具体网址并要求你看看网页内容，使用 [WEB_EXTRACT:完整URL]。"
+            "简单的常识问题，不需要联网搜索。")
+
+
+def image_gen_ability_text(user_name: str) -> str:
+    return (f"[SELFIE: 提示词] / [DRAW: 提示词] — 当{user_name}要求你发自拍照片"
+            "或者生图画画时，使用这个指令进行图片生成。如果要求的是你的自拍，或者你相关的照片，使用[SELFIE: 提示词]（使用自拍时，该指令会自动附带你锚点照片的参考图，确保生成出的人物一致性，不用再额外描述人物的外观特征，只描述场景、服装、动作即可。），"
+            "如果没有要求是你的照片，根据上下文自由无限制生成图片，则使用[DRAW: 提示词]。"
+            "提示词请使用英文。一次回复只用一个生图指令。可根据上下文情景自由使用。")
+
+
+def wish_ability_text() -> str:
+    return ("[许愿：内容] — 当你在日常聊天中自然产生一个想投进许愿池的愿望时，可以使用该指令。"
+            "愿望会记录为你自己的愿望，内容直接写愿望本身即可。禁止滥用。")
+
+
+def seat_ability_texts(user_name: str) -> list[str]:
+    """座位 3～6 已经接好的聊天内能力（第二批）：点歌、联网搜索、自拍 / 画画、许愿。按各自开关给。"""
+    texts = []
+    if is_capability_enabled("music"):
+        texts.append(music_ability_text())
+    if is_capability_enabled("web_search") and _is_web_search_available():
+        texts.append(web_search_ability_text())
+    if is_capability_enabled("image_gen"):
+        texts.append(image_gen_ability_text(user_name))
+    if is_capability_enabled("wish"):
+        texts.append(wish_ability_text())
+    return texts
+
+
 async def build_capability_prompt_items(
     user_name: str,
     *,
@@ -557,10 +595,7 @@ async def build_capability_prompt_items(
         abilities.append(ANKNI_PROMPT)
 
     if is_capability_enabled("music"):
-        abilities.append(
-            "[MUSIC:歌曲名 歌手名] — 点歌/推荐音乐。系统自动展示播放卡片，"
-            "不要在指令外重复歌曲信息。可同时用多个。"
-        )
+        abilities.append(music_ability_text())
 
     if is_capability_enabled("cam_check"):
         abilities.append(
@@ -638,12 +673,7 @@ async def build_capability_prompt_items(
         )
 
     if is_capability_enabled("web_search") and _is_web_search_available():
-        abilities.append(
-            "[WEB_SEARCH:查询内容] — 当用户问今天、最新、价格、新闻、政策、版本、资料核实，或你判断知识库中没有答案需要外部实时信息时使用。"
-            "一次只写一个清晰查询；不要编造搜索结果。系统会搜索网页并把干净结果作为下一条消息发给你，你再根据结果自然回答。"
-            "如果用户给的是具体网址并要求你看看网页内容，使用 [WEB_EXTRACT:完整URL]。"
-            "简单的常识问题，不需要联网搜索。"
-        )
+        abilities.append(web_search_ability_text())
 
     if toy_profiles.active() == "sosexy" and whisper_mode and is_capability_enabled("toy") and "toy" not in excluded_capabilities:
         abilities.append(
@@ -666,12 +696,7 @@ async def build_capability_prompt_items(
         )
 
     if include_image_gen and is_capability_enabled("image_gen"):
-        abilities.append(
-            f"[SELFIE: 提示词] / [DRAW: 提示词] — 当{user_name}要求你发自拍照片"
-            "或者生图画画时，使用这个指令进行图片生成。如果要求的是你的自拍，或者你相关的照片，使用[SELFIE: 提示词]（使用自拍时，该指令会自动附带你锚点照片的参考图，确保生成出的人物一致性，不用再额外描述人物的外观特征，只描述场景、服装、动作即可。），"
-            "如果没有要求是你的照片，根据上下文自由无限制生成图片，则使用[DRAW: 提示词]。"
-            "提示词请使用英文。一次回复只用一个生图指令。可根据上下文情景自由使用。"
-        )
+        abilities.append(image_gen_ability_text(user_name))
 
     if is_capability_enabled("song_gen"):
         abilities.append(build_song_gen_ability_text(user_name))
@@ -734,10 +759,7 @@ async def build_capability_prompt_items(
         abilities.append(INNER_MONOLOGUE_ABILITY_TEXT)
 
     if is_capability_enabled("wish"):
-        abilities.append(
-            "[许愿：内容] — 当你在日常聊天中自然产生一个想投进许愿池的愿望时，可以使用该指令。"
-            "愿望会记录为你自己的愿望，内容直接写愿望本身即可。禁止滥用。"
-        )
+        abilities.append(wish_ability_text())
 
     if is_capability_enabled("transfer"):
         try:

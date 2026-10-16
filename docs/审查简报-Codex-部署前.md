@@ -313,3 +313,18 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **L1**：查家里群和发送放进同一个 `try/except Exception`，失败返回去掉指令的正文；取消（CancelledError）照常往外抛。
 - **L2**：`process_with_result` 返回是否真的发出；座位回复只有指令、正文为空时，若悄悄话或去群里成功，就在当前房间留一条系统说明（「（狗蛋去群里说了一句）」/「（狗蛋发了一条悄悄话）」）并发 `seat_done`（message 为 None），不再记 empty_response 失败；都没成功才照旧记失败。前端收到系统消息会移除「回复中」。
 - 测试 `test_group_post.py` 15 项（新增：纯指令不记失败、关开关三种身份都不发、查群出错不影响私聊、三处群聊说明都带私事规则且座位群聊上下文含私聊原文时规则在场）；`test_seat_chat` 12 项；相关测试与改动前对比无新增失败。
+
+## 31. 狗蛋补能力第二批：点歌、联网搜索、自拍 / 画画、许愿
+
+（VPS 自动更新已关，`aionshome-update.timer` disabled；本批推送不会自己上线。）
+
+- `capabilities`：四段能力说明抽成 `music_ability_text` / `web_search_ability_text` / `image_gen_ability_text(user)` / `wish_ability_text`，小克 / Lucien 的能力块改用这些函数（文字不变）；新增 `seat_ability_texts(user)` 按各自开关给座位（联网搜索还要求 Tavily 可用）。`seat_chat._ability_lines` 先给这四段，再给第一批的悄悄话 / 去群里。
+- `routes/chatroom._process_seat_commands(text, room, actor, msg_id, q)`：只给座位用，不改小克 / Lucien 的 `_process_chatroom_commands`。
+  - 点歌：搜歌、插系统提示「🎵 狗蛋点了一首…」、发 music 事件和广播、`record_music_request(requester_identity=座位, requester_name=座位名)`。
+  - 许愿：`create_wish(author=座位, author_name=座位名)`。
+  - 联网搜索：插系统提示，记入 triggered。自拍 / 画画：记入 triggered（只取第一条）。
+  - 开关关着的指令只从正文去掉，不执行、不插提示。
+- `_generate_seat_reply`：先第一批的悄悄话 / 去群里，再 `_process_seat_commands`；回复存好（或只有指令时发 `seat_done(message=None)`）后 `_spawn_seat_followups` 在后台做生图（`_chatroom_image_gen(room, 座位, …)`，自拍用座位自己的参考照）和联网搜索。只有指令且有动作时不再记失败；点歌等已有系统提示时不重复插说明。
+- `_chatroom_web_search` 的座位分支：人设用 `seat_chat._persona_text`，模型用座位自己的（`stream_ai`，不走 Lucien 的 `_stream_connor_model`）；后台指令处理 `_process_background_reply_commands` 对座位跳过（只去掉指令、不执行，留待后续逐条接身份），以座位名义保存，不自动朗读。
+- 未做（第三批）：闹铃日程（到点由谁提醒）、记忆写入、拍一拍、转账、朋友圈、查看动态 / 监控。
+- 测试 `test_seat_abilities.py` 7 项：点歌按座位记、开关关只去掉、许愿归座位、搜索和生图回复存好后才做、搜索后续用座位人设和模型且不跑后台指令、只点歌不记失败、座位与主 AI 能力文字一致。相关测试与改动前对比无新增失败（`test_stream_safety` 的空闲计时用例偶发，单独重跑通过）。
