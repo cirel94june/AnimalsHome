@@ -328,3 +328,11 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - `_chatroom_web_search` 的座位分支：人设用 `seat_chat._persona_text`，模型用座位自己的（`stream_ai`，不走 Lucien 的 `_stream_connor_model`）；后台指令处理 `_process_background_reply_commands` 对座位跳过（只去掉指令、不执行，留待后续逐条接身份），以座位名义保存，不自动朗读。
 - 未做（第三批）：闹铃日程（到点由谁提醒）、记忆写入、拍一拍、转账、朋友圈、查看动态 / 监控。
 - 测试 `test_seat_abilities.py` 7 项：点歌按座位记、开关关只去掉、许愿归座位、搜索和生图回复存好后才做、搜索后续用座位人设和模型且不跑后台指令、只点歌不记失败、座位与主 AI 能力文字一致。相关测试与改动前对比无新增失败（`test_stream_safety` 的空闲计时用例偶发，单独重跑通过）。
+
+## 32. 65d6fae 审查修复（M1–M3、L1）
+
+- **M1 愿望作者**：`wish_pool.VALID_AUTHORS` 加入 ai3～ai6；`normalize_author(author, strict=False)`：筛选仍兼容（不认识按 user），`create_wish` 用 `strict=True`，不认识的身份抛 ValueError，不再写成用户。`get_actor_names` 补上座位名字（列表里没有的座位不加）。`maybe_create_ai_digest_wish` 沿用非严格（不认识的按 user → 直接返回不创建）。前端 `actorName` 先查 `state.actors`，座位名字可显示。测试真实写临时 SQLite：四个座位作者正确、按作者筛选只出该座位、陌生身份报错。
+- **M2 搜索后续线路快照**：`_spawn_seat_followups(..., pinned)` 把主回复的 `model_snapshot` 传给 `_chatroom_web_search(..., pinned=)`；座位调用没带快照时在函数开头（任何 await 之前）自己取。座位分支在 `stream_ai` 前 `ensure_model_unchanged`（中间无 await），线路被删 / 改 / 停用就不回复、不换模型，房间里留「（狗蛋的模型线路刚刚变了，这次搜索的结果没能回复）」。测试：搜索期间删掉线路 → 不调用模型、不保存、有说明。
+- **M3 只有动作时的完成**：许愿成功插「🌠 狗蛋往许愿池里投了一个愿望」，生图触发插「📸 狗蛋在拍照……」/「🎨 狗蛋在画图……」；座位生图失败（返回空或异常）插「（狗蛋的图没生成出来）」（小克 / Lucien 行为不变）。前端 `seat_done` 无条件移除 `.typing-indicator`。
+- **L1 点歌卡片锚点**：座位消息保存时带 `_music_attachments_from_triggered`（同小克 / Lucien）；只点了歌时用「🎵 《歌名》- 歌手」作为 TA 的这条消息，music 事件的 msg_id 就是这条已保存消息的 id。
+- 测试 `test_seat_abilities.py` 11 项（原「只点歌」测试由新的卡片锚点测试取代）；`test_group_post` + `test_seat_chat` 一起 38 项通过；相关测试与改动前对比无新增失败。

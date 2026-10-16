@@ -83,6 +83,8 @@ def test_search_followup_speaks_as_the_seat_with_its_own_model(monkeypatch):
     monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [])))
     monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
     monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "本少爷人设")
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-model": {"provider": "custom_openai", "model": "m"}})
     seen = []
 
     async def fake_stream(messages, model_key, *a, **k):
@@ -104,7 +106,70 @@ def test_search_followup_speaks_as_the_seat_with_its_own_model(monkeypatch):
     assert saved.await_args.args[:3] == ("room", "ai3", "今天晴，本少爷查过了")
 
 
-def test_reply_that_only_requests_a_song_ends_normally(room, monkeypatch):
+def test_seat_and_main_ais_get_the_same_instruction_text(monkeypatch):
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: True)
+    monkeypatch.setattr(capabilities, "_is_web_search_available", lambda: True)
+    texts = capabilities.seat_ability_texts("小猫")
+    assert texts == [capabilities.music_ability_text(), capabilities.web_search_ability_text(),
+                     capabilities.image_gen_ability_text("小猫"), capabilities.wish_ability_text()]
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "image_gen")
+    assert capabilities.image_gen_ability_text("小猫") not in capabilities.seat_ability_texts("小猫")
+    lines = seat_chat._ability_lines("小猫", group=False)
+    assert any(line.startswith("[MUSIC") for line in lines) and any(line.startswith("[去群里") for line in lines)
+
+
+def test_wish_author_is_stored_as_the_seat(tmp_path, monkeypatch):
+    """Codex M1：真实写进数据库，作者是 ai3～ai6，不是用户；不认识的身份报错。"""
+    import aiosqlite
+    import wish_pool
+    monkeypatch.setattr(wish_pool, "get_db", lambda: aiosqlite.connect(tmp_path / "w.db"))
+    monkeypatch.setattr(wish_pool.manager, "broadcast", AsyncMock())
+    monkeypatch.setattr(seat_chat.actors, "list_actors",
+                        lambda include_disabled=True: [{"id": "ai3", "name": "狗蛋"}, {"id": "ai4", "name": "四号"}])
+
+    async def go():
+        for seat in ("ai3", "ai4", "ai5", "ai6"):
+            await wish_pool.create_wish(author=seat, content=f"{seat} 的愿望")
+        with pytest.raises(ValueError):
+            await wish_pool.create_wish(author="stranger", content="x")
+        async with aiosqlite.connect(tmp_path / "w.db") as db:
+            rows = await (await db.execute("SELECT author, author_name FROM wishes ORDER BY author")).fetchall()
+        mine = await wish_pool.list_wishes(author="ai3")
+        return rows, mine, await wish_pool.get_actor_names()
+    rows, mine, names = asyncio.run(go())
+    assert [r[0] for r in rows] == ["ai3", "ai4", "ai5", "ai6"]
+    assert rows[0][1] == "狗蛋"
+    assert [w["author"] for w in mine["items"]] == ["ai3"]
+    assert names["ai3"] == "狗蛋"
+
+
+def test_search_followup_stops_if_the_seats_line_changes_meanwhile(monkeypatch):
+    """Codex M2：搜索等待期间线路被删，不换模型、不以座位名义回复，留一句说明。"""
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-key": {"provider": "custom_openai", "model": "m"}})
+    pinned = config.model_snapshot("seat-key")
+
+    async def search(*a):
+        config.MODELS.pop("seat-key")  # 搜索的时候线路被删了
+        return ["【联网搜索结果】晴"]
+    monkeypatch.setattr(chatroom_routes, "run_web_commands", search)
+    monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [])))
+    monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
+    monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "人设")
+    stream = MagicMock()
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    saved = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_msg", saved)
+    notes = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_chatroom_sys_msg", notes)
+    asyncio.run(chatroom_routes._chatroom_web_search("room", "ai3", "seat-key", {"searches": ["天气"]}, pinned=pinned))
+    stream.assert_not_called()
+    saved.assert_not_called()
+    assert "线路刚刚变了" in notes.await_args.args[1]
+
+
+def test_only_a_song_becomes_the_seats_message_with_the_card(room, monkeypatch):
+    """Codex L1：只点了歌时，歌名作为 TA 的消息保存，播放卡片挂在这条消息上。"""
     _enable(monkeypatch)
     monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({"name": "狗蛋"}, "m"))
     monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[]))
@@ -117,8 +182,12 @@ def test_reply_that_only_requests_a_song_ends_normally(room, monkeypatch):
     monkeypatch.setattr(chatroom_routes, "search_songs", lambda k, limit=5: [{"id": 1, "name": "晴天", "artist": "周杰伦"}])
     monkeypatch.setattr(chatroom_routes, "get_audio_url", lambda i: "u")
     monkeypatch.setattr(chatroom_routes, "record_music_request", AsyncMock())
-    failure = AsyncMock()
-    monkeypatch.setattr(chatroom_routes, "_save_chatroom_reply_failure", failure)
+    saved = []
+
+    async def save(room_id, sender, content, msg_id=None, attachments=None, **kw):
+        saved.append({"id": msg_id, "content": content, "attachments": attachments})
+        return saved[-1]
+    monkeypatch.setattr(chatroom_routes, "_save_msg", save)
     import config
     monkeypatch.setattr(config, "MODELS", {**config.MODELS, "m": {"provider": "custom_openai", "model": "m"}})
     q = asyncio.Queue()
@@ -126,17 +195,34 @@ def test_reply_that_only_requests_a_song_ends_normally(room, monkeypatch):
     events = []
     while not q.empty():
         events.append(q.get_nowait())
-    failure.assert_not_called()
-    assert events[-1] == {"type": "seat_done", "actor": "ai3", "message": None}
+    music = next(e for e in events if e["type"] == "music")
+    assert saved[0]["content"] == "🎵 《晴天》- 周杰伦" and saved[0]["attachments"][0]["type"] == "music"
+    assert music["msg_id"] == saved[0]["id"]  # 卡片挂在真正保存了的消息上
+    assert events[-1]["message"] == saved[0]
 
 
-def test_seat_and_main_ais_get_the_same_instruction_text(monkeypatch):
-    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: True)
-    monkeypatch.setattr(capabilities, "_is_web_search_available", lambda: True)
-    texts = capabilities.seat_ability_texts("小猫")
-    assert texts == [capabilities.music_ability_text(), capabilities.web_search_ability_text(),
-                     capabilities.image_gen_ability_text("小猫"), capabilities.wish_ability_text()]
-    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "image_gen")
-    assert capabilities.image_gen_ability_text("小猫") not in capabilities.seat_ability_texts("小猫")
-    lines = seat_chat._ability_lines("小猫", group=False)
-    assert any(line.startswith("[MUSIC") for line in lines) and any(line.startswith("[去群里") for line in lines)
+def test_wish_and_picture_leave_a_visible_note(room, monkeypatch):
+    """Codex M3：只许愿 / 只画图时房间里也有提示；前端收到 seat_done 就收起「回复中」。"""
+    _enable(monkeypatch)
+    import wish_pool
+    monkeypatch.setattr(wish_pool, "create_wish", AsyncMock())
+    _run("[许愿：想去海边]")
+    assert "许愿池" in room.await_args.args[1]
+    _run("[DRAW: a cat]")
+    assert "在画图" in room.await_args.args[1]
+    js = open("static/chatroom.js", encoding="utf-8").read()
+    seat_done = js[js.index("case 'seat_done':"):js.index("case 'round_start':")]
+    assert ".typing-indicator" in seat_done
+
+
+def test_seat_picture_failure_is_visible_but_main_ais_unchanged(monkeypatch):
+    import image_gen
+    monkeypatch.setattr(image_gen, "generate_image", AsyncMock(return_value=None))
+    monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
+    notes = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_chatroom_sys_msg", notes)
+    asyncio.run(chatroom_routes._chatroom_image_gen("room", "ai3", "a cat", False))
+    assert "图没生成出来" in notes.await_args.args[1]
+    notes.reset_mock()
+    asyncio.run(chatroom_routes._chatroom_image_gen("room", "aion", "a cat", False))
+    notes.assert_not_called()

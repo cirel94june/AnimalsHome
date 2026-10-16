@@ -3967,6 +3967,7 @@ function handleSSE(data) {
     case 'seat_done':
       pendingStreamSender = null;
       pendingStreamId = null;
+      messagesEl.querySelectorAll('.typing-indicator').forEach(el => el.remove());
       if (data.message && streamingBubble) streamingText = data.message.content;
       endStreamingBubble(data.message);
       if (data.message

@@ -1715,9 +1715,13 @@ async def _chatroom_poi_check(room_id: str, sender: str, model_key: str, categor
     print(f"[CHATROOM_POI] {sender} 搜索完成, room={room_id}, categories={searched_cats}")
 
 
-async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payload: dict):
+async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payload: dict, *,
+                               pinned: dict | None = None):
     """聊天室版联网搜索：Tavily 搜索/读取网页 → 触发者追加回复到聊天室"""
-    from config import load_worldbook, SETTINGS
+    from config import load_worldbook, SETTINGS, model_snapshot
+
+    if pinned is None and sender in seat_chat.SEAT_ACTORS:
+        pinned = model_snapshot(model_key)  # 没带快照的座位调用：在任何等待之前固定线路
 
     searches = payload.get("searches") or []
     extracts = payload.get("extracts") or []
@@ -1776,6 +1780,14 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     tts_from_model = True
     try:
         if is_seat:
+            from config import ensure_model_unchanged
+            try:
+                ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
+            except Exception:
+                print(f"[CHATROOM_WEB_SEARCH] {sender} 的线路在搜索期间变了，不换模型、不回复")
+                await _chatroom_sys_msg(room_id, f"（{sender_label}的模型线路刚刚变了，这次搜索的结果没能回复）",
+                                        asyncio.Queue())
+                return
             async for chunk in stream_ai(messages, model_key):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
@@ -1945,8 +1957,20 @@ async def _chatroom_image_gen(room_id: str, sender: str, prompt: str, is_selfie:
             print(f"[CHATROOM_IMG_GEN] {sender} 生图完成, room={room_id}")
         else:
             print(f"[CHATROOM_IMG_GEN] {sender} 生图失败, room={room_id}")
+            await _seat_image_failed(room_id, sender)
     except Exception as e:
         print(f"[CHATROOM_IMG_GEN] {sender} 生图异常: {e}")
+        await _seat_image_failed(room_id, sender)
+
+
+async def _seat_image_failed(room_id: str, sender: str) -> None:
+    """座位 3～6 的图没生成出来时，房间里留一句（小克、Lucien 的行为不变）。"""
+    if sender not in seat_chat.SEAT_ACTORS:
+        return
+    try:
+        await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的图没生成出来）", asyncio.Queue())
+    except Exception as exc:
+        print(f"[CHATROOM_IMG_GEN] 失败回执没写进去: {type(exc).__name__}")
 
 
 # ── 图片 URL 检测 & 下载保存 ──
@@ -3846,6 +3870,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
                                       visibility="shared", origin="chat_command",
                                       source_type="chatroom_command", source_ref=f"{room_id}:{msg_id}")
                     triggered["wish"] = True
+            if triggered.get("wish"):
+                await _chatroom_sys_msg(room_id, f"🌠 {label}往许愿池里投了一个愿望", _q, after_msg_id=msg_id)
         except Exception as e:
             print(f"[SEAT_WISH] 许愿失败: {e}")
 
@@ -3866,16 +3892,21 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     if (selfie_match or draw_match) and is_capability_enabled("image_gen"):
         match = selfie_match or draw_match
         triggered["image_gen"] = {"prompt": match.group(1).strip(), "is_selfie": bool(selfie_match)}
+        await _chatroom_sys_msg(room_id, f"📸 {label}在拍照……" if selfie_match else f"🎨 {label}在画图……",
+                                _q, after_msg_id=msg_id)
     return full_text, triggered
 
 
-def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered: dict) -> None:
-    """座位回复存好以后：生图、联网搜索在后台做，做完以 TA 的名义追加到房间里。"""
+def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered: dict,
+                          pinned: dict | None = None) -> None:
+    """座位回复存好以后：生图、联网搜索在后台做，做完以 TA 的名义追加到房间里。
+    搜索的追加回复带着主回复时的线路快照：期间线路被删 / 改就不回复，不换别的模型。"""
     if triggered.get("image_gen"):
         ig = triggered["image_gen"]
         spawn_generation_task(_chatroom_image_gen(room_id, actor_id, ig["prompt"], ig["is_selfie"]))
     if triggered.get("web_search"):
-        spawn_generation_task(_chatroom_web_search(room_id, actor_id, model_key, triggered["web_search"]))
+        spawn_generation_task(_chatroom_web_search(room_id, actor_id, model_key, triggered["web_search"],
+                                                   pinned=pinned))
 
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False):
@@ -3939,22 +3970,23 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         if posted:
             side_effect_notice = f"（{seat_chat.actors.display_name(actor_id)}去群里说了一句）"
     command_text, triggered = await _process_seat_commands(command_text, room_id, actor_id, msg_id, _q)
-    if triggered and not side_effect_notice:
-        side_effect_notice = "acted"  # 点了歌 / 许了愿 / 要发图 / 要去搜：系统提示已经插过了
     clean_text = _visible_chatroom_text(command_text).strip()
+    music_atts = _music_attachments_from_triggered(triggered)
+    if not clean_text and music_atts:  # 只点了歌：用歌名当 TA 的这条消息，播放卡片挂在上面
+        clean_text = "🎵 " + " / ".join(f"《{a['name']}》- {a['artist']}" for a in music_atts)
     if not clean_text:
-        if side_effect_notice:
-            if side_effect_notice != "acted":
+        if side_effect_notice or triggered:  # 许愿 / 生图 / 搜索的系统提示已经插过了
+            if side_effect_notice:
                 await _chatroom_sys_msg(room_id, side_effect_notice, _q)
             await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
-            _spawn_seat_followups(room_id, actor_id, model_key, triggered)
+            _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
             return
         await _save_chatroom_reply_failure(room_id, actor_id, _q, "empty_response", msg_id=msg_id)
         return
-    msg = await _save_msg(room_id, actor_id, clean_text, msg_id, auto_tts=False,
+    msg = await _save_msg(room_id, actor_id, clean_text, msg_id, attachments=music_atts or None, auto_tts=False,
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
-    _spawn_seat_followups(room_id, actor_id, model_key, triggered)
+    _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
     if not group:  # 和小克、Lucien 的群聊回复一样：群聊不单独记入 Memory Hub
         memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
 

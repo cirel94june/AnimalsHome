@@ -14,7 +14,8 @@ from database import get_db
 from ws import manager
 
 
-VALID_AUTHORS = {"user", "aion", "connor"}
+# 用户 + 六个 AI 座位（小克 aion、Lucien connor、座位 ai3～ai6）
+VALID_AUTHORS = {"user", "aion", "connor", "ai3", "ai4", "ai5", "ai6"}
 VALID_STATUSES = {"active", "fulfilled", "released"}
 VALID_VISIBILITIES = {"shared", "private"}
 
@@ -76,9 +77,14 @@ async def ensure_wish_schema() -> None:
         await db.commit()
 
 
-def normalize_author(author: str) -> str:
+def normalize_author(author: str, *, strict: bool = False) -> str:
+    """筛选用：不认识的按用户算（兼容旧调用）。创建愿望用 strict=True：不认识的身份直接报错，不能写成用户的愿望。"""
     value = (author or "user").strip().lower()
-    return value if value in VALID_AUTHORS else "user"
+    if value in VALID_AUTHORS:
+        return value
+    if strict:
+        raise ValueError(f"unknown wish author: {value}")
+    return "user"
 
 
 def normalize_status(status: str) -> str:
@@ -194,7 +200,15 @@ async def get_actor_names() -> dict[str, str]:
         connor_name = (connor_name or "第二位AI").strip() or "第二位AI"
     except Exception:
         connor_name = "第二位AI"
-    return {"user": user_name, "aion": ai_name, "connor": connor_name}
+    names = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    try:
+        import actors
+        for actor in actors.list_actors(include_disabled=True):
+            if actor.get("id") in VALID_AUTHORS and actor["id"] not in names:
+                names[actor["id"]] = actor.get("name") or actor["id"]
+    except Exception:
+        pass
+    return names
 
 
 async def list_wishes(status: str = "all", author: str = "all") -> dict[str, Any]:
@@ -245,7 +259,7 @@ async def create_wish(
     author_name: str = "",
 ) -> dict[str, Any]:
     await ensure_wish_schema()
-    author_key = normalize_author(author)
+    author_key = normalize_author(author, strict=True)
     content_text = _clean_text(content, 600)
     if not content_text:
         raise ValueError("empty wish")
