@@ -1640,8 +1640,8 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
             if moment_matches:
                 full_text = MOMENT_CMD_PATTERN.sub("", full_text).strip()
-                for mt_content, mt_reply in moment_matches:
-                    mt_content = mt_content.strip()
+                for mt_content, mt_reply in moment_matches[:1]:  # 每条回复最多 1 条（IB 限额）
+                    mt_content = mt_content.strip()[:800]
                     if mt_content:
                         mt_now = time.time()
                         mt_id = f"mt_{int(mt_now*1000)}"
@@ -2322,8 +2322,8 @@ async def send_message(conv_id: str, body: MsgCreate):
             moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
             if moment_matches:
                 full_text = MOMENT_CMD_PATTERN.sub("", full_text).strip()
-                for mt_content, mt_reply in moment_matches:
-                    mt_content = mt_content.strip()
+                for mt_content, mt_reply in moment_matches[:1]:  # 每条回复最多 1 条（IB 限额）
+                    mt_content = mt_content.strip()[:800]
                     if mt_content:
                         mt_now = time.time()
                         mt_id = f"mt_{int(mt_now*1000)}"
@@ -3826,8 +3826,8 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
             if moment_matches:
                 full_text = MOMENT_CMD_PATTERN.sub("", full_text).strip()
-                for mt_content, mt_reply in moment_matches:
-                    mt_content = mt_content.strip()
+                for mt_content, mt_reply in moment_matches[:1]:  # 每条回复最多 1 条（IB 限额）
+                    mt_content = mt_content.strip()[:800]
                     if mt_content:
                         mt_now = time.time()
                         mt_id = f"mt_{int(mt_now*1000)}"

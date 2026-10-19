@@ -552,8 +552,8 @@ def image_gen_ability_text(user_name: str) -> str:
 def moment_ability_text() -> str:
     return ("[MOMENT:朋友圈内容|true/false] — 当**本次**聊天内容非常触动人心、有很深的感触、"
             "或令人无语或非常搞笑时可以发一条朋友圈动态。第二个参数表示是否期望好友回复"
-            "（true=期望回复，false=不期望），禁止滥用。"
-            "朋友圈全家都看得到：私聊里单独说的私事不要写进去。")
+            "（true=期望回复，false=不期望），禁止滥用，一次回复最多发一条。"
+            "朋友圈全家都看得到：涉及你们的亲密关系、她的身体和私人情感的内容不要写进去，拿不准就不写。")
 
 
 def wish_ability_text() -> str:

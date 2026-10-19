@@ -208,7 +208,7 @@ def test_every_group_context_carries_the_private_matters_rule(monkeypatch):
     import inspect
     import chatroom
     rule = group_post.group_privacy_rule("小猫")
-    assert "私聊里单独跟你说的私事" in rule and "她自己在群里说了" in rule
+    assert "亲密关系" in rule and "身体" in rule and "私人情感" in rule and "她自己在群里说了" in rule and "自己判断" in rule
     for name in ("build_aion_group_context", "build_connor_group_context"):
         assert "group_privacy_rule(user_name)" in inspect.getsource(getattr(chatroom, name))
     import memory_hub_bridge
@@ -218,4 +218,4 @@ def test_every_group_context_carries_the_private_matters_rule(monkeypatch):
     msgs = [{"sender": "user", "content": "PRIVATE_SENTINEL", "created_at": 1, "source": "private"}]
     built = asyncio.run(seat_chat.build_context("ai3", msgs, group=True))
     text = "\n".join(m["content"] for m in built)
-    assert "PRIVATE_SENTINEL" in text and "私聊里单独跟你说的私事" in text
+    assert "PRIVATE_SENTINEL" in text and "亲密关系" in text

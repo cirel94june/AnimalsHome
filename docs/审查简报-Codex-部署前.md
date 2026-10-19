@@ -378,3 +378,13 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **M2**：朋友圈对座位不再取 Hub 内容（`_get_recent_memories` 座位直接返回空）。原因：memory-hub #85（已合并 b801a77）把 `private_group` 当作可信范围，incremental 会带私聊接续原话和私人记忆；朋友圈全家可见。座位评论仍参考本地最近聊天（自己的私聊 + 家里群），这部分按设计包含私聊记录，靠提示词「私聊私事不要写进评论」约束，不是过滤保证。
 - **更正**：第 28 节说「群聊里 Hub 会去掉私聊内容」、第 36 节说「private_group 不带私聊原话」，按已合并的 Hub 都不成立。AionsHome 家里群传 `private_group`，Hub 照样可能给私聊接续 / 私人材料；群里不提私事目前只靠 `group_privacy_rule` 提示词。已告知小猫，是否要 Hub 增加更严格的群聊范围由她决定。
 - 测试 `test_seat_moments.py` 8 项（新增：停用 / 没人设不回、等待中被停用不回、等待中换模型不回；Hub 不再被调用）；`test_moments*` 原有测试通过。
+
+## 38. 小猫定的隐私口径 + 朋友圈按 IB 机限额（覆盖第 37 节的 M2 做法）
+
+小猫（2026-10-19）：家里群、朋友圈里 AI **可以拿得到**私聊内容；系统提示强调涉及亲密关系等隐私不要说出来，由模型自己判断；朋友圈参考 AionsHome / IB 机的原则。IB 机（InternalBeyond-Mobile）的做法：记忆按「涉及亲密、身体、私人情感选私密」分级；社交圈共享限额——AI 每条回复最多发 1 条动态、动态 800 字、评论 300 字、每条动态至多 20 条评论。AionsHome 原作者朋友圈无隐私规则、无限额。
+
+- **隐私口径统一**（`group_post`）：`_private_matters()` 改为「你们之间的亲密关系和亲密的话、她的身体、她的私人情感（心事、情绪），以及工作吐槽、对别人的看法」。`group_privacy_rule`（家里群三处）改为：你可能知道私聊里说过的事，涉及上述的她没在群里提、也没让你说就不说出来；她自己说了才接；其他日常可自然聊；拿不准自己判断、宁可不说。新增 `moment_privacy_rule`，朋友圈评论提示（所有 AI）改用它；`moment_ability_text` 同口径。**均为提示词约束，不是过滤。**
+- **朋友圈座位恢复取 Hub**（撤回第 37 节 M2 的「不取」）：`_get_recent_memories` 对座位用 `context_block(座位, 朋友圈内容, "moments", "private_group")`，会带私聊接续 / 私人记忆，按小猫的决定靠提示词约束。
+- **IB 限额**：`routes/moments.py` 常量 `MAX_AI_MOMENTS_PER_REPLY=1 / MAX_AI_MOMENT_CHARS=800 / MAX_AI_COMMENT_CHARS=300 / MAX_COMMENTS_PER_MOMENT=20`。AI 评论截 300 字；动态已有 ≥20 条评论时 AI 不再评论。发动态：小克私聊三处、聊天室主 AI 一处、座位一处都改为只取第一条、正文截 800 字。
+- 第 37 节 M1（座位启用 / 人设 / 模型前后核对）保留不变。
+- 测试：`test_seat_moments.py` 10 项（Hub 恢复且为 private_group、IB 口径提示、评论 300 字与满 20 条不评、座位一次一条 800 字、小克私聊三处源码核对）；`test_group_post` 规则文字断言随口径更新。相关测试与改动前相同（均为既有失败）。

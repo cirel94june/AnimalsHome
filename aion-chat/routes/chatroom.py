@@ -1023,8 +1023,8 @@ async def _process_chatroom_commands(
     moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
     if moment_matches:
         full_text = MOMENT_CMD_PATTERN.sub("", full_text)
-        for mt_content, mt_reply in moment_matches:
-            mt_content = mt_content.strip()
+        for mt_content, mt_reply in moment_matches[:1]:  # 每条回复最多 1 条（IB 限额）
+            mt_content = mt_content.strip()[:800]
             if mt_content:
                 try:
                     mt_now = time.time()
@@ -3889,8 +3889,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
     if moment_matches:
         full_text = MOMENT_CMD_PATTERN.sub("", full_text)
-    for mt_content, mt_reply in moment_matches if is_capability_enabled("moment") else []:
-        mt_content = mt_content.strip()
+    for mt_content, mt_reply in moment_matches[:1] if is_capability_enabled("moment") else []:  # 每条回复最多 1 条
+        mt_content = mt_content.strip()[:800]
         if not mt_content:
             continue
         try:

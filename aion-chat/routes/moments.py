@@ -70,6 +70,11 @@ def _parse_moment_reply_result(raw_text: str, *, expect_chat_decision: bool) -> 
 
 
 SEAT_AUTHORS = ("ai3", "ai4", "ai5", "ai6")
+# 参考 IB 机的共享限额：AI 每条回复最多发 1 条动态；AI 动态 800 字、评论 300 字；每条动态最多 20 条评论
+MAX_AI_MOMENTS_PER_REPLY = 1
+MAX_AI_MOMENT_CHARS = 800
+MAX_AI_COMMENT_CHARS = 300
+MAX_COMMENTS_PER_MOMENT = 20
 
 
 def _name_map() -> dict[str, str]:
@@ -268,10 +273,15 @@ async def _get_recent_context_messages(who: str, limit: int = 30) -> list[dict]:
 
 async def _get_recent_memories(who: str, limit: int = 5, query: str = "") -> list[str]:
     """获取指定 AI 角色最近的记忆。
-    座位的记忆在 Memory Hub；Hub 的 private_group 也会给私聊接续原话和私人记忆（memory-hub #85 起），
-    朋友圈全家可见，所以这里先不取 Hub 的内容（座位照样能参考最近的聊天上下文）。"""
+    座位的记忆在 Memory Hub，按家里群口径（private_group）取一段——这会带私聊接续和私人记忆（memory-hub #85），
+    小猫定：可以拿得到，靠提示词「涉及亲密 / 身体 / 私人情感的不写」约束，由模型自己判断。"""
     if who in SEAT_AUTHORS:
-        return []
+        try:
+            import memory_hub_bridge
+            block = await memory_hub_bridge.context_block(who, query, "moments", "private_group")
+        except Exception:
+            block = ""
+        return [block] if block else []
     memories = []
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
@@ -354,10 +364,8 @@ def _build_moment_reply_messages(
     messages.append(moment_msg)
 
     # 5. 任务指令（朋友圈全家都看得到：上面的聊天上下文里有私聊，私事不要写进评论）
-    messages.append({"role": "user", "content": (
-        f"[提醒] 朋友圈和评论全家都看得到。{user_name}在私聊里单独跟你说的私事"
-        "（心事、身体和情绪、工作吐槽、对别人的看法、你们之间亲密的话），不要写进朋友圈评论。"
-    )})
+    from group_post import moment_privacy_rule
+    messages.append({"role": "user", "content": f"[提醒] {moment_privacy_rule(user_name)}"})
     messages.append({"role": "assistant", "content": "明白。"})
     if target_comment_id:
         # 回复某条评论
@@ -421,6 +429,8 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
     """让指定的 AI 角色回复朋友圈或评论"""
     moment = await _get_moment_with_comments(moment_id)
     if not moment:
+        return
+    if len(moment.get("comments") or []) >= MAX_COMMENTS_PER_MOMENT:  # 评论满了，AI 不再加
         return
 
     # 获取上下文和记忆
@@ -503,6 +513,7 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
     )
     if not comment_text:
         return
+    comment_text = comment_text[:MAX_AI_COMMENT_CHARS]
 
     # 保存评论
     now = time.time()

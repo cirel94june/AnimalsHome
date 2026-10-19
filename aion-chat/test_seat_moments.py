@@ -115,9 +115,8 @@ def test_seat_comments_with_its_own_persona_model_and_hub(db, monkeypatch):
     messages, model_key = seen[0]
     text = "\n".join(str(m["content"]) for m in messages)
     assert model_key == "seat-m" and "本少爷人设" in text
-    assert "私聊里单独跟你说的私事" in text  # 朋友圈全家可见的提醒
-    hub.assert_not_called()  # Hub 的 private_group 也会给私聊原话：朋友圈先不取 Hub
-    assert "狗蛋喜欢雨天" not in text
+    assert "亲密关系" in text and "自己判断" in text  # 朋友圈全家可见的提醒（IB 口径）
+    assert hub.await_args.args[3] == "private_group" and "狗蛋喜欢雨天" in text  # 小猫定：可以拿得到
     assert _rows(db, "SELECT author, content FROM moment_comments") == [("ai3", "下雨天最适合本少爷睡懒觉")]
 
 
@@ -184,3 +183,42 @@ def test_disabled_seat_is_not_woken_by_an_old_comment(db, monkeypatch):
     asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
     stream.assert_not_called()
     assert _rows(db, "SELECT COUNT(*) FROM moment_comments") == [(0,)]
+
+
+def test_ib_style_limits(db, monkeypatch):
+    """参考 IB 机的限额：AI 评论最多 300 字；一条动态满 20 条评论后 AI 不再评论。"""
+    _seat_reply_setup(monkeypatch)
+
+    async def stream(messages, model_key, *a, **k):
+        yield "长" * 500
+    monkeypatch.setattr(moments, "stream_ai", stream)
+    monkeypatch.setattr(moments, "_parse_moment_reply_result", lambda raw, expect_chat_decision: (raw, False, ""))
+    asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
+    assert [len(r[0]) for r in _rows(db, "SELECT content FROM moment_comments")] == [moments.MAX_AI_COMMENT_CHARS]
+
+    async def fill():
+        async with aiosqlite.connect(db) as conn:
+            for i in range(moments.MAX_COMMENTS_PER_MOMENT):
+                await conn.execute("INSERT INTO moment_comments VALUES (?, 'mu', 'user', 'x', NULL, ?)", (f"f{i}", 10 + i))
+            await conn.commit()
+    asyncio.run(fill())
+    stream2 = MagicMock()
+    monkeypatch.setattr(moments, "stream_ai", stream2)
+    asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
+    stream2.assert_not_called()
+
+
+def test_one_moment_per_reply_and_800_chars(db, monkeypatch):
+    monkeypatch.setattr(chatroom_routes, "is_capability_enabled", lambda name: True)
+    monkeypatch.setattr(chatroom_routes, "_chatroom_sys_msg", AsyncMock(return_value={"id": "sys"}))
+    monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
+    import ws
+    monkeypatch.setattr(ws.manager, "broadcast", AsyncMock())
+    text = "[MOMENT:" + "长" * 900 + "|false][MOMENT:第二条|false]"
+    asyncio.run(chatroom_routes._process_seat_commands(text, "g1", "ai3", "m1", asyncio.Queue()))
+    rows = _rows(db, "SELECT content FROM moments WHERE author='ai3'")
+    assert len(rows) == 1 and len(rows[0][0]) == 800
+    import inspect
+    import routes.chat as chat_routes
+    src = inspect.getsource(chat_routes)
+    assert src.count("moment_matches[:1]") == 3 and src.count("mt_content.strip()[:800]") == 3
