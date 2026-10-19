@@ -549,6 +549,13 @@ def image_gen_ability_text(user_name: str) -> str:
             "提示词请使用英文。一次回复只用一个生图指令。可根据上下文情景自由使用。")
 
 
+def moment_ability_text() -> str:
+    return ("[MOMENT:朋友圈内容|true/false] — 当**本次**聊天内容非常触动人心、有很深的感触、"
+            "或令人无语或非常搞笑时可以发一条朋友圈动态。第二个参数表示是否期望好友回复"
+            "（true=期望回复，false=不期望），禁止滥用。"
+            "朋友圈全家都看得到：私聊里单独说的私事不要写进去。")
+
+
 def wish_ability_text() -> str:
     return ("[许愿：内容] — 当你在日常聊天中自然产生一个想投进许愿池的愿望时，可以使用该指令。"
             "愿望会记录为你自己的愿望，内容直接写愿望本身即可。禁止滥用。")
@@ -565,6 +572,8 @@ def seat_ability_texts(user_name: str) -> list[str]:
         texts.append(image_gen_ability_text(user_name))
     if is_capability_enabled("wish"):
         texts.append(wish_ability_text())
+    if is_capability_enabled("moment"):
+        texts.append(moment_ability_text())
     if is_capability_enabled("schedule"):
         texts.extend([
             "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会叫你来提醒用户。日期时间用ISO格式。",
@@ -723,11 +732,7 @@ async def build_capability_prompt_items(
             abilities.append(widget_prompt)
 
     if is_capability_enabled("moment"):
-        abilities.append(
-            "[MOMENT:朋友圈内容|true/false] — 当**本次**聊天内容非常触动人心、有很深的感触、"
-            "或令人无语或非常搞笑时可以发一条朋友圈动态。第二个参数表示是否期望好友回复"
-            "（true=期望回复，false=不期望），禁止滥用。"
-        )
+        abilities.append(moment_ability_text())
 
     if is_capability_enabled("desk_note"):
         abilities.append(

@@ -3885,6 +3885,37 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
                                     _q, after_msg_id=msg_id)
             triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
 
+    # ── 发朋友圈（第三批）：作者是这位座位；期望回复时其他 AI 来评论 ──
+    moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
+    if moment_matches:
+        full_text = MOMENT_CMD_PATTERN.sub("", full_text)
+    for mt_content, mt_reply in moment_matches if is_capability_enabled("moment") else []:
+        mt_content = mt_content.strip()
+        if not mt_content:
+            continue
+        try:
+            mt_now = time.time()
+            mt_id = f"mt_{time.time_ns()}_{actor_id}"
+            expect = 1 if mt_reply == "true" else 0
+            async with get_db() as mt_db:
+                await mt_db.execute(
+                    "INSERT INTO moments (id, author, content, source_conv, source_msg_id, expect_reply, created_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (mt_id, actor_id, mt_content, f"chatroom:{room_id}", msg_id, expect, mt_now))
+                await mt_db.commit()
+            mt_data = {"type": "moment_new", "data": {
+                "id": mt_id, "author": actor_id, "content": mt_content, "expect_reply": expect,
+                "created_at": mt_now, "comments": [], "reactions": []}}
+            await _q.put(mt_data)
+            await broadcast_synced(ws_manager, mt_data)
+            await _chatroom_sys_msg(room_id, f"📷 {label}发了一条朋友圈", _q, after_msg_id=msg_id)
+            triggered["moment"] = True
+            if expect:
+                from routes.moments import _trigger_ai_replies
+                spawn_generation_task(_trigger_ai_replies(mt_id, exclude_author=actor_id))
+        except Exception as e:
+            print(f"[SEAT_MOMENT] 发布失败: {e}")
+
     # ── 闹铃 / 日程（第三批）：记在座位名下；定时监督要用摄像头，座位暂不支持；只能删自己设的 ──
     if any(p.search(full_text) for p in _SEAT_SCHEDULE_PATTERNS):
         if is_capability_enabled("schedule"):

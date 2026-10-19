@@ -360,3 +360,14 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - `_add_schedule` 的 id 改为 `sch_{time.time_ns()}`，同一回复连设几条不撞主键（对所有人生效）。
 - **M2**：`get_active_schedules(viewer=None)`：不给 viewer（日程页等）返回全部；给了就只返回该 AI 能看的——自己设的、家里群里设的（origin_room_id 是 group 房间）、小猫自己设的（origin=user）；座位私聊里设的只给该座位；小克 / Lucien 私聊里设的两位主 AI 之间照旧互相可见，座位看不到。接入：座位上下文 `viewer=座位`；小克 / Lucien 能力块 `viewer=who`；`schedule.py` 主 AI 两处到点上下文 `viewer=sender`。小克 / Lucien 现在也看不到座位私聊里设的日程。
 - 测试 `test_seat_schedule.py` 新增 2 项（两个拼字反例都不执行且正文干净；四种身份 + 日程页的可见范围）；`test_cache_marker` 的假函数补 `viewer` 参数。相关测试与改动前相同（均为既有失败）。
+
+## 36. 狗蛋补能力第三批第二段：朋友圈
+
+- **发**：`_process_seat_commands` 解析 `[MOMENT:内容|true/false]`（开关 `moment`，关着只去掉）：以座位为 author 写 `moments`（id `mt_{time_ns}_{座位}`），发 `moment_new` 事件和同步广播，房间插「📷 狗蛋发了一条朋友圈」；期望回复时 `_trigger_ai_replies(…, exclude_author=座位)`。座位提示词加 `moment_ability_text()`（与主 AI 共用，末尾加「朋友圈全家都看得到：私聊里单独说的私事不要写进去」——主 AI 的能力说明也因此多这一句）。
+- **评 / 回**（`routes/moments.py`）：
+  - `_name_map()` 统一名字表（加座位）；`_ai_authors()` = 小克、Lucien + `seat_chat.check_ready` 通过的座位。`_trigger_ai_replies` 用它；用户回复某 AI 的评论 / 评论某 AI 的朋友圈时唤醒该 AI 的判断也包含座位。
+  - `_ai_reply_to_moment` 座位分支：没模型直接不回；开头 `model_snapshot`，取完上下文后 `ensure_model_unchanged`（与 stream_ai 之间无 await），线路变了就不回、不换模型。人设用 `seat_chat._persona_text`；最近聊天用 `seat_chat.merged_messages`（自己的私聊 + 家里群）；记忆用 `memory_hub_bridge.context_block(座位, 朋友圈内容, "moments", "private_group")`（按全家可见口径，不带私聊原话 / 交接卡）。
+  - 所有 AI（含小克 / Lucien）的回复提示里加一条「朋友圈和评论全家都看得到，私聊私事不要写进评论」，因为上下文里有私聊记录。
+  - 评论 / 点赞 id 改为 `…_{time_ns}_{身份}`（座位首字母都是 a，旧写法会撞）。朋友圈里「看完回私聊说一句」对座位走 `autonomy._save_private_message`（已支持座位，发到 TA 的私聊房间）。
+- 前端 `moments.html`：额外读 `/api/actors`，座位的名字和相遇卡头像显示在朋友圈和评论里。
+- 测试 `test_seat_moments.py` 7 项：座位发朋友圈入库并触发别人回复且排除自己、关开关只去掉、准备好的座位加入评论轮、座位评论用自己的人设 / 模型 / Hub（private_group）且有隐私提醒、没模型或途中线路被删不评论、回复座位的评论会唤醒该座位、名字表与前端头像。相关测试与改动前相同（`test_stream_safety` 计时用例偶发）。

@@ -69,10 +69,38 @@ def _parse_moment_reply_result(raw_text: str, *, expect_chat_decision: bool) -> 
     return comment, send_chat_message, chat_message
 
 
+SEAT_AUTHORS = ("ai3", "ai4", "ai5", "ai6")
+
+
+def _name_map() -> dict[str, str]:
+    """内部身份 → 显示名：用户、小克、Lucien，加上已登记的座位 3～6。"""
+    user_name, ai_name, connor_name = _get_names()
+    names = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    try:
+        import actors
+        for actor_id in SEAT_AUTHORS:
+            names[actor_id] = actors.display_name(actor_id) or actor_id
+    except Exception:
+        pass
+    return names
+
+
+def _ai_authors() -> tuple[str, ...]:
+    """能回朋友圈的 AI：小克、Lucien，加上已启用、有人设、有模型的座位。"""
+    import seat_chat
+    ready = []
+    for actor_id in SEAT_AUTHORS:
+        try:
+            seat_chat.check_ready(actor_id)
+            ready.append(actor_id)
+        except Exception:
+            pass
+    return ("aion", "connor", *ready)
+
+
 def _author_display(author: str) -> str:
     """将内部 author 标识转换为显示名"""
-    user_name, ai_name, connor_name = _get_names()
-    return {"user": user_name, "aion": ai_name, "connor": connor_name}.get(author, author)
+    return _name_map().get(author, author)
 
 
 def _normalize_attachments(raw: Any) -> list:
@@ -139,7 +167,7 @@ async def _get_moment_with_comments(moment_id: str) -> Optional[dict]:
 def _format_moment_for_prompt(moment: dict) -> str:
     """将朋友圈及其评论格式化为 AI 可读的文本"""
     user_name, ai_name, connor_name = _get_names()
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = _name_map()
 
     author_display = name_map.get(moment["author"], moment["author"])
     ts = datetime.fromtimestamp(moment["created_at"]).strftime("%Y-%m-%d %H:%M")
@@ -181,8 +209,14 @@ async def _get_recent_context_messages(who: str, limit: int = 30) -> list[dict]:
     who: 'aion' 或 'connor'
     """
     user_name, ai_name, connor_name = _get_names()
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = _name_map()
     messages = []
+
+    if who in SEAT_AUTHORS:
+        import seat_chat
+        merged = await seat_chat.merged_messages(who, limit)
+        return [{"sender": m["sender"], "content": m["content"], "created_at": m["created_at"],
+                 "source": "群聊" if m["source"] == "group" else "私聊"} for m in merged][-limit:]
 
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
@@ -232,8 +266,15 @@ async def _get_recent_context_messages(who: str, limit: int = 30) -> list[dict]:
     return messages
 
 
-async def _get_recent_memories(who: str, limit: int = 5) -> list[str]:
-    """获取指定 AI 角色最近的记忆"""
+async def _get_recent_memories(who: str, limit: int = 5, query: str = "") -> list[str]:
+    """获取指定 AI 角色最近的记忆。座位的记忆在 Memory Hub，按全家可见的口径（private_group）取一段。"""
+    if who in SEAT_AUTHORS:
+        try:
+            import memory_hub_bridge
+            block = await memory_hub_bridge.context_block(who, query, "moments", "private_group")
+        except Exception:
+            block = ""
+        return [block] if block else []
     memories = []
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
@@ -265,14 +306,18 @@ def _build_moment_reply_messages(
 ) -> list[dict]:
     """为 AI 回复朋友圈/评论构建 messages 列表"""
     user_name, ai_name, connor_name = _get_names()
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = _name_map()
     my_name = name_map.get(who, who)
 
     messages = []
 
     # 1. 角色人设
     wb = load_worldbook()
-    if who == "aion":
+    if who in SEAT_AUTHORS:
+        import seat_chat
+        messages.append({"role": "user", "content": f"[你的角色设定]\n你是{my_name}。\n\n{seat_chat._persona_text(who)}"})
+        messages.append({"role": "assistant", "content": "收到，我会按照设定做自己。"})
+    elif who == "aion":
         if wb.get("ai_persona"):
             messages.append({"role": "user", "content": f"[你的角色设定]\n{wb['ai_persona']}"})
             messages.append({"role": "assistant", "content": "收到，我会按照设定扮演角色。"})
@@ -311,7 +356,12 @@ def _build_moment_reply_messages(
         moment_msg["attachments"] = moment_attachments
     messages.append(moment_msg)
 
-    # 5. 任务指令
+    # 5. 任务指令（朋友圈全家都看得到：上面的聊天上下文里有私聊，私事不要写进评论）
+    messages.append({"role": "user", "content": (
+        f"[提醒] 朋友圈和评论全家都看得到。{user_name}在私聊里单独跟你说的私事"
+        "（心事、身体和情绪、工作吐槽、对别人的看法、你们之间亲密的话），不要写进朋友圈评论。"
+    )})
+    messages.append({"role": "assistant", "content": "明白。"})
     if target_comment_id:
         # 回复某条评论
         target_comment = None
@@ -377,8 +427,15 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
         return
 
     # 获取上下文和记忆
+    if who in SEAT_AUTHORS:
+        import seat_chat
+        from config import model_snapshot
+        seat_model_key = seat_chat.seat_model(who)
+        if not seat_model_key:  # 没启用 / 没模型就不回，不换别人的模型
+            return
+        pinned = model_snapshot(seat_model_key)
     context_msgs = await _get_recent_context_messages(who, limit=30)
-    recent_memories = await _get_recent_memories(who, limit=5)
+    recent_memories = await _get_recent_memories(who, limit=5, query=str(moment.get("content") or ""))
 
     # 构建 messages
     messages = _build_moment_reply_messages(
@@ -388,7 +445,15 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
     # 调用 AI
     full_text = ""
     try:
-        if who == "aion":
+        if who in SEAT_AUTHORS:
+            from config import ensure_model_unchanged
+            model_messages = await _prepare_moment_messages_for_model(messages, seat_model_key)
+            ensure_model_unchanged(seat_model_key, pinned)  # 和下面发起调用之间没有 await
+            async for chunk in stream_ai(model_messages, seat_model_key, {}):
+                if chunk.startswith(CLI_STATUS_PREFIX):
+                    continue
+                full_text += chunk
+        elif who == "aion":
             # 取用户最近私聊会话选用的模型
             async with get_db() as _mdb:
                 _mdb.row_factory = aiosqlite.Row
@@ -436,7 +501,7 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
 
     # 保存评论
     now = time.time()
-    comment_id = f"mc_{int(now * 1000)}_{who[:1]}"
+    comment_id = f"mc_{time.time_ns()}_{who}"
     async with get_db() as db:
         await db.execute(
             "INSERT INTO moment_comments (id, moment_id, author, content, reply_to_id, created_at) "
@@ -461,7 +526,7 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
 
     # 随机决定是否点赞（70% 概率点赞）
     if random.random() < 0.7:
-        react_id = f"mr_{int(now * 1000)}_{who[:1]}"
+        react_id = f"mr_{time.time_ns()}_{who}"
         try:
             async with get_db() as db:
                 await db.execute(
@@ -482,7 +547,7 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
 
 async def _trigger_ai_replies(moment_id: str, exclude_author: str = None):
     """触发 AI 角色回复朋友圈。exclude_author 为发布者自身，不需要自己回复自己。"""
-    ai_roles = ["aion", "connor"]
+    ai_roles = list(_ai_authors())
     reply_roles = [r for r in ai_roles if r != exclude_author]
     random.shuffle(reply_roles)
 
@@ -686,9 +751,9 @@ async def add_comment(moment_id: str, body: CommentCreate):
             parent_comment = await cur.fetchone()
             if not parent_comment:
                 return {"error": "被回复的评论不存在"}
-            if parent_comment["author"] in ("aion", "connor"):
+            if parent_comment["author"] in ("aion", "connor", *SEAT_AUTHORS):
                 target_ai_author = parent_comment["author"]
-        elif moment_row["author"] in ("aion", "connor"):
+        elif moment_row["author"] in ("aion", "connor", *SEAT_AUTHORS):
             # 用户直接评论了 AI 的朋友圈，让朋友圈作者回复。
             target_ai_author = moment_row["author"]
 

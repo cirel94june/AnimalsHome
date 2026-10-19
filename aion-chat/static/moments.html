@@ -301,6 +301,7 @@ let momentsHasMore = false;
 let momentsLoading = false;
 let momentsRefreshPending = false;
 let nameMap = {};  // author → display name
+let avatarMap = {};  // author → 头像地址（来自相遇卡）
 let pendingMomentAttachments = [];
 
 // ── 初始化 ──
@@ -321,6 +322,15 @@ async function init() {
   } catch(e) {
     nameMap = { user: '用户', aion: 'AI', connor: 'Connor' };
   }
+  // 座位 3～6（狗蛋等）的名字和头像
+  try {
+    const people = await api('GET', '/api/actors');
+    (people.actors || []).forEach(a => {
+      if (!a || !a.id) return;
+      if (a.name && !['user', 'aion', 'connor'].includes(a.id)) nameMap[a.id] = a.name;
+      if (a.avatar) avatarMap[a.id] = a.avatar;
+    });
+  } catch(e) {}
   renderList();
 
   // 标记已读
@@ -404,6 +414,7 @@ function getAuthorName(author) {
 
 function getAvatarUrl(author) {
   if (author === 'user') return '/public/UserIcon.png';
+  if (avatarMap[author]) return avatarMap[author];
   if (author === 'aion') return '/public/AIIcon.png';
   return '/public/codexicon.png';
 }
