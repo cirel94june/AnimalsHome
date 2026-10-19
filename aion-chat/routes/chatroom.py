@@ -844,7 +844,8 @@ async def _process_chatroom_commands(
     )
 
     # ── 私聊里「去群里说」：只在 Lucien 私聊（connor_1v1）生效 ──
-    if who_identity == "connor" and await _get_room_type(room_id) == "connor_1v1":
+    if (who_identity == "connor" and group_post.GROUP_POST_CMD_PATTERN.search(full_text)
+            and await _get_room_type(room_id) == "connor_1v1"):  # 有这条指令才查房间
         full_text = await group_post.process(full_text, "connor")
 
     # ── 群聊悄悄话：只在 group 房间生效，内容投递到各自私聊窗口 ──
@@ -3884,6 +3885,13 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
             await _chatroom_sys_msg(room_id, format_web_system_message(label, web_search_matches, web_extract_matches),
                                     _q, after_msg_id=msg_id)
             triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
+
+    # ── 拍一拍（第三批）：发起者是这位座位；私聊只能拍小猫或自己，群里可以拍家里人 ──
+    async def _pat_saved(message):
+        await _q.put({"type": "system_msg", "message": message})
+        triggered["pat"] = True
+    full_text = await process_pat_commands(full_text, source_type="chatroom", source_id=room_id, sender=actor_id,
+                                           source_msg_id=msg_id, on_saved=_pat_saved)
 
     # ── 发朋友圈（第三批）：作者是这位座位；期望回复时其他 AI 来评论 ──
     moment_matches = MOMENT_CMD_PATTERN.findall(full_text)

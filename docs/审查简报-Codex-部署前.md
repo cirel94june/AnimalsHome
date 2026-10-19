@@ -393,3 +393,12 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 
 - `_ai_reply_to_moment` 保存评论改为一个写事务：`BEGIN IMMEDIATE` 后 `INSERT … SELECT … WHERE (SELECT COUNT(*) FROM moment_comments WHERE moment_id=?) < 20`，按 `rowcount` 判断是否真的插入；没插入（生成期间名额被用完）就打日志直接返回——不广播、不点赞、不发「回私聊说一句」。生成前的检查仍保留（满了就不调用模型）。
 - 测试 `test_comment_cap_holds_when_slots_fill_up_during_generation`：19 条 → 生成期间用户补到 20 条 → AI 不写第 21 条；回到 19 条 → 两个回复并发抢最后一个名额 → 最终 20 条。`test_seat_moments` 11 项 + 原有朋友圈测试共 17 项通过。
+
+## 40. 狗蛋补能力第三批第三段（上）：拍一拍（cd4defa 已部署）
+
+- 现用的拍拍实现在 `capabilities.py`（`pat_commands.py` 是没人调用的旧版本，未改）。
+- `PatRequest.target` 加入 ai3～ai6（小猫双击座位头像能拍）；`_pat_names()` 统一名字表（加座位）。`save_pat` 可参与者：小克私聊 {user, aion}；Lucien 私聊 {user, connor}；**座位私聊 {user, 该房间登记的座位}**（只在 seat_1v1 时再查 actor 列，旧表结构不受影响）；家里群 {user, aion, connor, ai3～ai6}。
+- `process_pat_commands` 的发起者和 `pat_history_command` 的历史还原都认得座位。座位回复里 `_process_seat_commands` 处理 `[PAT:]`（开关 pat），每条回复一次，系统消息进队列；座位提示词加 `build_pat_ability_text`。
+- 顺带：第一批在 `_process_chatroom_commands` 里给 Lucien 私聊加的「去群里」检查原本对每条回复都查一次房间类型，改为回复里真有 `[去群里：]` 才查（`test_pat.py` 因此在无房间表的环境下恢复通过；线上无行为变化）。
+- 测试 `test_seat_pat.py` 4 项：座位在家里群 / 自己私聊能拍，别的座位私聊和 Lucien 私聊不能；小猫能拍座位，座位私聊里不能拍不在场的人；座位指令处理与历史还原；座位提示词含拍拍。相关测试与改动前相同（均为既有失败）。
+- 转账（座位钱包）单独做，见下一节。

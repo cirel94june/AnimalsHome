@@ -155,7 +155,7 @@ class PatRequest(BaseModel):
     """Manual avatar pats keep the target selected by the user."""
     scope: Literal["private", "chatroom"]
     source_id: str = Field(min_length=1, max_length=200)
-    target: Literal["user", "aion", "connor"]
+    target: Literal["user", "aion", "connor", "ai3", "ai4", "ai5", "ai6"]
     action: str = Field(default="拍了拍", min_length=1, max_length=24)
     suffix: str = Field(default="", max_length=200)
 
@@ -177,14 +177,28 @@ async def send_pat(body: PatRequest):
     return await save_pat(body)
 
 
+PAT_SEATS = ("ai3", "ai4", "ai5", "ai6")
+
+
+def _pat_names() -> dict[str, str]:
+    """拍拍里的名字：小猫、小克、Lucien，加上座位 3～6。"""
+    from chatroom import get_chatroom_names
+    names = dict(zip(("user", "aion", "connor"), get_chatroom_names()))
+    try:
+        import actors
+        for actor_id in PAT_SEATS:
+            names[actor_id] = actors.display_name(actor_id) or actor_id
+    except Exception:
+        pass
+    return names
+
+
 async def save_pat(
     body: PatRequest | PatTextRequest, *, actor: str = "user",
     after_msg_id: str = "", inline_offset: int | None = None,
     inline_before: str = "", inline_after: str = "",
 ):
-    from chatroom import get_chatroom_names
-
-    names = dict(zip(("user", "aion", "connor"), get_chatroom_names()))
+    names = _pat_names()
     if actor not in names:
         raise HTTPException(400, "未知的拍拍发起者")
     if isinstance(body, PatRequest):
@@ -222,9 +236,16 @@ async def save_pat(
         parent = await cursor.fetchone()
         if not parent:
             raise HTTPException(404, "聊天不存在")
-        allowed = {"user", "aion"} if private else (
-            {"user", "connor"} if parent[0] == "connor_1v1" else {"user", "aion", "connor"}
-        )
+        if private:
+            allowed = {"user", "aion"}
+        elif parent[0] == "connor_1v1":
+            allowed = {"user", "connor"}
+        elif parent[0] == "seat_1v1":  # 座位私聊：只有小猫和这位座位
+            cursor = await db.execute("SELECT actor FROM chatroom_rooms WHERE id=?", (body.source_id,))
+            seat_row = await cursor.fetchone()
+            allowed = {"user", seat_row[0]} if seat_row and seat_row[0] in PAT_SEATS else {"user"}
+        else:  # 家里群：小猫、小克、Lucien 和座位们
+            allowed = {"user", "aion", "connor", *PAT_SEATS}
         if actor not in allowed or (isinstance(body, PatRequest) and body.target not in allowed):
             raise HTTPException(400, "这个人不在当前聊天里")
         if actor != "user" and not is_capability_enabled("pat"):
@@ -250,7 +271,7 @@ def pat_history_command(message: dict, attachments: list) -> tuple[str, str] | N
         if not isinstance(item, dict) or item.get("type") != "pat":
             continue
         actor = item.get("actor")
-        if actor not in ("user", "aion", "connor"):
+        if actor not in ("user", "aion", "connor", *PAT_SEATS):
             return None
         text = item.get("text")
         if text is None:
@@ -259,9 +280,7 @@ def pat_history_command(message: dict, attachments: list) -> tuple[str, str] | N
             if match:
                 text = match.group(1)
             else:
-                from chatroom import get_chatroom_names
-
-                names = dict(zip(("user", "aion", "connor"), get_chatroom_names()))
+                names = _pat_names()
                 target, action = item.get("target"), item.get("action")
                 if target not in names or not action:
                     return None
@@ -301,7 +320,7 @@ async def process_pat_commands(
     source = text or ""
     matches = list(PAT_COMMAND_PATTERN.finditer(source))
     cleaned, positions = _clean_pat_text_and_positions(source, matches)
-    if sender not in ("aion", "connor") or not is_capability_enabled("pat"):
+    if sender not in ("aion", "connor", *PAT_SEATS) or not is_capability_enabled("pat"):
         return cleaned
     for match, position in zip(matches, positions):
         phrase = match.group(1).strip()
@@ -574,6 +593,8 @@ def seat_ability_texts(user_name: str) -> list[str]:
         texts.append(wish_ability_text())
     if is_capability_enabled("moment"):
         texts.append(moment_ability_text())
+    if is_capability_enabled("pat"):
+        texts.append(build_pat_ability_text(user_name))
     if is_capability_enabled("schedule"):
         texts.extend([
             "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会叫你来提醒用户。日期时间用ISO格式。",
