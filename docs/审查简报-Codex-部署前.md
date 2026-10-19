@@ -342,3 +342,14 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 03973d3 经 Codex 批准已部署（自动更新仍关闭）。
 - `routes/wishes.py`：`GET /api/wishes` 的 author、`POST /api/wishes/draw` 的 author / drawer 校验加入 ai3～ai6（与 `wish_pool.VALID_AUTHORS` 一致）。创建接口对陌生作者原本就把 ValueError 转成 400。
 - 测试 `test_wish_http_filters_accept_seats`：真实 FastAPI TestClient，四个座位按作者列出只出自己、抽取 200，陌生作者创建 400。
+
+## 34. 狗蛋补能力第三批第一段：闹铃 / 日程（47f9140 + 本提交的测试）
+
+- **设定**：`_process_seat_commands` 新增日程段。`[Monitor:]` 对座位一律去掉不设（定时监督要摄像头，留到监控那一段）。`schedule` 开关开着时走 `_seat_schedule_commands`：
+  - `[SCHEDULE_DEL:id]`：查 `schedules` 里 active 且 `origin == 座位` 才删（`_del_schedule`，房间插「🗑 【狗蛋】取消了…」）；别人的 id 只去掉指令。
+  - `[ALARM:]` / `[REMINDER:]`：时间有效且不过期时插「⏰ / 📅 【狗蛋】设定了…」，再交给 `process_schedule_commands(origin=座位, origin_room_id=当前房间)` 入库。
+  - 开关关着：所有日程指令只去掉。
+- **到点**：`ScheduleManager._fire_alarm` 在「标记已触发 + 弹窗广播」之后，`origin` 是 ai3～ai6（且不是主动陪伴 / 应用监督检查点）就走 `_fire_seat_alarm` 并返回，不进小克 / Lucien 的流程。`_fire_seat_alarm`：回到设闹铃的房间（必须是 group，或该座位自己的 seat_1v1；否则回 TA 自己的私聊），调用 `_generate_seat_reply(..., extra_prompt="[闹铃到点] …")`，用 TA 自己的人设和模型；TA 没启用 / 没模型时按原逻辑在房间留失败记录，不换人。
+- `_generate_seat_reply` 新增 `extra_prompt`：追加在上下文最后一条；这种系统叫来的回复不写入 Memory Hub capture。
+- `get_schedule_origin_name` 认得座位名字（弹窗、日程列表显示「【狗蛋】」）。座位提示词：`seat_ability_texts` 加闹铃 / 日程 / 删除自己日程三条（不含 Monitor）；`seat_chat.build_context` 的背景块在开关开着时加「[当前日程列表]」（日程不会自己响，要看得到才能适时提起）。
+- 测试 `test_seat_schedule.py` 7 项：闹铃 / 日程记在座位名下且房间正确、Monitor 不入库、只能删自己的、关开关只去掉、到点走座位自己且标记已触发 + 弹窗 origin 正确、设在别的座位私聊的回到自己私聊、名字与上下文含日程列表、闹铃回复不写 Hub。相关测试与改动前相同（均为既有失败）。
