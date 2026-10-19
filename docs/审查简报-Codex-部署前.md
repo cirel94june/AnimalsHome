@@ -388,3 +388,8 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **IB 限额**：`routes/moments.py` 常量 `MAX_AI_MOMENTS_PER_REPLY=1 / MAX_AI_MOMENT_CHARS=800 / MAX_AI_COMMENT_CHARS=300 / MAX_COMMENTS_PER_MOMENT=20`。AI 评论截 300 字；动态已有 ≥20 条评论时 AI 不再评论。发动态：小克私聊三处、聊天室主 AI 一处、座位一处都改为只取第一条、正文截 800 字。
 - 第 37 节 M1（座位启用 / 人设 / 模型前后核对）保留不变。
 - 测试：`test_seat_moments.py` 10 项（Hub 恢复且为 private_group、IB 口径提示、评论 300 字与满 20 条不评、座位一次一条 800 字、小克私聊三处源码核对）；`test_group_post` 规则文字断言随口径更新。相关测试与改动前相同（均为既有失败）。
+
+## 39. R1：评论 20 条上限的并发漏洞
+
+- `_ai_reply_to_moment` 保存评论改为一个写事务：`BEGIN IMMEDIATE` 后 `INSERT … SELECT … WHERE (SELECT COUNT(*) FROM moment_comments WHERE moment_id=?) < 20`，按 `rowcount` 判断是否真的插入；没插入（生成期间名额被用完）就打日志直接返回——不广播、不点赞、不发「回私聊说一句」。生成前的检查仍保留（满了就不调用模型）。
+- 测试 `test_comment_cap_holds_when_slots_fill_up_during_generation`：19 条 → 生成期间用户补到 20 条 → AI 不写第 21 条；回到 19 条 → 两个回复并发抢最后一个名额 → 最终 20 条。`test_seat_moments` 11 项 + 原有朋友圈测试共 17 项通过。

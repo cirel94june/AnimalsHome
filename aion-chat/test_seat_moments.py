@@ -222,3 +222,41 @@ def test_one_moment_per_reply_and_800_chars(db, monkeypatch):
     import routes.chat as chat_routes
     src = inspect.getsource(chat_routes)
     assert src.count("moment_matches[:1]") == 3 and src.count("mt_content.strip()[:800]") == 3
+
+
+def test_comment_cap_holds_when_slots_fill_up_during_generation(db, monkeypatch):
+    """Codex R1：生成期间评论被补到 20 条，或两个 AI 同时抢最后一个名额，都不会出现第 21 条。"""
+    _seat_reply_setup(monkeypatch)
+    monkeypatch.setattr(moments, "_parse_moment_reply_result", lambda raw, expect_chat_decision: (raw, False, ""))
+
+    async def fill(n):
+        async with aiosqlite.connect(db) as conn:
+            for i in range(n):
+                await conn.execute("INSERT INTO moment_comments VALUES (?, 'mu', 'user', 'x', NULL, ?)", (f"u{i}_{n}", 10 + i))
+            await conn.commit()
+    asyncio.run(fill(19))
+
+    async def stream_fills_last_slot(messages, model_key, *a, **k):
+        async with aiosqlite.connect(db) as conn:  # 生成期间用户补上第 20 条
+            await conn.execute("INSERT INTO moment_comments VALUES ('late', 'mu', 'user', 'y', NULL, 99)")
+            await conn.commit()
+        yield "我也来"
+    monkeypatch.setattr(moments, "stream_ai", stream_fills_last_slot)
+    asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
+    assert _rows(db, "SELECT COUNT(*) FROM moment_comments WHERE moment_id='mu'") == [(20,)]
+
+    async def clear_one():
+        async with aiosqlite.connect(db) as conn:
+            await conn.execute("DELETE FROM moment_comments WHERE id='late'")
+            await conn.commit()
+    asyncio.run(clear_one())  # 回到 19 条，两个 AI 同时抢最后一个
+
+    async def stream(messages, model_key, *a, **k):
+        await asyncio.sleep(0)
+        yield "抢一个"
+    monkeypatch.setattr(moments, "stream_ai", stream)
+
+    async def both():
+        await asyncio.gather(moments._ai_reply_to_moment("ai3", "mu"), moments._ai_reply_to_moment("ai3", "mu"))
+    asyncio.run(both())
+    assert _rows(db, "SELECT COUNT(*) FROM moment_comments WHERE moment_id='mu'") == [(20,)]

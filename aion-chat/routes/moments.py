@@ -515,16 +515,21 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
         return
     comment_text = comment_text[:MAX_AI_COMMENT_CHARS]
 
-    # 保存评论
+    # 保存评论：「数一数还不满 20 条 → 插入」在同一个写事务里一次做完，生成期间名额被用完就不保存
     now = time.time()
     comment_id = f"mc_{time.time_ns()}_{who}"
     async with get_db() as db:
-        await db.execute(
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
             "INSERT INTO moment_comments (id, moment_id, author, content, reply_to_id, created_at) "
-            "VALUES (?,?,?,?,?,?)",
-            (comment_id, moment_id, who, comment_text, target_comment_id, now),
+            "SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM moment_comments WHERE moment_id=?) < ?",
+            (comment_id, moment_id, who, comment_text, target_comment_id, now, moment_id, MAX_COMMENTS_PER_MOMENT),
         )
+        inserted = cur.rowcount > 0
         await db.commit()
+    if not inserted:
+        print(f"[moments] {who} 的评论没保存：朋友圈 {moment_id} 已满 {MAX_COMMENTS_PER_MOMENT} 条评论")
+        return
 
     # 广播新评论
     comment_data = {
