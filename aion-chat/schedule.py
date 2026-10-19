@@ -714,7 +714,7 @@ class ScheduleManager:
                 abilities.append(autonomy_text)
             ability_block = "[系统能力] 你可以在回复中根据对话氛围，善用以下指令：\n" + "\n".join(f"{i+1}. {a}" for i, a in enumerate(abilities))
 
-            active_schedules = await get_active_schedules()
+            active_schedules = await get_active_schedules(viewer=sender)
             schedule_text = build_schedule_prompt(active_schedules)
             ability_block += f"\n\n【当前日程列表】\n{schedule_text}"
 
@@ -1081,7 +1081,7 @@ class ScheduleManager:
                 abilities.append(autonomy_text)
             ability_block = "[系统能力] 你可以在回复中根据对话氛围，善用以下指令：\n" + "\n".join(f"{i+1}. {a}" for i, a in enumerate(abilities))
 
-            active_schedules = await get_active_schedules()
+            active_schedules = await get_active_schedules(viewer=sender)
             schedule_text = build_schedule_prompt(active_schedules)
             ability_block += f"\n\n【当前日程列表】\n{schedule_text}"
 
@@ -1521,7 +1521,7 @@ async def _get_schedule_info(sid: str) -> dict | None:
 
 
 async def _add_schedule(stype: str, trigger_at: str, content: str, origin: str = "aion", origin_room_id: str = ""):
-    sid = f"sch_{int(time.time()*1000)}"
+    sid = f"sch_{time.time_ns()}"  # 同一条回复里连着设几个也不会撞 id
     now = time.time()
     trigger_at = trigger_at.replace("T", " ")
     async with get_db() as db:
@@ -1543,7 +1543,15 @@ async def _del_schedule(sid: str):
 
 
 # ── 获取活跃日程（供 prompt 注入） ────────────────
-async def get_active_schedules() -> list[dict]:
+SEAT_ORIGINS = ("ai3", "ai4", "ai5", "ai6")
+
+
+async def get_active_schedules(viewer: str | None = None) -> list[dict]:
+    """当前有效的日程。viewer 给了就只返回这位 AI 该看到的（放进 TA 的提示词用）：
+    - TA 自己设的；家里群里设的；小猫自己在日程页设的（origin=user）——都看得到；
+    - 座位（狗蛋等）在自己私聊里设的，只有 TA 自己看得到；
+    - 小克 / Lucien 在私聊里设的，两位主 AI 之间照旧互相看得到，座位看不到。
+    viewer 为 None（日程页等）返回全部。"""
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
@@ -1551,7 +1559,20 @@ async def get_active_schedules() -> list[dict]:
             "WHERE status='active' AND type!=? ORDER BY trigger_at",
             (PROACTIVE_TYPE,),
         )
-        return [dict(r) for r in await cur.fetchall()]
+        rows = [dict(r) for r in await cur.fetchall()]
+        if viewer is None:
+            return rows
+        cur = await db.execute("SELECT id FROM chatroom_rooms WHERE type='group'")
+        group_rooms = {r[0] for r in await cur.fetchall()}
+
+    def visible(s: dict) -> bool:
+        origin = s.get("origin") or "aion"
+        if origin == viewer or origin == "user" or (s.get("origin_room_id") or "") in group_rooms:
+            return True
+        if origin in SEAT_ORIGINS:
+            return False
+        return viewer in ("aion", "connor")
+    return [s for s in rows if visible(s)]
 
 
 def build_schedule_prompt(schedules: list[dict]) -> str:

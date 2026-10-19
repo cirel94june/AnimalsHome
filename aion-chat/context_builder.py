@@ -246,7 +246,7 @@ async def build_ability_block(
     static_parts, parts = parts, []
 
     if is_capability_enabled("schedule"):
-        schedules = await get_active_schedules()
+        schedules = await get_active_schedules(viewer="connor" if who == "connor" else "aion")
         schedule_text = build_schedule_prompt(schedules)
         parts.append(f"【当前日程列表】\n{schedule_text}")
 

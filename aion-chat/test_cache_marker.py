@@ -151,7 +151,7 @@ def test_ability_block_puts_schedule_and_device_after_the_heading(monkeypatch):
     monkeypatch.setattr(context_builder, "format_ability_block", lambda items: "[系统能力]\n点歌")
     monkeypatch.setattr(context_builder, "is_capability_enabled", lambda name: name == "schedule")
 
-    async def schedules():
+    async def schedules(viewer=None):
         return []
     monkeypatch.setattr(context_builder, "get_active_schedules", schedules)
     monkeypatch.setattr(context_builder, "build_schedule_prompt", lambda s: "今天没有日程")

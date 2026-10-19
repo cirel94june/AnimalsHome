@@ -155,7 +155,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
     if is_capability_enabled("schedule"):  # 日程不会自己响，要在提示词里看得到才能「合适时机自然提起」
         try:
             from schedule import build_schedule_prompt, get_active_schedules
-            background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules()))
+            background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules(viewer=actor_id)))
         except Exception:
             pass
     messages += [

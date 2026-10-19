@@ -156,3 +156,32 @@ def test_alarm_reply_is_not_captured_as_a_conversation_turn(monkeypatch):
                                                      actor="ai3", extra_prompt="[闹铃到点] 喝水"))
     assert sent[0][-1] == {"role": "user", "content": "[闹铃到点] 喝水"}
     capture.assert_not_called()
+
+
+def test_reassembled_commands_cannot_delete_others_or_set_monitor(db, notes):
+    """Codex M1：去掉里面那条指令后拼出来的新指令，不会再被执行。"""
+    text, triggered = _run("[SCHEDULE_[SCHEDULE_DEL:missing]DEL:xk]"
+                           "[Mon[SCHEDULE_DEL:missing]itor:2099-01-03T08:00|内容]好", notes)
+    assert dict((r[0], r[3]) for r in _rows(db) if r[0] in ("xk", "gd")) == {"xk": "active", "gd": "active"}
+    assert not _rows(db, "type='monitor'")
+    assert "SCHEDULE" not in text and "itor" not in text and text.endswith("好")
+
+
+def _add_rows(path, rows):
+    async def go():
+        async with aiosqlite.connect(path) as conn:
+            for sid, origin, room in rows:
+                await conn.execute("INSERT INTO schedules (id, type, trigger_at, content, created_at, origin, origin_room_id) "
+                                   "VALUES (?, 'reminder', '2099-01-02', ?, 0, ?, ?)", (sid, f"{sid} 的内容", origin, room))
+            await conn.commit()
+    asyncio.run(go())
+
+
+def test_each_ai_only_sees_its_own_and_shared_schedules(db):
+    """Codex M2：别人私聊里设的日程不进你的提示词；自己的、家里群里的、小猫自己设的都看得到。"""
+    _add_rows(db, [("p4", "ai4", "s4"), ("grp", "ai4", "g1"), ("usr", "user", ""), ("lc", "connor", "c1")])
+    seen = lambda viewer: {s["id"] for s in asyncio.run(schedule.get_active_schedules(viewer=viewer))}  # noqa: E731
+    assert seen("ai3") == {"gd", "grp", "usr"}
+    assert seen("ai4") == {"p4", "grp", "usr"}
+    assert seen("aion") == {"xk", "grp", "usr", "lc"}  # 小克 / Lucien 之间照旧互相看得到，座位私聊的看不到
+    assert seen(None) == {"xk", "gd", "p4", "grp", "usr", "lc"}  # 日程页仍是全部

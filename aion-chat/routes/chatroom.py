@@ -3886,13 +3886,11 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
             triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
 
     # ── 闹铃 / 日程（第三批）：记在座位名下；定时监督要用摄像头，座位暂不支持；只能删自己设的 ──
-    full_text = MONITOR_CMD.sub("", full_text)
-    if any(p.search(full_text) for p in (ALARM_CMD, REMINDER_CMD, SCHEDULE_DEL_CMD, SCHEDULE_LIST_CMD)):
+    if any(p.search(full_text) for p in _SEAT_SCHEDULE_PATTERNS):
         if is_capability_enabled("schedule"):
             full_text = await _seat_schedule_commands(full_text, room_id, actor_id, label, msg_id, _q, triggered)
         else:
-            for pat in (ALARM_CMD, REMINDER_CMD, SCHEDULE_DEL_CMD, SCHEDULE_LIST_CMD):
-                full_text = pat.sub("", full_text)
+            full_text = _strip_schedule_commands(full_text)
 
     # ── 自拍 / 画画 ──
     selfie_match = SELFIE_CMD_PATTERN.search(full_text)
@@ -3906,26 +3904,30 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     return full_text, triggered
 
 
+_SEAT_SCHEDULE_PATTERNS = (ALARM_CMD, REMINDER_CMD, MONITOR_CMD, SCHEDULE_DEL_CMD, SCHEDULE_LIST_CMD)
+
+
+def _strip_schedule_commands(text: str) -> str:
+    """去掉所有日程指令；去掉后若又拼出新指令也一并去掉（只用于显示，不会再执行）。"""
+    for _ in range(10):
+        cleaned = text
+        for pat in _SEAT_SCHEDULE_PATTERNS:
+            cleaned = pat.sub("", cleaned)
+        if cleaned == text:
+            break
+        text = cleaned
+    return text
+
+
 async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, label: str, msg_id: str,
                                   _q: asyncio.Queue, triggered: dict) -> str:
-    """座位设闹铃 / 日程：在房间里插提示，记到 schedules（origin=座位、origin_room_id=这个房间）。
-    删除只认 TA 自己设的；别人的 id 只去掉指令，不删。"""
-    from schedule import _del_schedule
-    for match in list(SCHEDULE_DEL_CMD.finditer(full_text)):
-        sid = match.group(1).strip()
-        full_text = full_text.replace(match.group(0), "", 1)
-        async with get_db() as db:
-            cur = await db.execute("SELECT origin, type, trigger_at, content FROM schedules WHERE id=? AND status='active'",
-                                   (sid,))
-            row = await cur.fetchone()
-        if not row or row[0] != actor_id:
-            continue
-        if await _del_schedule(sid):
-            kind = {"alarm": "闹铃", "reminder": "日程"}.get(row[1], "日程")
-            await _chatroom_sys_msg(room_id, f"🗑 【{label}】取消了 {row[2].replace('T', ' ')} 的{kind}：{row[3]}", _q,
-                                    after_msg_id=msg_id)
-            triggered["schedule"] = True
-    for pattern, icon, kind in ((ALARM_CMD, "⏰", "闹铃"), (REMINDER_CMD, "📅", "日程")):
+    """座位设闹铃 / 日程：只从原文解析一次，只做允许的三种（闹铃、日程、删自己的），不把清理后的文字再交给
+    通用解析器（防止拼出新指令）。删除在数据库那一层限定 origin=这位座位。"""
+    from schedule import _add_schedule
+    from schedule_history import finish_schedule
+    deletes = [m.group(1).strip() for m in SCHEDULE_DEL_CMD.finditer(full_text)]
+    adds = []
+    for pattern, stype in ((ALARM_CMD, "alarm"), (REMINDER_CMD, "reminder")):
         for match in pattern.finditer(full_text):
             try:
                 dt = _parse_dt(match.group(1))
@@ -3933,10 +3935,29 @@ async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, l
             except Exception:
                 continue
             if dt and content and not _is_schedule_time_stale(dt):
-                await _chatroom_sys_msg(room_id, f"{icon} 【{label}】设定了{kind}：{dt.replace('T', ' ')}，内容：{content}",
-                                        _q, after_msg_id=msg_id)
-                triggered["schedule"] = True
-    return await process_schedule_commands(full_text, None, origin=actor_id, origin_room_id=room_id)
+                adds.append((stype, dt, content))
+    for sid in deletes:
+        async with get_db() as db:
+            await db.execute("BEGIN IMMEDIATE")
+            cur = await db.execute(
+                "SELECT type, trigger_at, content FROM schedules WHERE id=? AND status='active' AND origin=?",
+                (sid, actor_id))
+            row = await cur.fetchone()
+            changed = bool(row) and await finish_schedule(db, sid, "cancelled")
+            await db.commit()
+        if changed:
+            await manager.broadcast({"type": "schedule_changed"})
+            kind = {"alarm": "闹铃", "reminder": "日程"}.get(row[0], "日程")
+            await _chatroom_sys_msg(room_id, f"🗑 【{label}】取消了 {row[1].replace('T', ' ')} 的{kind}：{row[2]}", _q,
+                                    after_msg_id=msg_id)
+            triggered["schedule"] = True
+    for stype, dt, content in adds:
+        await _add_schedule(stype, dt, content, actor_id, room_id)
+        icon, kind = ("⏰", "闹铃") if stype == "alarm" else ("📅", "日程")
+        await _chatroom_sys_msg(room_id, f"{icon} 【{label}】设定了{kind}：{dt.replace('T', ' ')}，内容：{content}",
+                                _q, after_msg_id=msg_id)
+        triggered["schedule"] = True
+    return _strip_schedule_commands(full_text)
 
 
 def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered: dict,

@@ -353,3 +353,10 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - `_generate_seat_reply` 新增 `extra_prompt`：追加在上下文最后一条；这种系统叫来的回复不写入 Memory Hub capture。
 - `get_schedule_origin_name` 认得座位名字（弹窗、日程列表显示「【狗蛋】」）。座位提示词：`seat_ability_texts` 加闹铃 / 日程 / 删除自己日程三条（不含 Monitor）；`seat_chat.build_context` 的背景块在开关开着时加「[当前日程列表]」（日程不会自己响，要看得到才能适时提起）。
 - 测试 `test_seat_schedule.py` 7 项：闹铃 / 日程记在座位名下且房间正确、Monitor 不入库、只能删自己的、关开关只去掉、到点走座位自己且标记已触发 + 弹窗 origin 正确、设在别的座位私聊的回到自己私聊、名字与上下文含日程列表、闹铃回复不写 Hub。相关测试与改动前相同（均为既有失败）。
+
+## 35. f061e02 审查修复（M1 二次解析、M2 日程可见范围）
+
+- **M1**：`_seat_schedule_commands` 改为只从原文解析一次：收集 `[SCHEDULE_DEL:]`、`[ALARM:]`、`[REMINDER:]`（时间有效不过期），然后直接执行——删除在一个 `BEGIN IMMEDIATE` 事务里 `SELECT … WHERE id=? AND status='active' AND origin=当前座位`，命中才 `finish_schedule`；新增直接 `_add_schedule(type, dt, content, 座位, 房间)`。**不再调用通用 `process_schedule_commands`**，所以清理后拼出来的指令（含 Monitor、别人的删除）不会被执行。正文用 `_strip_schedule_commands` 反复去掉日程指令直到不再变化（只影响显示）。开关关着时同样只清理。外层不再单独先 `MONITOR_CMD.sub`。
+- `_add_schedule` 的 id 改为 `sch_{time.time_ns()}`，同一回复连设几条不撞主键（对所有人生效）。
+- **M2**：`get_active_schedules(viewer=None)`：不给 viewer（日程页等）返回全部；给了就只返回该 AI 能看的——自己设的、家里群里设的（origin_room_id 是 group 房间）、小猫自己设的（origin=user）；座位私聊里设的只给该座位；小克 / Lucien 私聊里设的两位主 AI 之间照旧互相可见，座位看不到。接入：座位上下文 `viewer=座位`；小克 / Lucien 能力块 `viewer=who`；`schedule.py` 主 AI 两处到点上下文 `viewer=sender`。小克 / Lucien 现在也看不到座位私聊里设的日程。
+- 测试 `test_seat_schedule.py` 新增 2 项（两个拼字反例都不执行且正文干净；四种身份 + 日程页的可见范围）；`test_cache_marker` 的假函数补 `viewer` 参数。相关测试与改动前相同（均为既有失败）。
