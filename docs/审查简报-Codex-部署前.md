@@ -371,3 +371,10 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 评论 / 点赞 id 改为 `…_{time_ns}_{身份}`（座位首字母都是 a，旧写法会撞）。朋友圈里「看完回私聊说一句」对座位走 `autonomy._save_private_message`（已支持座位，发到 TA 的私聊房间）。
 - 前端 `moments.html`：额外读 `/api/actors`，座位的名字和相遇卡头像显示在朋友圈和评论里。
 - 测试 `test_seat_moments.py` 7 项：座位发朋友圈入库并触发别人回复且排除自己、关开关只去掉、准备好的座位加入评论轮、座位评论用自己的人设 / 模型 / Hub（private_group）且有隐私提醒、没模型或途中线路被删不评论、回复座位的评论会唤醒该座位、名字表与前端头像。相关测试与改动前相同（`test_stream_safety` 计时用例偶发）。
+
+## 37. 16dbce6 审查修复（M1 座位状态、M2 Hub 范围）+ 更正第 28 / 36 节
+
+- **M1**：`_ai_reply_to_moment` 座位分支开头改用 `seat_chat.check_ready`（启用、有人设、有模型），不通过直接返回——用户回复停用座位的历史评论也不会唤醒它。图片准备后、发请求前再 `check_ready` 一次：仍需通过且模型键与开头一致，再 `ensure_model_unchanged`（三者与 `stream_ai` 之间无 await）。
+- **M2**：朋友圈对座位不再取 Hub 内容（`_get_recent_memories` 座位直接返回空）。原因：memory-hub #85（已合并 b801a77）把 `private_group` 当作可信范围，incremental 会带私聊接续原话和私人记忆；朋友圈全家可见。座位评论仍参考本地最近聊天（自己的私聊 + 家里群），这部分按设计包含私聊记录，靠提示词「私聊私事不要写进评论」约束，不是过滤保证。
+- **更正**：第 28 节说「群聊里 Hub 会去掉私聊内容」、第 36 节说「private_group 不带私聊原话」，按已合并的 Hub 都不成立。AionsHome 家里群传 `private_group`，Hub 照样可能给私聊接续 / 私人材料；群里不提私事目前只靠 `group_privacy_rule` 提示词。已告知小猫，是否要 Hub 增加更严格的群聊范围由她决定。
+- 测试 `test_seat_moments.py` 8 项（新增：停用 / 没人设不回、等待中被停用不回、等待中换模型不回；Hub 不再被调用）；`test_moments*` 原有测试通过。

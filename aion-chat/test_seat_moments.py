@@ -83,7 +83,13 @@ def test_ready_seats_join_the_comment_round(monkeypatch):
 def _seat_reply_setup(monkeypatch, model="seat-m"):
     import config
     monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-m": {"provider": "custom_openai", "model": "m"}})
-    monkeypatch.setattr(seat_chat, "seat_model", lambda a: model)
+    state = {"ready": bool(model), "model": model}
+
+    def check_ready(actor):
+        if not state["ready"]:
+            raise seat_chat.SeatNotReady("停用了")
+        return {"name": "狗蛋"}, state["model"]
+    monkeypatch.setattr(seat_chat, "check_ready", check_ready)
     monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "本少爷人设")
     monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[
         {"sender": "user", "content": "私聊里的心事", "created_at": 1, "source": "private"}]))
@@ -91,6 +97,7 @@ def _seat_reply_setup(monkeypatch, model="seat-m"):
     hub = AsyncMock(return_value="【记忆】狗蛋喜欢雨天")
     monkeypatch.setattr(memory_hub_bridge, "context_block", hub)
     monkeypatch.setattr(moments.random, "random", lambda: 1.0)  # 不点赞，简化
+    hub.state = state
     return hub
 
 
@@ -107,9 +114,10 @@ def test_seat_comments_with_its_own_persona_model_and_hub(db, monkeypatch):
     asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
     messages, model_key = seen[0]
     text = "\n".join(str(m["content"]) for m in messages)
-    assert model_key == "seat-m" and "本少爷人设" in text and "狗蛋喜欢雨天" in text
+    assert model_key == "seat-m" and "本少爷人设" in text
     assert "私聊里单独跟你说的私事" in text  # 朋友圈全家可见的提醒
-    assert hub.await_args.args[3] == "private_group"
+    hub.assert_not_called()  # Hub 的 private_group 也会给私聊原话：朋友圈先不取 Hub
+    assert "狗蛋喜欢雨天" not in text
     assert _rows(db, "SELECT author, content FROM moment_comments") == [("ai3", "下雨天最适合本少爷睡懒觉")]
 
 
@@ -149,3 +157,30 @@ def test_seat_names_and_avatars_show_on_the_page(monkeypatch):
     assert names["ai3"] == "狗蛋" and {"user", "aion", "connor"} <= set(names)
     html = open("static/moments.html", encoding="utf-8").read()
     assert "/api/actors" in html and "avatarMap[author]" in html
+
+
+def test_disabled_seat_is_not_woken_by_an_old_comment(db, monkeypatch):
+    """Codex M1：停用 / 没人设的座位，回复它以前的评论也不会让它说话；等待期间被停用同样不回。"""
+    hub = _seat_reply_setup(monkeypatch)
+    stream = MagicMock()
+    monkeypatch.setattr(moments, "stream_ai", stream)
+    hub.state["ready"] = False
+    asyncio.run(moments._ai_reply_to_moment("ai3", "mu", None))
+    stream.assert_not_called()
+    hub.state["ready"] = True
+
+    async def ctx(who, limit=30):
+        hub.state["ready"] = False  # 取上下文的时候被停用了
+        return []
+    monkeypatch.setattr(moments, "_get_recent_context_messages", ctx)
+    asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
+    stream.assert_not_called()
+
+    async def ctx2(who, limit=30):
+        hub.state.update(ready=True, model="other-m")  # 等待期间换了模型
+        return []
+    hub.state["ready"] = True
+    monkeypatch.setattr(moments, "_get_recent_context_messages", ctx2)
+    asyncio.run(moments._ai_reply_to_moment("ai3", "mu"))
+    stream.assert_not_called()
+    assert _rows(db, "SELECT COUNT(*) FROM moment_comments") == [(0,)]

@@ -267,14 +267,11 @@ async def _get_recent_context_messages(who: str, limit: int = 30) -> list[dict]:
 
 
 async def _get_recent_memories(who: str, limit: int = 5, query: str = "") -> list[str]:
-    """获取指定 AI 角色最近的记忆。座位的记忆在 Memory Hub，按全家可见的口径（private_group）取一段。"""
+    """获取指定 AI 角色最近的记忆。
+    座位的记忆在 Memory Hub；Hub 的 private_group 也会给私聊接续原话和私人记忆（memory-hub #85 起），
+    朋友圈全家可见，所以这里先不取 Hub 的内容（座位照样能参考最近的聊天上下文）。"""
     if who in SEAT_AUTHORS:
-        try:
-            import memory_hub_bridge
-            block = await memory_hub_bridge.context_block(who, query, "moments", "private_group")
-        except Exception:
-            block = ""
-        return [block] if block else []
+        return []
     memories = []
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
@@ -430,8 +427,9 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
     if who in SEAT_AUTHORS:
         import seat_chat
         from config import model_snapshot
-        seat_model_key = seat_chat.seat_model(who)
-        if not seat_model_key:  # 没启用 / 没模型就不回，不换别人的模型
+        try:  # 停用、没人设、没模型都不回（历史评论也唤醒不了），不换别人的模型
+            _, seat_model_key = seat_chat.check_ready(who)
+        except seat_chat.SeatNotReady:
             return
         pinned = model_snapshot(seat_model_key)
     context_msgs = await _get_recent_context_messages(who, limit=30)
@@ -448,7 +446,14 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
         if who in SEAT_AUTHORS:
             from config import ensure_model_unchanged
             model_messages = await _prepare_moment_messages_for_model(messages, seat_model_key)
-            ensure_model_unchanged(seat_model_key, pinned)  # 和下面发起调用之间没有 await
+            # 等待期间可能被停用、清空人设或换了模型：再核对一次，都没变才发（和下面发起调用之间没有 await）
+            try:
+                _, still_model = seat_chat.check_ready(who)
+            except seat_chat.SeatNotReady:
+                return
+            if still_model != seat_model_key:
+                return
+            ensure_model_unchanged(seat_model_key, pinned)
             async for chunk in stream_ai(model_messages, seat_model_key, {}):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
