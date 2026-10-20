@@ -19,14 +19,19 @@ _NEXT_CHAT_RE = re.compile(
     r"[\[［]\s*NEXT_CHAT\s*[:：]\s*([^\]］]+?)\s*[\]］]",
     re.IGNORECASE,
 )
+SEATS = ("ai3", "ai4", "ai5", "ai6")
 _SETTING_KEYS = {
     "aion": "proactive_companionship_aion_enabled",
     "connor": "proactive_companionship_connor_enabled",
+    **{seat: f"proactive_companionship_{seat}_enabled" for seat in SEATS},  # 座位各自一个开关，默认关
 }
 
 
 def _actor_id(actor: str | None) -> str:
-    return "connor" if str(actor or "").strip().lower() == "connor" else "aion"
+    actor = str(actor or "").strip().lower()
+    if actor in SEATS:
+        return actor
+    return "connor" if actor == "connor" else "aion"
 
 
 def is_proactive_enabled(actor: str) -> bool:
@@ -85,7 +90,7 @@ def _message_actor(event: dict) -> str | None:
             return "aion"
     if event.get("type") == "chatroom_msg_created":
         sender = str(data.get("sender") or "").lower()
-        if sender in ("user", "aion", "connor"):
+        if sender in ("user", "aion", "connor", *SEATS):
             return sender
     return None
 
@@ -127,10 +132,12 @@ async def process_visible_message_event(event: dict) -> tuple[dict, bool]:
                 trigger_at = datetime.fromtimestamp(created_at + decision * 60).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
+                # 座位记下是在哪个房间说的，到点回到这个房间；小克 / Lucien 照旧留空（按最后活跃窗口找）
+                room = str(data.get("room_id") or "") if actor in SEATS else ""
                 await db.execute(
                     "INSERT INTO schedules "
                     "(id,type,trigger_at,content,created_at,status,origin,origin_room_id) "
-                    "VALUES (?,?,?,?,?,'active',?,'')",
+                    "VALUES (?,?,?,?,?,'active',?,?)",
                     (
                         f"pc_{actor}_{time.time_ns()}",
                         PROACTIVE_TYPE,
@@ -138,6 +145,7 @@ async def process_visible_message_event(event: dict) -> tuple[dict, bool]:
                         "",
                         created_at,
                         actor,
+                        room,
                     ),
                 )
         await db.commit()
@@ -170,7 +178,15 @@ async def proactive_status_payload() -> dict:
 
     now = time.time()
     roles = []
-    for actor, name in (("aion", ai_name), ("connor", connor_name)):
+    people = [("aion", ai_name), ("connor", connor_name)]
+    try:  # 已启用的座位（狗蛋等）也列出来，各自开关
+        import actors
+        for actor in actors.list_actors(include_disabled=False):
+            if actor.get("id") in SEATS:
+                people.append((actor["id"], actor.get("name") or actor["id"]))
+    except Exception:
+        pass
+    for actor, name in people:
         next_at = timers.get(actor, "")
         remaining = None
         if next_at:

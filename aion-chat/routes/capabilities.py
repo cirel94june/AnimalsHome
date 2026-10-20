@@ -91,7 +91,7 @@ async def get_proactive_companionship():
 @router.put("/api/proactive-companionship/{actor}")
 async def update_proactive_companionship(actor: str, body: CapabilityToggle):
     actor = actor.strip().lower()
-    if actor not in ("aion", "connor"):
+    if actor not in ("aion", "connor", "ai3", "ai4", "ai5", "ai6"):
         raise HTTPException(status_code=404, detail="unknown actor")
     set_proactive_enabled(actor, body.enabled)
     payload = await proactive_status_payload()

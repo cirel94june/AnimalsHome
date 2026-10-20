@@ -428,3 +428,11 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 
 - `seat_wallet._cents(amount) = round(amount*100)`。`pay_user`：不到一分（≤0 分）直接拒绝；余额与金额都按分比较；扣款写 `-cents/100`。`credit_from_user`：按分取整后记账，0 分不记。比较和扣款用同一个金额。
 - 测试 `test_sub_cent_amounts_are_neither_paid_nor_credited`：0.004 元不转不记、1.005 入账按整分、0.999 按 1.00 扣、账上都是整分。`test_seat_wallet.py` 共 11 项通过。
+
+## 45. 狗蛋补能力第三批第四段：主动陪伴
+
+- `proactive_companionship`：座位各自一个开关 `proactive_companionship_<座位>_enabled`（默认关）；`_actor_id` 认得座位；`_message_actor` 把座位的 `chatroom_msg_created` 当作 AI 消息。座位回复里的 `[NEXT_CHAT:x]` 照原机制在广播时去掉并建计时器，**座位的计时器记下 `origin_room_id=说话的房间`**（小克 / Lucien 照旧留空）。小猫发消息清掉所有计时器、某位 AI 再说话清掉 TA 自己的，机制不变。
+- `proactive_status_payload` 列出已启用的座位；`PUT /api/proactive-companionship/{actor}` 接受 ai3～ai6。工具能力页的「主动陪伴」卡片按 roles 渲染，座位自动出现开关。
+- 座位提示词：开关开着时加 `proactive_ability_text`（每次回复给出 NEXT_CHAT 决定）。
+- 到点：主动陪伴计时器实际由 `_fire_monitor` 处理——认领计时器后，origin 是座位就 `_fire_seat_alarm` 并返回；`_fire_alarm` 里的座位分支也不再排除主动陪伴（认领在前）。`_fire_seat_alarm` 对主动陪伴用「[主动陪伴触发] …没有新的对话消息，请结合最新上下文自然地主动继续聊」，回到计时器记下的房间（群或 TA 自己的私聊，其他情况回 TA 私聊）；回复不写 Hub（`extra_prompt`）。
+- 测试 `test_seat_proactive.py` 5 项：座位 NEXT_CHAT 建计时器且记房间、关开关不建、状态列出座位且开关接口接受座位、到点由座位在原房间开口且重复触发不再开口、提示词随开关。原有主动陪伴测试通过；相关测试与改动前相同（`test_stream_safety` 计时用例偶发）。

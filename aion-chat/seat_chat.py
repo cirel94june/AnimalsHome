@@ -173,6 +173,8 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "assistant", "content": "明白了。"},
     ]
     abilities = _ability_lines(user_name, group)
+    if proactive_line(actor_id):
+        abilities.append(proactive_line(actor_id))
     if is_capability_enabled("transfer"):  # 转账要带上 TA 自己钱包的余额
         try:
             from routes.seat_wallet import get_seat_balance
@@ -209,3 +211,12 @@ def _ability_lines(user_name: str, group: bool) -> list[str]:
         import group_post
         lines.append(group_post.ability_text(user_name))
     return lines
+
+
+def proactive_line(actor_id: str) -> str:
+    """主动陪伴开着时，座位每次回复都要给出 [NEXT_CHAT:x] / [NEXT_CHAT:NONE] 的决定。"""
+    try:
+        from proactive_companionship import proactive_ability_text
+        return proactive_ability_text(actor_id)
+    except Exception:
+        return ""

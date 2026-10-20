@@ -547,8 +547,13 @@ class ScheduleManager:
             room_id = await chatroom_routes._get_or_create_seat_room(origin)
             room_type = seat_chat.SEAT_ROOM_TYPE
         user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
-        prompt = (f"[闹铃到点] 现在是 {item['trigger_at'].replace('T', ' ')}，你之前设的闹铃到了：{item['content']}。"
-                  f"用你自己的口吻提醒{user_name}，就像你刚好想起来。不要再设同一个闹铃。")
+        if item.get("type") == PROACTIVE_TYPE:
+            now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+            prompt = (f"[主动陪伴触发] 截至当前 {now_str}，这段时间没有新的对话消息。"
+                      f"请结合最新上下文，自然地主动和{user_name}继续聊下去。")
+        else:
+            prompt = (f"[闹铃到点] 现在是 {item['trigger_at'].replace('T', ' ')}，你之前设的闹铃到了：{item['content']}。"
+                      f"用你自己的口吻提醒{user_name}，就像你刚好想起来。不要再设同一个闹铃。")
         await chatroom_routes._generate_seat_reply(room_id, {"actor": origin}, [], asyncio.Queue(), 30,
                                                    actor=origin, group=room_type == "group", extra_prompt=prompt)
 
@@ -587,7 +592,7 @@ class ScheduleManager:
             await manager.broadcast({"type": "schedule_changed"})
 
         # 座位 3～6 设的闹铃：由 TA 自己在设闹铃的房间里提醒，不走小克 / Lucien 的流程
-        if origin in ("ai3", "ai4", "ai5", "ai6") and not is_proactive and not is_app_checkpoint:
+        if origin in ("ai3", "ai4", "ai5", "ai6") and not is_app_checkpoint:
             await self._fire_seat_alarm(item)
             return
 
@@ -910,6 +915,9 @@ class ScheduleManager:
         # 标记为已触发
         if is_proactive:
             if not await claim_proactive_timer(sid):
+                return
+            if origin in ("ai3", "ai4", "ai5", "ai6"):  # 座位的主动陪伴：TA 自己回到原来的房间开口
+                await self._fire_seat_alarm(item)
                 return
         else:
             async with aiosqlite.connect(DB_PATH) as db:
