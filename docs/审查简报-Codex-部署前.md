@@ -436,3 +436,11 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 座位提示词：开关开着时加 `proactive_ability_text`（每次回复给出 NEXT_CHAT 决定）。
 - 到点：主动陪伴计时器实际由 `_fire_monitor` 处理——认领计时器后，origin 是座位就 `_fire_seat_alarm` 并返回；`_fire_alarm` 里的座位分支也不再排除主动陪伴（认领在前）。`_fire_seat_alarm` 对主动陪伴用「[主动陪伴触发] …没有新的对话消息，请结合最新上下文自然地主动继续聊」，回到计时器记下的房间（群或 TA 自己的私聊，其他情况回 TA 私聊）；回复不写 Hub（`extra_prompt`）。
 - 测试 `test_seat_proactive.py` 5 项：座位 NEXT_CHAT 建计时器且记房间、关开关不建、状态列出座位且开关接口接受座位、到点由座位在原房间开口且重复触发不再开口、提示词随开关。原有主动陪伴测试通过；相关测试与改动前相同（`test_stream_safety` 计时用例偶发）。
+
+## 46. 狗蛋补能力第三批第五段：看监控、看动态
+
+- `_process_seat_commands`：`[CAM_CHECK]`（开关 cam_check）插「📷 狗蛋查看了监控」，记下系统消息 id；`[查看动态:n]`（开关 activity_check 且活动日志 AI 联动开着）n 夹到 1～12，插「📊 狗蛋查看了用户动态」。开关关着只去掉。`_spawn_seat_followups` 把两者交给 `_chatroom_cam_check` / `_chatroom_activity_check`，带主回复的线路快照。
+- 两个后续函数新增关键字参数 `pinned`；座位调用没带时在任何等待前自取。座位分支：人设用 `seat_chat._persona_text`（插在最前），生成前 `ensure_model_unchanged`（与 `stream_ai` 之间无 await），线路变了就在房间说明并返回、不换模型；模型用座位自己的（不走 `_stream_connor_model`）；收尾不跑 `_process_background_reply_commands`，只去掉指令后以座位名义保存、不自动朗读。小克 / Lucien 分支不变。
+- `capabilities`：两段能力说明抽成 `cam_check_ability_text` / `activity_check_ability_text`（主 AI 文字不变），`seat_ability_texts` 按开关给座位。
+- 定时监督 `[Monitor:]` 对座位仍关闭（需要座位版的定时截图流程，未做）。
+- 测试 `test_seat_cam_activity.py` 6 项：座位发起两种查看并插提示、关开关只去掉、后续带快照、看动态 / 看监控都用座位人设与模型且不跑后台指令、截图期间线路被删则不回复并说明、提示词按开关给。相关测试与改动前相同（均为既有失败）。

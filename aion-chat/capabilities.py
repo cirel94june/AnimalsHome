@@ -574,6 +574,19 @@ def image_gen_ability_text(user_name: str) -> str:
             "提示词请使用英文。一次回复只用一个生图指令。可根据上下文情景自由使用。")
 
 
+def cam_check_ability_text(user_name: str) -> str:
+    return (f"{CAM_CHECK_CMD} — 当你想查看{user_name}**此时此刻**的状态，"
+            "不限于监督其是否去睡觉，在吃什么，在干什么时，可以主动调用指令。"
+            "使用后下条消息会收到画面，查看前不要编造内容。")
+
+
+def activity_check_ability_text(user_name: str) -> str:
+    return (f"[查看动态:n] — 查看{user_name}过去n×10分钟的设备使用动态"
+            "（n为1~12的整数，例如[查看动态:2]查看过去20分钟，[查看动态:6]查看过去1小时）。"
+            f"当你好奇{user_name}最近在干什么、想了解{user_name}的设备使用情况时可以使用。"
+            "使用后下条消息会收到动态摘要，查看前不要编造内容。")
+
+
 def moment_ability_text() -> str:
     return ("[MOMENT:朋友圈内容|true/false] — 当**本次**聊天内容非常触动人心、有很深的感触、"
             "或令人无语或非常搞笑时可以发一条朋友圈动态。第二个参数表示是否期望好友回复"
@@ -601,6 +614,10 @@ def seat_ability_texts(user_name: str) -> list[str]:
         texts.append(moment_ability_text())
     if is_capability_enabled("pat"):
         texts.append(build_pat_ability_text(user_name))
+    if is_capability_enabled("cam_check"):
+        texts.append(cam_check_ability_text(user_name))
+    if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
+        texts.append(activity_check_ability_text(user_name))
     if is_capability_enabled("schedule"):
         texts.extend([
             "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会叫你来提醒用户。日期时间用ISO格式。",
@@ -640,11 +657,7 @@ async def build_capability_prompt_items(
         abilities.append(music_ability_text())
 
     if is_capability_enabled("cam_check"):
-        abilities.append(
-            f"{CAM_CHECK_CMD} — 当你想查看{user_name}**此时此刻**的状态，"
-            "不限于监督其是否去睡觉，在吃什么，在干什么时，可以主动调用指令。"
-            "使用后下条消息会收到画面，查看前不要编造内容。"
-        )
+        abilities.append(cam_check_ability_text(user_name))
 
     if is_capability_enabled("schedule"):
         abilities.extend([
@@ -699,12 +712,7 @@ async def build_capability_prompt_items(
         )
 
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
-        abilities.append(
-            f"[查看动态:n] — 查看{user_name}过去n×10分钟的设备使用动态"
-            "（n为1~12的整数，例如[查看动态:2]查看过去20分钟，[查看动态:6]查看过去1小时）。"
-            f"当你好奇{user_name}最近在干什么、想了解{user_name}的设备使用情况时可以使用。"
-            "使用后下条消息会收到动态摘要，查看前不要编造内容。"
-        )
+        abilities.append(activity_check_ability_text(user_name))
 
     if is_capability_enabled("poi_search") and _is_outside_location():
         abilities.append(

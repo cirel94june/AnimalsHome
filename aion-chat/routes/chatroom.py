@@ -1402,8 +1402,13 @@ async def _chatroom_cam_check(
     model_key: str,
     delay: float = 5.0,
     system_msg_id: str = "",
+    *,
+    pinned: dict | None = None,
 ):
     """聊天室版监控查看：播放提示音 → 延迟截图 → AI 追加回复到聊天室"""
+    if pinned is None and sender in seat_chat.SEAT_ACTORS:  # 座位：在任何等待之前固定线路
+        from config import model_snapshot
+        pinned = model_snapshot(model_key)
     from config import load_worldbook, SETTINGS
     from camera import cam, build_monitor_alert_data
 
@@ -1480,6 +1485,10 @@ async def _chatroom_cam_check(
         prefix_msgs.append({"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"})
         prefix_msgs.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
 
+    is_seat = sender in seat_chat.SEAT_ACTORS
+    if is_seat:  # 座位用自己的人设
+        prefix_msgs.insert(0, {"role": "assistant", "content": "收到，我会按照设定做自己。"})
+        prefix_msgs.insert(0, {"role": "user", "content": f"[你的角色设定]\n你是{_name_for_identity(sender)}。\n\n{seat_chat._persona_text(sender)}"})
     cam_message = {"role": "user", "content": cam_prompt}
     if fname:
         cam_message["attachments"] = [f"/screenshots/{fname}"]
@@ -1488,7 +1497,19 @@ async def _chatroom_cam_check(
     full_text = ""
     tts_from_model = True
     try:
-        if sender == "aion":
+        if is_seat:
+            from config import ensure_model_unchanged
+            try:
+                ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
+            except Exception:
+                await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的模型线路刚刚变了，这次没能接着说）",
+                                        asyncio.Queue())
+                return
+            async for chunk in stream_ai(messages, model_key):
+                if chunk.startswith(CLI_STATUS_PREFIX):
+                    continue
+                full_text += chunk
+        elif sender == "aion":
             _temp = SETTINGS.get("temperature")
             async for chunk in stream_ai(messages, model_key, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
@@ -1510,8 +1531,13 @@ async def _chatroom_cam_check(
         await _save_msg(room_id, "system", "监控画面已获取，但模型没有返回分析结果。", auto_tts=False)
         return
 
-    from schedule import _process_background_reply_commands
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
+    if is_seat:
+        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
+        if full_text.strip():
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
+        return
+    from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
         full_text,
         target={"type": "chatroom", "room_id": room_id},
@@ -1524,8 +1550,11 @@ async def _chatroom_cam_check(
     print(f"[CHATROOM_CAM_CHECK] {sender} 查看监控完成, room={room_id}")
 
 
-async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n: int):
+async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n: int, *, pinned: dict | None = None):
     """聊天室版查看动态：获取摘要 → AI 追加回复到聊天室"""
+    if pinned is None and sender in seat_chat.SEAT_ACTORS:  # 座位：在任何等待之前固定线路
+        from config import model_snapshot
+        pinned = model_snapshot(model_key)
     from activity import get_activity_summary_for_prompt
     from config import load_worldbook, SETTINGS
 
@@ -1558,12 +1587,28 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
         prefix_msgs.append({"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"})
         prefix_msgs.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
 
+    is_seat = sender in seat_chat.SEAT_ACTORS
+    if is_seat:  # 座位用自己的人设
+        prefix_msgs.insert(0, {"role": "assistant", "content": "收到，我会按照设定做自己。"})
+        prefix_msgs.insert(0, {"role": "user", "content": f"[你的角色设定]\n你是{_name_for_identity(sender)}。\n\n{seat_chat._persona_text(sender)}"})
     messages = prefix_msgs + recent + [{"role": "user", "content": activity_prompt}]
 
     full_text = ""
     tts_from_model = True
     try:
-        if sender == "aion":
+        if is_seat:
+            from config import ensure_model_unchanged
+            try:
+                ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
+            except Exception:
+                await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的模型线路刚刚变了，这次没能接着说）",
+                                        asyncio.Queue())
+                return
+            async for chunk in stream_ai(messages, model_key):
+                if chunk.startswith(CLI_STATUS_PREFIX):
+                    continue
+                full_text += chunk
+        elif sender == "aion":
             _temp = SETTINGS.get("temperature")
             async for chunk in stream_ai(messages, model_key, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
@@ -1582,8 +1627,13 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
     if not full_text.strip():
         return
 
-    from schedule import _process_background_reply_commands
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
+    if is_seat:
+        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
+        if full_text.strip():
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
+        return
+    from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
         full_text,
         target={"type": "chatroom", "room_id": room_id},
@@ -3952,6 +4002,24 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     full_text = await process_pat_commands(full_text, source_type="chatroom", source_id=room_id, sender=actor_id,
                                            source_msg_id=msg_id, on_saved=_pat_saved)
 
+    # ── 看监控 / 看动态（第三批）：开关开着才看；结果由 TA 自己接着说 ──
+    if CAM_CHECK_CMD in full_text:
+        full_text = full_text.replace(CAM_CHECK_CMD, "")
+        if is_capability_enabled("cam_check"):
+            cam_notice = await _chatroom_sys_msg(room_id, f"📷 {label}查看了监控", _q, after_msg_id=msg_id)
+            triggered["cam_check"] = cam_notice["id"]
+    activity_match = ACTIVITY_CHECK_PATTERN.search(full_text)
+    if activity_match:
+        full_text = ACTIVITY_CHECK_PATTERN.sub("", full_text)
+        from activity import is_activity_tracking_enabled
+        if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
+            try:
+                activity_n = max(1, min(12, int(activity_match.group(1))))
+            except (TypeError, ValueError):
+                activity_n = 6
+            await _chatroom_sys_msg(room_id, f"📊 {label}查看了用户动态", _q, after_msg_id=msg_id)
+            triggered["activity"] = activity_n
+
     # ── 发朋友圈（第三批）：作者是这位座位；期望回复时其他 AI 来评论 ──
     moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
     if moment_matches:
@@ -4068,6 +4136,12 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
     if triggered.get("web_search"):
         spawn_generation_task(_chatroom_web_search(room_id, actor_id, model_key, triggered["web_search"],
                                                    pinned=pinned))
+    if triggered.get("cam_check"):
+        spawn_generation_task(_chatroom_cam_check(room_id, actor_id, model_key,
+                                                  system_msg_id=str(triggered["cam_check"]), pinned=pinned))
+    if triggered.get("activity"):
+        spawn_generation_task(_chatroom_activity_check(room_id, actor_id, model_key, triggered["activity"],
+                                                       pinned=pinned))
 
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
