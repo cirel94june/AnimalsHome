@@ -85,6 +85,7 @@ def test_due_seat_timer_wakes_the_seat_in_its_room(db, monkeypatch):
                                "VALUES ('pc1', 'proactive', '2000-01-01 08:00:00', '', 0, 'ai3', 's3')")
             await conn.commit()
     asyncio.run(add())
+    monkeypatch.setitem(pc.SETTINGS, "proactive_companionship_ai3_enabled", True)
     reply = AsyncMock()
     monkeypatch.setattr(chatroom_routes, "_generate_seat_reply", reply)
     item = {"id": "pc1", "type": "proactive", "trigger_at": "2000-01-01 08:00:00", "content": "",
@@ -104,3 +105,58 @@ def test_seat_prompt_includes_next_chat_when_enabled(monkeypatch):
     assert "[NEXT_CHAT:x]" in seat_chat.proactive_line("ai3")
     monkeypatch.setitem(pc.SETTINGS, "proactive_companionship_ai3_enabled", False)
     assert seat_chat.proactive_line("ai3") == ""
+
+
+def _add_timer(path, sid, origin, room=""):
+    async def add():
+        async with aiosqlite.connect(path) as conn:
+            await conn.execute("INSERT INTO schedules (id, type, trigger_at, content, created_at, origin, origin_room_id) "
+                               "VALUES (?, 'proactive', '2000-01-01 08:00:00', '', 0, ?, ?)", (sid, origin, room))
+            await conn.commit()
+    asyncio.run(add())
+
+
+def test_switching_off_clears_only_that_actors_timers(db, monkeypatch):
+    _add_timer(db, "pc1", "ai3", "s3")
+    _add_timer(db, "pc2", "aion")
+    from routes import capabilities as cap_routes
+    monkeypatch.setattr(cap_routes, "set_proactive_enabled", lambda a, e: None)
+    monkeypatch.setattr(cap_routes.manager, "broadcast", AsyncMock())
+    asyncio.run(cap_routes.update_proactive_companionship("ai3", cap_routes.CapabilityToggle(enabled=False)))
+    assert _timers(db) == [("aion", "")]
+
+
+@pytest.mark.parametrize("origin", ["ai3", "aion", "connor"])
+def test_due_timer_stays_quiet_when_switched_off(db, monkeypatch, origin):
+    _add_timer(db, "pc1", origin, "s3")
+    monkeypatch.setitem(pc.SETTINGS, f"proactive_companionship_{origin}_enabled", False)
+    seat_reply = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_generate_seat_reply", seat_reply)
+    mgr = schedule.ScheduleManager()
+    item = {"id": "pc1", "type": "proactive", "trigger_at": "2000-01-01 08:00:00", "content": "",
+            "origin": origin, "origin_room_id": "s3"}
+    asyncio.run(mgr._fire_monitor(item))
+    seat_reply.assert_not_called()
+    assert _timers(db) == []  # 认领掉了，不会再响
+
+
+def test_switched_off_while_waiting_seat_does_not_speak(monkeypatch):
+    import seat_chat
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-m"))
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-m": {"provider": "custom_openai", "model": "m"}})
+    monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[]))
+    monkeypatch.setattr(seat_chat, "build_context", AsyncMock(return_value=[{"role": "system", "content": "x"}]))
+    called = []
+
+    async def stream(*a, **k):
+        called.append(1)
+        yield "嗨"
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    saved = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_msg", saved)
+    q = asyncio.Queue()
+    asyncio.run(chatroom_routes._generate_seat_reply("s3", {"actor": "ai3"}, [], q, 30, actor="ai3",
+                                                     extra_prompt="[主动陪伴触发]", proceed_check=lambda: False))
+    assert not called
+    saved.assert_not_called()

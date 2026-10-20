@@ -83,6 +83,7 @@ def test_search_followup_speaks_as_the_seat_with_its_own_model(monkeypatch):
     monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [])))
     monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
     monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "本少爷人设")
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-model"))
     import config
     monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-model": {"provider": "custom_openai", "model": "m"}})
     seen = []
@@ -156,6 +157,7 @@ def test_search_followup_stops_if_the_seats_line_changes_meanwhile(monkeypatch):
     monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [])))
     monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
     monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "人设")
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-key"))
     stream = MagicMock()
     monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
     saved = AsyncMock()
@@ -250,3 +252,22 @@ def test_wish_http_filters_accept_seats(tmp_path, monkeypatch):
         assert drawn.status_code == 200
     bad = client.post(f"{prefix}/api/wishes" if not prefix else prefix, json={"content": "x", "author": "stranger"})
     assert bad.status_code == 400
+
+
+def test_search_followup_drops_unexecuted_transfer_tags(monkeypatch):
+    """§47 L1：后续回复里的转账标签去掉，不显示没执行过的转账卡片。"""
+    monkeypatch.setattr(chatroom_routes, "run_web_commands", AsyncMock(return_value=["【联网搜索结果】晴"]))
+    monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [])))
+    monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
+    monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "人设")
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-key"))
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-key": {"provider": "custom_openai", "model": "m"}})
+
+    async def stream(*a, **k):
+        yield "晴天[转账：10元]"
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    saved = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_msg", saved)
+    asyncio.run(chatroom_routes._chatroom_web_search("room", "ai3", "seat-key", {"searches": ["天气"]}))
+    assert saved.await_args.args[2] == "晴天"

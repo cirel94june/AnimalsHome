@@ -554,7 +554,12 @@ class ScheduleManager:
         else:
             prompt = (f"[闹铃到点] 现在是 {item['trigger_at'].replace('T', ' ')}，你之前设的闹铃到了：{item['content']}。"
                       f"用你自己的口吻提醒{user_name}，就像你刚好想起来。不要再设同一个闹铃。")
+        proceed_check = None
+        if item.get("type") == PROACTIVE_TYPE:  # 等上下文期间开关被关了，也不开口
+            from proactive_companionship import is_proactive_enabled
+            proceed_check = lambda: is_proactive_enabled(origin)  # noqa: E731
         await chatroom_routes._generate_seat_reply(room_id, {"actor": origin}, [], asyncio.Queue(), 30,
+                                                   proceed_check=proceed_check,
                                                    actor=origin, group=room_type == "group", extra_prompt=prompt)
 
     # ── 触发闹铃 ─────────────────────────────────
@@ -575,6 +580,9 @@ class ScheduleManager:
         # 标记为已触发
         if is_proactive:
             if not await claim_proactive_timer(sid):
+                return
+            from proactive_companionship import is_proactive_enabled
+            if not is_proactive_enabled(origin):  # 计时器排好后开关被关了：不开口
                 return
         elif not is_app_checkpoint:
             async with aiosqlite.connect(DB_PATH) as db:
@@ -915,6 +923,9 @@ class ScheduleManager:
         # 标记为已触发
         if is_proactive:
             if not await claim_proactive_timer(sid):
+                return
+            from proactive_companionship import is_proactive_enabled
+            if not is_proactive_enabled(origin):  # 计时器排好后开关被关了：不开口
                 return
             if origin in ("ai3", "ai4", "ai5", "ai6"):  # 座位的主动陪伴：TA 自己回到原来的房间开口
                 await self._fire_seat_alarm(item)

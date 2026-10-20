@@ -52,6 +52,7 @@ def _seat_line(monkeypatch):
     import config
     monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-m": {"provider": "custom_openai", "model": "m"}})
     monkeypatch.setattr(seat_chat, "_persona_text", lambda a: "本少爷人设")
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-m"))
     monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [])))
     monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
     seen = []
@@ -117,3 +118,55 @@ def test_seat_prompt_offers_looking(monkeypatch):
     monkeypatch.setattr(capabilities, "is_activity_tracking_enabled", lambda: True)
     texts = capabilities.seat_ability_texts("小猫")
     assert any(t.startswith("[CAM_CHECK]") or "CAM_CHECK" in t for t in texts) and any(t.startswith("[查看动态:n]") for t in texts)
+
+
+@pytest.mark.parametrize("change", ["disabled", "model"])
+def test_followup_stops_if_seat_changes_while_waiting(monkeypatch, change):
+    import activity
+    seen, connor, saved, background = _seat_line(monkeypatch)
+    state = {"ready": True, "model": "seat-m"}
+
+    def check_ready(actor):
+        if not state["ready"]:
+            raise seat_chat.SeatNotReady("off")
+        return {}, state["model"]
+
+    monkeypatch.setattr(seat_chat, "check_ready", check_ready)
+
+    def summary(n):  # 读动态期间（任何 await 之前已检查过一次）座位变了
+        if change == "disabled":
+            state["ready"] = False
+        else:
+            state["model"] = "other-m"
+        return "在玩游戏"
+    monkeypatch.setattr(activity, "get_activity_summary_for_prompt", summary)
+    notes = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_chatroom_sys_msg", notes)
+    asyncio.run(chatroom_routes._chatroom_activity_check("s3", "ai3", "seat-m", 3))
+    assert not seen
+    saved.assert_not_called()
+
+
+def test_followup_skipped_if_seat_not_ready_at_start(monkeypatch):
+    seen, connor, saved, background = _seat_line(monkeypatch)
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "other-m"))
+    asyncio.run(chatroom_routes._chatroom_activity_check("s3", "ai3", "seat-m", 3))
+    assert not seen
+    saved.assert_not_called()
+
+
+def test_followup_drops_unexecuted_transfer_tags(monkeypatch):
+    import activity
+    monkeypatch.setattr(activity, "get_activity_summary_for_prompt", lambda n: "在玩游戏")
+    seen, connor, saved, background = _seat_line(monkeypatch)
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-m"))
+
+    async def stream(messages, model_key, *a, **k):
+        yield "给你[转账：10元]买零食[转账给小猫#user：5元]"
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    import routes.seat_wallet as wallet
+    pay = AsyncMock()
+    monkeypatch.setattr(wallet, "pay_user", pay)
+    asyncio.run(chatroom_routes._chatroom_activity_check("s3", "ai3", "seat-m", 3))
+    assert saved.await_args.args[2] == "给你买零食"
+    pay.assert_not_called()

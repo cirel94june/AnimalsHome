@@ -94,6 +94,9 @@ async def update_proactive_companionship(actor: str, body: CapabilityToggle):
     if actor not in ("aion", "connor", "ai3", "ai4", "ai5", "ai6"):
         raise HTTPException(status_code=404, detail="unknown actor")
     set_proactive_enabled(actor, body.enabled)
+    if not body.enabled:  # 关掉后已经排好的「待会儿再来」也不再算数
+        from proactive_companionship import clear_proactive_timers
+        await clear_proactive_timers(actor)
     payload = await proactive_status_payload()
     await manager.broadcast({"type": "proactive_companionship_changed", "data": payload})
     return {"ok": True, "data": payload}

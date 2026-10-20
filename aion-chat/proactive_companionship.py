@@ -153,6 +153,17 @@ async def process_visible_message_event(event: dict) -> tuple[dict, bool]:
     return updated, changed
 
 
+async def clear_proactive_timers(actor: str) -> int:
+    """关掉某位 AI 的主动陪伴时，清掉 TA 还没到点的计时器（别人的不动）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM schedules WHERE type=? AND status='active' AND origin=?",
+            (PROACTIVE_TYPE, _actor_id(actor)),
+        )
+        await db.commit()
+        return cur.rowcount or 0
+
+
 async def claim_proactive_timer(schedule_id: str) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(

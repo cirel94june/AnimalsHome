@@ -1406,6 +1406,8 @@ async def _chatroom_cam_check(
     pinned: dict | None = None,
 ):
     """聊天室版监控查看：播放提示音 → 延迟截图 → AI 追加回复到聊天室"""
+    if sender in seat_chat.SEAT_ACTORS and not _seat_still_ready(sender, model_key):
+        return  # 座位已停用 / 没人设 / 换了模型：这次不接着说
     if pinned is None and sender in seat_chat.SEAT_ACTORS:  # 座位：在任何等待之前固定线路
         from config import model_snapshot
         pinned = model_snapshot(model_key)
@@ -1500,6 +1502,8 @@ async def _chatroom_cam_check(
         if is_seat:
             from config import ensure_model_unchanged
             try:
+                if not _seat_still_ready(sender, model_key):  # 等待期间停用 / 清空人设 / 换了模型
+                    raise RuntimeError("seat changed")
                 ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             except Exception:
                 await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的模型线路刚刚变了，这次没能接着说）",
@@ -1533,7 +1537,7 @@ async def _chatroom_cam_check(
 
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
     if is_seat:
-        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
+        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(_strip_unexecuted_transfers(full_text)), model_key)
         if full_text.strip():
             await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
         return
@@ -1552,6 +1556,8 @@ async def _chatroom_cam_check(
 
 async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n: int, *, pinned: dict | None = None):
     """聊天室版查看动态：获取摘要 → AI 追加回复到聊天室"""
+    if sender in seat_chat.SEAT_ACTORS and not _seat_still_ready(sender, model_key):
+        return  # 座位已停用 / 没人设 / 换了模型：这次不接着说
     if pinned is None and sender in seat_chat.SEAT_ACTORS:  # 座位：在任何等待之前固定线路
         from config import model_snapshot
         pinned = model_snapshot(model_key)
@@ -1599,6 +1605,8 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
         if is_seat:
             from config import ensure_model_unchanged
             try:
+                if not _seat_still_ready(sender, model_key):  # 等待期间停用 / 清空人设 / 换了模型
+                    raise RuntimeError("seat changed")
                 ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             except Exception:
                 await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的模型线路刚刚变了，这次没能接着说）",
@@ -1629,7 +1637,7 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
 
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
     if is_seat:
-        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
+        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(_strip_unexecuted_transfers(full_text)), model_key)
         if full_text.strip():
             await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
         return
@@ -1771,6 +1779,8 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     """聊天室版联网搜索：Tavily 搜索/读取网页 → 触发者追加回复到聊天室"""
     from config import load_worldbook, SETTINGS, model_snapshot
 
+    if sender in seat_chat.SEAT_ACTORS and not _seat_still_ready(sender, model_key):
+        return  # 座位已停用 / 没人设 / 换了模型：这次不接着说
     if pinned is None and sender in seat_chat.SEAT_ACTORS:
         pinned = model_snapshot(model_key)  # 没带快照的座位调用：在任何等待之前固定线路
 
@@ -1833,6 +1843,8 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         if is_seat:
             from config import ensure_model_unchanged
             try:
+                if not _seat_still_ready(sender, model_key):  # 等待期间停用 / 清空人设 / 换了模型
+                    raise RuntimeError("seat changed")
                 ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             except Exception:
                 print(f"[CHATROOM_WEB_SEARCH] {sender} 的线路在搜索期间变了，不换模型、不回复")
@@ -1864,7 +1876,8 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
 
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
     if is_seat:  # 座位的后台指令还没逐条接好身份：这里只去掉指令，不执行
-        full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(clean_web_command_text(full_text)), model_key)
+        full_text = _normalize_cli_bubble_breaks(
+            _visible_chatroom_text(_strip_unexecuted_transfers(clean_web_command_text(full_text))), model_key)
         if full_text.strip():
             await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
         return
@@ -4126,6 +4139,20 @@ async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, l
     return _strip_schedule_commands(full_text)
 
 
+def _seat_still_ready(sender: str, model_key: str) -> bool:
+    """座位仍启用、有人设、而且现在选的还是这条模型线路。"""
+    try:
+        _, current = seat_chat.check_ready(sender)
+    except seat_chat.SeatNotReady:
+        return False
+    return current == model_key
+
+
+def _strip_unexecuted_transfers(text: str) -> str:
+    """后续回复不执行指令：转账标签也去掉，免得显示一张没真正转过的转账卡片。"""
+    return TRANSFER_CMD_PATTERN.sub("", text or "")
+
+
 def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered: dict,
                           pinned: dict | None = None) -> None:
     """座位回复存好以后：生图、联网搜索在后台做，做完以 TA 的名义追加到房间里。
@@ -4145,7 +4172,7 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
 
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
-                               extra_prompt: str = ""):
+                               extra_prompt: str = "", proceed_check=None):
     """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
 
     私聊时 actor 取房间登记的座位；群聊时由调用方指定，并按群聊方式组织上下文。
@@ -4175,6 +4202,9 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
             if extra_prompt:  # 系统叫 TA 来说话（比如闹铃到点），不是有人发了消息
                 messages.append({"role": "user", "content": extra_prompt})
             stream_filter = KnownCommandStreamFilter()
+            if proceed_check is not None and not proceed_check():  # 比如主动陪伴在等待期间被关掉
+                await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
+                return
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):
                 if not isinstance(chunk, str):

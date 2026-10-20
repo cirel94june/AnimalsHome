@@ -444,3 +444,18 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - `capabilities`：两段能力说明抽成 `cam_check_ability_text` / `activity_check_ability_text`（主 AI 文字不变），`seat_ability_texts` 按开关给座位。
 - 定时监督 `[Monitor:]` 对座位仍关闭（需要座位版的定时截图流程，未做）。
 - 测试 `test_seat_cam_activity.py` 6 项：座位发起两种查看并插提示、关开关只去掉、后续带快照、看动态 / 看监控都用座位人设与模型且不跑后台指令、截图期间线路被删则不回复并说明、提示词按开关给。相关测试与改动前相同（均为既有失败）。
+
+## 47. §44–46（d3d52eb / 87bec27 / 54d8e64）审查修复（M1、M2、L1）
+
+- **M1 关掉主动陪伴后旧计时器还会来**（小克 / Lucien / 座位都修）：
+  - `proactive_companionship.clear_proactive_timers(actor)`：删掉这位 AI 所有 `type='proactive' AND status='active'` 的计时器，别人的不动。`PUT /api/proactive-companionship/{actor}` 在 `enabled=False` 时调用。
+  - `_fire_monitor` 和 `_fire_alarm` 的主动陪伴分支：认领计时器之后先 `is_proactive_enabled(origin)`，关着就直接返回（计时器已认领，不会再响）。
+  - 座位：`_fire_seat_alarm` 对主动陪伴传 `proceed_check`；`_generate_seat_reply` 在取完记忆 / 上下文之后、`ensure_model_unchanged` 与 `stream_ai` 之前（中间无 await）再查一次，关了就发 `seat_done` 返回，不调模型、不保存。
+  - 主 AI 的认领后检查之后到发请求之间仍有等待（取上下文），这一小段窗口未加二次检查；关开关已同步清掉计时器，正常操作下不会再进来。
+- **M2 后续回复只核对线路、没核对座位本人**：新增 `_seat_still_ready(sender, model_key)`（`seat_chat.check_ready` 成功且当前所选模型 == 主回复的 `model_key`）。`_chatroom_cam_check` / `_chatroom_activity_check` / `_chatroom_web_search` 的座位路径：函数一开始查一次，不满足直接返回；发请求前（与 `ensure_model_unchanged`、`stream_ai` 之间无 await）再查一次，不满足走原来的「这次没能接着说」说明并返回，不换模型、不保存。
+- **L1 后续回复里的转账标签**：新增 `_strip_unexecuted_transfers`（`TRANSFER_CMD_PATTERN`，含 `[转账给名字#身份：n元]`）。三个座位后续的保存路径在 `_visible_chatroom_text` 之前去掉转账标签，不再显示没执行过的转账卡片；后续本来就不执行转账。
+- 测试：
+  - `test_seat_proactive.py` +5：关开关只清这位的计时器；关着时到点（座位 / aion / connor）都不开口且计时器已认领；等待期间被关则座位不调模型不保存。原到点用例补上开关已开。
+  - `test_seat_cam_activity.py` +4：等待期间座位停用 / 换模型则不调模型不保存；开始时就不满足则跳过；后续回复里两种转账标签被去掉且不调 `pay_user`。原用例补上座位就绪的替身。
+  - `test_seat_abilities.py`：两条上网搜后续用例补上座位就绪替身；+1 后续回复去掉转账标签。
+  - 三个座位文件共 33 项通过。相关 47 个测试文件：309 通过、10 失败，其中 8 个为既有失败（camera_sentinel_dispatch、chatroom 移动端 / 人设 / 输入框缓存、chatroom_wechat_system_display ×2（改动前同样失败）、wechat_mode_dispatcher ×2），另 2 个即上面补替身的上网搜用例，已修。
