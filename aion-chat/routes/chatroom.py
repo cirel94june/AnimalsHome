@@ -3378,19 +3378,23 @@ async def send_message(room_id: str, body: MsgSend):
         user_transfer_matches = TRANSFER_CMD_PATTERN.findall(body.content)
         _, ai_name, connor_name = get_chatroom_names()
         room_seat = await _room_seat(room_id) if user_transfer_matches else ""
+        from routes.seat_wallet import SEATS as _WALLET_SEATS
+        transfer_names = {"aion": ai_name, "connor": connor_name,
+                          **{a: _name_for_identity(a) for a in _WALLET_SEATS}}
         for t_recipient, t_amount_str in user_transfer_matches:
             try:
                 t_val = float(t_amount_str)
-                _seat = _transfer_seat(t_recipient, room_seat, ai_name, connor_name)
-                if _seat:  # 座位钱包：座位私聊里默认给 TA；点了座位名字的给那位
-                    from routes.seat_wallet import credit_from_user
-                    await credit_from_user(_seat, t_val, f"用户转账给{_name_for_identity(_seat)} {t_val}元")
-                    print(f"[SEAT_WALLET] 用户转账给{_seat}: {t_val}元")
+                payee = _transfer_recipient(t_recipient, room_seat, transfer_names)
+                if payee == "ambiguous":
+                    await _chatroom_sys_msg(room_id, f"（「{(t_recipient or '').strip()}」有重名，这笔 {t_val:g} 元没入账，"
+                                                     "请用转账按钮选人）", asyncio.Queue())
                     continue
-                # 判断收款人：匹配 Aion 名字则进 Aion 钱包，否则默认 Connor 钱包
-                recipient_stripped = (t_recipient or "").strip()
-                is_aion = recipient_stripped and recipient_stripped == ai_name
-                if is_aion:
+                if payee in _WALLET_SEATS:  # 座位钱包
+                    from routes.seat_wallet import credit_from_user
+                    await credit_from_user(payee, t_val, f"用户转账给{_name_for_identity(payee)} {t_val}元")
+                    print(f"[SEAT_WALLET] 用户转账给{payee}: {t_val}元")
+                    continue
+                if payee == "aion":
                     # Aion 钱包
                     async with get_db() as t_db:
                         t_now = time.time()
@@ -3837,17 +3841,25 @@ async def _room_seat(room_id: str) -> str:
     return row[1] if row and row[0] == "seat_1v1" and row[1] in SEATS else ""
 
 
-def _transfer_seat(recipient: str | None, room_seat: str, ai_name: str, connor_name: str) -> str:
-    """小猫这笔转账该进哪位座位的钱包：点了座位名字的给那位；座位私聊里没点名（或点的不是小克 / Lucien）给这位座位；
-    其余（给小克 / Lucien、群里没点名）返回空串，走原来的钱包。"""
-    from routes.seat_wallet import SEATS
+_TRANSFER_ID_SUFFIX = re.compile(r"#(aion|connor|ai[3-6])$")
+
+
+def _transfer_recipient(recipient: str | None, room_seat: str, names: dict[str, str]) -> str:
+    """小猫这笔转账给谁：返回 aion / connor / ai3～ai6，手写名字有重名时返回 "ambiguous"（不转）。
+    - 转账按钮写的是「名字#身份」，按身份认，重名也不会转错；
+    - 手写名字：只有一个人叫这个名字就给 TA，有重名就不转；
+    - 没点名或名字不认识：座位私聊里给这位座位，其余照旧给 Lucien。"""
     named = (recipient or "").strip()
-    by_name = {_name_for_identity(a): a for a in SEATS}
-    if named in by_name:
-        return by_name[named]
-    if room_seat and named not in (ai_name, connor_name):
-        return room_seat
-    return ""
+    tagged = _TRANSFER_ID_SUFFIX.search(named)
+    if tagged:
+        return tagged.group(1)
+    if named:
+        ids = [key for key, value in names.items() if value == named]
+        if len(ids) > 1:
+            return "ambiguous"
+        if ids:
+            return ids[0]
+    return room_seat or "connor"
 
 
 async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, msg_id: str,

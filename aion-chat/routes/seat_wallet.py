@@ -59,7 +59,7 @@ async def pay_user(actor: str, amount: float, description: str) -> bool:
         return False
     async with get_db() as db:
         await db.execute("BEGIN IMMEDIATE")
-        if await _balance(db, actor) < amount:
+        if round(await _balance(db, actor) * 100) < round(amount * 100):  # 按分比较，0.3-0.1 还能转 0.2
             await db.commit()
             return False
         await db.execute(

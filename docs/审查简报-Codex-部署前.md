@@ -415,3 +415,11 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 
 - `crOpenTransferDialog`（非座位私聊）：每次打开先删掉上次加的座位按钮（`data-seat`），再按 `crSeats` 里已启用的座位各加一个按钮（`data-target=座位`）；`crSwitchTransferTarget` 按 `data-target` 统一切换高亮，标题用 `crName`；确认时写成 `[转账给<座位名>：n元]`，服务端按第 41 节 `_transfer_seat` 点名路由进座位钱包。小克 / Lucien 两个按钮补 `data-target`。按钮容器 `flex-wrap: wrap`。
 - 测试 `test_seat_wallet.py` 新增前端核对 1 项（共 7 项）。
+
+## 43. 94ce633 / 061c4ee / 9b77cba 审查修复（M1–M3、L1）
+
+- **M1 双击座位头像**：`chatroom.js` 的 `AionPat.bind` 上下文 `names` 加入 `crSeats` 里的所有座位（`crName`），`pat.js` 能找到座位名字、打开拍拍窗。
+- **M2 AI 自由文本拍拍的范围**：`save_pat` 对 `PatTextRequest`：正文里「」中出现的名字，若是家里人（`_pat_names` 里有，含重名的多个身份），这些身份至少有一个必须在当前聊天的参与者里，否则 400；不认识的名字当物件放行。对小克 / Lucien 同样生效（例：Lucien 私聊里拍「小克」现被拒）。
+- **M3 重名**：转账按钮写成 `[转账给<名字>#<身份>：n元]`（小克 / Lucien / 座位都带），转账卡片显示时去掉 `#身份`。服务端 `_transfer_recipient(收款人, 房间座位, 名字表)` 取代 `_transfer_seat`：带 `#身份` 就按身份；手写名字唯一对应一人才给 TA，**重名返回 ambiguous → 不入账**，房间里说明「有重名，没入账，请用转账按钮选人」；没点名或名字不认识：座位私聊给这位座位，其余照旧给 Lucien。发送处理按返回身份分到座位 / 小克 / Lucien 钱包。
+- **L1**：`pay_user` 余额比较按分（`round(x*100)`）。
+- 测试：`test_seat_wallet.py`（收款路由改为新函数、重名按身份 / 手写重名不转、0.30-0.10 还能转 0.20、卡片隐藏身份）、`test_seat_pat.py`（AI 拍不在场的人被拒、群里可拍、物件放行、双击上下文含座位）。相关测试与改动前相同（均为既有失败）。

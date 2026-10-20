@@ -174,7 +174,10 @@ window.AionPat?.bind({
   container: document.getElementById('messages'),
   getContext: () => ({
     scope: 'chatroom', source_id: currentRoom?.id,
-    names: { user: crName('user'), aion: crName('aion'), connor: crName('connor') },
+    names: {
+      user: crName('user'), aion: crName('aion'), connor: crName('connor'),
+      ...Object.fromEntries(Object.keys(crSeats).map(id => [id, crName(id)])),  // 座位（狗蛋等）也能被双击拍
+    },
   }),
   onSent: message => {
     if (message.room_id !== currentRoom?.id) return;
@@ -6322,7 +6325,7 @@ function renderTransferCards(html) {
     const val = parseFloat(amount);
     const isNeg = val < 0;
     const absVal = Math.abs(val);
-    const targetName = recipient ? recipient.trim() : '';
+    const targetName = recipient ? recipient.trim().replace(/#(aion|connor|ai[3-6])$/, '') : '';
     if (isNeg) {
       return `<div class="transfer-card deduct"><div class="transfer-card-icon-wrap"><svg viewBox="0 0 40 40" width="28" height="28"><circle cx="20" cy="20" r="18" fill="none" stroke="#fff" stroke-width="2.5"/><line x1="14" y1="14" x2="26" y2="26" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="26" y1="14" x2="14" y2="26" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg></div><div class="transfer-card-body"><div class="transfer-card-amount">¥${absVal}</div><div class="transfer-card-desc">钱包扣除${targetName ? '（' + targetName + '）' : ''}</div></div><div class="transfer-card-footer">扣除</div></div>`;
     } else {
@@ -7036,7 +7039,7 @@ function crConfirmTransfer() {
   const n = Number(val);
   const targetName = crTransferTarget === 'aion' ? crAiName
     : (crTransferTarget === 'connor' ? crConnorName : crName(crTransferTarget));
-  const tag = `[转账给${targetName}：${n}元]`;
+  const tag = `[转账给${targetName}#${crTransferTarget}：${n}元]`;  // #身份：重名也不会转错，卡片上不显示
   const cur = inputEl.value;
   inputEl.value = cur ? cur + ' ' + tag : tag;
   resizeInput();

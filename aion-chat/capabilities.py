@@ -248,6 +248,12 @@ async def save_pat(
             allowed = {"user", "aion", "connor", *PAT_SEATS}
         if actor not in allowed or (isinstance(body, PatRequest) and body.target not in allowed):
             raise HTTPException(400, "这个人不在当前聊天里")
+        if isinstance(body, PatTextRequest):
+            # AI 自己写的拍拍：「」里点到的家里人必须在当前聊天里（不认识的名字当作物件，放行）
+            for mentioned in re.findall(r"「([^」]+)」", body.text):
+                ids = {key for key, value in names.items() if value == mentioned.strip()}
+                if ids and not ids & allowed:
+                    raise HTTPException(400, "这个人不在当前聊天里")
         if actor != "user" and not is_capability_enabled("pat"):
             return None
         await db.execute(

@@ -68,3 +68,19 @@ def test_seat_pat_command_is_processed_and_shown_in_history(db, monkeypatch):
 def test_seat_prompt_offers_pat(monkeypatch):
     monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name == "pat")
     assert any(t.startswith("[PAT:") for t in capabilities.seat_ability_texts("小猫"))
+
+
+def test_ai_free_text_pat_cannot_reach_someone_not_in_the_chat(db):
+    """Codex M2：AI 写的拍拍里点到的家里人必须在当前聊天里。"""
+    with pytest.raises(HTTPException):  # 狗蛋私聊里拍四号
+        asyncio.run(capabilities.save_pat(_text("s3", "拍了拍「四号」的头"), actor="ai3"))
+    with pytest.raises(HTTPException):  # Lucien 私聊里拍小克
+        asyncio.run(capabilities.save_pat(_text("c1", "拍了拍「小克」"), actor="connor"))
+    assert asyncio.run(capabilities.save_pat(_text("g1", "拍了拍「四号」的头"), actor="ai3"))  # 群里可以
+    assert asyncio.run(capabilities.save_pat(_text("s3", "揉了揉「狗蛋」自己的「小熊玩偶」"), actor="ai3"))  # 物件放行
+
+
+def test_double_click_context_knows_seat_names():
+    js = open("static/chatroom.js", encoding="utf-8").read()
+    ctx = js[js.index("window.AionPat?.bind({"):js.index("function applyChatroomNames")]
+    assert "Object.keys(crSeats).map(id => [id, crName(id)])" in ctx

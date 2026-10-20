@@ -54,14 +54,34 @@ def test_wallet_api_only_for_seats(db):
 
 
 def test_user_transfer_goes_to_the_right_wallet(db):
-    route = chatroom_routes._transfer_seat
+    names = {"aion": "小克", "connor": "Lucien", "ai3": "狗蛋", "ai4": "四号"}
+    route = lambda r, seat="": chatroom_routes._transfer_recipient(r, seat, names)  # noqa: E731
     assert asyncio.run(chatroom_routes._room_seat("s3")) == "ai3"
     assert asyncio.run(chatroom_routes._room_seat("g1")) == ""
-    assert route("", "ai3", "小克", "Lucien") == "ai3"        # 狗蛋私聊里没点名 → 狗蛋（以前会进 Lucien 的钱包）
-    assert route("狗蛋", "", "小克", "Lucien") == "ai3"       # 群里点名狗蛋 → 狗蛋
-    assert route("小克", "ai3", "小克", "Lucien") == ""       # 在狗蛋私聊里点名小克 → 小克的钱包
-    assert route("", "", "小克", "Lucien") == ""              # 群里没点名 → 照旧（Lucien）
-    assert route("四号", "ai3", "小克", "Lucien") == "ai4"
+    assert route("", "ai3") == "ai3"            # 狗蛋私聊里没点名 → 狗蛋（以前会进 Lucien 的钱包）
+    assert route("狗蛋") == "ai3"               # 群里点名狗蛋 → 狗蛋
+    assert route("小克", "ai3") == "aion"       # 在狗蛋私聊里点名小克 → 小克
+    assert route("") == "connor"                # 群里没点名 → 照旧 Lucien
+    assert route("不认识的人") == "connor"
+
+
+def test_duplicate_names_never_send_money_to_the_wrong_one(db):
+    """Codex M3：同名时按按钮带的身份认；手写重名的名字就不转。"""
+    names = {"aion": "小克", "connor": "Lucien", "ai3": "宝宝", "ai4": "宝宝", "ai5": "小克"}
+    route = lambda r, seat="": chatroom_routes._transfer_recipient(r, seat, names)  # noqa: E731
+    assert route("宝宝#ai3") == "ai3" and route("宝宝#ai4") == "ai4"
+    assert route("小克#aion") == "aion" and route("小克#ai5") == "ai5"
+    assert route("宝宝") == "ambiguous" and route("小克") == "ambiguous"
+
+
+def test_small_amounts_are_compared_in_cents(db):
+    """Codex L1：存 0.30、转 0.10 后还能再转 0.20。"""
+    async def go():
+        await seat_wallet.credit_from_user("ai3", 0.30, "x")
+        assert await seat_wallet.pay_user("ai3", 0.10, "a")
+        assert await seat_wallet.pay_user("ai3", 0.20, "b")
+        assert not await seat_wallet.pay_user("ai3", 0.01, "c")
+    asyncio.run(go())
 
 
 def test_seat_transfer_command_respects_balance(db, monkeypatch):
@@ -105,3 +125,10 @@ def test_group_transfer_dialog_has_a_button_per_enabled_seat():
     confirm = js[js.index("function crConfirmTransfer"):js.index("async function crOpenWalletPanel")]
     assert "crName(crTransferTarget)" in confirm  # 选了狗蛋就写成 [转账给狗蛋：n元]
     assert "flex-wrap: wrap" in open("static/chatroom.css", encoding="utf-8").read()
+
+
+def test_transfer_tag_carries_the_id_but_the_card_hides_it():
+    js = open("static/chatroom.js", encoding="utf-8").read()
+    assert "#${crTransferTarget}：${n}元]" in js
+    render = js[js.index("function renderTransferCards"):js.index("function renderTransferCards") + 600]
+    assert ".replace(/#(aion|connor|ai[3-6])$/, '')" in render
