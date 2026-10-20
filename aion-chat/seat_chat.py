@@ -173,6 +173,14 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "assistant", "content": "明白了。"},
     ]
     abilities = _ability_lines(user_name, group)
+    if is_capability_enabled("transfer"):  # 转账要带上 TA 自己钱包的余额
+        try:
+            from routes.seat_wallet import get_seat_balance
+            balance = await get_seat_balance(actor_id)
+            abilities.append(f"[转账：n元] — 给{user_name}转账（n为正整数），会从你自己的钱包余额中扣除。"
+                             f"你的钱包当前余额：{balance:.2f}元。余额不足时不要转账，系统也不会转。")
+        except Exception:
+            pass
     if abilities:
         messages += [
             {"role": "user", "content": "[你能用的指令]\n" + "\n\n".join(abilities)},

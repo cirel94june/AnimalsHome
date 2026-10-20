@@ -402,3 +402,11 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 顺带：第一批在 `_process_chatroom_commands` 里给 Lucien 私聊加的「去群里」检查原本对每条回复都查一次房间类型，改为回复里真有 `[去群里：]` 才查（`test_pat.py` 因此在无房间表的环境下恢复通过；线上无行为变化）。
 - 测试 `test_seat_pat.py` 4 项：座位在家里群 / 自己私聊能拍，别的座位私聊和 Lucien 私聊不能；小猫能拍座位，座位私聊里不能拍不在场的人；座位指令处理与历史还原；座位提示词含拍拍。相关测试与改动前相同（均为既有失败）。
 - 转账（座位钱包）单独做，见下一节。
+
+## 41. 狗蛋补能力第三批第三段（下）：座位钱包
+
+- 新模块 `routes/seat_wallet.py`（已在 main.py 注册）：账记在 `bookkeeping`，record_type `seat_wallet_user:<座位>`（小猫转入 / 扣除）与 `seat_wallet_ai:<座位>`（TA 转给小猫，负数）。`credit_from_user`、`pay_user`（`BEGIN IMMEDIATE` 内查余额、够才插入，不够返回 False）、`get_seat_balance`；接口 `GET /api/seat-wallet/{座位}/balance`、`/transactions`（只认 ai3～ai6，其他 404；limit 1～200）。变动广播 `seat_wallet_update`。
+- **修 bug**：小猫在座位私聊里发 `[转账：n元]`，原来默认进 Lucien 的钱包。`_room_seat(room_id)` + `_transfer_seat(收款人, 房间座位, 小克名, Lucien 名)`：点名座位 → 那位座位；座位私聊里没点名或点的不是小克 / Lucien → 这位座位；其余照旧走小克 / Lucien 钱包。
+- 座位转出：`_process_seat_commands` 解析 `[转账：n元]`（开关 transfer）→ `pay_user`；成功保留标签（前端照旧显示转账卡片），余额不够或开关关着就去掉标签，前者在房间说明「余额不够，没转成」。座位提示词显示 TA 自己钱包的余额。
+- 前端 `chatroom.js`：座位私聊里「转账」只转给这位座位（隐藏小克 / Lucien 切换），「钱包」面板显示这位座位的余额和记录；收到 `seat_wallet_update` 时刷新。家里群的转账弹窗仍只有小克 / Lucien 两个按钮（给座位转账可手写 `[转账给狗蛋：n元]`）。
+- 测试 `test_seat_wallet.py` 6 项：各自余额、不能透支、接口只认座位、收款路由（含原 bug 场景）、座位转出余额判断与标签保留、提示词余额、前端指向。相关测试与改动前相同（均为既有失败）。

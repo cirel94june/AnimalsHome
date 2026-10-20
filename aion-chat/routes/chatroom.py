@@ -3377,9 +3377,16 @@ async def send_message(room_id: str, body: MsgSend):
     if body.content:
         user_transfer_matches = TRANSFER_CMD_PATTERN.findall(body.content)
         _, ai_name, connor_name = get_chatroom_names()
+        room_seat = await _room_seat(room_id) if user_transfer_matches else ""
         for t_recipient, t_amount_str in user_transfer_matches:
             try:
                 t_val = float(t_amount_str)
+                _seat = _transfer_seat(t_recipient, room_seat, ai_name, connor_name)
+                if _seat:  # 座位钱包：座位私聊里默认给 TA；点了座位名字的给那位
+                    from routes.seat_wallet import credit_from_user
+                    await credit_from_user(_seat, t_val, f"用户转账给{_name_for_identity(_seat)} {t_val}元")
+                    print(f"[SEAT_WALLET] 用户转账给{_seat}: {t_val}元")
+                    continue
                 # 判断收款人：匹配 Aion 名字则进 Aion 钱包，否则默认 Connor 钱包
                 recipient_stripped = (t_recipient or "").strip()
                 is_aion = recipient_stripped and recipient_stripped == ai_name
@@ -3821,6 +3828,28 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
+async def _room_seat(room_id: str) -> str:
+    """这个房间如果是某位座位的私聊，返回那位座位；否则空串。"""
+    from routes.seat_wallet import SEATS
+    async with get_db() as db:
+        cur = await db.execute("SELECT type, actor FROM chatroom_rooms WHERE id=?", (room_id,))
+        row = await cur.fetchone()
+    return row[1] if row and row[0] == "seat_1v1" and row[1] in SEATS else ""
+
+
+def _transfer_seat(recipient: str | None, room_seat: str, ai_name: str, connor_name: str) -> str:
+    """小猫这笔转账该进哪位座位的钱包：点了座位名字的给那位；座位私聊里没点名（或点的不是小克 / Lucien）给这位座位；
+    其余（给小克 / Lucien、群里没点名）返回空串，走原来的钱包。"""
+    from routes.seat_wallet import SEATS
+    named = (recipient or "").strip()
+    by_name = {_name_for_identity(a): a for a in SEATS}
+    if named in by_name:
+        return by_name[named]
+    if room_seat and named not in (ai_name, connor_name):
+        return room_seat
+    return ""
+
+
 async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, msg_id: str,
                                  _q: asyncio.Queue) -> tuple[str, dict]:
     """座位 3～6 回复里的聊天内指令（第二批）：点歌、许愿当场做；自拍 / 画画、联网搜索记下来，回复存好后再做。
@@ -3885,6 +3914,24 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
             await _chatroom_sys_msg(room_id, format_web_system_message(label, web_search_matches, web_extract_matches),
                                     _q, after_msg_id=msg_id)
             triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
+
+    # ── 转账（第三批）：从 TA 自己的钱包扣，余额不够就不转 ──
+    for t_match in list(TRANSFER_CMD_PATTERN.finditer(full_text)):
+        try:
+            t_val = float(t_match.group(2))
+        except (TypeError, ValueError):
+            t_val = 0
+        ok = False
+        if t_val > 0 and is_capability_enabled("transfer"):
+            from routes.seat_wallet import pay_user
+            user_name = get_chatroom_names()[0]
+            ok = await pay_user(actor_id, t_val, f"{label}转账给{user_name} {t_val:g}元")
+            if not ok:
+                await _chatroom_sys_msg(room_id, f"（{label}的钱包余额不够，这笔 {t_val:g} 元没转成）", _q, after_msg_id=msg_id)
+        if ok:
+            triggered["transfer"] = True  # 留着标签：前端据此显示转账卡片
+        else:
+            full_text = full_text.replace(t_match.group(0), "", 1)
 
     # ── 拍一拍（第三批）：发起者是这位座位；私聊只能拍小猫或自己，群里可以拍家里人 ──
     async def _pat_saved(message):

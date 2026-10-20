@@ -5562,7 +5562,7 @@ function connectWS() {
       }
 
       // Connor 钱包余额变动 → 自动刷新钱包面板
-      if (data.type === 'connor_wallet_update') {
+      if (data.type === 'connor_wallet_update' || data.type === 'seat_wallet_update') {
         if (document.getElementById('crWalletPanelOverlay').classList.contains('show')) {
           crOpenWalletPanel();
         }
@@ -6985,6 +6985,16 @@ function crCloseWhisper() { document.getElementById('crWhisperModal').classList.
 let crTransferTarget = 'connor'; // 'connor' | 'aion'
 
 function crOpenTransferDialog() {
+  const seatRoom = currentRoom?.type === 'seat_1v1';
+  document.querySelector('.cr-transfer-target-wrap').style.display = seatRoom ? 'none' : '';
+  if (seatRoom) {  // 座位私聊：只能转给这位座位
+    crTransferTarget = currentRoom.actor;
+    document.getElementById('crTransferDialogTitle').textContent = `给【${crName(currentRoom.actor)}】转账`;
+    document.getElementById('crTransferAmountInput').value = '';
+    document.getElementById('crTransferDialogOverlay').classList.add('show');
+    setTimeout(() => document.getElementById('crTransferAmountInput').focus(), 100);
+    return;
+  }
   crTransferTarget = 'connor';
   document.getElementById('crTransferTargetConnor').textContent = crConnorName;
   document.getElementById('crTransferTargetAion').textContent = crAiName;
@@ -7012,7 +7022,8 @@ function crConfirmTransfer() {
   const val = document.getElementById('crTransferAmountInput').value.trim();
   if (!val || isNaN(Number(val)) || Number(val) === 0) return;
   const n = Number(val);
-  const targetName = crTransferTarget === 'aion' ? crAiName : crConnorName;
+  const targetName = crTransferTarget === 'aion' ? crAiName
+    : (crTransferTarget === 'connor' ? crConnorName : crName(crTransferTarget));
   const tag = `[转账给${targetName}：${n}元]`;
   const cur = inputEl.value;
   inputEl.value = cur ? cur + ' ' + tag : tag;
@@ -7024,10 +7035,13 @@ function crConfirmTransfer() {
 async function crOpenWalletPanel() {
   document.getElementById('crWalletPanelOverlay').classList.add('show');
   closeSidebar();
+  const seat = currentRoom?.type === 'seat_1v1' ? currentRoom.actor : '';  // 座位私聊看 TA 自己的钱包
+  const walletApi = seat ? `/api/seat-wallet/${encodeURIComponent(seat)}` : '/api/connor-wallet';
+  const walletOwner = seat ? crName(seat) : crConnorName;
   try {
     const [balRes, txRes] = await Promise.all([
-      fetch('/api/connor-wallet/balance').then(r => r.json()),
-      fetch('/api/connor-wallet/transactions?limit=50').then(r => r.json())
+      fetch(`${walletApi}/balance`).then(r => r.json()),
+      fetch(`${walletApi}/transactions?limit=50`).then(r => r.json())
     ]);
     document.getElementById('crWalletBalanceValue').textContent = `¥${(balRes.balance || 0).toFixed(2)}`;
     const list = document.getElementById('crWalletTxList');
@@ -7035,13 +7049,13 @@ async function crOpenWalletPanel() {
       list.innerHTML = '<div class="wallet-tx-empty">暂无转账记录</div>';
     } else {
       list.innerHTML = txRes.map(tx => {
-        const isAi = tx.record_type === 'connor_wallet_ai';
+        const isAi = tx.record_type === 'connor_wallet_ai' || String(tx.record_type || '').startsWith('seat_wallet_ai:');
         const d = new Date(tx.created_at * 1000);
         const timeStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         const sign = tx.amount >= 0 ? '+' : '';
         const cls = tx.amount >= 0 ? 'positive' : 'negative';
         const uName = '用户';
-        let desc = tx.description || (isAi ? `${crConnorName}转账` : `${uName}转账`);
+        let desc = tx.description || (isAi ? `${walletOwner}转账` : `${uName}转账`);
         return `<div class="wallet-tx-item"><div><div class="wallet-tx-desc">${esc(desc)}</div><div class="wallet-tx-time">${timeStr}</div></div><div class="wallet-tx-amount ${cls}">${sign}${tx.amount.toFixed(2)}</div></div>`;
       }).join('');
     }

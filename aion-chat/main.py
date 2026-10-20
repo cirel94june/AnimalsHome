@@ -71,6 +71,7 @@ from routes import doudizhu as doudizhu_routes
 from routes import seeky as seeky_routes
 from routes import wallet as wallet_routes
 from routes import connor_wallet as connor_wallet_routes
+from routes import seat_wallet as seat_wallet_routes
 from routes import health as health_routes
 from routes import band_commands as band_commands_routes
 from routes import phone_screen as phone_screen_routes
@@ -369,6 +370,7 @@ except Exception as exc:
 app.include_router(seeky_routes.router)
 app.include_router(wallet_routes.router)
 app.include_router(connor_wallet_routes.router)
+app.include_router(seat_wallet_routes.router)
 app.include_router(health_routes.router)
 app.include_router(band_commands_routes.router)
 app.include_router(phone_screen_routes.router)
