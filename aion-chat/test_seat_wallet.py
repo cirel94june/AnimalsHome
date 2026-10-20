@@ -132,3 +132,17 @@ def test_transfer_tag_carries_the_id_but_the_card_hides_it():
     assert "#${crTransferTarget}：${n}元]" in js
     render = js[js.index("function renderTransferCards"):js.index("function renderTransferCards") + 600]
     assert ".replace(/#(aion|connor|ai[3-6])$/, '')" in render
+
+
+def test_sub_cent_amounts_are_neither_paid_nor_credited(db):
+    """Codex 复审 Low：比较和扣款用同一个按分的金额；0.004 元这种不到一分的不转、不记。"""
+    async def go():
+        assert not await seat_wallet.pay_user("ai3", 0.004, "x")
+        await seat_wallet.credit_from_user("ai3", 0.004, "x")
+        await seat_wallet.credit_from_user("ai3", 1.005, "x")  # 记成整分
+        assert await seat_wallet.pay_user("ai3", 0.999, "y")    # 按 1.00 扣
+        return await seat_wallet.get_seat_balance("ai3"), await seat_wallet.seat_transactions("ai3")
+    balance, txs = asyncio.run(go())
+    assert round(balance * 100) == seat_wallet._cents(1.005) - 100  # 入账按分取整，扣款按 1.00
+    assert all(abs(t["amount"] * 100 - round(t["amount"] * 100)) < 1e-6 for t in txs)  # 账上都是整分
+    assert len(txs) == 2  # 0.004 的转入、转出都没记

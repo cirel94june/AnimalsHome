@@ -423,3 +423,8 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **M3 重名**：转账按钮写成 `[转账给<名字>#<身份>：n元]`（小克 / Lucien / 座位都带），转账卡片显示时去掉 `#身份`。服务端 `_transfer_recipient(收款人, 房间座位, 名字表)` 取代 `_transfer_seat`：带 `#身份` 就按身份；手写名字唯一对应一人才给 TA，**重名返回 ambiguous → 不入账**，房间里说明「有重名，没入账，请用转账按钮选人」；没点名或名字不认识：座位私聊给这位座位，其余照旧给 Lucien。发送处理按返回身份分到座位 / 小克 / Lucien 钱包。
 - **L1**：`pay_user` 余额比较按分（`round(x*100)`）。
 - 测试：`test_seat_wallet.py`（收款路由改为新函数、重名按身份 / 手写重名不转、0.30-0.10 还能转 0.20、卡片隐藏身份）、`test_seat_pat.py`（AI 拍不在场的人被拒、群里可拍、物件放行、双击上下文含座位）。相关测试与改动前相同（均为既有失败）。
+
+## 44. 99ce1c7 已部署；复审 Low：钱包金额统一到分
+
+- `seat_wallet._cents(amount) = round(amount*100)`。`pay_user`：不到一分（≤0 分）直接拒绝；余额与金额都按分比较；扣款写 `-cents/100`。`credit_from_user`：按分取整后记账，0 分不记。比较和扣款用同一个金额。
+- 测试 `test_sub_cent_amounts_are_neither_paid_nor_credited`：0.004 元不转不记、1.005 入账按整分、0.999 按 1.00 扣、账上都是整分。`test_seat_wallet.py` 共 11 项通过。

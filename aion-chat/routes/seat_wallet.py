@@ -42,8 +42,17 @@ async def _broadcast(actor: str) -> None:
     await manager.broadcast({"type": "seat_wallet_update", "data": {"actor": actor}})
 
 
+def _cents(amount: float) -> int:
+    """金额统一到分：查余额、扣款、入账都用同一个数，0.004 这种不到一分的算 0。"""
+    return round(float(amount) * 100)
+
+
 async def credit_from_user(actor: str, amount: float, description: str) -> None:
-    """小猫给 TA 转账（负数是扣除，和小克 / Lucien 钱包一致）。"""
+    """小猫给 TA 转账（负数是扣除，和小克 / Lucien 钱包一致）。按分记账，不到一分的不记。"""
+    cents = _cents(amount)
+    if cents == 0:
+        return
+    amount = cents / 100
     now = time.time()
     async with get_db() as db:
         await db.execute(
@@ -55,16 +64,17 @@ async def credit_from_user(actor: str, amount: float, description: str) -> None:
 
 async def pay_user(actor: str, amount: float, description: str) -> bool:
     """TA 给小猫转账：余额够才扣，查余额和扣款在同一个写事务里；不够返回 False。"""
-    if amount <= 0:
+    cents = _cents(amount)
+    if cents <= 0:  # 不到一分的不转
         return False
     async with get_db() as db:
         await db.execute("BEGIN IMMEDIATE")
-        if round(await _balance(db, actor) * 100) < round(amount * 100):  # 按分比较，0.3-0.1 还能转 0.2
+        if _cents(await _balance(db, actor)) < cents:  # 按分比较，0.3-0.1 还能转 0.2
             await db.commit()
             return False
         await db.execute(
             "INSERT INTO bookkeeping (id, record_type, amount, description, created_at) VALUES (?,?,?,?,?)",
-            (f"swt_{time.time_ns()}", _types(actor)[1], -amount, description, time.time()))
+            (f"swt_{time.time_ns()}", _types(actor)[1], -cents / 100, description, time.time()))
         await db.commit()
     await _broadcast(actor)
     return True
