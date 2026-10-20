@@ -6998,6 +6998,18 @@ function crOpenTransferDialog() {
   crTransferTarget = 'connor';
   document.getElementById('crTransferTargetConnor').textContent = crConnorName;
   document.getElementById('crTransferTargetAion').textContent = crAiName;
+  // 已启用的座位（狗蛋等）也各有一个按钮；每次打开按最新名单重建
+  const btnBox = document.querySelector('.cr-transfer-target-btns');
+  btnBox.querySelectorAll('[data-seat]').forEach(b => b.remove());
+  Object.values(crSeats).filter(a => a.enabled).forEach(a => {
+    const b = document.createElement('button');
+    b.className = 'cr-transfer-target-btn';
+    b.dataset.target = a.id;
+    b.dataset.seat = '1';
+    b.textContent = crName(a.id);
+    b.onclick = () => crSwitchTransferTarget(a.id);
+    btnBox.appendChild(b);
+  });
   document.getElementById('crTransferTargetConnor').classList.add('active');
   document.getElementById('crTransferTargetAion').classList.remove('active');
   document.getElementById('crTransferDialogTitle').textContent = `给【${crConnorName}】转账`;
@@ -7008,10 +7020,10 @@ function crOpenTransferDialog() {
 
 function crSwitchTransferTarget(target) {
   crTransferTarget = target;
-  const name = target === 'aion' ? crAiName : crConnorName;
+  const name = target === 'aion' ? crAiName : (target === 'connor' ? crConnorName : crName(target));
   document.getElementById('crTransferDialogTitle').textContent = `给【${name}】转账`;
-  document.getElementById('crTransferTargetConnor').classList.toggle('active', target === 'connor');
-  document.getElementById('crTransferTargetAion').classList.toggle('active', target === 'aion');
+  document.querySelectorAll('.cr-transfer-target-btns .cr-transfer-target-btn')
+    .forEach(b => b.classList.toggle('active', b.dataset.target === target));
 }
 
 function crCloseTransferDialog() {

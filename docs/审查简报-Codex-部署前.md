@@ -410,3 +410,8 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 座位转出：`_process_seat_commands` 解析 `[转账：n元]`（开关 transfer）→ `pay_user`；成功保留标签（前端照旧显示转账卡片），余额不够或开关关着就去掉标签，前者在房间说明「余额不够，没转成」。座位提示词显示 TA 自己钱包的余额。
 - 前端 `chatroom.js`：座位私聊里「转账」只转给这位座位（隐藏小克 / Lucien 切换），「钱包」面板显示这位座位的余额和记录；收到 `seat_wallet_update` 时刷新。家里群的转账弹窗仍只有小克 / Lucien 两个按钮（给座位转账可手写 `[转账给狗蛋：n元]`）。
 - 测试 `test_seat_wallet.py` 6 项：各自余额、不能透支、接口只认座位、收款路由（含原 bug 场景）、座位转出余额判断与标签保留、提示词余额、前端指向。相关测试与改动前相同（均为既有失败）。
+
+## 42. 家里群转账弹窗加座位按钮
+
+- `crOpenTransferDialog`（非座位私聊）：每次打开先删掉上次加的座位按钮（`data-seat`），再按 `crSeats` 里已启用的座位各加一个按钮（`data-target=座位`）；`crSwitchTransferTarget` 按 `data-target` 统一切换高亮，标题用 `crName`；确认时写成 `[转账给<座位名>：n元]`，服务端按第 41 节 `_transfer_seat` 点名路由进座位钱包。小克 / Lucien 两个按钮补 `data-target`。按钮容器 `flex-wrap: wrap`。
+- 测试 `test_seat_wallet.py` 新增前端核对 1 项（共 7 项）。

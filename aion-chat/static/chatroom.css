@@ -2813,6 +2813,7 @@ body[data-theme="light"] #settingsOverlay .settings-panel { background: rgba(244
 }
 .cr-transfer-target-btns {
   display: flex;
+  flex-wrap: wrap;  /* 座位多了换行，不挤出屏幕 */
   gap: 8px;
 }
 .cr-transfer-target-btn {

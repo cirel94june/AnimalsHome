@@ -93,3 +93,15 @@ def test_seat_prompt_shows_its_own_balance(db, monkeypatch):
 def test_page_points_wallet_and_transfer_at_the_seat():
     js = open("static/chatroom.js", encoding="utf-8").read()
     assert "/api/seat-wallet/" in js and "currentRoom?.type === 'seat_1v1'" in js and "seat_wallet_update" in js
+
+
+def test_group_transfer_dialog_has_a_button_per_enabled_seat():
+    js = open("static/chatroom.js", encoding="utf-8").read()
+    open_dialog = js[js.index("function crOpenTransferDialog"):js.index("function crSwitchTransferTarget")]
+    assert "filter(a => a.enabled)" in open_dialog and "b.dataset.target = a.id" in open_dialog
+    assert "querySelectorAll('[data-seat]').forEach(b => b.remove())" in open_dialog  # 每次打开重建，不会越加越多
+    switch = js[js.index("function crSwitchTransferTarget"):js.index("function crCloseTransferDialog")]
+    assert "crName(target)" in switch and "b.dataset.target === target" in switch
+    confirm = js[js.index("function crConfirmTransfer"):js.index("async function crOpenWalletPanel")]
+    assert "crName(crTransferTarget)" in confirm  # 选了狗蛋就写成 [转账给狗蛋：n元]
+    assert "flex-wrap: wrap" in open("static/chatroom.css", encoding="utf-8").read()
