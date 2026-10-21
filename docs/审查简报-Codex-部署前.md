@@ -563,3 +563,13 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_camera_sentinel_dispatch.py`：原来的固定分工规则用例改写为新规则（名单、编号、不固定分工、建议人选、不出现内部名）。其余用例不变，全部通过。
   - 新文件 `test_wake_roster.py` 11 项：解析座位和多人、回退到建议人选、座位可作为固定设置、建议权重、名单只含准备好的座位且带上次被叫来的时间、叫座位时在私聊里带截图开口；定位方面有智能挑座位（提示词带规则、日志记录目标）、挑小克走原路径、固定模式不带规则、哨兵失败用建议人选、不叫时谁都不叫。
   - 相关 35 个测试文件：274 通过，2 个失败均为既有的 `test_sentinel_routes`。设置页内联脚本 `node --check` 通过。
+
+## 53. §50–52（c2dc985）审查修复（M1、M2）
+
+- **M1 加入座位后，小克 / Lucien 同群不再串行**：`_wake_core_targets` 的同群判断去掉 `len(ordered_actors) == 2`，只比较 aion 和 connor 的目标（都是同一个群）。同群时把这两位按 aion→connor 的顺序串行，作为一个任务，和各座位的私聊任务 `asyncio.gather` 并行；不同群时照旧全部并行。座位仍然只到自己的私聊。
+- **M2 共享生成器在等上下文之后没有重查座位**：`_generate_seat_reply` 在 `proceed_check` 之后、`ensure_model_unchanged` 和 `stream_ai` 之前（中间没有 await），调用 `_seat_still_ready(actor_id, model_key)`，要求仍然启用、有人设、当前所选模型等于开始时的 model_key。不满足就抛出「座位设置刚刚改动了…没有换人」，交给已有的失败处理（`_save_chatroom_reply_failure` 在房间里留「没能回复」记录），不调模型、不保存、不换人。所有调用方（聊天、闹铃、主动陪伴、定时监督、监控 / 定位唤醒）都会经过这次检查。
+- 测试：
+  - `test_wake_roster.py` +4：三种叫人顺序（含 ai4），都满足 aion 结束后 connor 才开始、座位不排在两位后面；对照组是两位在不同群时并行。
+  - `test_seat_proactive.py` +2：等上下文期间停用座位或改选模型，模型没被调用、没保存、留下失败记录。
+  - 拿掉两个修复后其中 5 项失败。
+  - 座位与叫人相关的 7 个文件共 95 项通过。相关 54 个文件中，失败的都是既有失败（chatroom 前端 ×5、sentinel_routes ×2）。`test_seat_chat::…line_removed…` 在改用统一失败记录后通过。

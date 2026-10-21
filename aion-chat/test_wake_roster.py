@@ -167,3 +167,49 @@ def test_location_no_call_wakes_nobody(location_env):
     location_env.core_location.assert_not_called()
     location_env.wake.assert_not_called()
     assert location_env.logs[-1]["final_wake_targets"] == []
+
+
+@pytest.mark.parametrize("asked", [["aion", "connor", "ai3"], ["ai3", "connor", "aion"], ["connor", "ai3", "aion", "ai4"]])
+def test_main_pair_in_one_group_stays_in_order_even_with_seats(asked):
+    """§52 复审 M1：一起叫了座位，小克 / Lucien 在同一个群里仍然先后说；座位在自己私聊里并行。"""
+    monitor = camera.CameraMonitor()
+    events = []
+
+    async def resolve(actor):
+        if actor in ("aion", "connor"):
+            return {"type": "chatroom", "room_id": "g1", "room_type": "group"}
+        return {"type": "chatroom", "room_id": f"{actor}-private", "room_type": "seat_1v1"}
+
+    async def wake(actor, target, *args, **kwargs):
+        events.append(f"{actor}-start")
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        events.append(f"{actor}-end")
+
+    from unittest.mock import patch
+    with patch.object(monitor, "_resolve_actor_target", side_effect=resolve), \
+            patch.object(monitor, "_call_core_for_actor", side_effect=wake):
+        asyncio.run(monitor._wake_core_targets(asked, "trigger", 1.0))
+    assert events.index("aion-end") < events.index("connor-start")
+    seats = [a for a in asked if a.startswith("ai")]
+    for seat in seats:  # 座位没有排在两位主 AI 后面等
+        assert events.index(f"{seat}-start") < events.index("connor-end")
+
+
+def test_main_pair_in_different_rooms_runs_in_parallel():
+    monitor = camera.CameraMonitor()
+    events = []
+
+    async def resolve(actor):
+        return {"type": "chatroom", "room_id": f"{actor}-room", "room_type": "group"}
+
+    async def wake(actor, target, *args, **kwargs):
+        events.append(f"{actor}-start")
+        await asyncio.sleep(0)
+        events.append(f"{actor}-end")
+
+    from unittest.mock import patch
+    with patch.object(monitor, "_resolve_actor_target", side_effect=resolve), \
+            patch.object(monitor, "_call_core_for_actor", side_effect=wake):
+        asyncio.run(monitor._wake_core_targets(["aion", "connor"], "trigger", 1.0))
+    assert events.index("connor-start") < events.index("aion-end")

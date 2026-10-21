@@ -4250,6 +4250,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
             if proceed_check is not None and not proceed_check():  # 比如主动陪伴在等待期间被关掉
                 await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
                 return
+            if not _seat_still_ready(actor_id, model_key):  # 取记忆 / 上下文期间被停用、清空人设或改选了模型
+                raise RuntimeError("座位设置刚刚改动了（停用、人设或模型），这次没有回复，也没有换人")
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
             async for chunk in stream_ai(messages, model_key, usage_meta):
                 if not isinstance(chunk, str):

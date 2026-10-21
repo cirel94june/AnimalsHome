@@ -1811,9 +1811,10 @@ class CameraMonitor:
                     "error": str(exc),
                 }
 
-        same_group = (
-            len(ordered_actors) == 2
-            and targets.get("aion")
+        # 小克和 Lucien 被叫到同一个群时按固定顺序先后说（第二位能看到第一位刚说的）；
+        # 只看这两位的目标，和一起被叫来的座位（各自私聊）无关，座位与这一组并行
+        same_group = bool(
+            targets.get("aion")
             and targets.get("connor")
             and targets["aion"].get("type") == "chatroom"
             and targets["connor"].get("type") == "chatroom"
@@ -1822,8 +1823,11 @@ class CameraMonitor:
             and targets["aion"].get("room_id") == targets["connor"].get("room_id")
         )
         if same_group:
-            for actor in ordered_actors:
-                await wake_one(actor)
+            async def main_pair():
+                for actor in ("aion", "connor"):
+                    await wake_one(actor)
+            others = [actor for actor in ordered_actors if actor not in ("aion", "connor")]
+            await asyncio.gather(main_pair(), *(wake_one(actor) for actor in others))
         else:
             await asyncio.gather(*(wake_one(actor) for actor in ordered_actors))
         return results

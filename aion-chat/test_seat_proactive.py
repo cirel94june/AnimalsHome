@@ -226,3 +226,44 @@ def test_main_ai_still_speaks_when_switch_stays_on(db, monkeypatch):
     item, model_calls, consumed = _main_ai_monitor_setup(db, monkeypatch, "aion", "never")
     asyncio.run(schedule.ScheduleManager()._fire_monitor(item))
     assert model_calls == [1]
+
+
+@pytest.mark.parametrize("change", ["disabled", "reselected"])
+def test_seat_reply_stops_if_the_seat_changes_while_building_context(monkeypatch, change):
+    """§52 复审 M2：取记忆 / 上下文期间座位被停用或改选模型，不再用旧线路回复，房间里说明。"""
+    import seat_chat
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-m": {"provider": "custom_openai", "model": "m"},
+                                           "other-m": {"provider": "custom_openai", "model": "o"}})
+    state = {"ready": True, "model": "seat-m"}
+
+    def check_ready(actor):
+        if not state["ready"]:
+            raise seat_chat.SeatNotReady("off")
+        return {}, state["model"]
+    monkeypatch.setattr(seat_chat, "check_ready", check_ready)
+    monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[]))
+
+    async def build_context(*a, **k):
+        if change == "disabled":
+            state["ready"] = False
+        else:
+            state["model"] = "other-m"
+        return [{"role": "system", "content": "x"}]
+    monkeypatch.setattr(seat_chat, "build_context", build_context)
+    monkeypatch.setattr(seat_chat.actors, "display_name", lambda a: "狗蛋")
+    called = []
+
+    async def stream(*a, **k):
+        called.append(a[1] if len(a) > 1 else k.get("model_key"))
+        yield "嗨"
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    saved = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_msg", saved)
+    failure = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_save_chatroom_reply_failure", failure)
+    asyncio.run(chatroom_routes._generate_seat_reply("s3", {"actor": "ai3"}, [], asyncio.Queue(), 30, actor="ai3",
+                                                     extra_prompt="[监控唤醒]", extra_attachments=["/screenshots/x.jpg"]))
+    assert not called
+    saved.assert_not_called()
+    assert failure.await_args.args[1] == "ai3" and "改动" in failure.await_args.args[3]  # 留下「没能回复」，不换人
