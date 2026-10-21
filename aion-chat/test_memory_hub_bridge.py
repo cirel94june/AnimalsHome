@@ -625,3 +625,18 @@ def test_remember_skipped_without_hub_identity_or_when_writes_off(fake_hub, isol
     assert not bridge.can_remember("ai3") and _remember(items=[{"content": "x"}]) == []
     _write(isolated_config, enabled=True, url=fake_hub, actors={"ai3": "jasper"}, capture_enabled=False)
     assert _remember(items=[{"content": "x"}]) == [] and not CALLS
+
+
+def test_remember_outcome_tells_duplicate_from_full_queue_and_unavailable(isolated_config, monkeypatch):
+    _seat_hub(isolated_config, f"http://127.0.0.1:{_free_port()}/mcp")
+    monkeypatch.setattr(bridge, "_kick_drain", lambda: None)
+    outcome = {}
+    assert bridge.schedule_remember("ai3", [{"content": "小猫怕打雷"}], request_key="a", outcome=outcome) == ["小猫怕打雷"]
+    assert outcome == {"duplicate": 0, "failed": ""}
+    assert bridge.schedule_remember("ai3", [{"content": "小猫怕打雷！"}], request_key="b", outcome=outcome) == []
+    assert outcome == {"duplicate": 1, "failed": ""}  # 记过了：正常，不算失败
+    monkeypatch.setattr(bridge, "OUTBOX_MAX", 1)  # 队列里已有上面那条，满了
+    assert bridge.schedule_remember("ai3", [{"content": "小猫喜欢下雨"}], request_key="c", outcome=outcome) == []
+    assert outcome["failed"] == "full"
+    assert bridge.schedule_remember("ai4", [{"content": "x"}], request_key="d", outcome=outcome) == []
+    assert outcome["failed"] == "unavailable"  # ai4 没有 Hub 身份

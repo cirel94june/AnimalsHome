@@ -507,3 +507,13 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_proactive.py` +5：小克 / Lucien × 在准备阶段关、在进模型前一刻关（换掉 consume，先关再迭代真实 `content_stream`），模型都没被调用；开关一直开着的对照组正常调用。拿掉修复后其中 4 项失败。
   - `test_seat_memory.py` +5：`[梗]`、`梗：`、`【梗】` 三种写法从真实指令一路到真实 SQLite outbox 的 payload，内容是「梗：小猫是猫王」、分类保留、正文干净；提示词不再出现 `[梗]`；只写记忆的回复（新排上队 / 被去重两种）不调 `_save_chatroom_reply_failure`，以 `seat_done(message=None)` 结束。
   - 相关测试：313 通过、9 失败，其中 8 个为既有失败（同 §47），`test_memory_hub_bridge::test_slow_hub_times_out_without_blocking_chat` 是本机计时问题，拿掉本轮改动后同样失败。
+
+## 50. 4e2b598 已部署；复审 Low：记忆没记上时要提示
+
+- 2026-10-21 03:31 部署 99ce1c7 → 4e2b598（服务正常、日志无报错）。
+- `schedule_remember(..., outcome=None)`：返回值仍是「这次排上队的内容」；传入 dict 时填 `duplicate`（因记过而跳过的条数）和 `failed`：`""` / `unavailable`（Hub 没开或这位 AI 没有 Hub 身份）/ `full`（待补传队列满）/ `error`（落盘异常）。
+- 座位入口：有有效条目且 `failed` 非空时，在房间里显示「（狗蛋想记的事这次没记上，晚点可以再跟 TA 说一次）」；正常去重（`failed` 为空）保持静默。`triggered["memory"]` 不变，纯指令回复仍以 `seat_done(message=None)` 正常结束，不记成空回复失败。
+- 测试：
+  - `test_memory_hub_bridge.py` +1：新排上队、去重、队列满（`OUTBOX_MAX=1`）、无 Hub 身份四种情况的 outcome。
+  - `test_seat_memory.py` +3：full / error / unavailable 时显示「没记上」，去重时不提示；原有替身改为接受 `outcome`。
+  - 相关测试 211 通过，6 个失败均为既有失败（chatroom 前端缓存 / 移动端 ×5，`test_slow_hub` 本机计时）。

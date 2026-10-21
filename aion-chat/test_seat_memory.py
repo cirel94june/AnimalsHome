@@ -17,7 +17,7 @@ def room(monkeypatch):
     monkeypatch.setattr(chatroom_routes, "_name_for_identity", lambda a: "狗蛋")
     import config
     monkeypatch.setattr(config, "load_worldbook", lambda: {"user_name": "小猫"})
-    remember = MagicMock(side_effect=lambda actor, items, request_key: [i["content"] for i in items])
+    remember = MagicMock(side_effect=lambda actor, items, request_key, outcome=None: [i["content"] for i in items])
     monkeypatch.setattr(memory_hub_bridge, "schedule_remember", remember)
     return notes, remember
 
@@ -34,7 +34,7 @@ def test_seat_memory_goes_to_hub_with_speaker_subject_and_room(room, monkeypatch
                    user_text="记住哦，我喜欢芒果")
     assert text == "好，记下了"
     actor, items = remember.call_args.args
-    assert actor == "ai3" and remember.call_args.kwargs == {"request_key": "m1"}
+    assert actor == "ai3" and remember.call_args.kwargs["request_key"] == "m1"
     assert items == [
         {"content": "小猫喜欢吃芒果", "room": "preferences", "speaker_name": "小猫", "subject_name": "小猫",
          "importance": 0.75},
@@ -157,3 +157,27 @@ def test_memory_only_reply_ends_normally_not_as_failure(monkeypatch, queued):
     while not q.empty():
         events.append(q.get_nowait())
     assert {"type": "seat_done", "actor": "ai3", "message": None} in events
+
+
+@pytest.mark.parametrize("failed", ["full", "error", "unavailable"])
+def test_memory_not_saved_tells_the_room_but_duplicates_stay_quiet(room, monkeypatch, failed):
+    """4e2b598 复审 Low：队列满 / 落盘失败 / Hub 没开时提示「没记上」；正常去重不提示。"""
+    notes, remember = room
+    monkeypatch.setattr(chatroom_routes, "is_capability_enabled", lambda name: True)
+
+    def fake(actor, items, request_key, outcome=None):
+        outcome.update(duplicate=0, failed=failed)
+        return []
+    remember.side_effect = fake
+    text, triggered = _run("[MEMORY:小猫怕打雷]")
+    assert text == "" and triggered.get("memory")
+    assert [c.args[1] for c in notes.await_args_list] == ["（狗蛋想记的事这次没记上，晚点可以再跟 TA 说一次）"]
+
+    notes.reset_mock()
+
+    def dup(actor, items, request_key, outcome=None):
+        outcome.update(duplicate=1, failed="")
+        return []
+    remember.side_effect = dup
+    _run("[MEMORY:小猫怕打雷]")
+    notes.assert_not_called()

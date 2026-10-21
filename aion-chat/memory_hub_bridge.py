@@ -455,16 +455,24 @@ def can_remember(actor: str) -> bool:
     return _is_active(cfg) and bool(cfg.get("capture_enabled", True)) and bool(source_ai_for(actor, cfg))
 
 
-def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: str) -> list[str]:
+def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: str,
+                      outcome: dict[str, Any] | None = None) -> list[str]:
     """把 AI 明确要记的事放进 outbox，后台送到 Hub；返回这次真正排上队的内容。
+
+    outcome（可选）会被填上：duplicate = 因为记过而跳过的条数；failed = "" / "unavailable"（Hub 没开、
+    这位 AI 没有 Hub 身份）/ "full"（待补传队列满了）/ "error"（落盘失败）。调用方据此区分
+    「记过了，正常不提示」和「这次没记上，要告诉用户」。
 
     items：[{content, room, subject_name, speaker_name, importance}]。request_key 是这条回复的固定编号，
     每条的 client_request_id = aionshome-mem-<request_key>-<序号>，outbox 重发时 Hub 认得是同一条。
     一次最多 REMEMBER_MAX_PER_REPLY 条；同一件事 24 小时内（这次回复里或之前）只发一次。
     """
     global _dropped
+    result = outcome if outcome is not None else {}
+    result.update(duplicate=0, failed="")
     cfg = load_config()
     if not can_remember(actor):
+        result["failed"] = "unavailable"
         return []
     source_ai = source_ai_for(actor, cfg)
     platform = str(cfg.get("platform") or "aionshome")
@@ -482,11 +490,13 @@ def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: s
                     continue
                 if conn.execute("SELECT 1 FROM remembered WHERE source_ai=? AND digest=?",
                                 (source_ai, digest)).fetchone():
+                    result["duplicate"] += 1
                     continue
                 (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
                 if pending >= OUTBOX_MAX:
                     _dropped += 1
                     log.warning("[MemoryHub] 待补传队列已满（%s 条），这条记忆没有排上", OUTBOX_MAX)
+                    result["failed"] = "full"
                     break
                 room = str(item.get("room") or "").strip()
                 payload = {
@@ -507,6 +517,7 @@ def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: s
                 queued.append(content)
     except Exception as error:
         log.warning("[MemoryHub] 记忆写入待补传队列失败：%s", error)
+        result["failed"] = "error"
         return []
     if queued:
         _kick_drain()

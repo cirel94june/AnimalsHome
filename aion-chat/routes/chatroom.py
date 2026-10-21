@@ -3965,8 +3965,12 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
             items = _seat_memory_items(memory_matches, user_name, user_text)
             if items:  # 记过的事被去重、没新排上队也算处理过了，只写了记忆的回复不算失败
                 triggered["memory"] = True
-            for content in memory_hub_bridge.schedule_remember(actor_id, items, request_key=msg_id):
+            outcome: dict = {}
+            for content in memory_hub_bridge.schedule_remember(actor_id, items, request_key=msg_id, outcome=outcome):
                 await _chatroom_sys_msg(room_id, f"💾 {label}记住了：{content[:50]}", _q, after_msg_id=msg_id)
+            if items and outcome.get("failed"):  # 记过了不提示；队列满 / 落盘失败 / Hub 没开要让人知道
+                await _chatroom_sys_msg(room_id, f"（{label}想记的事这次没记上，晚点可以再跟 TA 说一次）", _q,
+                                        after_msg_id=msg_id)
 
     # ── 点歌 ──
     music_matches = MUSIC_CMD_PATTERN.findall(full_text)
