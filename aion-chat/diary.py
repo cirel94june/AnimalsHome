@@ -138,6 +138,55 @@ def normalize_diary_payload(data: dict[str, Any]) -> tuple[dict[str, str], Optio
     return diary, moment
 
 
+def build_diary_entry(
+    *,
+    author: str,
+    title: str,
+    content: str,
+    mood: str = "",
+    source_type: str = "",
+    source_ref: str = "",
+    source_start_ts: float | None = None,
+    source_end_ts: float | None = None,
+    now: float | None = None,
+) -> Optional[dict[str, Any]]:
+    """组装一篇日记（正文为空返回 None）。"""
+    content = (content or "").strip()
+    if not content:
+        return None
+    now = now or time.time()
+    return {
+        "id": f"di_{author}_{int(now * 1000)}",
+        "author": author,
+        "title": (title or "").strip(),
+        "content": content,
+        "mood": (mood or "").strip(),
+        "source_type": source_type or "",
+        "source_ref": source_ref or "",
+        "source_start_ts": source_start_ts,
+        "source_end_ts": source_end_ts,
+        "created_at": now,
+    }
+
+
+async def insert_diary_entry(db, entry: dict[str, Any]) -> None:
+    """在调用方的连接 / 事务里写入，不提交（方便和别的写入放进同一个事务）。"""
+    await db.execute(
+        "INSERT INTO diary_entries "
+        "(id, author, title, content, mood, source_type, source_ref, source_start_ts, source_end_ts, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            entry["id"], entry["author"], entry["title"], entry["content"],
+            entry["mood"], entry["source_type"], entry["source_ref"],
+            entry["source_start_ts"], entry["source_end_ts"], entry["created_at"],
+        ),
+    )
+
+
+async def broadcast_diary_entry(entry: dict[str, Any]) -> None:
+    await manager.broadcast({"type": "diary_new", "data": entry})
+
+
 async def save_diary_entry(
     *,
     author: str,
@@ -150,36 +199,16 @@ async def save_diary_entry(
     source_end_ts: float | None = None,
 ) -> Optional[dict[str, Any]]:
     """保存一篇 AI 日记，并广播给打开的日记本页面。"""
-    content = (content or "").strip()
-    if not content:
+    entry = build_diary_entry(
+        author=author, title=title, content=content, mood=mood, source_type=source_type,
+        source_ref=source_ref, source_start_ts=source_start_ts, source_end_ts=source_end_ts,
+    )
+    if entry is None:
         return None
-    now = time.time()
-    entry_id = f"di_{author}_{int(now * 1000)}"
-    entry = {
-        "id": entry_id,
-        "author": author,
-        "title": (title or "").strip(),
-        "content": content,
-        "mood": (mood or "").strip(),
-        "source_type": source_type or "",
-        "source_ref": source_ref or "",
-        "source_start_ts": source_start_ts,
-        "source_end_ts": source_end_ts,
-        "created_at": now,
-    }
     async with get_db() as db:
-        await db.execute(
-            "INSERT INTO diary_entries "
-            "(id, author, title, content, mood, source_type, source_ref, source_start_ts, source_end_ts, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                entry["id"], entry["author"], entry["title"], entry["content"],
-                entry["mood"], entry["source_type"], entry["source_ref"],
-                entry["source_start_ts"], entry["source_end_ts"], entry["created_at"],
-            ),
-        )
+        await insert_diary_entry(db, entry)
         await db.commit()
-    await manager.broadcast({"type": "diary_new", "data": entry})
+    await broadcast_diary_entry(entry)
     return entry
 
 

@@ -634,3 +634,17 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 开关和接口（非座位返回 404）；
   - 座位消息可以评分，她自己的消息不能评分。
   - 相关测试 205 通过，5 个失败均为既有失败（chatroom 前端）。
+
+## 57. §55（054d17f）座位日记审查修复（D1–D4）
+
+- **D1 空日记被当成成功**：先用 `diary.build_diary_entry` 组装日记，正文去掉空白后为空就返回 None。`{"diary": null}`、`{}`、只有空白、字符串只有空白，都和解析失败一样处理：计一次失败、锚点不动；连续 3 次后才跳过这一段。没有另外设计「模型主动不写」的状态（提示词要求一定写一篇）。
+- **D2 日记和锚点不在同一次提交**：`diary.py` 把 `save_diary_entry` 拆成 `build_diary_entry` / `insert_diary_entry(db, entry)`（只执行，不提交）/ `broadcast_diary_entry`。`save_diary_entry` 由这三步组成，小克 / Lucien 的行为不变。座位日记在同一个连接里 INSERT 日记并 upsert 锚点，然后一次 commit，提交之后才广播、发朋友圈、送礼。提交后在任何等待点停机，重启时这一段已经算写过，不会再写第二篇。
+- **D3 模型快照建立得太晚**：第一次 `check_ready` 之后马上 `model_snapshot`，中间没有 await，然后才读消息。生成前再 `check_ready`（模型键相同）+ `ensure_model_unchanged`，中间没有 await。这一步出任何问题都返回 `skip_not_ready`，不计失败次数（设置变了不算「写不出来」）。
+- **D4 积压记录全部读进内存**：
+  - `_pending_stretch` 只用聚合查询取锚点之后这一段的概况：条数、MIN/MAX 时间、她最后一句的时间，不读正文。
+  - `_recent_messages(anchor, last_ts)` 在 SQL 里 `created_at <= last_ts ORDER BY created_at DESC, rowid DESC LIMIT 80`，再反转为正序。
+  - 这一段的语义：从锚点之后到快照时的 last_ts，整段都算处理过（日记的 source 起止 = 整段的 MIN/MAX）；正文只用最近 80 条；成功后锚点推进到 last_ts。生成期间新来的消息时间晚于 last_ts，留给下一段。
+- 测试 `test_seat_diary.py`：
+  - 原用例改成真实写入 `diary_entries`，只替换广播。
+  - 新增 D1 四种空日记；D2 在广播时取消任务，结果库里 1 篇、锚点已推进，再跑一次时这一段不再写；D3 读消息期间改了线路的模型，结果是跳过、不调模型、不计失败；D4 300 条只读最近 80 条，提示词里没有更早的，日记起止按整段。
+  - 共 16 项通过；日记、总结、座位相关的 17 个文件共 157 项通过。

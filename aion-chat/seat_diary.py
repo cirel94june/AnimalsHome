@@ -29,31 +29,40 @@ def _anchor_key(seat: str) -> str:
     return f"seat_diary:{seat}"
 
 
-async def _read_new_messages(seat: str) -> tuple[float, list[dict]]:
+_SCOPE = (
+    "FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+    "WHERE m.created_at > ? AND m.sender != 'system' AND r.id NOT GLOB 'billiards_*' "
+    "AND (r.type = 'group' OR (r.type = 'seat_1v1' AND r.actor = ?)) "
+)
+
+
+async def _pending_stretch(seat: str) -> dict:
+    """锚点之后这一段的概况（只读条数和时间，不读正文）：条数、起止时间、她最后一句的时间。"""
     async with get_db() as db:
         cur = await db.execute("SELECT anchor_ts FROM chatroom_digest_anchors WHERE room_id=?", (_anchor_key(seat),))
         row = await cur.fetchone()
         anchor = float(row[0]) if row else 0.0
         cur = await db.execute(
-            "SELECT m.sender, m.content, m.created_at FROM chatroom_messages m "
-            "JOIN chatroom_rooms r ON r.id = m.room_id "
-            "WHERE m.created_at > ? AND m.sender != 'system' AND r.id NOT GLOB 'billiards_*' "
-            "AND (r.type = 'group' OR (r.type = 'seat_1v1' AND r.actor = ?)) "
-            "ORDER BY m.created_at ASC",
+            "SELECT COUNT(*), MIN(m.created_at), MAX(m.created_at), "
+            "MAX(CASE WHEN m.sender = 'user' THEN m.created_at END) " + _SCOPE,
             (anchor, seat),
         )
-        rows = await cur.fetchall()
-    return anchor, [{"sender": r[0], "content": r[1] or "", "created_at": float(r[2])} for r in rows]
+        count, first_ts, last_ts, last_user_ts = await cur.fetchone()
+    return {"anchor": anchor, "count": int(count or 0), "first_ts": first_ts, "last_ts": last_ts,
+            "last_user_ts": last_user_ts}
 
 
-async def _set_anchor(seat: str, ts: float) -> None:
+async def _recent_messages(seat: str, anchor: float, last_ts: float) -> list[dict]:
+    """这一段（锚点之后、到这次快照的 last_ts 为止）最近的 MAX_CONTEXT_MESSAGES 条，按时间正序。
+    在 SQL 里限条数，长时间积压也不会把整段正文读进内存。"""
     async with get_db() as db:
-        await db.execute(
-            "INSERT INTO chatroom_digest_anchors (room_id, anchor_ts) VALUES (?, ?) "
-            "ON CONFLICT(room_id) DO UPDATE SET anchor_ts=excluded.anchor_ts",
-            (_anchor_key(seat), ts),
+        cur = await db.execute(
+            "SELECT m.sender, m.content, m.created_at " + _SCOPE + "AND m.created_at <= ? "
+            "ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?",
+            (anchor, seat, last_ts, MAX_CONTEXT_MESSAGES),
         )
-        await db.commit()
+        rows = await cur.fetchall()
+    return [{"sender": r[0], "content": r[1] or "", "created_at": float(r[2])} for r in reversed(rows)]
 
 
 def _diary_prompt(name: str, user_name: str, context_text: str) -> str:
@@ -79,31 +88,53 @@ def _diary_prompt(name: str, user_name: str, context_text: str) -> str:
     )
 
 
+async def _skip_stretch(seat: str, last_ts: float) -> None:
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO chatroom_digest_anchors (room_id, anchor_ts) VALUES (?, ?) "
+            "ON CONFLICT(room_id) DO UPDATE SET anchor_ts=excluded.anchor_ts",
+            (_anchor_key(seat), last_ts),
+        )
+        await db.commit()
+
+
+def _count_failure(seat: str) -> bool:
+    """记一次写不出来；连续 MAX_FAILURES 次返回 True（这一段跳过）。"""
+    _failures[seat] = _failures.get(seat, 0) + 1
+    if _failures[seat] >= MAX_FAILURES:
+        _failures[seat] = 0
+        return True
+    return False
+
+
 async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
     """满足条件就写一篇；返回这次的结果（skip_* / written / failed），方便日志和测试。"""
     import seat_chat
     from config import ensure_model_unchanged, load_worldbook, model_snapshot
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
-    from diary import parse_diary_payload, normalize_diary_payload, publish_ai_moment, save_diary_entry
+    from diary import (
+        broadcast_diary_entry, build_diary_entry, insert_diary_entry, normalize_diary_payload,
+        parse_diary_payload, publish_ai_moment,
+    )
 
     now = now or time.time()
     try:
         _, model_key = seat_chat.check_ready(seat)
     except seat_chat.SeatNotReady:
         return "skip_not_ready"
-    _, msgs = await _read_new_messages(seat)
-    if len(msgs) < MIN_NEW_MESSAGES:
+    pinned = model_snapshot(model_key)  # 紧接着固定线路，和第一次等待之间不让出
+    stretch = await _pending_stretch(seat)
+    if stretch["count"] < MIN_NEW_MESSAGES:
         return "skip_too_few"
-    user_times = [m["created_at"] for m in msgs if m["sender"] == "user"]
-    if not user_times:
+    if not stretch["last_user_ts"]:
         return "skip_no_user"
-    if now - max(user_times) < QUIET_SECONDS:
+    if now - float(stretch["last_user_ts"]) < QUIET_SECONDS:
         return "skip_not_quiet"
+    last_ts = float(stretch["last_ts"])
+    recent = await _recent_messages(seat, stretch["anchor"], last_ts)
 
-    pinned = model_snapshot(model_key)
     user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
     name = seat_chat.actors.display_name(seat)
-    recent = msgs[-MAX_CONTEXT_MESSAGES:]
     context_text = "\n".join(
         f"【{seat_chat._speaker_name(m['sender'], user_name)}】{m['content']}" for m in recent if m["content"].strip()
     )
@@ -112,44 +143,52 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
         {"role": "assistant", "content": "收到，我会按照设定做自己。"},
         {"role": "user", "content": _diary_prompt(name, user_name, context_text)},
     ]
-    last_ts = msgs[-1]["created_at"]
-    raw = ""
+    # 开口前再确认一次：仍启用、有人设、所选模型和线路都没变；之后到发请求之间没有 await。
+    # 设置变了算跳过（下次再写），不算「写不出来」
     try:
-        # 开口前再确认一次：仍启用、有人设、所选模型没换；之后到发请求之间没有 await
         _, current = seat_chat.check_ready(seat)
         if current != model_key:
             return "skip_not_ready"
         ensure_model_unchanged(model_key, pinned)
+    except Exception:
+        return "skip_not_ready"
+    raw = ""
+    try:
         async with asyncio.timeout(300):
             async for chunk in stream_ai(messages, model_key):
                 if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
                     raw += chunk
-    except seat_chat.SeatNotReady:
-        return "skip_not_ready"
     except Exception as error:
         log.warning("[seat_diary] %s 生成日记失败：%s", seat, error)
         raw = ""
 
     data = parse_diary_payload(raw) if raw else None
-    if not data:
-        _failures[seat] = _failures.get(seat, 0) + 1
-        if _failures[seat] >= MAX_FAILURES:  # 这一段写不出来就跳过，下一段重新开始
-            _failures[seat] = 0
-            await _set_anchor(seat, last_ts)
-        return "failed"
-    _failures[seat] = 0
-    diary_entry, moment_entry = normalize_diary_payload(data)
-    await save_diary_entry(
+    diary_entry, moment_entry = normalize_diary_payload(data) if data else ({}, None)
+    entry = build_diary_entry(
         author=seat,
         title=diary_entry.get("title", ""),
-        content=diary_entry.get("content", ""),
+        content=str(diary_entry.get("content") or ""),
         mood=diary_entry.get("mood", ""),
         source_type="seat_digest",
         source_ref=seat,
-        source_start_ts=msgs[0]["created_at"],
+        source_start_ts=float(stretch["first_ts"]),
         source_end_ts=last_ts,
-    )
-    await _set_anchor(seat, last_ts)
+    ) if data else None
+    if entry is None:  # 解析不了，或者日记正文是空的：都算写不出来
+        if _count_failure(seat):  # 这一段连着写不出来就跳过，下一段重新开始
+            await _skip_stretch(seat, last_ts)
+        return "failed"
+    _failures[seat] = 0
+    # 日记和锚点在同一个事务里提交：要么都成功，要么都没有；中途停机重启不会给同一段写第二篇
+    async with get_db() as db:
+        await insert_diary_entry(db, entry)
+        await db.execute(
+            "INSERT INTO chatroom_digest_anchors (room_id, anchor_ts) VALUES (?, ?) "
+            "ON CONFLICT(room_id) DO UPDATE SET anchor_ts=excluded.anchor_ts",
+            (_anchor_key(seat), last_ts),
+        )
+        await db.commit()
+    await broadcast_diary_entry(entry)
 
     from capabilities import is_capability_enabled
     if moment_entry and moment_entry.get("content") and is_capability_enabled("moment"):
