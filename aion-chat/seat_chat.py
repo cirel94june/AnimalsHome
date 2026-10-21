@@ -199,6 +199,25 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
     return messages
 
 
+async def seat_target_room(actor_id: str) -> tuple[str, str]:
+    """座位主动找她时去哪：和小克一样去她最近说话的地方——最近在群里说话就在那个群，
+    最近在和 TA 私聊（或还没说过话）就去 TA 的私聊。别的座位私聊、Lucien 私聊、台球房不算。"""
+    from database import get_db
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT r.id, r.type FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE m.sender = 'user' AND r.id NOT GLOB 'billiards_*' "
+            "AND (r.type = 'group' OR (r.type = ? AND r.actor = ?)) "
+            "ORDER BY m.created_at DESC LIMIT 1",
+            (SEAT_ROOM_TYPE, actor_id),
+        )
+        row = await cur.fetchone()
+    if row and row[1] == "group":
+        return row[0], "group"
+    import routes.chatroom as chatroom_routes
+    return await chatroom_routes._get_or_create_seat_room(actor_id), SEAT_ROOM_TYPE
+
+
 def location_line() -> str:
     """和小克一样：位置上下文开关开着、位置追踪开着时，带上她现在的位置和天气。"""
     from capabilities import is_capability_enabled

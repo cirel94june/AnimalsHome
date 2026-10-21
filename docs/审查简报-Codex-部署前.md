@@ -684,3 +684,17 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 用座位的人设、模型推荐，并去掉转账标签；搜索期间改选模型则不回复；没结果时说明；
   - 共用搜索函数的格式化、缓存，没有 Key 时返回空。
   - 相关测试 268 通过，9 个失败均为既有失败（chatroom 前端、wechat_mode、bubble parity）。
+
+## 62. 狗蛋补能力：逛淘宝
+
+逛淘宝 = AI 按自己的兴趣去淘宝真实搜索、挑选后存进独立收藏篮、写小感想（不加购、不下单），可以由自主活动发起，也可以在淘宝页手动点。
+
+- `seat_chat.seat_target_room(actor)`（新）：把 §54「去她最近说话的地方」抽出来共用（最近在群就去那个群，否则去 TA 私聊；别的座位私聊、Lucien 私聊、台球房不算）。`camera._resolve_actor_target` 改为调用它，行为不变。
+- `taobao_shopping.actor_id`：接受 ai3～ai6，座位要先通过 `check_ready`（停用、没人设、没选模型时报错，不去逛）。选搜索词和挑商品都走 `autonomy._call_actor` / `_actor_context`，座位分支已有（用 TA 自己的模型和人设）。
+- `taobao_notifications.notify_shopping_trip`：座位在事务之前用 `seat_target_room` 确定房间（避免在 `BEGIN IMMEDIATE` 里再开一个写连接），事务里再确认这个房间是群或 TA 自己的私聊；回执卡片、去重、同步事件的逻辑和主 AI 相同，名字用 display_name。
+- `routes/taobao.py`：`ActorBody.actor` 接受 ai3～ai6；`/state` 的 names / avatars 加上启用的座位。`taobao.js` 的同伴卡片改为按 names 生成（选择框、筛选按钮原本就按 names 生成）。
+- `autonomy.SEAT_ACTIONS` 加入 `taobao_roam`（自主活动开关、自主入口总开关、购物锁的过滤仍然有效）。
+- 测试：
+  - `test_seat_taobao.py` 新增 7 项：回执去哪 4 种情况（没说过话去私聊；最近在群里去群；最近在私聊去私聊；别的座位私聊不算），同一次只发一张；没准备好时不能逛；自主活动可选；页面列出启用的座位。
+  - `test_autonomy_seats.py` 中座位可选活动的期望加上 taobao_roam。`test_wake_roster.py` 的数据库替身同时替换 `database.get_db`（共用函数用它）。
+  - 淘宝和座位相关共 54 项通过，淘宝前端 4 个 node 测试通过。

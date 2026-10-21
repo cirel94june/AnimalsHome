@@ -25,8 +25,14 @@ ACTIVE_TRIPS: dict[str, dict] = {}
 
 
 def actor_id(actor: str) -> str:
-    if actor not in ("aion", "connor"):
+    import seat_chat  # 狗蛋等座位和小克 / Lucien 一样能逛
+    if actor not in ("aion", "connor", *seat_chat.SEAT_ACTORS):
         raise ValueError("未知的购物角色")
+    if actor in seat_chat.SEAT_ACTORS:
+        try:
+            seat_chat.check_ready(actor)  # 停用、没人设、没选模型时不去
+        except seat_chat.SeatNotReady as exc:
+            raise ValueError(str(exc)) from exc
     return actor
 
 

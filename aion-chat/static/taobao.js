@@ -201,7 +201,7 @@
     $('empty').hidden = items.length > 0;
     $('recentProducts').replaceChildren(...state.items.slice(0,8).map(p=>card(p,true)));
     $('recentEmpty').hidden = state.items.length > 0;
-    $('companionCards').replaceChildren(...['connor','aion'].map(actor=>{
+    $('companionCards').replaceChildren(...['connor','aion',...Object.keys(state.names).filter(a=>!['connor','aion'].includes(a))].map(actor=>{
       const card = node('div','companion'); card.dataset.actor = actor;
       const img = node('img','portrait'); img.src = state.portraits?.[actor] || state.avatars?.[actor]; img.alt = state.names[actor];
       img.onerror = () => {img.onerror=null; img.src=state.avatars?.[actor] || '/public/funIcon_0034_逛淘宝.png';};

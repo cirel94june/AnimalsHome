@@ -18,7 +18,7 @@ class SearchBody(BaseModel):
 
 
 class ActorBody(BaseModel):
-    actor: Literal["aion", "connor"]
+    actor: Literal["aion", "connor", "ai3", "ai4", "ai5", "ai6"]
 
 
 class SaveBody(ActorBody):
@@ -39,11 +39,19 @@ async def state():
     from chatroom import get_chatroom_names
     _, first, second = get_chatroom_names()
     store = await get_store()
-    return {"names": {"aion": first, "connor": second}, "items": await store.list_items(),
+    names = {"aion": first, "connor": second}
+    avatars = {"aion": "/public/gropicon1.png", "connor": "/public/codexicon.png"}
+    import actors
+    from seat_chat import SEAT_ACTORS
+    for seat in actors.list_actors(include_disabled=False):  # 启用的座位也能去逛、也显示在页面上
+        if seat["id"] in SEAT_ACTORS:
+            names[seat["id"]] = seat["name"] or seat["id"]
+            avatars[seat["id"]] = seat.get("avatar") or "/public/AIIcon.png"
+    return {"names": names, "items": await store.list_items(),
             "settings": await store.settings(), "busy": SHOPPING_LOCK.locked(), "last_run": _last_run,
             "trips": await store.list_trips(), "active_trips": list(ACTIVE_TRIPS.values()),
             "portraits": {"aion": "/api/widget-control/assets/aion/索吻", "connor": "/api/widget-control/assets/connor/查岗"},
-            "avatars": {"aion": "/public/gropicon1.png", "connor": "/public/codexicon.png"}}
+            "avatars": avatars}
 
 
 @router.get("/trips")

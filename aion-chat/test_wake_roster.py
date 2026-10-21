@@ -87,6 +87,8 @@ def chat_db(tmp_path, monkeypatch):
             await conn.commit()
     asyncio.run(setup())
     monkeypatch.setattr(camera, "get_db", lambda: aiosqlite.connect(path))
+    import database
+    monkeypatch.setattr(database, "get_db", lambda: aiosqlite.connect(path))  # seat_chat.seat_target_room 用
     import routes.chatroom as chatroom_routes
     monkeypatch.setattr(chatroom_routes, "_get_or_create_seat_room", AsyncMock(return_value="s3"))
 

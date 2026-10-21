@@ -12,10 +12,17 @@ from ws import manager
 async def notify_shopping_trip(actor, trip_id, items):
     if not items:
         return None
-    if actor not in {"aion", "connor"} or not re.fullmatch(r"[A-Za-z0-9_-]+", trip_id):
+    from seat_chat import SEAT_ACTORS, seat_target_room
+    is_seat = actor in SEAT_ACTORS
+    if (actor not in {"aion", "connor"} and not is_seat) or not re.fullmatch(r"[A-Za-z0-9_-]+", trip_id):
         raise ValueError("无效的逛街通知")
     _, first, second = get_chatroom_names()
-    name = (first if actor == "aion" else second) or "AI"
+    if is_seat:
+        import actors
+        name = actors.display_name(actor) or "AI"
+        seat_room_id, _ = await seat_target_room(actor)  # 和小克一样去她最近说话的地方
+    else:
+        name = (first if actor == "aion" else second) or "AI"
     content = f"{name} 逛淘宝，往心愿袋里塞了 {len(items)} 件商品"
     card = {"type": "taobao_trip", "trip_id": trip_id, "actor": actor, "count": len(items),
             "products": [{k: p.get(k, "") for k in ("item_id", "title", "image")} for p in items[:3]]}
@@ -26,9 +33,17 @@ async def notify_shopping_trip(actor, trip_id, items):
         for table in ("messages", "chatroom_messages"):
             if await (await db.execute(f"SELECT 1 FROM {table} WHERE id=?", (message_id,))).fetchone():
                 return None
-        target = manager.get_aion_last_active() if actor == "aion" else manager.get_connor_last_active()
-        room_id = target.removeprefix("chatroom:") if target and (actor == "connor" or target.startswith("chatroom:")) else None
-        room = None
+        if is_seat:
+            room = await (await db.execute(
+                "SELECT id FROM chatroom_rooms WHERE id=? AND (type='group' OR (type='seat_1v1' AND actor=?))",
+                (seat_room_id, actor))).fetchone()
+            if not room:
+                return None
+            room_id = None
+        else:
+            target = manager.get_aion_last_active() if actor == "aion" else manager.get_connor_last_active()
+            room_id = target.removeprefix("chatroom:") if target and (actor == "connor" or target.startswith("chatroom:")) else None
+            room = None
         if room_id:
             types = ("group", "group") if actor == "aion" else ("group", "connor_1v1")
             room = await (await db.execute("SELECT id FROM chatroom_rooms WHERE id=? AND type IN (?,?)", (room_id, *types))).fetchone()

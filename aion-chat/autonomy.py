@@ -57,7 +57,7 @@ ACTION_DEFS = {
 # 座位 3～6 目前能做的事；其余活动按座位核对过再逐个放开（见 docs/功能盘点）
 # 默认关闭：翻相册（原作者设定）、和宠物鲸鱼 Seeky 互动（小猫不要 Seeky）
 DEFAULT_OFF_ACTIONS = {"album_browse", "seeky_interaction"}
-SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel"}
+SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel", "taobao_roam"}
 
 SEEKY_ACTIONS = {
     "feed": "投喂",

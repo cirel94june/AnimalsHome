@@ -1658,22 +1658,10 @@ class CameraMonitor:
             )
 
     async def _resolve_actor_target(self, actor: str) -> dict | None:
-        if actor in SEAT_WAKE_IDS:
-            # 座位和小克一样：去她最近说话的地方——最近在群里说话就在群里接，最近在和 TA 私聊就去私聊
-            async with get_db() as db:
-                cur = await db.execute(
-                    "SELECT r.id, r.type FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
-                    "WHERE m.sender = 'user' AND r.id NOT GLOB 'billiards_*' "
-                    "AND (r.type = 'group' OR (r.type = 'seat_1v1' AND r.actor = ?)) "
-                    "ORDER BY m.created_at DESC LIMIT 1",
-                    (actor,),
-                )
-                row = await cur.fetchone()
-            if row and row[1] == "group":
-                return {"type": "chatroom", "room_id": row[0], "room_type": "group"}
-            import routes.chatroom as chatroom_routes
-            room_id = await chatroom_routes._get_or_create_seat_room(actor)
-            return {"type": "chatroom", "room_id": room_id, "room_type": "seat_1v1"}
+        if actor in SEAT_WAKE_IDS:  # 座位和小克一样：去她最近说话的地方（群或 TA 的私聊）
+            import seat_chat
+            room_id, room_type = await seat_chat.seat_target_room(actor)
+            return {"type": "chatroom", "room_id": room_id, "room_type": room_type}
         actor = "connor" if actor == "connor" else "aion"
         async with get_db() as db:
             db.row_factory = aiosqlite.Row
