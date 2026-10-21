@@ -70,9 +70,54 @@ def test_roster_has_ready_seats_and_last_woken_from_logs(monkeypatch):
         ("aion", "main_ai", "小克", 80.0), ("connor", "second_ai", "Lucien", 0.0), ("ai3", "ai3", "狗蛋", 80.0)]
 
 
-def test_waking_a_seat_speaks_in_its_private_room_with_the_snapshot(monkeypatch):
+@pytest.fixture
+def chat_db(tmp_path, monkeypatch):
+    """聊天室房间和消息：g1 群、s3 狗蛋私聊、s4 座位 4 私聊、台球房。"""
+    import aiosqlite
+    path = tmp_path / "chat.db"
+
+    async def setup():
+        async with aiosqlite.connect(path) as conn:
+            await conn.execute("CREATE TABLE chatroom_rooms (id TEXT PRIMARY KEY, type TEXT, actor TEXT DEFAULT '')")
+            await conn.execute("CREATE TABLE chatroom_messages (id TEXT, room_id TEXT, sender TEXT, content TEXT, "
+                               "created_at REAL)")
+            for rid, kind, actor in (("g1", "group", ""), ("s3", "seat_1v1", "ai3"), ("s4", "seat_1v1", "ai4"),
+                                     ("billiards_1", "group", "")):
+                await conn.execute("INSERT INTO chatroom_rooms VALUES (?,?,?)", (rid, kind, actor))
+            await conn.commit()
+    asyncio.run(setup())
+    monkeypatch.setattr(camera, "get_db", lambda: aiosqlite.connect(path))
     import routes.chatroom as chatroom_routes
     monkeypatch.setattr(chatroom_routes, "_get_or_create_seat_room", AsyncMock(return_value="s3"))
+
+    def said(room_id, ts):
+        async def add():
+            async with aiosqlite.connect(path) as conn:
+                await conn.execute("INSERT INTO chatroom_messages VALUES (?,?,?,?,?)", (f"m{ts}", room_id, "user", "x", ts))
+                await conn.commit()
+        asyncio.run(add())
+    return said
+
+
+@pytest.mark.parametrize("history, expected", [
+    ([], ("s3", "seat_1v1")),  # 还没说过话：去 TA 私聊
+    ([("g1", 1), ("s3", 2)], ("s3", "seat_1v1")),  # 最近在和 TA 私聊
+    ([("s3", 1), ("g1", 2)], ("g1", "group")),  # 最近在群里说话：在群里接
+    ([("g1", 1), ("s4", 2), ("billiards_1", 3)], ("g1", "group")),  # 别的座位私聊、台球房不算
+])
+def test_seat_goes_where_she_last_talked_like_aion(chat_db, history, expected):
+    """2026-10-21 小猫：几个 AI 权限一样。座位被叫来时和小克一样去她最近说话的地方。"""
+    for room_id, ts in history:
+        chat_db(room_id, ts)
+    target = asyncio.run(camera.CameraMonitor()._resolve_actor_target("ai3"))
+    assert (target["room_id"], target["room_type"]) == expected
+
+
+@pytest.mark.parametrize("room, group", [("s3", False), ("g1", True)])
+def test_waking_a_seat_speaks_in_its_room_with_the_snapshot(chat_db, monkeypatch, room, group):
+    import routes.chatroom as chatroom_routes
+    if group:
+        chat_db("g1", 5)
     reply = AsyncMock()
     monkeypatch.setattr(chatroom_routes, "_generate_seat_reply", reply)
     monkeypatch.setattr(camera, "load_worldbook", lambda: {"user_name": "小猫"})
@@ -80,7 +125,8 @@ def test_waking_a_seat_speaks_in_its_private_room_with_the_snapshot(monkeypatch)
     results = asyncio.run(monitor._wake_core_targets(["ai3"], "小猫在沙发上发呆", 0.0, "", "很久没说话", [], "shot.jpg"))
     assert results["ai3"]["ok"]
     args, kwargs = reply.await_args
-    assert args[0] == "s3" and kwargs["actor"] == "ai3" and kwargs["group"] is False
+    assert args[0] == room and kwargs["actor"] == "ai3" and kwargs["group"] is group
+    assert ("群聊里" in kwargs["extra_prompt"]) is group
     assert kwargs["extra_attachments"] == ["/screenshots/shot.jpg"]
     assert "很久没说话" in kwargs["extra_prompt"] and "小猫在沙发上发呆" in kwargs["extra_prompt"]
 
@@ -213,3 +259,27 @@ def test_main_pair_in_different_rooms_runs_in_parallel():
             patch.object(monitor, "_call_core_for_actor", side_effect=wake):
         asyncio.run(monitor._wake_core_targets(["aion", "connor"], "trigger", 1.0))
     assert events.index("connor-start") < events.index("aion-end")
+
+
+def test_everyone_woken_into_the_same_group_speaks_in_turn():
+    """小克、Lucien、狗蛋被叫到同一个群：按顺序一个接一个；在别处的座位并行。"""
+    monitor = camera.CameraMonitor()
+    events = []
+
+    async def resolve(actor):
+        if actor == "ai4":
+            return {"type": "chatroom", "room_id": "s4", "room_type": "seat_1v1"}
+        return {"type": "chatroom", "room_id": "g1", "room_type": "group"}
+
+    async def wake(actor, target, *args, **kwargs):
+        events.append(f"{actor}-start")
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        events.append(f"{actor}-end")
+
+    from unittest.mock import patch
+    with patch.object(monitor, "_resolve_actor_target", side_effect=resolve),             patch.object(monitor, "_call_core_for_actor", side_effect=wake):
+        asyncio.run(monitor._wake_core_targets(["ai3", "ai4", "connor", "aion"], "trigger", 1.0))
+    group_events = [e for e in events if not e.startswith("ai4")]
+    assert group_events == ["aion-start", "aion-end", "connor-start", "connor-end", "ai3-start", "ai3-end"]
+    assert events.index("ai4-start") < events.index("aion-end")

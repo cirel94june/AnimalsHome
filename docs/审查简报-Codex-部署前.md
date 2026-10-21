@@ -573,3 +573,14 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_proactive.py` +2：等上下文期间停用座位或改选模型，模型没被调用、没保存、留下失败记录。
   - 拿掉两个修复后其中 5 项失败。
   - 座位与叫人相关的 7 个文件共 95 项通过。相关 54 个文件中，失败的都是既有失败（chatroom 前端 ×5、sentinel_routes ×2）。`test_seat_chat::…line_removed…` 在改用统一失败记录后通过。
+
+## 54. 座位被叫来也去她最近说话的地方（小猫：「几个 AI 权限都一样」）
+
+- `_resolve_actor_target(座位)`：查她最近一条消息（`chatroom_messages.sender='user'`）所在的房间，范围和座位的合并时间线一致：群（不含 `billiards_*`）或这位座位自己的私聊。最近在群里就返回该群（room_type=group），否则返回 TA 的私聊（`_get_or_create_seat_room`）。别的座位的私聊、Lucien 的私聊不算。
+- `_call_seat_core`：`group` 和场景描述跟着目标房间走（群里或私聊里），群里走座位的群聊上下文（含群聊隐私规则）。
+- `_wake_core_targets`：§53 只把 aion 和 connor 编成同群串行组，现在改成**按房间分组**。被叫到同一个群的人（aion、connor、ai3～ai6，按这个顺序）一个接一个说；私聊和其他房间各自成组，组与组之间 `gather` 并行。§53 的用例照样通过。
+- 测试 `test_wake_roster.py`：
+  - 去哪说话 4 种：没说过话去私聊；最近在私聊；最近在群里；别的座位私聊和台球房不算。
+  - 叫座位在私聊或群里开口各 1 种（`group` 参数和场景描述）。
+  - 三人同群严格按顺序，另一位在私聊的座位并行。
+  - 相关测试中失败的只有既有的 `sentinel_routes` ×2。

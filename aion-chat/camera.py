@@ -1658,7 +1658,19 @@ class CameraMonitor:
             )
 
     async def _resolve_actor_target(self, actor: str) -> dict | None:
-        if actor in SEAT_WAKE_IDS:  # 座位：在 TA 自己的私聊里开口
+        if actor in SEAT_WAKE_IDS:
+            # 座位和小克一样：去她最近说话的地方——最近在群里说话就在群里接，最近在和 TA 私聊就去私聊
+            async with get_db() as db:
+                cur = await db.execute(
+                    "SELECT r.id, r.type FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+                    "WHERE m.sender = 'user' AND r.id NOT GLOB 'billiards_*' "
+                    "AND (r.type = 'group' OR (r.type = 'seat_1v1' AND r.actor = ?)) "
+                    "ORDER BY m.created_at DESC LIMIT 1",
+                    (actor,),
+                )
+                row = await cur.fetchone()
+            if row and row[1] == "group":
+                return {"type": "chatroom", "room_id": row[0], "room_type": "group"}
             import routes.chatroom as chatroom_routes
             room_id = await chatroom_routes._get_or_create_seat_room(actor)
             return {"type": "chatroom", "room_id": room_id, "room_type": "seat_1v1"}
@@ -1779,10 +1791,12 @@ class CameraMonitor:
             pass
         if screenshot_filename:
             parts.append("附图是这次的监控画面。")
-        parts.append(f"你现在是在你和{user_name}的私聊里主动联系她，用你自己的口吻自然地开口，"
+        in_group = target.get("room_type") == "group"
+        scene = "群聊里" if in_group else f"你和{user_name}的私聊里"
+        parts.append(f"你现在是在{scene}主动联系她，用你自己的口吻自然地开口，"
                      "不要复述监控记录原文，也不要替别人说话。")
         await chatroom_routes._generate_seat_reply(
-            target["room_id"], {"actor": actor}, [], asyncio.Queue(), 30, actor=actor, group=False,
+            target["room_id"], {"actor": actor}, [], asyncio.Queue(), 30, actor=actor, group=in_group,
             extra_prompt="\n".join(parts),
             extra_attachments=[f"/screenshots/{screenshot_filename}"] if screenshot_filename else None,
         )
@@ -1811,25 +1825,22 @@ class CameraMonitor:
                     "error": str(exc),
                 }
 
-        # 小克和 Lucien 被叫到同一个群时按固定顺序先后说（第二位能看到第一位刚说的）；
-        # 只看这两位的目标，和一起被叫来的座位（各自私聊）无关，座位与这一组并行
-        same_group = bool(
-            targets.get("aion")
-            and targets.get("connor")
-            and targets["aion"].get("type") == "chatroom"
-            and targets["connor"].get("type") == "chatroom"
-            and targets["aion"].get("room_type") == "group"
-            and targets["connor"].get("room_type") == "group"
-            and targets["aion"].get("room_id") == targets["connor"].get("room_id")
-        )
-        if same_group:
-            async def main_pair():
-                for actor in ("aion", "connor"):
-                    await wake_one(actor)
-            others = [actor for actor in ordered_actors if actor not in ("aion", "connor")]
-            await asyncio.gather(main_pair(), *(wake_one(actor) for actor in others))
-        else:
-            await asyncio.gather(*(wake_one(actor) for actor in ordered_actors))
+        # 被叫到同一个群里的人（小克、Lucien、座位都一样）按固定顺序一个接一个说，后说的能看到前面刚说的；
+        # 不同房间之间并行
+        lanes: dict[str, list[str]] = {}
+        for actor in ordered_actors:
+            target = targets.get(actor) or {}
+            if target.get("type") == "chatroom" and target.get("room_type") == "group" and target.get("room_id"):
+                lane = f"group:{target['room_id']}"
+            else:
+                lane = f"solo:{actor}"
+            lanes.setdefault(lane, []).append(actor)
+
+        async def run_lane(members: list[str]):
+            for actor in members:
+                await wake_one(actor)
+
+        await asyncio.gather(*(run_lane(members) for members in lanes.values()))
         return results
 
     async def _call_connor_core(
