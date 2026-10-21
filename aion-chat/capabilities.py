@@ -614,6 +614,13 @@ def seat_memory_ability_text(user_name: str) -> str:
     )
 
 
+def wechat_message_ability_text(user_name: str) -> str:
+    return (
+        f"[微信消息：内容] — 当你已经在当前窗口多次联系{user_name}，但{user_name}长时间没有回复时，"
+        f"可以使用该指令把“内容”作为一条消息发送到{user_name}的微信来提醒她。"
+    )
+
+
 def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
     """座位 3～6 已经接好的聊天内能力（第二批）：点歌、联网搜索、自拍 / 画画、许愿。按各自开关给。"""
     texts = []
@@ -633,6 +640,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(cam_check_ability_text(user_name))
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
         texts.append(activity_check_ability_text(user_name))
+    if is_capability_enabled("wechat_message"):
+        texts.append(wechat_message_ability_text(user_name))
     if actor and is_capability_enabled("memory_write"):
         import memory_hub_bridge
         if memory_hub_bridge.can_remember(actor):
@@ -764,10 +773,7 @@ async def build_capability_prompt_items(
         )
 
     if is_capability_enabled("wechat_message"):
-        abilities.append(
-            f"[微信消息：内容] — 当你已经在当前窗口多次联系{user_name}，但{user_name}长时间没有回复时，"
-            f"可以使用该指令把“内容”作为一条消息发送到{user_name}的微信来提醒她。"
-        )
+        abilities.append(wechat_message_ability_text(user_name))
 
     if include_image_gen and is_capability_enabled("image_gen"):
         abilities.append(image_gen_ability_text(user_name))

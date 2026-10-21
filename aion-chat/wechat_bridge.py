@@ -47,6 +47,12 @@ def build_wechat_user_content(content: str) -> str:
 def resolve_wechat_sender_label(source_type: str, sender: str) -> str:
     source_type = (source_type or "").strip().lower()
     sender = (sender or "").strip().lower()
+    if source_type == "chatroom" and sender in ("ai3", "ai4", "ai5", "ai6"):  # 座位：用 TA 的名字
+        try:
+            import actors
+            return actors.display_name(sender) or ""
+        except Exception:
+            return ""
     if source_type == "chatroom" and sender in ("aion", "connor"):
         try:
             from chatroom import get_chatroom_names

@@ -584,3 +584,30 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 叫座位在私聊或群里开口各 1 种（`group` 参数和场景描述）。
   - 三人同群严格按顺序，另一位在私聊的座位并行。
   - 相关测试中失败的只有既有的 `sentinel_routes` ×2。
+
+## 55. ④ 狗蛋补能力：日记、微信
+
+清单见 `docs/座位能力对齐清单.md`（小猫：几个 AI 权限都一样）。
+
+- **日记** `seat_diary.py`（新）：
+  - 小克 / Lucien 的日记是在本地记忆总结时顺带写的。座位的记忆在 Hub、没有本地总结，所以单独做一个循环，在 `main.lifespan` 里启动，关闭时和 Hub 的任务一起取消。
+  - **触发**：每 10 分钟检查一次每位座位。范围和座位的合并时间线一致：TA 的私聊 + 所有群，不含 `billiards_*` 和 system。锚点存在 `chatroom_digest_anchors`，key 为 `seat_diary:<座位>`。锚点之后至少 20 条新消息、其中有她说的话，并且她最后一句已过 30 分钟，才写。
+  - **生成**：用座位的人设 + 最近 80 条（`【说话人】内容`）+ 和 Lucien 相同的 JSON 格式（日记 / 朋友圈 / 礼物），另加一句「亲密、身体、私人情感只写进日记，不发朋友圈」。
+    - 一开始 `check_ready` 并做模型快照；发请求前再 `check_ready`（模型键必须相同）并 `ensure_model_unchanged`，中间没有 await。
+    - 超时 300 秒。
+  - **结果**：
+    - 解析成功：`save_diary_entry(author=座位, source_type="seat_digest")`，推进锚点。
+    - 朋友圈：moment 开关开着才发，截到 `MAX_AI_MOMENT_CHARS`（800），作者是座位。
+    - 礼物：`send_gift_from_decision(sender=座位)`。
+    - 解析失败不推进锚点；同一段连续失败 3 次后推进锚点并跳过，避免反复花钱。
+  - **日记本页面**：从 `/api/actors` 读取座位，增加标签（textContent），`#seatTabs { display: contents }` 与其他标签平分一行。
+  - **朗读**：座位日记的朗读接口返回 400「还没有给狗蛋配置声音」（座位声音是清单第 4 项）。
+- **微信**：
+  - `_process_seat_commands`：wechat_message 开关开着时，和小克 / Lucien 一样调用 `process_wechat_outbound_commands(source_type="chatroom", source_id=房间, sender=座位)`。房间里留下记录，记下回复路线（她从微信回话会回到这个房间，入站已支持座位私聊房间），通过 `dispatch_wechat_message` 发出。开关关着时只去掉指令。
+  - `wechat_bridge.resolve_wechat_sender_label`：座位用 `actors.display_name`（「狗蛋：内容」）。
+  - `wechat_mode_dispatcher`：微信模式转发的发言人加上 ai3～ai6，名字用 display_name。
+  - 能力说明：抽出 `wechat_message_ability_text`（主 AI 文字不变），`seat_ability_texts` 按开关给出。
+- 测试：
+  - `test_seat_diary.py` 9 项：写日记（人设、上下文范围、别的座位私聊不算、作者、锚点、朋友圈截断、礼物发送者、写过不再写）；4 种不满足条件；未就绪或改选模型；朋友圈开关关着；解析失败重试后跳过；座位朗读提示没配声音。
+  - `test_seat_wechat.py` 4 项：以自己的名字发送并记下路线、关开关只去掉、提示词、微信模式转发和名字。
+  - 相关测试 220 通过，5 个失败均为既有失败（wechat_mode ×3、chatroom 显示 ×2）。

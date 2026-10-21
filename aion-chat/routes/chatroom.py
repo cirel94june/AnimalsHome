@@ -3953,6 +3953,27 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     triggered: dict = {}
     label = _name_for_identity(actor_id)
 
+    # ── 微信消息：和小克 / Lucien 一样，开关开着才发；以 TA 的名字发到她的微信，房间里留记录 ──
+    if is_capability_enabled("wechat_message"):
+        async def _save_wechat_system(system_text: str):
+            await _chatroom_sys_msg(room_id, system_text, _q, after_msg_id=msg_id)
+
+        full_text, wechat_messages = await process_wechat_outbound_commands(
+            full_text,
+            source_type="chatroom",
+            source_id=room_id,
+            sender=actor_id,
+            source_msg_id=msg_id,
+            save_system_message=_save_wechat_system,
+            send_wechat_message=dispatch_wechat_message,
+            record_route=record_wechat_route,
+        )
+        if wechat_messages:
+            triggered["wechat_messages"] = wechat_messages
+    else:  # 开关关着：只去掉指令，不发
+        from wechat_bridge import extract_wechat_messages
+        full_text, _ = extract_wechat_messages(full_text)
+
     # ── 记住事情：写进 Memory Hub（开关 memory_write；这位座位有 Hub 身份才写）──
     # 模型照老习惯写了 [MEMORY:[梗]…]：先改成「梗：」，否则第一个 ] 就把指令截断了
     full_text = _MEMORY_JOKE_PREFIX.sub(r"\1梗：", full_text)

@@ -82,7 +82,7 @@ async def list_diaries(
     page_size: int = Query(20, ge=1, le=100),
     author: str = Query("", max_length=32),
 ):
-    """分页获取日记，author 可选：user / aion / connor。"""
+    """分页获取日记，author 可选：user / aion / connor / ai3～ai6。"""
     offset = (page - 1) * page_size
     where = ""
     params: list[object] = []
@@ -114,6 +114,9 @@ async def synthesize_diary_tts(entry_id: str):
 
     entry = dict(row)
     author = entry.get("author")
+    if author in ("ai3", "ai4", "ai5", "ai6"):  # 座位还没有自己的声音设置（对齐清单第 4 项）
+        import actors
+        return JSONResponse({"error": f"还没有给{actors.display_name(author)}配置声音"}, status_code=400)
     if author not in ("aion", "connor"):
         return JSONResponse({"error": "用户日记不支持语音合成"}, status_code=403)
 

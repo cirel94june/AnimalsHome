@@ -40,7 +40,7 @@ def extract_wechat_event_route(
         return ("aion_private", source_id, message_id, "aion") if source_id and message_id else None
     if (
         event.get("type") == "chatroom_msg_created"
-        and str(data.get("sender") or "").strip().lower() in {"aion", "connor"}
+        and str(data.get("sender") or "").strip().lower() in {"aion", "connor", "ai3", "ai4", "ai5", "ai6"}
     ):
         source_id = str(data.get("room_id") or "").strip()
         sender = str(data.get("sender") or "").strip().lower()
@@ -69,6 +69,12 @@ async def _default_identity_resolver(
         "aion": ai_name,
         "connor": connor_name,
     }.get(sender, "AI")
+    if sender in ("ai3", "ai4", "ai5", "ai6"):  # 座位：用 TA 的名字
+        try:
+            import actors
+            sender_name = actors.display_name(sender) or "AI"
+        except Exception:
+            pass
     source_label = "群聊"
     try:
         from database import get_db

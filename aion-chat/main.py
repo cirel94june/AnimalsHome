@@ -212,6 +212,8 @@ async def lifespan(app: FastAPI):
     connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
     memory_hub_outbox_task = asyncio.create_task(memory_hub_bridge.outbox_worker())
     memory_hub_jobs_task = asyncio.create_task(memory_hub_jobs.jobs_worker())
+    import seat_diary
+    seat_diary_task = asyncio.create_task(seat_diary.seat_diary_loop())  # 狗蛋等座位写日记
     idle_autonomy_mgr.start()
     board_patrol_mgr.start()
     ha_event_listener.start()
@@ -229,7 +231,8 @@ async def lifespan(app: FastAPI):
         # Memory Hub 的两个后台任务：先取消并等它们收尾（关连接），不受下面其他服务停止失败的影响
         memory_hub_outbox_task.cancel()
         memory_hub_jobs_task.cancel()
-        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, return_exceptions=True)
+        seat_diary_task.cancel()
+        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, seat_diary_task, return_exceptions=True)
         await post_sentinel.stop()
         try:
             from billiards.service import get_service as billiards_service
