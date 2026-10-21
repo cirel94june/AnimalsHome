@@ -663,3 +663,9 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 内心旁白不是后台指令：模型写 `[心里嘀咕：…]`，保留在回复正文里，前端 `crMessageContentItems` / `crRenderInnerMonologues` 对所有非用户消息都特殊显示（不看发言人）；TTS、微信模式会去掉它，这些已经适用于所有人。
 - 改动：`seat_ability_texts` 在 inner_monologue 开关开着时，加入和主 AI 相同的 `INNER_MONOLOGUE_ABILITY_TEXT`。
 - 测试 `test_seat_inner_monologue.py` 2 项：提示词随开关出现；座位回复（分两段流式）原样保存这个标记，流式显示时也不被吞掉。
+
+## 60. 狗蛋补能力：桌面便笺
+
+- 座位回复本来就会经过 `process_note_commands(raw_text, actor_id)`（以座位身份写便笺，主 AI 也一样不按开关过滤处理）。桌面页 `desk.js` 用 actors 列表显示署名和头像，座位已包含在内。缺的只是能力说明。
+- 改动：抽出 `desk_note_ability_text(user_name)`（主 AI 文字不变）；`seat_ability_texts` 在 desk_note 开关开着时加入。
+- 测试 `test_seat_desk_note.py` 2 项：提示词随开关出现；座位回复中的 `[NOTE:…]` 被去掉，以 ai3 署名写入便笺。原 `test_actors_desk_notes.py` 照样通过。

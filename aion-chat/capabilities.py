@@ -614,6 +614,14 @@ def seat_memory_ability_text(user_name: str) -> str:
     )
 
 
+def desk_note_ability_text(user_name: str) -> str:
+    return (
+        f"[NOTE:内容] — 在{user_name}手机桌面的便笺上留一句短短的话（一两句以内），"
+        "比如提醒、惦记、晚安或想到对方的小事。它会以你的名义贴在桌面上，不出现在聊天正文里。"
+        "不必每次都用，真的有话想留在桌面上时再写。"
+    )
+
+
 def wechat_message_ability_text(user_name: str) -> str:
     return (
         f"[微信消息：内容] — 当你已经在当前窗口多次联系{user_name}，但{user_name}长时间没有回复时，"
@@ -642,6 +650,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(activity_check_ability_text(user_name))
     if is_capability_enabled("wechat_message"):
         texts.append(wechat_message_ability_text(user_name))
+    if is_capability_enabled("desk_note"):  # 便笺指令座位回复里本来就会处理，这里把能力告诉 TA
+        texts.append(desk_note_ability_text(user_name))
     if is_capability_enabled("inner_monologue"):  # 和小克 / Lucien 同一段说明；前端对所有 AI 的消息都特殊显示
         texts.append(INNER_MONOLOGUE_ABILITY_TEXT)
     if actor and is_capability_enabled("memory_write"):
@@ -802,11 +812,7 @@ async def build_capability_prompt_items(
         abilities.append(moment_ability_text())
 
     if is_capability_enabled("desk_note"):
-        abilities.append(
-            f"[NOTE:内容] — 在{user_name}手机桌面的便笺上留一句短短的话（一两句以内），"
-            "比如提醒、惦记、晚安或想到对方的小事。它会以你的名义贴在桌面上，不出现在聊天正文里。"
-            "不必每次都用，真的有话想留在桌面上时再写。"
-        )
+        abilities.append(desk_note_ability_text(user_name))
 
     if is_capability_enabled("memory_write"):
         abilities.append(
