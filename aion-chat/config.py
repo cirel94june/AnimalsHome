@@ -624,9 +624,11 @@ DEFAULT_CAM_CFG = {
     "quiet_hours_start": "00:00",
     "quiet_hours_end": "09:00",
     "wake_mode": "aion",
+    # 出门 / 回家时叫谁：smart = 哨兵按情况挑（拿不准就随机），也可以固定 aion / connor / 座位
+    "location_wake_mode": "smart",
 }
 
-CAM_WAKE_MODES = {"aion", "connor", "smart"}
+CAM_WAKE_MODES = {"aion", "connor", "smart", "ai3", "ai4", "ai5", "ai6"}  # 座位 3～6 也可以固定叫
 
 
 def normalize_camera_wake_mode(value: object) -> str:
@@ -647,6 +649,7 @@ def load_cam_config() -> dict:
         for k, v in DEFAULT_CAM_CFG.items():
             cfg.setdefault(k, v)
         cfg["wake_mode"] = normalize_camera_wake_mode(cfg.get("wake_mode"))
+        cfg["location_wake_mode"] = normalize_camera_wake_mode(cfg.get("location_wake_mode") or "smart")
         return cfg
     return dict(DEFAULT_CAM_CFG)
 

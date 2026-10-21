@@ -153,13 +153,19 @@
       <div class="cam-wake-row">
         <label for="camWakeMode2">需要联系时唤醒谁</label>
         <select id="camWakeMode2" onchange="camWakeModeChanged()">
-          <option value="aion" id="camWakeAionOption">主 AI</option>
-          <option value="connor" id="camWakeConnorOption">第二 AI</option>
+          <option value="aion">主 AI</option>
+          <option value="connor">第二 AI</option>
+          <option value="smart">✨ 智能唤醒</option>
+        </select>
+      </div>
+      <div class="cam-wake-row">
+        <label for="camLocationWakeMode">出门 / 回家时叫谁</label>
+        <select id="camLocationWakeMode" onchange="camWakeModeChanged()">
           <option value="smart">✨ 智能唤醒</option>
         </select>
       </div>
       <div class="cam-smart-note" id="camSmartDispatchNote" style="display:none">
-        哨兵会根据事件、对话和近期互动，决定唤醒一位或两位。
+        智能唤醒：不按事情类型固定分工。点名谁就叫谁；正在和谁聊相关的事就让谁接着来；拿不准时随机挑一位，越久没被叫来的越容易被挑中。只有明显危险、身体不适这类情况才会同时叫几位。
       </div>
       <div class="cam-settings-grid">
         <div class="cam-field">
@@ -291,9 +297,8 @@ async function syncCamModalState() {
     $("camIntervalMax2").value = status.auto_interval_max;
     $("camMaxKeep2").value = status.max_screenshots;
     $("includePcScreenToggle2").checked = !!status.include_pc_screen;
-    $("camWakeAionOption").textContent = status.ai_name || "主 AI";
-    $("camWakeConnorOption").textContent = status.connor_name || "第二 AI";
-    $("camWakeMode2").value = status.wake_mode || "aion";
+    fillWakeOptions($("camWakeMode2"), status, status.wake_mode || "aion");
+    fillWakeOptions($("camLocationWakeMode"), status, status.location_wake_mode || "smart");
     updateSmartDispatchNote();
     $("quietHoursToggle2").checked = status.quiet_hours_enabled || false;
     $("quietHoursStart2").value = status.quiet_hours_start || "00:00";
@@ -425,13 +430,34 @@ async function camApplyConfig() {
     auto_interval_min: intervalMin, auto_interval_max: intervalMax, max_screenshots: maxKeep,
     include_pc_screen: $("includePcScreenToggle2").checked,
     quiet_hours_enabled: quietEnabled, quiet_hours_start: $("quietHoursStart2").value || "00:00", quiet_hours_end: $("quietHoursEnd2").value || "09:00",
-    wake_mode: $("camWakeMode2").value
+    wake_mode: $("camWakeMode2").value,
+    location_wake_mode: $("camLocationWakeMode").value
   });
+}
+
+// 「叫谁」下拉框：小克、Lucien、已启用的座位、智能唤醒。名字用 textContent 填，不拼 HTML。
+function fillWakeOptions(select, status, current) {
+  const choices = [
+    ["aion", status.ai_name || "主 AI"],
+    ["connor", status.connor_name || "第二 AI"],
+    ...(status.wake_seats || []).map(seat => [seat.id, seat.name || seat.id]),
+    ["smart", "✨ 智能唤醒"],
+  ];
+  if (!choices.some(([value]) => value === current)) {
+    choices.splice(choices.length - 1, 0, [current, current + "（未启用）"]);  // 选过的座位被停用了也照实显示
+  }
+  select.replaceChildren(...choices.map(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    return option;
+  }));
+  select.value = current;
 }
 
 function updateSmartDispatchNote() {
   $("camSmartDispatchNote").style.display =
-    $("camWakeMode2").value === "smart" ? "" : "none";
+    ($("camWakeMode2").value === "smart" || $("camLocationWakeMode").value === "smart") ? "" : "none";
 }
 
 async function camWakeModeChanged() {

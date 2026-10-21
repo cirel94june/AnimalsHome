@@ -692,6 +692,23 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
     loc_info = format_location_for_prompt()
     state_desc = "从家里出门了" if new_state == "outside" else "从外面回到家了"
 
+    # 叫谁：设置里的「出门 / 回家时叫谁」；智能模式由哨兵按派单规则挑，拿不准就用随机建议人选
+    from camera import (
+        wake_roster, suggest_wake_target, build_sentinel_dispatch_policy,
+        parse_sentinel_dispatch, resolve_sentinel_wake_targets,
+    )
+    from config import load_cam_config, normalize_camera_wake_mode
+    wake_mode = normalize_camera_wake_mode(load_cam_config().get("location_wake_mode") or "smart")
+    roster = wake_roster()
+    roster_ids = [item["id"] for item in roster]
+    suggested = suggest_wake_target(roster)
+    smart = wake_mode == "smart"
+    dispatch_block = (
+        "\n" + build_sentinel_dispatch_policy(user_name=user_name, roster=roster, suggested=suggested) + "\n"
+        if smart else ""
+    )
+    dispatch_json = ',"wake_target":"main_ai","wake_reason":"","wake_confidence":"low"' if smart else ""
+
     prompt = f"""你是{user_name}的位置监控哨兵。也是{user_name}的爱人伴侣。检测到{user_name}的位置状态发生了变化：{state_desc}
 
 当前时间：{now_str}
@@ -712,13 +729,14 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
 - 如果{user_name}出门了但对话中没有提到这件事（{ai_name}还不知道），则需要唤醒
 - 如果{user_name}回家了，应主动问候，并欢迎回家。
 - 其他你认为需要主动联系的情况
-
+{dispatch_block}
 请严格按照以下JSON格式回复，不要包含其他内容：
-{{"monitoringlog":"位置变化事件记录，例如：检测到{user_name}离开了家，当前位于XX。","call_core":false,"core_reason":""}}"""
+{{"monitoringlog":"位置变化事件记录，例如：检测到{user_name}离开了家，当前位于XX。","call_core":false,"core_reason":""{dispatch_json}}}"""
 
     monitoring_log = event_desc
     call_core = False
     core_reason = ""
+    dispatch = parse_sentinel_dispatch({}, wake_mode, roster_ids=roster_ids, suggested=suggested)
 
     try:
         from memory import _call_sentinel_text
@@ -733,11 +751,20 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
         monitoring_log = parsed.get("monitoringlog", event_desc)
         call_core = bool(parsed.get("call_core", False))
         core_reason = parsed.get("core_reason", "")
+        dispatch = parse_sentinel_dispatch(parsed, wake_mode, roster_ids=roster_ids, suggested=suggested)
     except Exception as e:
         print(f"[Location] 哨兵分析失败: {e}")
-        # 分析失败时默认通知 Core（保守策略）
+        # 分析失败时默认通知 Core（保守策略）；叫谁按设置，智能模式用随机建议人选
         call_core = True
         core_reason = f"位置变化哨兵分析失败，默认唤醒Core通知：{event_desc}"
+        dispatch = {
+            "sentinel_wake_target": "",
+            "final_wake_targets": resolve_sentinel_wake_targets(
+                True, wake_mode, "", roster_ids=roster_ids, suggested=suggested),
+            "wake_reason": "哨兵分析失败，按设置 / 随机建议人选叫人。",
+            "wake_confidence": "low",
+        }
+    wake_targets = dispatch["final_wake_targets"] if call_core else []
 
     print(f"[Location] 哨兵判断: call_core={call_core}, reason={core_reason}")
 
@@ -753,12 +780,23 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
         "core_reason": core_reason,
         "screenshot": "",
         "source": "location",
+        **dispatch,
+        "final_wake_targets": wake_targets,
     }
     append_monitor_log(log_entry)
     await manager.broadcast({"type": "monitor_log", "data": log_entry})
 
-    if call_core:
+    if not call_core:
+        return
+    if "aion" in wake_targets:  # 小克：照旧走位置专用的唤醒
         await _call_core_location(event_desc, status, core_reason, recent_logs, last_user_ts)
+    others = [actor for actor in wake_targets if actor != "aion"]
+    if others:  # Lucien / 座位：走摄像头的唤醒流程（位置事件当作监控记录，不带截图）
+        from camera import cam
+        reason = core_reason
+        if dispatch.get("wake_reason"):
+            reason = f"{core_reason}\n派单依据：{dispatch['wake_reason']}" if core_reason else f"派单依据：{dispatch['wake_reason']}"
+        await cam._wake_core_targets(others, f"📍 {monitoring_log}", last_user_ts, "", reason, recent_logs, "")
 
 
 async def _call_core_location(

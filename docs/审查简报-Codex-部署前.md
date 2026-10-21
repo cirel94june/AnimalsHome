@@ -531,3 +531,35 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 改：原「座位不能设监督」改为「开关开着能设」，上下文里有 `[Monitor:`。
   - 新增 6 项：关开关不设；到点由座位带截图在原房间开口、主 AI 流程没走、已认领、重复不开口；关开关到点不截图且提示没画面；截图附在触发消息上；提示词随开关。
   - 相关 160 项通过。
+
+## 52. 监控 / 定位叫谁：智能模式不固定分工，可以叫座位，出门回家也智能挑人
+
+方案见 `docs/施工方案-监控定位叫谁.md`。小猫 2026-10-21 的要求：智能模式不要按事情类型固定分工；出门回家要「随机，智能一点」；狗蛋等座位都能被叫来。
+
+- **候选名单** `camera.wake_roster()`：小克、Lucien，加上 `seat_chat.check_ready` 通过的座位。每人带 `key`（给哨兵看的编号：小克 main_ai、Lucien second_ai，座位用自己的 id，内部名不交给哨兵）和 `last_woken`（最近 3 天监控日志里 `final_wake_targets` 出现的最晚时间）。
+- **随机建议人选** `suggest_wake_target`：权重 = 1 + 距上次被叫来的小时数（上限 72；从没被叫过的按 72 算），用 `random.choices` 抽一个。
+- **派单规则** `build_sentinel_dispatch_policy(user_name, roster, suggested)`（替换原来的固定分工）：列出名单和上次被叫来的时间；不按事情类型分工；点名优先；保持上下文连续；都不明显时看互动情况、避免总叫同一位；拿不准就用建议人选；只有明显危险、健康异常、情绪崩溃、长时间失联才多叫，用逗号分隔。
+- **解析**：
+  - `parse_wake_target_ids(value, allowed)`：支持逗号、顿号、斜杠、空格分隔多人；兼容 main_ai / second_ai / both / aion / connor；all 表示名单里所有人；不在名单里的丢掉；结果按名单顺序。
+  - `resolve_sentinel_wake_targets(..., roster_ids, suggested)`：固定模式返回设置的人；智能模式解析不出人时回退到建议人选（不再固定回退小克，没有名单时仍回退 aion，旧测试保持）。
+  - `parse_sentinel_dispatch` 同样传入名单和建议人选。`sentinel_wake_target` 解析得出人时记原值，否则记 main_ai（旧行为）。
+- **摄像头**：
+  - `CAM_WAKE_MODES` 加入 ai3～ai6。
+  - `_analyze_and_log` 用名单、建议人选生成规则并解析。
+  - `_handle_monitor_no_image` 取图失败时，智能模式也用建议人选。
+  - `_wake_core_targets` 按 aion、connor、ai3～ai6 的顺序处理座位：`_resolve_actor_target` 返回座位私聊（`_get_or_create_seat_room`），`_call_seat_core` 拼唤醒提示（多久没说话、叫醒原因、整体状况、最新和最近的监控记录、设备动态、位置），附截图后调用 `_generate_seat_reply(group=False)`。座位没准备好时，房间里留「没能回复」记录，不换人。
+- **定位**：
+  - 摄像头配置新增 `location_wake_mode`，默认 smart，可选值同上。
+  - 智能模式下，`_notify_sentinel` 的提示词附上派单规则，JSON 多出 wake_target、wake_reason、wake_confidence；固定模式提示词不变。
+  - 解析失败时照旧默认要叫，叫谁按设置，智能模式用建议人选。
+  - 日志记录带上 dispatch 和 `final_wake_targets`，用于下次计算上次被叫来的时间。
+  - 叫 aion 照旧走 `_call_core_location`，行为不变；Lucien 和座位走 `cam._wake_core_targets`，位置事件作为监控记录，不带截图，派单依据写进原因。
+- **设置页** `static/camera.html`：
+  - 「需要联系时唤醒谁」改成动态选项（小克、Lucien、已启用座位、智能），名字用 textContent 填写。选过、后来被停用的座位显示「（未启用）」。
+  - 新增「出门 / 回家时叫谁」。
+  - 智能说明改成新规则。
+  - `/api/cam/status` 多返回 `location_wake_mode` 和 `wake_seats`，`PUT /api/cam/config` 接受 `location_wake_mode`。
+- 测试：
+  - `test_camera_sentinel_dispatch.py`：原来的固定分工规则用例改写为新规则（名单、编号、不固定分工、建议人选、不出现内部名）。其余用例不变，全部通过。
+  - 新文件 `test_wake_roster.py` 11 项：解析座位和多人、回退到建议人选、座位可作为固定设置、建议权重、名单只含准备好的座位且带上次被叫来的时间、叫座位时在私聊里带截图开口；定位方面有智能挑座位（提示词带规则、日志记录目标）、挑小克走原路径、固定模式不带规则、哨兵失败用建议人选、不叫时谁都不叫。
+  - 相关 35 个测试文件：274 通过，2 个失败均为既有的 `test_sentinel_routes`。设置页内联脚本 `node --check` 通过。

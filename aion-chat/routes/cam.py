@@ -15,7 +15,7 @@ from config import (
     normalize_camera_wake_mode,
     save_cam_config,
 )
-from camera import cam, detect_cameras, read_monitor_logs
+from camera import cam, detect_cameras, read_monitor_logs, wake_roster
 from phone_camera import phone_camera
 
 router = APIRouter()
@@ -32,6 +32,7 @@ class CamConfigUpdate(BaseModel):
     quiet_hours_end: Optional[str] = None
     esp32_cam_url: Optional[str] = None
     wake_mode: Optional[str] = None
+    location_wake_mode: Optional[str] = None
 
 @router.get("/api/cam/cameras")
 async def list_cameras():
@@ -71,8 +72,11 @@ async def cam_status():
         "is_quiet_hours": cam._is_quiet_hours(),
         "next_capture_in": round(remaining),
         "wake_mode": normalize_camera_wake_mode(cam.cfg.get("wake_mode")),
+        "location_wake_mode": normalize_camera_wake_mode(cam.cfg.get("location_wake_mode") or "smart"),
         "ai_name": ai_name,
         "connor_name": connor_name,
+        # 已启用、准备好的座位，设置页的「叫谁」里可以选
+        "wake_seats": [{"id": r["id"], "name": r["name"]} for r in wake_roster() if r["id"] not in ("aion", "connor")],
     }
 
 @router.post("/api/cam/open")
@@ -136,6 +140,8 @@ async def update_cam_config(body: CamConfigUpdate):
         cam.cfg["esp32_cam_url"] = body.esp32_cam_url.strip()
     if body.wake_mode is not None:
         cam.cfg["wake_mode"] = normalize_camera_wake_mode(body.wake_mode)
+    if body.location_wake_mode is not None:
+        cam.cfg["location_wake_mode"] = normalize_camera_wake_mode(body.location_wake_mode)
     save_cam_config(cam.cfg)
     return {"ok": True}
 

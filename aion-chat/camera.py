@@ -60,25 +60,117 @@ def normalize_sentinel_wake_target(value: object) -> str:
     return target if target in SENTINEL_WAKE_TARGETS else "main_ai"
 
 
+# ── 智能叫人（2026-10-21 小猫：不按事情类型固定分工，也能叫座位）──
+SEAT_WAKE_IDS = ("ai3", "ai4", "ai5", "ai6")
+# 给哨兵看的编号：小克 / Lucien 用中性的 main_ai / second_ai（不把内部名字交给哨兵），座位用自己的 id
+WAKE_KEYS = {"aion": "main_ai", "connor": "second_ai"}
+_WAKE_KEY_TO_ID = {"main_ai": "aion", "second_ai": "connor", "aion": "aion", "connor": "connor"}
+_WAKE_SPLIT = re.compile(r"[,，、/;；\s]+")
+
+
+def _wake_key(actor_id: str) -> str:
+    return WAKE_KEYS.get(actor_id, actor_id)
+
+
+def _last_woken_times(days: int = 3) -> dict[str, float]:
+    """最近几天每位 AI 上一次被监控 / 定位叫来的时间（来自监控日志）。"""
+    latest: dict[str, float] = {}
+    try:
+        entries = read_logs_since(time.time() - days * 86400)
+    except Exception:
+        return latest
+    for entry in entries:
+        ts = float(entry.get("timestamp") or 0)
+        for actor in entry.get("final_wake_targets") or []:
+            latest[actor] = max(latest.get(actor, 0.0), ts)
+    return latest
+
+
+def wake_roster() -> list[dict]:
+    """现在能被叫来的人：小克、Lucien，加上已启用、有人设、有模型的座位。每人带上次被叫来的时间。"""
+    try:
+        from chatroom import get_chatroom_names
+        _, aion_name, connor_name = get_chatroom_names()
+    except Exception:
+        aion_name, connor_name = (load_worldbook().get("ai_name") or "AI"), "AI"
+    roster = [{"id": "aion", "name": aion_name}, {"id": "connor", "name": connor_name}]
+    try:
+        import actors
+        import seat_chat
+        for seat in SEAT_WAKE_IDS:
+            try:
+                seat_chat.check_ready(seat)
+            except Exception:
+                continue
+            roster.append({"id": seat, "name": actors.display_name(seat)})
+    except Exception:
+        pass
+    last = _last_woken_times()
+    for item in roster:
+        item["key"] = _wake_key(item["id"])
+        item["last_woken"] = last.get(item["id"], 0.0)
+    return roster
+
+
+def suggest_wake_target(roster: list[dict], rng=random, now: float | None = None) -> str:
+    """拿不准时的随机建议人选：越久没被叫来的人越容易抽到（上限 72 小时），从没被叫过的按 72 小时算。"""
+    if not roster:
+        return "aion"
+    now = now or time.time()
+    weights = [
+        1 + (min(72.0, (now - item["last_woken"]) / 3600) if item.get("last_woken") else 72.0)
+        for item in roster
+    ]
+    return rng.choices([item["id"] for item in roster], weights=weights, k=1)[0]
+
+
+def parse_wake_target_ids(value: object, allowed: list[str]) -> list[str]:
+    """哨兵写的 wake_target → 名单里的 AI id（按名单顺序、去重）。支持逗号分隔多人；
+    兼容旧值 main_ai / second_ai / both / aion / connor；all = 名单里所有人。不在名单里的丢掉。"""
+    picked: set[str] = set()
+    for part in _WAKE_SPLIT.split(str(value or "").strip().lower()):
+        if not part:
+            continue
+        if part == "both":
+            picked.update({"aion", "connor"})
+        elif part == "all":
+            picked.update(allowed)
+        else:
+            picked.add(_WAKE_KEY_TO_ID.get(part, part))
+    return [actor for actor in allowed if actor in picked]
+
+
 def resolve_sentinel_wake_targets(
     call_core: bool,
     wake_mode: str,
     sentinel_target: object,
+    *,
+    roster_ids: list[str] | None = None,
+    suggested: str = "",
 ) -> list[str]:
     if not call_core:
         return []
     mode = normalize_camera_wake_mode(wake_mode)
     if mode != "smart":
         return [mode]
-    target = normalize_sentinel_wake_target(sentinel_target)
-    if target == "both":
-        return ["aion", "connor"]
-    return ["aion"] if target == "main_ai" else ["connor"]
+    allowed = list(roster_ids) if roster_ids else ["aion", "connor"]
+    picked = parse_wake_target_ids(sentinel_target, allowed)
+    if picked:
+        return picked
+    return [suggested if suggested in allowed else allowed[0]]
 
 
-def parse_sentinel_dispatch(parsed: dict, wake_mode: str) -> dict:
+def parse_sentinel_dispatch(
+    parsed: dict,
+    wake_mode: str,
+    *,
+    roster_ids: list[str] | None = None,
+    suggested: str = "",
+) -> dict:
     call_core = bool(parsed.get("call_core", False))
-    sentinel_target = normalize_sentinel_wake_target(parsed.get("wake_target"))
+    raw_target = str(parsed.get("wake_target") or "").strip().lower()
+    allowed = list(roster_ids) if roster_ids else ["aion", "connor"]
+    sentinel_target = raw_target if parse_wake_target_ids(raw_target, allowed) else "main_ai"
     confidence = str(parsed.get("wake_confidence") or "").strip().lower()
     if confidence not in {"high", "medium", "low"}:
         confidence = "low"
@@ -87,29 +179,47 @@ def parse_sentinel_dispatch(parsed: dict, wake_mode: str) -> dict:
         "final_wake_targets": resolve_sentinel_wake_targets(
             call_core,
             wake_mode,
-            sentinel_target,
+            raw_target,
+            roster_ids=allowed,
+            suggested=suggested,
         ),
         "wake_reason": str(parsed.get("wake_reason") or "").strip(),
         "wake_confidence": confidence,
     }
 
 
+def _ago_text(ts: float, now: float) -> str:
+    if not ts:
+        return "最近三天没被叫来过"
+    hours = (now - ts) / 3600
+    return f"{int(hours * 60)}分钟前" if hours < 1 else f"{hours:.0f}小时前"
+
+
 def build_sentinel_dispatch_policy(
     *,
     user_name: str,
-    ai_name: str,
-    connor_name: str,
+    roster: list[dict],
+    suggested: str,
+    now: float | None = None,
 ) -> str:
+    """派单规则：谁都可以处理任何事，按点名、上下文连续、互动情况挑人，拿不准就用随机建议人选。"""
+    now = now or time.time()
+    lines = "\n".join(
+        f"- {item['key']}：{item['name']}（上次被叫来：{_ago_text(item.get('last_woken', 0.0), now)}）"
+        for item in roster
+    )
+    by_id = {item["id"]: item for item in roster}
+    tip = by_id.get(suggested) or (roster[0] if roster else {"key": "main_ai", "name": "AI"})
     return f"""派单规则（仅在 call_core=true 时使用）：
-- wake_target 只能是 main_ai、second_ai、both。main_ai 代表{ai_name}，second_ai 代表{connor_name}，both 代表两位都唤醒。
-- 明确点名优先：{user_name}明确呼唤其中一位时，优先派给被点名者。
-- 强烈情绪、想发疯吐槽、受委屈需要立刻站队、玩闹撩骚，优先派给{ai_name}（main_ai）。
-- 饮食出行、运动工作、直播前后、睡眠作息、身体不适，偷懒摸鱼，不去休息，不吃饭需要提醒时，优先派给{connor_name}（second_ai）。
-- 撒娇、亲密互动、低落但嘴硬等不固定归属；结合点名、最近由谁处理同一事情、近期互动和谁更久没有被唤醒来选择。
-- 当明显危险、健康异常、情绪崩溃、涉及三个人共同的家庭关系、或长时间没有交流，选择 both。
-- 普通的不确定或低置信度不能成为选择 both 的理由；仍要先判断更匹配的一位。
-- 最近处理同一事件的人优先保持上下文；同类事件连续发生时避免机械地总派同一位，但上下文连续性高于轮换。
-- wake_reason 用一句话说明派单依据；wake_confidence 只能是 high、medium、low。"""
+可以叫的人（wake_target 只能填下面冒号前的编号）：
+{lines}
+- 不按事情类型固定分工：谁都可以处理任何事情。
+- 明确点名优先：{user_name}明确呼唤其中一位时，叫被点名的那位。
+- 保持上下文：最近的聊天里{user_name}正在和某一位聊相关的事，或同一件事最近是某一位在跟进，优先让这位接着来。
+- 都不明显时，结合最近的聊天氛围、谁最近和{user_name}互动得多、谁很久没被叫来，选一位更合适的；同类事情连续发生时不要总叫同一位。
+- 仍然拿不准时，就选系统随机给出的建议人选：{tip['key']}（{tip['name']}）。
+- 只有明显危险、健康异常、情绪崩溃、或长时间没有交流这类情况，才同时叫两位或更多，编号用英文逗号分隔（例如 main_ai,second_ai）。普通的不确定或低置信度不能成为多叫的理由，仍要先判断更合适的一位。
+- wake_reason 用一句话说明为什么叫这位；wake_confidence 只能是 high、medium、low。"""
 
 
 # ── 监控日志文件读写 ──────────────────────────────
@@ -1255,10 +1365,13 @@ class CameraMonitor:
             f"{image_result.no_image_context or PHONE_CAMERA_NO_IMAGE_CONTEXT}\n"
             f"本次哨兵巡逻取图结果：{error}。"
         )
+        roster = wake_roster()
         wake_targets = resolve_sentinel_wake_targets(
             True,
             self.cfg.get("wake_mode", "aion"),
-            "main_ai",
+            "",
+            roster_ids=[item["id"] for item in roster],
+            suggested=suggest_wake_target(roster),
         )
         now = time.time()
         log_entry = {
@@ -1276,7 +1389,7 @@ class CameraMonitor:
             "screenshot": "",
             "sentinel_wake_target": "main_ai",
             "final_wake_targets": wake_targets,
-            "wake_reason": "取图失败时沿用主 AI 安全回退。",
+            "wake_reason": "取图失败：固定模式按设置叫人，智能模式用随机建议人选。",
             "wake_confidence": "low",
         }
         append_monitor_log(log_entry)
@@ -1380,10 +1493,13 @@ class CameraMonitor:
             if heart_rate_summary_text
             else f"\n{user_name}最近心率摘要（穿戴设备数据，仅作辅助）：\n（暂无可用心率数据）\n"
         )
+        roster = wake_roster()
+        roster_ids = [item["id"] for item in roster]
+        suggested = suggest_wake_target(roster)
         dispatch_policy = build_sentinel_dispatch_policy(
             user_name=user_name,
-            ai_name=ai_name,
-            connor_name=connor_name,
+            roster=roster,
+            suggested=suggested,
         )
         layout_guidance = build_monitor_layout_guidance(
             bool(self.cfg.get("include_pc_screen", False))
@@ -1457,7 +1573,8 @@ class CameraMonitor:
 
         monitoring_log = ""
         call_core = False
-        dispatch = parse_sentinel_dispatch({}, self.cfg.get("wake_mode", "aion"))
+        dispatch = parse_sentinel_dispatch({}, self.cfg.get("wake_mode", "aion"),
+                                           roster_ids=roster_ids, suggested=suggested)
 
         try:
             from memory import _call_sentinel_vision
@@ -1474,6 +1591,8 @@ class CameraMonitor:
             dispatch = parse_sentinel_dispatch(
                 parsed,
                 self.cfg.get("wake_mode", "aion"),
+                roster_ids=roster_ids,
+                suggested=suggested,
             )
             summary = parsed.get("summary", "")
             core_reason = parsed.get("core_reason", "")
@@ -1539,6 +1658,10 @@ class CameraMonitor:
             )
 
     async def _resolve_actor_target(self, actor: str) -> dict | None:
+        if actor in SEAT_WAKE_IDS:  # 座位：在 TA 自己的私聊里开口
+            import routes.chatroom as chatroom_routes
+            room_id = await chatroom_routes._get_or_create_seat_room(actor)
+            return {"type": "chatroom", "room_id": room_id, "room_type": "seat_1v1"}
         actor = "connor" if actor == "connor" else "aion"
         async with get_db() as db:
             db.row_factory = aiosqlite.Row
@@ -1603,10 +1726,69 @@ class CameraMonitor:
     ):
         if actor == "connor":
             return await self._call_connor_core(target, *args, **kwargs)
+        if actor in SEAT_WAKE_IDS:
+            return await self._call_seat_core(actor, target, *args, **kwargs)
         return await self._call_core(*args, target_override=target, **kwargs)
 
+    async def _call_seat_core(
+        self,
+        actor: str,
+        target: dict,
+        trigger_log: str,
+        last_user_ts: float,
+        summary: str = "",
+        core_reason: str = "",
+        cached_logs: list = None,
+        screenshot_filename: str = "",
+        camera_jpeg: bytes | None = None,
+    ):
+        """监控 / 定位叫座位：TA 在自己的私聊里用自己的人设和模型主动开口，附上这次的截图。
+        TA 没准备好时由 _generate_seat_reply 在房间里留「没能回复」记录，不换别人。"""
+        import routes.chatroom as chatroom_routes
+        user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
+        if last_user_ts > 0:
+            elapsed = time.time() - last_user_ts
+            hours, minutes = int(elapsed // 3600), int((elapsed % 3600) // 60)
+            time_ago = f"{hours}小时{minutes}分钟" if hours > 0 else f"{minutes}分钟"
+        else:
+            time_ago = "很长时间"
+        logs = (cached_logs if cached_logs is not None else read_logs_since(time.time() - 3600 * 6))[-5:]
+        recent_detail = "\n".join(
+            f"[{entry.get('time', '')}] {entry.get('monitoringlog', '')}" for entry in logs
+        ) or trigger_log
+        parts = [f"[监控唤醒] {user_name}已经{time_ago}没有和你说话了。"]
+        if core_reason:
+            parts.append(f"叫你来的原因：{core_reason}")
+        if summary:
+            parts.append(f"这段时间{user_name}的整体状况：{summary}")
+        parts.append(f"最新一条监控记录：{trigger_log}")
+        parts.append(f"最近的监控记录：\n{recent_detail}")
+        try:
+            from activity import get_monitor_activity_for_prompt
+            device_activity = get_monitor_activity_for_prompt()
+            if device_activity:
+                parts.append(device_activity)
+        except Exception:
+            pass
+        try:
+            from location import format_location_for_prompt
+            loc_info = format_location_for_prompt()
+            if loc_info:
+                parts.append(loc_info)
+        except Exception:
+            pass
+        if screenshot_filename:
+            parts.append("附图是这次的监控画面。")
+        parts.append(f"你现在是在你和{user_name}的私聊里主动联系她，用你自己的口吻自然地开口，"
+                     "不要复述监控记录原文，也不要替别人说话。")
+        await chatroom_routes._generate_seat_reply(
+            target["room_id"], {"actor": actor}, [], asyncio.Queue(), 30, actor=actor, group=False,
+            extra_prompt="\n".join(parts),
+            extra_attachments=[f"/screenshots/{screenshot_filename}"] if screenshot_filename else None,
+        )
+
     async def _wake_core_targets(self, actors: list[str], *args, **kwargs) -> dict:
-        ordered_actors = [a for a in ("aion", "connor") if a in actors]
+        ordered_actors = [a for a in ("aion", "connor", *SEAT_WAKE_IDS) if a in actors]
         targets = {
             actor: await self._resolve_actor_target(actor)
             for actor in ordered_actors

@@ -53,24 +53,26 @@ class SentinelDispatchTests(unittest.TestCase):
             camera.resolve_sentinel_wake_targets(True, "smart", "unknown"),
         )
 
-    def test_dispatch_policy_uses_configured_names_and_clear_both_boundary(self):
+    def test_dispatch_policy_lists_roster_without_fixed_roles(self):
+        """2026-10-21：不按事情类型固定分工；名单里每人带编号和上次被叫来的时间。"""
         policy = camera.build_sentinel_dispatch_policy(
             user_name="Configured User",
-            ai_name="Configured Main",
-            connor_name="Configured Second",
+            roster=[
+                {"id": "aion", "key": "main_ai", "name": "Configured Main", "last_woken": 0.0},
+                {"id": "connor", "key": "second_ai", "name": "Configured Second", "last_woken": 0.0},
+            ],
+            suggested="connor",
         )
 
-        self.assertIn("Configured Main", policy)
-        self.assertIn("Configured Second", policy)
-        self.assertIn("main_ai", policy)
-        self.assertIn("second_ai", policy)
-        self.assertIn("both", policy)
+        self.assertIn("main_ai：Configured Main", policy)
+        self.assertIn("second_ai：Configured Second", policy)
+        self.assertIn("不按事情类型固定分工", policy)
+        self.assertIn("建议人选：second_ai（Configured Second）", policy)
         self.assertNotIn("aion", policy.lower())
         self.assertNotIn("connor", policy.lower())
-        self.assertIn("转账", policy)
+        self.assertNotIn("饮食出行", policy)
         self.assertIn("明显危险", policy)
         self.assertIn("普通的不确定", policy)
-        self.assertIn("不能", policy)
 
     def test_parse_dispatch_preserves_sentinel_and_final_targets(self):
         dispatch = camera.parse_sentinel_dispatch(
