@@ -643,6 +643,11 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
             "[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。",
             "[SCHEDULE_DEL:日程id] — 删除你自己设的日程/闹铃（别人设的删不了）。",
         ])
+        if is_capability_enabled("cam_check"):
+            texts.append(
+                f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督。到时间后系统自动截取摄像头画面发给你，"
+                f"你可以看看{user_name}的状态再自然地回应。内容写清楚想看什么（比如「看她有没有在学习」）。"
+            )
     return texts
 
 

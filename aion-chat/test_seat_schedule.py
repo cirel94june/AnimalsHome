@@ -67,10 +67,98 @@ def test_seat_alarm_and_reminder_are_recorded_under_the_seat(db, notes):
     assert text == "好" and triggered["schedule"]
     rows = _rows(db, "origin='ai3' AND status='active'")
     assert {(r[1], r[2], r[5]) for r in rows} == {("alarm", "喝水", "g1"), ("reminder", "交作业", "g1"),
-                                                 ("reminder", "狗蛋的日程", "")}
-    assert not _rows(db, "type='monitor'")  # 定时监督要摄像头，座位暂不支持
+                                                 ("monitor", "看看你", "g1"), ("reminder", "狗蛋的日程", "")}
     shown = [c.args[1] for c in notes.await_args_list]
     assert any("【狗蛋】设定了闹铃" in s for s in shown) and any("【狗蛋】设定了日程" in s for s in shown)
+    assert any("【狗蛋】设定了监督" in s for s in shown)
+
+
+def test_seat_monitor_needs_the_camera_switch(db, notes, monkeypatch):
+    monkeypatch.setattr(chatroom_routes, "is_capability_enabled", lambda name: name != "cam_check")
+    when = (datetime.now() + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+    text, _ = _run(f"好[Monitor:{when}|看看你]", notes)
+    assert text == "好" and not _rows(db, "type='monitor'")
+    notes.assert_not_called()
+
+
+def _due_monitor(db):
+    async def add():
+        async with aiosqlite.connect(db) as conn:
+            await conn.execute("INSERT INTO schedules (id, type, trigger_at, content, created_at, origin, origin_room_id) "
+                               "VALUES ('m1', 'monitor', '2000-01-01 08:00', '看她有没有在学习', 0, 'ai3', 's3')")
+            await conn.commit()
+    asyncio.run(add())
+    return {"id": "m1", "type": "monitor", "trigger_at": "2000-01-01 08:00", "content": "看她有没有在学习",
+            "origin": "ai3", "origin_room_id": "s3"}
+
+
+def test_seat_monitor_fires_with_the_snapshot_through_the_seat(db, monkeypatch):
+    item = _due_monitor(db)
+    import camera
+    from types import SimpleNamespace
+    acquire = AsyncMock(return_value=SimpleNamespace(prompt_attachment="/screenshots/m.jpg",
+                                                     image_result=SimpleNamespace(no_image_context="")))
+    monkeypatch.setattr(camera, "acquire_prompt_monitor_context", acquire)
+    import capabilities
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: True)
+    reply = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_generate_seat_reply", reply)
+    main_flow = AsyncMock()
+    monkeypatch.setattr(schedule, "get_active_schedules", main_flow)  # 主 AI 流程没走到
+    asyncio.run(schedule.ScheduleManager()._fire_monitor(item))
+    args, kwargs = reply.await_args
+    assert args[0] == "s3" and kwargs["actor"] == "ai3" and kwargs["group"] is False
+    assert kwargs["extra_attachments"] == ["/screenshots/m.jpg"]
+    assert "定时监控触发" in kwargs["extra_prompt"] and "看她有没有在学习" in kwargs["extra_prompt"]
+    assert acquire.await_args.kwargs["alert_extra"]["origin"] == "ai3"
+    assert _rows(db, "id='m1'")[0][3] == "triggered"
+    main_flow.assert_not_called()
+    reply.reset_mock()
+    asyncio.run(schedule.ScheduleManager()._fire_monitor(item))  # 重复触发不再开口
+    reply.assert_not_called()
+
+
+def test_seat_monitor_without_camera_switch_says_there_is_no_picture(db, monkeypatch):
+    item = _due_monitor(db)
+    import camera
+    acquire = AsyncMock()
+    monkeypatch.setattr(camera, "acquire_prompt_monitor_context", acquire)
+    import capabilities
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "cam_check")
+    reply = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_generate_seat_reply", reply)
+    asyncio.run(schedule.ScheduleManager()._fire_monitor(item))
+    acquire.assert_not_called()
+    kwargs = reply.await_args.kwargs
+    assert kwargs["extra_attachments"] is None and "没有拿到摄像头画面" in kwargs["extra_prompt"]
+    assert "不要假装看到了画面" in kwargs["extra_prompt"]
+
+
+def test_seat_reply_attaches_the_snapshot_to_the_trigger_message(monkeypatch):
+    monkeypatch.setattr(seat_chat, "check_ready", lambda a: ({}, "seat-m"))
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-m": {"provider": "custom_openai", "model": "m"}})
+    monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[]))
+    monkeypatch.setattr(seat_chat, "build_context", AsyncMock(return_value=[{"role": "system", "content": "x"}]))
+    seen = []
+
+    async def stream(messages, *a, **k):
+        seen.append(messages)
+        yield "在学习呢"
+    monkeypatch.setattr(chatroom_routes, "stream_ai", stream)
+    monkeypatch.setattr(chatroom_routes, "_save_msg", AsyncMock(return_value={"id": "x"}))
+    asyncio.run(chatroom_routes._generate_seat_reply("s3", {"actor": "ai3"}, [], asyncio.Queue(), 30, actor="ai3",
+                                                     extra_prompt="[定时监控触发]",
+                                                     extra_attachments=["/screenshots/m.jpg"]))
+    assert seen[0][-1] == {"role": "user", "content": "[定时监控触发]", "attachments": ["/screenshots/m.jpg"]}
+
+
+def test_seat_prompt_offers_monitor_only_with_camera_switch(monkeypatch):
+    import capabilities
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name in ("schedule", "cam_check"))
+    assert any(t.startswith("[Monitor:") for t in capabilities.seat_ability_texts("小猫"))
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name == "schedule")
+    assert not any(t.startswith("[Monitor:") for t in capabilities.seat_ability_texts("小猫"))
 
 
 def test_seat_can_only_delete_its_own_schedules(db, notes):
@@ -131,7 +219,7 @@ def test_origin_name_and_seat_context_show_schedules(db, monkeypatch):
     monkeypatch.setattr(seat_chat.actors, "get_actor", lambda a: {"name": "狗蛋"})
     built = asyncio.run(seat_chat.build_context("ai3", [], group=False))
     text = "\n".join(m["content"] for m in built)
-    assert "[当前日程列表]" in text and "狗蛋的日程" in text and "[ALARM:" in text and "Monitor" not in text
+    assert "[当前日程列表]" in text and "狗蛋的日程" in text and "[ALARM:" in text and "[Monitor:" in text  # 看监控开关开着时可以设定时监督
 
 
 def test_alarm_reply_is_not_captured_as_a_conversation_turn(monkeypatch):

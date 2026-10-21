@@ -535,9 +535,44 @@ class ScheduleManager:
                   "reasoning_content": reasoning_content}
         await manager.broadcast({"type": "chatroom_msg_created", "data": ai_msg}, expressive_autoplay=True)
 
-    async def _fire_seat_alarm(self, item: dict):
+    async def _fire_seat_monitor(self, item: dict):
+        """座位设的定时监督到点：「看监控」开关开着才截图，截图交给 TA 自己看、在原房间开口。
+        截不到 / 开关关了就照实告诉 TA 没有画面，仍由 TA 自己回应，不换小克或 Lucien。"""
+        from capabilities import is_capability_enabled
+        origin = item.get("origin")
+        content = item.get("content") or ""
+        user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
+        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        attachment = ""
+        no_image_context = ""
+        if is_capability_enabled("cam_check"):
+            from camera import acquire_prompt_monitor_context
+            try:
+                monitor_context = await acquire_prompt_monitor_context(
+                    "scheduled_monitor",
+                    alert_content=content,
+                    alert_extra={"origin": origin, "origin_name": get_schedule_origin_name(origin)},
+                )
+                attachment = monitor_context.prompt_attachment or ""
+                no_image_context = monitor_context.image_result.no_image_context or ""
+            except Exception as error:
+                log.warning("座位定时监督截图失败 %s: %s", item.get("id"), error)
+        prompt = (f"[定时监控触发]\n你之前设置了在 {item['trigger_at'].replace('T', ' ')} 查看{user_name}的状态。\n"
+                  f"监控目的：{content}\n")
+        if attachment:
+            prompt += f"这是系统在当前时间（{now_str}）自动从摄像头截取的实时画面。\n"
+        else:
+            prompt += f"当前时间是{now_str}，这次没有拿到摄像头画面。\n"
+        if no_image_context:
+            prompt += no_image_context + "\n"
+        prompt += ("请根据画面和之前的对话，用你自己的口吻自然地回应。" if attachment
+                   else "请结合之前的对话自然地回应，不要假装看到了画面。")
+        await self._fire_seat_alarm(item, prompt=prompt, attachments=[attachment] if attachment else None)
+
+    async def _fire_seat_alarm(self, item: dict, *, prompt: str = "", attachments: list | None = None):
         """座位的闹铃到点：回到设闹铃的房间（没有就去 TA 的私聊），用 TA 自己的人设和模型提醒。
-        TA 没启用 / 没模型时房间里会留一条「没能回复」的记录，不换别人来提醒。"""
+        TA 没启用 / 没模型时房间里会留一条「没能回复」的记录，不换别人来提醒。
+        prompt / attachments：定时监督这类自带提示词和截图的情况。"""
         import routes.chatroom as chatroom_routes
         import seat_chat
         origin = item.get("origin")
@@ -555,7 +590,9 @@ class ScheduleManager:
             room_id = await chatroom_routes._get_or_create_seat_room(origin)
             room_type = seat_chat.SEAT_ROOM_TYPE
         user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
-        if item.get("type") == PROACTIVE_TYPE:
+        if prompt:
+            pass
+        elif item.get("type") == PROACTIVE_TYPE:
             now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
             prompt = (f"[主动陪伴触发] 截至当前 {now_str}，这段时间没有新的对话消息。"
                       f"请结合最新上下文，自然地主动和{user_name}继续聊下去。")
@@ -567,7 +604,7 @@ class ScheduleManager:
             from proactive_companionship import is_proactive_enabled
             proceed_check = lambda: is_proactive_enabled(origin)  # noqa: E731
         await chatroom_routes._generate_seat_reply(room_id, {"actor": origin}, [], asyncio.Queue(), 30,
-                                                   proceed_check=proceed_check,
+                                                   proceed_check=proceed_check, extra_attachments=attachments,
                                                    actor=origin, group=room_type == "group", extra_prompt=prompt)
 
     # ── 触发闹铃 ─────────────────────────────────
@@ -951,6 +988,9 @@ class ScheduleManager:
             if not changed:
                 return
             await manager.broadcast({"type": "schedule_changed"})
+            if origin in SEAT_ORIGINS:  # 座位设的定时监督：TA 自己看截图、在原房间开口
+                await self._fire_seat_monitor(item)
+                return
 
         # ── 确定响应目标 ──
         target = self._resolve_target(item)

@@ -517,3 +517,17 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_memory_hub_bridge.py` +1：新排上队、去重、队列满（`OUTBOX_MAX=1`）、无 Hub 身份四种情况的 outcome。
   - `test_seat_memory.py` +3：full / error / unavailable 时显示「没记上」，去重时不提示；原有替身改为接受 `outcome`。
   - 相关测试 211 通过，6 个失败均为既有失败（chatroom 前端缓存 / 移动端 ×5，`test_slow_hub` 本机计时）。
+
+## 51. 狗蛋补能力：定时监督 Monitor（座位版）
+
+- **设定**：`_seat_schedule_commands` 在「看监控」开关（cam_check）开着时，多解析 `[Monitor:时间|内容]` → `_add_schedule("monitor", …, origin=座位, origin_room_id=房间)`，房间里显示「👀 【狗蛋】设定了监督」。开关关着只去掉，不设。仍然只从原文解析一次，去掉指令后拼出来的新指令不执行。座位删除自己的监督显示「定时监督」。
+- **能力说明**：`seat_ability_texts` 在 schedule 和 cam_check 都开着时给出 `[Monitor:…]`。
+- **到点**：`_fire_monitor` 非主动陪伴分支：`finish_schedule(…"triggered")` 认领成功、广播之后，如果 origin 是座位就调用 `_fire_seat_monitor` 并返回，不走小克 / Lucien 流程。重复触发因认领失败不再开口。
+  - `_fire_seat_monitor`：cam_check 开着时调用 `acquire_prompt_monitor_context("scheduled_monitor", alert_extra={origin: 座位})` 截图；开关关着或截图异常时不截图。提示词「[定时监控触发] … 监控目的 …」：有图时说明是实时画面，没图时说明这次没拿到画面，并要求「不要假装看到了画面」。
+  - 交给 `_fire_seat_alarm(item, prompt=…, attachments=[截图])`，房间选择与闹铃相同（设的房间：群或 TA 自己的私聊，其他情况回 TA 私聊）。
+  - `_generate_seat_reply` 新增 `extra_attachments`，附在系统触发的那条 user 消息上（和主 AI 定时监督的 `trigger_msg["attachments"]` 写法一致）。回复不写 Hub（extra_prompt 规则不变），模型线路快照、`check_ready` 与之前相同。
+- 没有加活动日志、心率摘要（主 AI 的监督有）；如果需要以后再加。
+- 测试 `test_seat_schedule.py`：
+  - 改：原「座位不能设监督」改为「开关开着能设」，上下文里有 `[Monitor:`。
+  - 新增 6 项：关开关不设；到点由座位带截图在原房间开口、主 AI 流程没走、已认领、重复不开口；关开关到点不截图且提示没画面；截图附在触发消息上；提示词随开关。
+  - 相关 160 项通过。

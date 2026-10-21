@@ -4145,7 +4145,10 @@ async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, l
     from schedule_history import finish_schedule
     deletes = [m.group(1).strip() for m in SCHEDULE_DEL_CMD.finditer(full_text)]
     adds = []
-    for pattern, stype in ((ALARM_CMD, "alarm"), (REMINDER_CMD, "reminder")):
+    kinds = [(ALARM_CMD, "alarm"), (REMINDER_CMD, "reminder")]
+    if is_capability_enabled("cam_check"):  # 定时监督到点要看摄像头
+        kinds.append((MONITOR_CMD, "monitor"))
+    for pattern, stype in kinds:
         for match in pattern.finditer(full_text):
             try:
                 dt = _parse_dt(match.group(1))
@@ -4165,13 +4168,13 @@ async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, l
             await db.commit()
         if changed:
             await manager.broadcast({"type": "schedule_changed"})
-            kind = {"alarm": "闹铃", "reminder": "日程"}.get(row[0], "日程")
+            kind = {"alarm": "闹铃", "reminder": "日程", "monitor": "定时监督"}.get(row[0], "日程")
             await _chatroom_sys_msg(room_id, f"🗑 【{label}】取消了 {row[1].replace('T', ' ')} 的{kind}：{row[2]}", _q,
                                     after_msg_id=msg_id)
             triggered["schedule"] = True
     for stype, dt, content in adds:
         await _add_schedule(stype, dt, content, actor_id, room_id)
-        icon, kind = ("⏰", "闹铃") if stype == "alarm" else ("📅", "日程")
+        icon, kind = {"alarm": ("⏰", "闹铃"), "monitor": ("👀", "监督")}.get(stype, ("📅", "日程"))
         await _chatroom_sys_msg(room_id, f"{icon} 【{label}】设定了{kind}：{dt.replace('T', ' ')}，内容：{content}",
                                 _q, after_msg_id=msg_id)
         triggered["schedule"] = True
@@ -4211,7 +4214,7 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
 
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
-                               extra_prompt: str = "", proceed_check=None):
+                               extra_prompt: str = "", proceed_check=None, extra_attachments: list | None = None):
     """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
 
     私聊时 actor 取房间登记的座位；群聊时由调用方指定，并按群聊方式组织上下文。
@@ -4239,7 +4242,10 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
             messages = await seat_chat.build_context(actor_id, merged or msgs, context_limit=context_limit,
                                                      chat_id=room_id, group=group)
             if extra_prompt:  # 系统叫 TA 来说话（比如闹铃到点），不是有人发了消息
-                messages.append({"role": "user", "content": extra_prompt})
+                trigger_msg = {"role": "user", "content": extra_prompt}
+                if extra_attachments:  # 定时监督到点时的摄像头截图
+                    trigger_msg["attachments"] = list(extra_attachments)
+                messages.append(trigger_msg)
             stream_filter = KnownCommandStreamFilter()
             if proceed_check is not None and not proceed_check():  # 比如主动陪伴在等待期间被关掉
                 await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
