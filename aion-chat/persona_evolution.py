@@ -18,7 +18,8 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 EVOLUTION_RUN_RETENTION_SECONDS = 72 * 60 * 60
 ACTOR_MAIN_AI = "main_ai"
 ACTOR_CONNOR = "connor"
-EVOLUTION_ACTORS = {ACTOR_MAIN_AI, ACTOR_CONNOR}
+SEAT_ACTORS = ("ai3", "ai4", "ai5", "ai6")  # 座位和小克 / Lucien 一样做人格成长（小猫：几个 AI 权限一样）
+EVOLUTION_ACTORS = {ACTOR_MAIN_AI, ACTOR_CONNOR, *SEAT_ACTORS}
 
 _AI_SECTION_LABELS = [
     ("identity_core", "核心身份"),
@@ -83,6 +84,10 @@ def _actor_display_names(actor: str) -> dict:
     user_name, ai_name, connor_name = _chatroom_names()
     target_name = connor_name if actor == ACTOR_CONNOR else ai_name
     other_name = ai_name if actor == ACTOR_CONNOR else connor_name
+    if actor in SEAT_ACTORS:
+        import actors
+        target_name = actors.display_name(actor) or actor
+        other_name = f"{ai_name}、{connor_name}"
     return {
         "user_name": user_name,
         "target_name": target_name,
@@ -252,7 +257,20 @@ async def _timeline_user_neighbor(
     op = "<" if before else ">"
     order = "DESC" if before else "ASC"
     actor = _require_actor(actor)
-    if actor == ACTOR_CONNOR:
+    if actor in SEAT_ACTORS:
+        cur = await db.execute(
+            f"""
+            SELECT m.id, m.content, m.created_at, r.title,
+                   CASE WHEN r.type='group' THEN 'group' ELSE 'seat_private' END AS source
+            FROM chatroom_messages m
+            JOIN chatroom_rooms r ON r.id = m.room_id
+            WHERE m.sender='user' AND m.created_at {op} ?
+              AND (r.type='group' OR (r.type='seat_1v1' AND r.actor=?))
+            ORDER BY m.created_at {order} LIMIT 1
+            """,
+            (created_at, actor),
+        )
+    elif actor == ACTOR_CONNOR:
         cur = await db.execute(
             f"""
             SELECT id, content, created_at, title, source FROM (
@@ -483,8 +501,74 @@ async def fetch_connor_daily_memory_summaries(start_ts: float, end_ts: float, li
     return result
 
 
+async def fetch_seat_feedback(actor: str, start_ts: float, end_ts: float) -> list[dict]:
+    """座位收到的点评：TA 在群里、在自己私聊里被点赞 / 点踩并写了理由的发言。"""
+    names = _actor_display_names(actor)
+    user_name = names["user_name"]
+    items: list[dict] = []
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT m.id, m.room_id, r.title AS room_title, r.type AS room_type, m.content, m.created_at, "
+            "m.ai_feedback_rating, m.ai_feedback_reason, m.ai_feedback_updated_at "
+            "FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE m.sender=? AND (r.type='group' OR (r.type='seat_1v1' AND r.actor=?)) "
+            "AND m.ai_feedback_rating IN ('like','dislike') "
+            "AND COALESCE(m.ai_feedback_reason, '') != '' "
+            "AND m.ai_feedback_updated_at >= ? AND m.ai_feedback_updated_at < ? "
+            "ORDER BY m.ai_feedback_updated_at ASC",
+            (actor, actor, start_ts, end_ts),
+        )
+        for row in await cur.fetchall():
+            data = dict(row)
+            private = data.get("room_type") == "seat_1v1"
+            items.append({
+                "source": "seat_private" if private else "group",
+                "message_id": data["id"],
+                "conv_id": "",
+                "room_id": data["room_id"],
+                "room_title": data.get("room_title") or ("私聊" if private else "群聊"),
+                "speaker": names["target_name"],
+                "rating": data["ai_feedback_rating"],
+                "reason": data["ai_feedback_reason"],
+                "message_content": data["content"],
+                "message_created_at": data["created_at"],
+                "feedback_updated_at": data["ai_feedback_updated_at"],
+                "context": await _timeline_user_context(db, actor, data["created_at"], user_name),
+            })
+    return items
+
+
+async def fetch_seat_daily_summaries(actor: str, start_ts: float, end_ts: float, limit: int = 12) -> list[dict]:
+    """座位没有本地记忆总结（记忆在 Hub），用 TA 这段时间写的日记代替「当天记忆」。"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT id, content, created_at, source_start_ts, source_end_ts FROM diary_entries "
+            "WHERE author=? AND COALESCE(source_start_ts, created_at) < ? AND COALESCE(source_end_ts, created_at) >= ? "
+            "ORDER BY created_at ASC LIMIT ?",
+            (actor, end_ts, start_ts, limit),
+        )
+        rows = await cur.fetchall()
+    return [
+        {
+            "id": row["id"],
+            "room_id": "",
+            "time_range": _window_label(row["source_start_ts"] or row["created_at"], row["source_end_ts"] or row["created_at"]),
+            "source_start_ts": row["source_start_ts"] or row["created_at"],
+            "source_end_ts": row["source_end_ts"] or row["created_at"],
+            "summary": _safe_short(row["content"] or "", 600),
+            "importance": None,
+            "unresolved": False,
+        }
+        for row in rows
+    ]
+
+
 async def fetch_actor_feedback(actor: str, start_ts: float, end_ts: float) -> list[dict]:
     actor = _require_actor(actor)
+    if actor in SEAT_ACTORS:
+        return await fetch_seat_feedback(actor, start_ts, end_ts)
     if actor == ACTOR_CONNOR:
         return await fetch_connor_feedback(start_ts, end_ts)
     return await fetch_main_ai_feedback(start_ts, end_ts)
@@ -492,6 +576,8 @@ async def fetch_actor_feedback(actor: str, start_ts: float, end_ts: float) -> li
 
 async def fetch_actor_daily_memory_summaries(actor: str, start_ts: float, end_ts: float) -> list[dict]:
     actor = _require_actor(actor)
+    if actor in SEAT_ACTORS:
+        return await fetch_seat_daily_summaries(actor, start_ts, end_ts)
     if actor == ACTOR_CONNOR:
         return await fetch_connor_daily_memory_summaries(start_ts, end_ts)
     return await fetch_daily_memory_summaries(start_ts, end_ts)
@@ -511,6 +597,10 @@ async def _main_ai_model() -> str:
 
 async def _actor_model(actor: str) -> str:
     actor = _require_actor(actor)
+    if actor in SEAT_ACTORS:
+        import seat_chat
+        _, model_key = seat_chat.check_ready(actor)  # 没准备好就报错，这次复盘失败，不换模型
+        return model_key
     if actor == ACTOR_CONNOR:
         cfg = _chatroom_config()
         return (cfg.get("connor_model") or "Codex").strip() or "Codex"
@@ -519,6 +609,11 @@ async def _actor_model(actor: str) -> str:
 
 async def _call_actor_model(actor: str, messages: list[dict], model_key: str) -> str:
     actor = _require_actor(actor)
+    if actor in SEAT_ACTORS:
+        import seat_chat
+        _, current = seat_chat.check_ready(actor)
+        if current != model_key:
+            raise RuntimeError("座位刚刚换了模型，这次复盘不做")
     if actor == ACTOR_CONNOR:
         from chatroom import simple_connor_cli_call
 
@@ -642,6 +737,10 @@ def _current_connor_sections(cfg: dict | None = None) -> dict:
 
 def _current_actor_sections(actor: str) -> dict:
     actor = _require_actor(actor)
+    if actor in SEAT_ACTORS:
+        import actors
+        current = actors.persona_sections(actor)
+        return {key: str(current.get(key) or "") for key in _AI_SECTION_KEYS}
     if actor == ACTOR_CONNOR:
         return _current_connor_sections()
     return _current_ai_sections(load_worldbook())
@@ -816,19 +915,19 @@ def _diff_sections(
 
 def _locked_section_keys(actor: str) -> set[str]:
     """完全锁定、进化不得改写的人设分区：世界书里标为 locked 的，加上角色登记表里该角色的种子分区。"""
-    locks = (load_worldbook().get("persona_section_locks") or {}).get("ai") or {}
+    locks = {} if actor in SEAT_ACTORS else (load_worldbook().get("persona_section_locks") or {}).get("ai") or {}
     keys = {key for key, mode in locks.items() if mode == "locked"}
     keys.add("identity_core")  # 核心身份始终锁定
     try:
         from actors import seed_locked_sections
-        keys.update(seed_locked_sections("connor" if actor == ACTOR_CONNOR else "aion"))
+        keys.update(seed_locked_sections(actor if actor in SEAT_ACTORS else ("connor" if actor == ACTOR_CONNOR else "aion")))
     except Exception:
         pass
     return keys
 
 
 def _effective_section_locks(actor: str) -> dict:
-    locks = dict(load_worldbook().get("persona_section_locks") or {})
+    locks = {} if actor in SEAT_ACTORS else dict(load_worldbook().get("persona_section_locks") or {})
     ai_locks = dict(locks.get("ai") or {})
     for key in _locked_section_keys(actor):
         ai_locks[key] = "locked"
@@ -846,7 +945,10 @@ def _apply_section_updates(actor: str, before_sections: dict, updates: dict) -> 
     diffs = _diff_sections(before_sections, after_sections, updates, actor=actor)
     if not diffs:
         return after_sections, []
-    if actor == ACTOR_CONNOR:
+    if actor in SEAT_ACTORS:
+        import actors
+        actors.save_persona_sections(actor, after_sections)
+    elif actor == ACTOR_CONNOR:
         cfg = _chatroom_config()
         cfg["connor_persona_sections"] = after_sections
         cfg["connor_persona"] = _compile_ai_persona_sections(after_sections, actor=actor)
@@ -900,7 +1002,10 @@ def _build_prompt(
     names = _actor_display_names(actor)
     ai_name = names["target_name"]
     user_name = names["user_name"]
-    if actor == ACTOR_CONNOR:
+    if actor in SEAT_ACTORS:  # 座位：读 TA 自己的人设分区，不能拿小克的
+        ai_sections = _current_actor_sections(actor)
+        ai_persona_text = _compile_ai_persona_sections(ai_sections, actor=actor)
+    elif actor == ACTOR_CONNOR:
         cfg = _chatroom_config()
         ai_sections = _current_connor_sections(cfg)
         compiled_ai_persona = _compile_ai_persona_sections(ai_sections, actor=actor)
@@ -1454,6 +1559,9 @@ async def delete_connor_evolution_run(run_id: str) -> dict:
 
 def _actor_auto_enabled(actor: str) -> bool:
     actor = _require_actor(actor)
+    if actor in SEAT_ACTORS:
+        import actors
+        return actors.persona_evolution_enabled(actor)
     if actor == ACTOR_CONNOR:
         return bool(_chatroom_config().get("connor_persona_evolution_enabled"))
     return bool(load_worldbook().get("persona_evolution_enabled"))
@@ -1482,3 +1590,23 @@ async def main_ai_persona_evolution_loop():
 
 async def connor_persona_evolution_loop():
     await persona_evolution_loop(ACTOR_CONNOR)
+
+
+async def seat_persona_evolution_loop():
+    """座位：每天北京时间 05:00 和小克 / Lucien 一样复盘；开关按各自的设置。"""
+    while True:
+        try:
+            await asyncio.sleep(_seconds_until_next_5())
+            for actor in SEAT_ACTORS:
+                if not _actor_auto_enabled(actor):
+                    continue
+                try:
+                    result = await run_persona_evolution(actor, trigger="scheduled", window_mode="previous")
+                    print(f"[persona_evolution] {actor} {result.get('status')}: {result.get('message')}")
+                except Exception as exc:
+                    print(f"[persona_evolution] {actor} scheduled error: {exc}")
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            print(f"[persona_evolution] seats scheduled error: {exc}")
+            await asyncio.sleep(60)

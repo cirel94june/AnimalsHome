@@ -182,6 +182,11 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       '<div class="hint">自主活动、做梦、交接卡、旅行、出门逛走这条。要和上面是<b>同一个模型</b>，只是换一家中转站（比如聊天走按次、后台走按量），这样还是 TA 自己。</div>' +
       '<div class="wrow" style="margin-top:10px"><span>名片颜色</span><input type="color" id="f-color"></div>' +
       (a.id !== 'aion' ? '<div class="wrow"><span>启用这个位置</span><input type="checkbox" id="f-on"></div>' : '') +
+      (!a.builtin ? '<div class="sec" id="f-evo"><b>人格成长</b>' +
+        '<div class="wrow"><span>每天 05:00 自动复盘</span><input type="checkbox" id="f-evo-on"></div>' +
+        '<div class="hint">和小克、Lucien 一样：读你给 TA 的点赞 / 点踩理由和 TA 的日记，慢慢改写自己的人设。核心身份、关系锚点、边界与禁令不会被改。</div>' +
+        '<div class="acts" style="margin:6px 0 0"><button type="button" id="f-evo-run">现在复盘一次</button></div>' +
+        '<div class="hint" id="f-evo-latest">最近复盘：读取中…</div></div>' : '') +
       '</div><div class="acts"><button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>';
     mask.appendChild(box); document.body.appendChild(mask);
     mask.addEventListener('click', function (e) { if (e.target === mask) mask.remove(); });
@@ -190,6 +195,34 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     $('#f-sign').value = a.sign || ''; $('#f-meet').value = a.meet_since || ''; $('#f-hub').value = a.memory_hub || '';
     $('#f-color').value = /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : '#5c86c8';
     if ($('#f-on')) $('#f-on').checked = !!a.enabled;
+    // ── 座位的人格成长：开关即时保存；可以手动复盘一次；显示最近一次结果（文字用 textContent） ──
+    if ($('#f-evo')) {
+      var evoBase = '/api/persona-evolution/seat/' + encodeURIComponent(a.id);
+      var showLatest = function () {
+        fetch(evoBase + '/runs?limit=1', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+          var run = (j.runs || [])[0];
+          $('#f-evo-latest').textContent = run
+            ? '最近复盘：' + (run.window_label || '') + ' · ' + (run.user_message || run.summary || run.status || '')
+            : '最近复盘：暂无记录';
+        }).catch(function () { $('#f-evo-latest').textContent = '最近复盘：读取失败'; });
+      };
+      fetch(evoBase + '/config', { cache: 'no-store' }).then(function (r) { return r.json(); })
+        .then(function (j) { $('#f-evo-on').checked = !!j.enabled; }).catch(function () {});
+      $('#f-evo-on').onchange = function () {
+        var box2 = this;
+        fetch(evoBase + '/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: box2.checked }) })
+          .then(function (r) { if (!r.ok) throw new Error(r.status); })
+          .catch(function (e) { box2.checked = !box2.checked; alert('没保存上：' + e.message); });
+      };
+      $('#f-evo-run').onclick = function () {
+        var btn = this; btn.disabled = true; $('#f-evo-latest').textContent = '复盘中，可能要一两分钟…';
+        post(evoBase + '/run-test', {}).then(function (res) {
+          $('#f-evo-latest').textContent = '这次复盘：' + (res.message || res.status || '完成');
+        }).catch(function (e) { $('#f-evo-latest').textContent = '复盘没成功：' + e.message; })
+          .then(function () { btn.disabled = false; });
+      };
+      showLatest();
+    }
     // ── 选中转站 → 选模型；模型可以直接从中转站拉；也可以在这里新加一个中转站（Key 只存服务器） ──
     var models = [];
     function post(url, body) {

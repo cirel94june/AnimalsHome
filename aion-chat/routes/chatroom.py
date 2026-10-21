@@ -3248,7 +3248,7 @@ async def update_message_feedback(msg_id: str, body: MessageFeedbackUpdate):
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT m.*, r.type AS room_type FROM chatroom_messages m "
+            "SELECT m.*, r.type AS room_type, COALESCE(r.actor, '') AS room_actor FROM chatroom_messages m "
             "JOIN chatroom_rooms r ON r.id = m.room_id WHERE m.id=?",
             (msg_id,),
         )
@@ -3256,9 +3256,12 @@ async def update_message_feedback(msg_id: str, body: MessageFeedbackUpdate):
         if not row:
             raise HTTPException(status_code=404, detail="message not found")
         can_rate = (
-            row["room_type"] == "group" and row["sender"] in ("aion", "connor")
+            row["room_type"] == "group" and row["sender"] in ("aion", "connor", *seat_chat.SEAT_ACTORS)
         ) or (
             row["room_type"] == "connor_1v1" and row["sender"] == "connor"
+        ) or (
+            row["room_type"] == seat_chat.SEAT_ROOM_TYPE and row["sender"] in seat_chat.SEAT_ACTORS
+            and row["sender"] == row["room_actor"]
         )
         if not can_rate:
             raise HTTPException(status_code=400, detail="only AI messages can be rated here")

@@ -2723,9 +2723,11 @@ function crMsgMenuHtml(sender, msgId, opts = {}) {
 
 function crCanRateAiMsg(msg) {
   if (!msg?.id || !currentRoom) return false;
-  if (currentRoom.type === 'group') return msg.sender === 'aion' || msg.sender === 'connor';
+  const seat = /^ai[3-6]$/.test(msg.sender || '');
+  if (currentRoom.type === 'group') return msg.sender === 'aion' || msg.sender === 'connor' || seat;
   if (currentRoom.type === 'connor_1v1') return msg.sender === 'connor';
-  return false;  // 座位私聊暂不接人设进化的评分
+  if (currentRoom.type === 'seat_1v1') return seat && msg.sender === currentRoom.actor;  // 座位也做人格成长
+  return false;
 }
 
 function crMsgFeedbackHtml(msg) {

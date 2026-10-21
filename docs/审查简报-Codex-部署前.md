@@ -611,3 +611,26 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_diary.py` 9 项：写日记（人设、上下文范围、别的座位私聊不算、作者、锚点、朋友圈截断、礼物发送者、写过不再写）；4 种不满足条件；未就绪或改选模型；朋友圈开关关着；解析失败重试后跳过；座位朗读提示没配声音。
   - `test_seat_wechat.py` 4 项：以自己的名字发送并记下路线、关开关只去掉、提示词、微信模式转发和名字。
   - 相关测试 220 通过，5 个失败均为既有失败（wechat_mode ×3、chatroom 显示 ×2）。
+
+## 56. ⑤ 狗蛋补能力：人格成长（persona evolution）
+
+做法与小克 / Lucien 相同：读她写了理由的点赞 / 点踩，以及当天的「记忆」，由 TA 自己的模型决定是否改写自己的人设分区。核心身份和种子分区锁定，其余分区可以慢慢生长。
+
+- `persona_evolution.py`：
+  - `EVOLUTION_ACTORS` 加入 ai3～ai6。
+  - **点评** `fetch_seat_feedback`：这位座位在群里、在自己私聊里（`seat_1v1` 且 `r.actor=座位`）有评分且写了理由的发言。别的座位私聊不算。上下文 `_timeline_user_neighbor` 只取 TA 的私聊 + 群里她说的话。
+  - **当天记忆** `fetch_seat_daily_summaries`：座位没有本地记忆总结，改用这段时间 TA 写的日记（`diary_entries.author=座位`，§55）。
+  - **模型**：`_actor_model` 调用 `check_ready`，没准备好就报错，这次复盘失败、不换模型。`_call_actor_model` 调用前再查一次，所选模型变了就报错，中间没有 await。调用走 `simple_ai_call`（和小克的路径一样）。
+  - **人设**：`_current_actor_sections` 和 `_build_prompt` 读 `actors.persona_sections(座位)`。原本 `_build_prompt` 的 else 分支会把小克的世界书人设交给模型，已经修正；测试确认提示词里没有小克的人设。`_apply_section_updates` 通过 `actors.save_persona_sections` 写回座位分区，不碰世界书。
+  - **锁**：座位不读世界书里小克的 `persona_section_locks`，只锁 `identity_core` + `seed_locked_sections(座位)`（人设包的种子分区，默认是核心身份、关系锚点、边界与禁令）。`_effective_section_locks` 也同样处理。
+  - **开关**：`actors.persona_evolution_enabled` 和 `set_…`，存在 actors.json 里这位座位下，默认关。`seat_persona_evolution_loop` 每天北京时间 05:00 依次处理开着开关的座位，在 lifespan 里启动和取消。
+- **接口** `routes/persona_evolution.py`：`/seat/{actor}/run-test | config (GET/PUT) | runs (GET) | runs/{id} (DELETE)`。座位以外的 actor 返回 404。
+- **评分**：`update_message_feedback` 允许座位在群里的发言，以及 TA 自己私聊里的发言（查询多取 `r.actor AS room_actor`，要求发言人等于房间主人）。前端 `crCanRateAiMsg` 做了同样的判断。
+- **AI 名片页**（`static/ib/cards.html`）：座位的编辑框里新增「人格成长」，包括开关（立即保存，失败时回滚）、「现在复盘一次」、最近一次结果（textContent）。
+- 测试 `test_seat_persona_evolution.py` 5 项：
+  - 点评范围（群 + 自己私聊，不含别的座位私聊、没评分的、小克的）；
+  - 端到端复盘：只改座位分区，核心身份不变，小克锁住的分区不影响座位，提示词里没有小克的人设，世界书没写过；拿掉 `_build_prompt` 修正后此项失败；
+  - 模型变了或没准备好时报错；
+  - 开关和接口（非座位返回 404）；
+  - 座位消息可以评分，她自己的消息不能评分。
+  - 相关测试 205 通过，5 个失败均为既有失败（chatroom 前端）。

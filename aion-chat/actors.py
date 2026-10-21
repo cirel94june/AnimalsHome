@@ -355,6 +355,24 @@ def seed_locked_sections(actor_id: str) -> list[str]:
     return list(keys) if isinstance(keys, list) else list(SEED_LOCKED_SECTIONS)
 
 
+def save_persona_sections(actor_id: str, sections: dict[str, str]) -> None:
+    """人格成长改写座位人设分区（只动这一位的 persona_sections）。"""
+    data = _load_raw()
+    data.setdefault("seats", {}).setdefault(actor_id, {})["persona_sections"] = dict(sections)
+    _save_raw(data)
+
+
+def persona_evolution_enabled(actor_id: str) -> bool:
+    seat = (_load_raw().get("seats") or {}).get(actor_id) or {}
+    return bool(seat.get("persona_evolution_enabled"))
+
+
+def set_persona_evolution_enabled(actor_id: str, enabled: bool) -> None:
+    data = _load_raw()
+    data.setdefault("seats", {}).setdefault(actor_id, {})["persona_evolution_enabled"] = bool(enabled)
+    _save_raw(data)
+
+
 def persona_sections(actor_id: str) -> dict[str, str]:
     """座位 3～6 的人设分区（前两位以世界书 / 聊天室设置为准）。"""
     seat = (_load_raw().get("seats") or {}).get(actor_id) or {}

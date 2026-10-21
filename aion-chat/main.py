@@ -210,6 +210,8 @@ async def lifespan(app: FastAPI):
     compression_task = asyncio.create_task(auto_calendar_compression_loop())
     persona_evolution_task = asyncio.create_task(main_ai_persona_evolution_loop())
     connor_persona_evolution_task = asyncio.create_task(connor_persona_evolution_loop())
+    from persona_evolution import seat_persona_evolution_loop
+    seat_persona_evolution_task = asyncio.create_task(seat_persona_evolution_loop())  # 狗蛋等座位的人格成长
     memory_hub_outbox_task = asyncio.create_task(memory_hub_bridge.outbox_worker())
     memory_hub_jobs_task = asyncio.create_task(memory_hub_jobs.jobs_worker())
     import seat_diary
@@ -247,12 +249,13 @@ async def lifespan(app: FastAPI):
             idle_autonomy_mgr.stop()
             await board_patrol_mgr.stop()
             connor_persona_evolution_task.cancel()
+            seat_persona_evolution_task.cancel()
             persona_evolution_task.cancel()
             cr_digest_task.cancel()
             digest_task.cancel()
             compression_task.cancel()
             await asyncio.gather(
-                connor_persona_evolution_task, persona_evolution_task,
+                connor_persona_evolution_task, persona_evolution_task, seat_persona_evolution_task,
                 cr_digest_task, digest_task, compression_task,
                 return_exceptions=True,
             )
