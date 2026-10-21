@@ -57,7 +57,8 @@ ACTION_DEFS = {
 # 座位 3～6 目前能做的事；其余活动按座位核对过再逐个放开（见 docs/功能盘点）
 # 默认关闭：翻相册（原作者设定）、和宠物鲸鱼 Seeky 互动（小猫不要 Seeky）
 DEFAULT_OFF_ACTIONS = {"album_browse", "seeky_interaction"}
-SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel", "taobao_roam"}
+SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel", "taobao_roam",
+                "role_chat", "home_dynamics", "memory_browse", "xhs_roam"}
 
 SEEKY_ACTIONS = {
     "feed": "投喂",
@@ -729,12 +730,14 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         f"{rest_hint}\n\n"
         f"{options}{niche_hint}\n\n"
         "reason 请保留你选择它的真实动机。"
-        "如果 action 是 private_chat 或 role_chat，message 就是本次要实际发送的正式聊天正文："
+        + (f"如果选 role_chat，可以在 target 里写想找谁聊（{_partner_hint(actor)}），不写就由系统安排。"
+           if "role_chat" in enabled else "")
+        + "如果 action 是 private_chat 或 role_chat，message 就是本次要实际发送的正式聊天正文："
         "private_chat 是对用户说，role_chat 是对另一位家庭成员说。"
         "请直接以你自身人格像平时聊天一样自然完整地表达，由你决定篇幅、段落和表达形式；"
         "可以有符合平时习惯的内心活动，但不要机械套模板，不要写成行动说明，也不要刻意压短。"
         "其他动作的 message 留空。\n"
-        '格式：{"action":"上面的key之一","reason":"选择这个动作的理由","message":"聊天动作要实际发送的完整正文，其他动作为空"}'
+        '格式：{"action":"上面的key之一","reason":"选择这个动作的理由","message":"聊天动作要实际发送的完整正文，其他动作为空","target":""}'
     )
     try:
         data = await _ask_actor_json(actor, instruction)
@@ -751,10 +754,12 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
     message = message.strip() if isinstance(message, str) else ""
     if action in {"private_chat", "role_chat"} and not message:
         return fallback
+    target = data.get("target")
     return {
         "action": action,
         "reason": str(data.get("reason") or "").strip(),
         "message": message if action in {"private_chat", "role_chat"} else "",
+        "target": target.strip() if action == "role_chat" and isinstance(target, str) else "",
     }
 
 
@@ -976,9 +981,13 @@ async def _save_private_message(
         )
     if _is_seat(actor):
         from routes.chatroom import _get_or_create_seat_room
+        if force_private:
+            room_id = await _get_or_create_seat_room(actor)
+        else:  # 和小克一样去她最近说话的地方（群或 TA 的私聊）
+            from seat_chat import seat_target_room
+            room_id, _ = await seat_target_room(actor)
         return await _save_autonomy_chatroom_message(
-            await _get_or_create_seat_room(actor), actor, content,
-            attachments=attachments or [], auto_tts=False,
+            room_id, actor, content, attachments=attachments or [], auto_tts=False,
         )
     if force_private:
         from routes.chatroom import _get_or_create_connor_private_room
@@ -1288,13 +1297,57 @@ async def _run_seeky_interaction(actor: str) -> dict:
     return {"event": event, "seeky_reply": seeky_msg}
 
 
+def _family_partners(actor: str) -> list[str]:
+    """能一起聊的家人：小克、Lucien、已经准备好的座位（不含自己）。"""
+    partners = [a for a in ("aion", "connor") if a != actor]
+    try:
+        import seat_chat
+        for seat in seat_chat.SEAT_ACTORS:
+            if seat == actor:
+                continue
+            try:
+                seat_chat.check_ready(seat)
+            except seat_chat.SeatNotReady:
+                continue
+            partners.append(seat)
+    except Exception:
+        pass
+    return partners
+
+
+def _partner_hint(actor: str) -> str:
+    return "、".join(f"{a}={_actor_label(a)}" for a in _family_partners(actor))
+
+
+def _pick_partner(actor: str, wanted: str = "") -> str:
+    """点名的家人在名单里就找 TA（写 id 或名字都行）；否则小克 / Lucien 照旧找对方，座位随机找一位。"""
+    partners = _family_partners(actor)
+    wanted = (wanted or "").strip()
+    for partner in partners:
+        if wanted and wanted in (partner, _actor_label(partner)):
+            return partner
+    if actor in ("aion", "connor"):
+        return "connor" if actor == "aion" else "aion"
+    return random.choice(partners) if partners else "aion"
+
+
+async def _reply_in_group(target: str, room_id: str, room, msgs, context_limit, message: str, queue):
+    from routes.chatroom import _generate_seat_reply, _reply_aion, _reply_connor
+    if target == "aion":
+        await _reply_aion(room_id, msgs, context_limit, message, await _aion_model(), queue)
+    elif target == "connor":
+        await _reply_connor(room_id, msgs, context_limit, message, queue, connor_model_key=_connor_model())
+    else:  # 座位：用 TA 自己的人设和模型在群里接话（没准备好会留「没能回复」，不换人）
+        await _generate_seat_reply(room_id, room or {}, msgs, queue, context_limit, actor=target, group=True)
+
+
 async def _run_role_chat(actor: str, selected: dict | None = None) -> dict:
-    from routes.chatroom import _load_room_and_messages, _reply_aion, _reply_connor, _save_msg
+    from routes.chatroom import _load_room_and_messages, _save_msg
 
     room_id = await _latest_group_room_id()
     if not room_id:
         raise RuntimeError("没有可用的群聊房间")
-    target = "connor" if actor == "aion" else "aion"
+    target = _pick_partner(actor, str((selected or {}).get("target") or ""))
     actor_name = _actor_label(actor)
     target_name = _actor_label(target)
     message = str((selected or {}).get("message") or "").strip()
@@ -1304,10 +1357,7 @@ async def _run_role_chat(actor: str, selected: dict | None = None) -> dict:
     room, msgs = await _load_room_and_messages(room_id, 50)
     queue: asyncio.Queue = asyncio.Queue()
     context_limit = room.get("context_minutes", 30) if room else 30
-    if target == "aion":
-        await _reply_aion(room_id, msgs, context_limit, message, await _aion_model(), queue)
-    else:
-        await _reply_connor(room_id, msgs, context_limit, message, queue, connor_model_key=_connor_model())
+    await _reply_in_group(target, room_id, room, msgs, context_limit, message, queue)
     event = await append_idle_event(
         actor, "role_chat", f"{actor_name}在群聊里找{target_name}主动聊了起来",
         message, target_type="chatroom", target_id=room_id,
@@ -1339,7 +1389,15 @@ async def _memory_rows(actor: str) -> list[dict]:
     items: list[dict] = []
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
-        if actor == "connor":
+        if _is_seat(actor):  # 座位的记忆在 Hub，本地能翻的是 TA 自己写过的日记
+            cur = await db.execute(
+                "SELECT id, content, 'diary' AS type, created_at, source_start_ts, source_end_ts FROM diary_entries "
+                "WHERE author=? ORDER BY COALESCE(source_start_ts, created_at) ASC",
+                (actor,),
+            )
+            for row in await cur.fetchall():
+                items.append({**dict(row), "id": f"diary:{row['id']}", "source": "diary"})
+        elif actor == "connor":
             cur = await db.execute(
                 "SELECT id, content, scope AS type, created_at, source_start_ts, source_end_ts FROM chatroom_memories "
                 "WHERE scope IN ('connor','group') ORDER BY COALESCE(source_start_ts, created_at) ASC"
@@ -1695,14 +1753,15 @@ async def _write_home_dynamics_diary(actor: str, result: dict, text: str) -> dic
 
 
 async def _run_home_group_tease(actor: str, result: dict, items: list[dict], text: str) -> dict | None:
-    from routes.chatroom import _load_room_and_messages, _reply_aion, _reply_connor, _save_msg
+    from routes.chatroom import _load_room_and_messages, _save_msg
 
     room_id = await _latest_group_room_id()
     if not room_id:
         return None
-    target = "connor" if actor == "aion" else "aion"
-    target_name = _actor_label(target)
     item = _home_item_by_index(items, result.get("target_index"), exclude_author=actor)
+    author = str((item or {}).get("author") or "")
+    target = author if author in _family_partners(actor) else _pick_partner(actor)  # 调侃发这条动态的家人
+    target_name = _actor_label(target)
     context = item["title"] if item else text
     message = _clip(str(result.get("group_message") or "").strip(), 500)
     if not message:
@@ -1711,10 +1770,7 @@ async def _run_home_group_tease(actor: str, result: dict, items: list[dict], tex
     room, msgs = await _load_room_and_messages(room_id, 50)
     queue: asyncio.Queue = asyncio.Queue()
     context_limit = room.get("context_minutes", 30) if room else 30
-    if target == "aion":
-        await _reply_aion(room_id, msgs, context_limit, message, await _aion_model(), queue)
-    else:
-        await _reply_connor(room_id, msgs, context_limit, message, queue, connor_model_key=_connor_model())
+    await _reply_in_group(target, room_id, room, msgs, context_limit, message, queue)
     await append_idle_event(
         actor, "home_dynamics_result", f"{_actor_label(actor)}根据家庭动态在群聊里调侃了{target_name}",
         message, target_type="chatroom", target_id=room_id, result_type="chatroom_message",

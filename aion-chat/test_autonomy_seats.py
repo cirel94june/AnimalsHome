@@ -60,7 +60,8 @@ def _offered_actions(env, monkeypatch, actor):
 
 def test_seat_only_gets_seat_safe_actions_and_outing_when_possible(env, monkeypatch):
     offered = _offered_actions(env, monkeypatch, "ai3")
-    assert offered == {"rest", "private_chat", "web_roam", "wish_pool", "travel", "taobao_roam"}  # 还没有可去的 MCP 地方
+    assert offered == {"rest", "private_chat", "web_roam", "wish_pool", "travel", "taobao_roam",
+                       "role_chat", "home_dynamics", "memory_browse"}  # 还没有可去的 MCP 地方；小红书没配好不提供
 
     mcp_outings.save_tool({"name": "小论坛", "url": "https://forum.example/mcp", "autonomy": True})
     assert "mcp_outing" in _offered_actions(env, monkeypatch, "ai3")

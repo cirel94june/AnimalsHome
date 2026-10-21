@@ -514,6 +514,7 @@ pre {
         <button type="button" onclick="saveConfig()">保存</button>
         <button class="secondary" type="button" id="runPrimaryBtn" onclick="runOnce('aion')">让主AI跑一次</button>
         <button class="secondary" type="button" id="runSecondaryBtn" onclick="runOnce('connor')">让第二AI跑一次</button>
+        <span id="seatRunBtns" style="display:contents"></span>
       </div>
       <div class="hint">运行时会先保存当前目标和说明。</div>
     </div>
@@ -582,6 +583,7 @@ pre {
             <label class="check"><input type="checkbox" id="actorSecondaryInput"> 启用</label>
           </div>
         </article>
+        <span id="seatActorCards" style="display:contents"></span>
       </div>
 
       <details style="margin-top:12px">
@@ -782,6 +784,7 @@ async function loadConfig(options = {}) {
   $('actorSecondaryLabel').textContent = actorName('connor');
   $('runPrimaryBtn').textContent = '让' + actorName('aion') + '跑一次';
   $('runSecondaryBtn').textContent = '让' + actorName('connor') + '跑一次';
+  renderSeatActors();
   $('cookieHint').textContent = currentConfig.cookie_configured ? ('已保存：' + currentConfig.cookie_masked) : '尚未保存 cookie';
   const accountBits = [];
   if (currentConfig.logged_in_nickname) accountBits.push('昵称：' + currentConfig.logged_in_nickname);
@@ -792,6 +795,38 @@ async function loadConfig(options = {}) {
   $('configDetails').open = !currentConfig.cookie_configured;
   updateOverview();
   if (!options.silent) setStatus('设置已加载。');
+}
+// 狗蛋等座位：和小克 / Lucien 一样有启用开关和「跑一次」按钮（名字用 textContent）
+function seatIds() {
+  return Object.keys((currentConfig && currentConfig.actor_labels) || {}).filter(id => /^ai[3-6]$/.test(id));
+}
+function renderSeatActors() {
+  const cards = $('seatActorCards'), btns = $('seatRunBtns');
+  if (!cards || !btns) return;
+  cards.replaceChildren(); btns.replaceChildren();
+  seatIds().forEach(id => {
+    const card = document.createElement('article'); card.className = 'actor-card';
+    const top = document.createElement('div'); top.className = 'actor-top';
+    const info = document.createElement('div');
+    const name = document.createElement('div'); name.className = 'actor-name'; name.textContent = actorName(id);
+    const hint = document.createElement('div'); hint.className = 'hint'; hint.textContent = '角色启用状态';
+    info.append(name, hint);
+    const label = document.createElement('label'); label.className = 'check';
+    const box = document.createElement('input'); box.type = 'checkbox'; box.dataset.seatActor = id;
+    const actorCfg = (currentConfig.actors || {})[id];
+    box.checked = !actorCfg || actorCfg.enabled !== false;
+    label.append(box, document.createTextNode(' 启用'));
+    top.append(info, label); card.append(top); cards.append(card);
+    const btn = document.createElement('button'); btn.className = 'secondary'; btn.type = 'button';
+    btn.dataset.seatRun = id; btn.textContent = '让' + actorName(id) + '跑一次';
+    btn.addEventListener('click', () => runOnce(id));
+    btns.append(btn);
+  });
+}
+function seatActorPayload() {
+  const out = {};
+  document.querySelectorAll('[data-seat-actor]').forEach(box => { out[box.dataset.seatActor] = { enabled: box.checked }; });
+  return out;
 }
 function collectPayload() {
   const cookie = $('cookieInput').value.trim();
@@ -808,10 +843,10 @@ function collectPayload() {
     write_delay_seconds: parseFloat($('delayInput').value || '5'),
     max_comments_for_prompt: parseInt($('maxCommentsInput').value || '20', 10),
     comment_signature_template: $('signatureInput').value || ' ——{actor_name}',
-    actors: {
+    actors: Object.assign({
       aion: { enabled: $('actorPrimaryInput').checked },
       connor: { enabled: $('actorSecondaryInput').checked }
-    }
+    }, seatActorPayload())
   };
   if (cookie) payload.cookie = cookie;
   return payload;
@@ -876,6 +911,7 @@ async function checkLogin() {
 async function runOnce(actor) {
   $('runPrimaryBtn').disabled = true;
   $('runSecondaryBtn').disabled = true;
+  document.querySelectorAll('[data-seat-run]').forEach(b => { b.disabled = true; });
   try {
     const saved = await saveConfig({ quiet:true });
     if (!saved) return;
@@ -887,6 +923,7 @@ async function runOnce(actor) {
   } finally {
     $('runPrimaryBtn').disabled = false;
     $('runSecondaryBtn').disabled = false;
+    document.querySelectorAll('[data-seat-run]').forEach(b => { b.disabled = false; });
   }
 }
 loadConfig().catch(err => setStatus({ ok:false, error:'加载失败：' + err.message }));

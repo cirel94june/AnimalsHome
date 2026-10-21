@@ -74,7 +74,7 @@ async def update_config(body: XhsConfigUpdate):
         updates["actors"] = {
             actor: actor_cfg.dict(exclude_none=True)
             for actor, actor_cfg in body.actors.items()
-            if actor in ("aion", "connor")
+            if actor in xhs_lite.known_actors()
         }
     xhs_lite.save_config(updates)
     return {"ok": True, "config": xhs_lite.public_config()}

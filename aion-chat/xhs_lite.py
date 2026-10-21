@@ -37,6 +37,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+SEAT_ACTORS = ("ai3", "ai4", "ai5", "ai6")  # 狗蛋等座位和小克 / Lucien 一样可以巡游
+
+
+def _seat_ready(actor: str) -> bool:
+    try:
+        import seat_chat
+        seat_chat.check_ready(actor)
+        return True
+    except Exception:
+        return False
+
+
+def known_actors() -> tuple[str, ...]:
+    return ("aion", "connor", *SEAT_ACTORS)
+
+
 def _deep_merge(default: dict, raw: dict) -> dict:
     result = dict(default)
     for key, value in (raw or {}).items():
@@ -68,7 +84,7 @@ def save_config(updates: dict[str, Any]) -> dict[str, Any]:
         if key == "actors" and isinstance(value, dict):
             actors = cfg.setdefault("actors", {})
             for actor, actor_update in value.items():
-                if actor not in ("aion", "connor") or not isinstance(actor_update, dict):
+                if actor not in known_actors() or not isinstance(actor_update, dict):
                     continue
                 actors.setdefault(actor, {})
                 actors[actor].update(actor_update)
@@ -95,6 +111,12 @@ def actor_label(actor: str) -> str:
         return connor_name
     if actor == "user":
         return user_name
+    if actor in SEAT_ACTORS:
+        try:
+            import actors
+            return actors.display_name(actor) or actor
+        except Exception:
+            return actor
     return actor or "AI"
 
 
@@ -107,6 +129,7 @@ def public_config() -> dict[str, Any]:
     public["actor_labels"] = {
         "aion": actor_label("aion"),
         "connor": actor_label("connor"),
+        **{seat: actor_label(seat) for seat in SEAT_ACTORS if _seat_ready(seat)},  # 准备好的座位也列出来
     }
     return public
 
@@ -410,14 +433,18 @@ def is_ready_for_auto(actor: str | None = None) -> bool:
         return False
     if not ((cfg.get("target_user_id") or "").strip() or (cfg.get("target_nickname") or "").strip()):
         return False
-    if actor in ("aion", "connor") and not cfg.get("actors", {}).get(actor, {}).get("enabled", True):
+    if actor in known_actors() and not cfg.get("actors", {}).get(actor, {}).get("enabled", True):
+        return False
+    if actor in SEAT_ACTORS and not _seat_ready(actor):
         return False
     return True
 
 
 async def run_actor_roam(actor: str, *, manual: bool = False) -> dict:
-    if actor not in ("aion", "connor"):
+    if actor not in known_actors():
         raise RuntimeError("未知小红书巡游角色")
+    if actor in SEAT_ACTORS and not _seat_ready(actor):
+        raise RuntimeError(f"{actor_label(actor)} 还没准备好（停用、没人设或没选模型）")
     cfg = load_config()
     if not cfg.get("enabled"):
         raise RuntimeError("小红书 Lite 尚未启用")

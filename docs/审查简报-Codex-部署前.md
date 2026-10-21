@@ -698,3 +698,24 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_taobao.py` 新增 7 项：回执去哪 4 种情况（没说过话去私聊；最近在群里去群；最近在私聊去私聊；别的座位私聊不算），同一次只发一张；没准备好时不能逛；自主活动可选；页面列出启用的座位。
   - `test_autonomy_seats.py` 中座位可选活动的期望加上 taobao_roam。`test_wake_roster.py` 的数据库替身同时替换 `database.get_db`（共用函数用它）。
   - 淘宝和座位相关共 54 项通过，淘宝前端 4 个 node 测试通过。
+
+## 63. 狗蛋补能力：自主活动（和家人聊聊、看家庭动态、翻旧记忆、小红书）
+
+小猫 2026-10-21：相册、AI 好友 / 留言板、台球先不做；Seeky 不要。所以 SEAT_ACTIONS 只加 `role_chat`、`home_dynamics`、`memory_browse`、`xhs_roam`。
+
+- **和家人聊聊**：
+  - 选动作的 JSON 多一个可选 `target`；提示词列出能找的家人（`_partner_hint`）。
+  - `_family_partners(actor)`：小克、Lucien、`check_ready` 通过的座位，不含自己。
+  - `_pick_partner(actor, wanted)`：点名的人（id 或名字）在名单里就找 TA；否则小克↔Lucien 照旧互找，座位随机找一位。小克 / Lucien 也可以点名找座位。
+  - `_reply_in_group(target, …)`：aion → `_reply_aion`，connor → `_reply_connor`，座位 → `_generate_seat_reply(group=True)`（就绪检查都在里面，没准备好会留「没能回复」，不换人）。
+- **看家庭动态**：`_run_home_group_tease` 的调侃对象改成「发这条动态的家人」（如果在名单里），否则用 `_pick_partner`；回话同样走 `_reply_in_group`。小克 / Lucien 的行为因此有一点变化：以前固定调侃对方，现在调侃发这条动态的人（可能是座位）。回复朋友圈、私聊、写日记的分支原本就支持座位。
+- **翻旧记忆**：座位的记忆在 Hub，本地没有记忆表。`_memory_rows(座位)` 读 TA 自己写的日记（`diary_entries.author=座位`，id 加前缀 `diary:`），按天抽取、读后可以发朋友圈 / 写随笔 / 私聊，流程与主 AI 相同。
+- **私聊留言**：`_save_private_message(座位)` 不带 `force_private` 时，和小克一样去她最近说话的地方（`seat_target_room`），带 `force_private` 时仍去 TA 的私聊。自主私聊、读后私聊等都会经过这里。
+- **小红书**：
+  - `xhs_lite`：`known_actors()` 包含 ai3～ai6；`actor_label` 用 display_name；`public_config.actor_labels` 只列准备好的座位。
+  - `is_ready_for_auto` 和 `run_actor_roam` 对座位要求 `check_ready`（不满足就不自动去，手动点会报错）；`save_config` 和接口接受座位的启用开关（座位默认启用，和主 AI 默认一致）。决定评论走 `autonomy._ask_actor_json`，座位分支已有。
+  - 页面：座位的启用卡片和「跑一次」按钮动态生成（textContent），保存时一起提交。
+- 测试：
+  - `test_seat_autonomy_more.py` 8 项：可选活动（含暂缓项不出现）；找谁聊天；回话走对方自己的路径（小克 / 座位）；座位的旧记忆是自己的日记；私聊去她最近说话的地方、force_private 时去私聊；调侃发动态的人；小红书的名字、列表、开关、就绪检查。
+  - `test_autonomy_seats.py` 中座位可选活动的期望更新。
+  - 相关 34 个文件：330 通过，5 个失败是既有失败（taobao_native_mcp ×4；`test_idle_autonomy_actions…friend_visit_action_is_available…` 改动前同样失败）。`test_idle_autonomy_friend_visit.py` 在本机改动前后都卡住超时（AI 好友小猫暂缓）。
