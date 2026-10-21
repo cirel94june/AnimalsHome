@@ -459,3 +459,38 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_cam_activity.py` +4：等待期间座位停用 / 换模型则不调模型不保存；开始时就不满足则跳过；后续回复里两种转账标签被去掉且不调 `pay_user`。原用例补上座位就绪的替身。
   - `test_seat_abilities.py`：两条上网搜后续用例补上座位就绪替身；+1 后续回复去掉转账标签。
   - 三个座位文件共 33 项通过。相关 47 个测试文件：309 通过、10 失败，其中 8 个为既有失败（camera_sentinel_dispatch、chatroom 移动端 / 人设 / 输入框缓存、chatroom_wechat_system_display ×2（改动前同样失败）、wechat_mode_dispatcher ×2），另 2 个即上面补替身的上网搜用例，已修。
+
+## 48. 狗蛋补能力第三批第六段：记住事情（写进 Memory Hub）
+
+按 Hub 窗口 2026-10-20 的约定：用 MCP `remember`（不用 `safe_remember` / `capture`）。
+
+- **outbox 多一种记录**（`memory_hub_bridge`）：
+  - 表加列 `kind`（默认 `capture`）、`payload`；新表 `remembered(source_ai, digest, created_at)`。
+  - `schedule_remember(actor, items, request_key)`：每条单独入队，`kind='remember'`，`payload` = content / room / speaker_name / subject_name / importance，`event_id = aionshome-mem-<回复 msg_id>-<序号>`。发送时把 `event_id` 作为 `client_request_id`，所以 outbox 重发时 Hub 能认出同一条。
+  - 入队时同样固定 source_ai / platform / Hub 指纹。
+  - 和对话记录走同一条队列，同一身份严格按顺序补传，断线、冷却、重启的处理都与 capture 相同。
+  - 限制：
+    - content 截到 200 字；
+    - room 只接受白名单（preferences / people / bond / health / career / psychology / learning / social / animal_dorm），其他一律留空交给 Hub 自动分，**AI 不能写进 living_room**；
+    - importance 夹在 0～0.8；
+    - 一条回复最多 3 条；
+    - 同一身份 24 小时内同一件事（去掉标点、空格、大小写后的指纹）只发一次，这次回复里的重复也一样。
+  - `_send_capture` 按 kind 分派到 `_send_remember`。Hub 回 `status=error` 视为明确拒收：标为 `uncertain` 并记下原因，**不重发，也不挡同一身份后面的记录**；网络失败照旧按退避重发。
+  - `can_remember(actor)`：Hub 开着、允许写入、这位 AI 有 Hub 身份。
+- **座位指令**（`_process_seat_commands`）：
+  - `[MEMORY:内容|分类|关于谁]`（`|` 或 `｜`），开关 `memory_write` 开着才写，关着只去掉。
+  - speaker_name 固定为小猫的名字；没写「关于谁」时 subject_name = 小猫。
+  - 小猫这一句里有「记住」时 importance 为 0.75，否则 0.5。
+  - 真正排上队的才在房间里显示「💾 狗蛋记住了：…」。
+  - `_generate_seat_reply` 传入配对的小猫原话（`paired_user_message`）；闹铃、主动陪伴这类系统触发的回复不传，按 0.5 处理。
+- **提示词**：`seat_memory_ability_text`，只在开关开着且这位座位有 Hub 身份时给（`seat_ability_texts(user_name, actor)`）。按 Hub 的内容规则写明：
+  - 一条一件事，第三人称，200 字内；
+  - 只记小猫本人说的、关于自己的事，群里别人的话不写成小猫的事；
+  - 梗和角色扮演不当事实（真要记就加 [梗]）；
+  - 建议不是待办；
+  - 说明这份记忆是三位 AI 共用的，并列出可选分类。
+- 小克、Lucien 的 [MEMORY:] 仍然写本地记忆库，没有改动。
+- 测试：
+  - `test_memory_hub_bridge.py` +6，假 Hub 加了 remember 工具：参数和固定编号、不进客厅且截断长度和重要度、标点变体去重和每条回复的上限、断线后用同一编号补传且只记一次、拒收后停放且不挡后面的对话、没有 Hub 身份或写入关闭时不发。
+  - 新文件 `test_seat_memory.py` 5 项：解析分类和关于谁并显示提示、默认值以及没排上队时不显示提示、关开关只去掉、提示词按 Hub 身份给、系统触发的回复不传小猫原话。
+  - 相关测试：303 通过，8 个失败均为既有失败（同 §47）。

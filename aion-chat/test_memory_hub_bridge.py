@@ -68,6 +68,24 @@ def fake_hub():
             time.sleep(2)
         return json.dumps({"status": "ok"})
 
+    @hub.tool()
+    def remember(content: str = "", room: str = "", category: str = "", importance: float = 0.5,
+                 source_ai: str = "claude", event_date: str = "", force_create: bool = False,
+                 client_request_id: str = "", subject_name: str = "", speaker_name: str = "") -> str:
+        args = {"content": content, "source_ai": source_ai, "client_request_id": client_request_id,
+                "importance": importance}
+        for key, value in (("room", room), ("subject_name", subject_name), ("speaker_name", speaker_name)):
+            if value:
+                args[key] = value
+        CALLS.append(("remember", args))
+        if content == "拒收":
+            return json.dumps({"status": "error", "error": "empty_content"})
+        if client_request_id and (source_ai, client_request_id) in STORED_IDS:
+            return json.dumps({"status": "queued", "duplicate": True})
+        STORED_IDS.add((source_ai, client_request_id))
+        STORED.append(content)
+        return json.dumps({"status": "queued"})
+
     port = _free_port()
     server = uvicorn.Server(uvicorn.Config(hub.streamable_http_app(), host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -535,3 +553,75 @@ def test_chatrooms_tell_hub_which_rooms_are_groups(monkeypatch):
     assert 'memory_hub_chat_type="private_group"' in src["build_aion_group_context"]
     assert 'memory_hub_chat_type="private_group"' in src["build_connor_group_context"]
     assert 'memory_hub_chat_type="private"' in src["build_connor_1v1_context"]
+
+
+# ── AI 明确要记的事（Hub remember，2026-10-20 约定）──
+
+def _remember(actor="ai3", items=None, key="cm_1_s"):
+    async def run():
+        queued = bridge.schedule_remember(actor, items or [], request_key=key)
+        await asyncio.gather(*list(bridge._background_tasks))
+        return queued
+    return asyncio.run(run())
+
+
+def _seat_hub(isolated_config, url):
+    _write(isolated_config, enabled=True, url=url, actors={"ai3": "jasper", "aion": "claude"})
+
+
+def test_remember_sends_one_fact_with_identity_and_fixed_request_id(fake_hub, isolated_config):
+    _seat_hub(isolated_config, fake_hub)
+    queued = _remember(items=[{"content": "小猫喜欢吃芒果", "room": "preferences", "speaker_name": "小猫",
+                               "subject_name": "小猫", "importance": 0.75}])
+    assert queued == ["小猫喜欢吃芒果"]
+    assert CALLS[-1] == ("remember", {"content": "小猫喜欢吃芒果", "source_ai": "jasper",
+                                      "client_request_id": "aionshome-mem-cm_1_s-0", "importance": 0.75,
+                                      "room": "preferences", "subject_name": "小猫", "speaker_name": "小猫"})
+    assert _rows() == []
+
+
+def test_remember_never_targets_living_room_and_caps_length_and_importance(fake_hub, isolated_config):
+    _seat_hub(isolated_config, fake_hub)
+    _remember(items=[{"content": "长" * 300, "room": "living_room", "importance": 5}])
+    args = CALLS[-1][1]
+    assert "room" not in args and len(args["content"]) == 200 and args["importance"] == 0.8
+
+
+def test_remember_dedupes_punctuation_variants_and_caps_per_reply(fake_hub, isolated_config):
+    _seat_hub(isolated_config, fake_hub)
+    queued = _remember(items=[{"content": c} for c in ("小猫喜欢芒果", "小猫喜欢芒果！", "一", "二", "三")])
+    assert queued == ["小猫喜欢芒果", "一", "二"]
+    assert _remember(items=[{"content": "小猫 喜欢芒果。"}], key="cm_2_s") == []  # 下一条回复里又记同一件事
+    assert [c[1]["content"] for c in CALLS if c[0] == "remember"] == ["小猫喜欢芒果", "一", "二"]
+
+
+def test_remember_survives_hub_outage_with_same_request_id(fake_hub, isolated_config):
+    _seat_hub(isolated_config, f"http://127.0.0.1:{_free_port()}/mcp")
+    assert _remember(items=[{"content": "小猫怕打雷"}]) == ["小猫怕打雷"]
+    assert _rows() == [("", "pending", 1)]
+    _seat_hub(isolated_config, fake_hub)
+    bridge._cooldown_until["write"] = 0.0
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("UPDATE outbox SET next_at=0, hub=?", (bridge.hub_id(bridge.load_config()),))
+    assert asyncio.run(bridge.drain_outbox()) == 1
+    assert asyncio.run(bridge.drain_outbox()) == 0
+    sent = [c[1] for c in CALLS if c[0] == "remember"]
+    assert sent[-1]["client_request_id"] == "aionshome-mem-cm_1_s-0" and STORED == ["小猫怕打雷"]
+
+
+def test_rejected_memory_is_parked_and_does_not_block_the_queue(fake_hub, isolated_config):
+    _seat_hub(isolated_config, fake_hub)
+    _remember(items=[{"content": "拒收"}])
+    assert asyncio.run(bridge.capture_turn("ai3", "我到家了", "欢迎回来"))  # 同一身份后面的对话照常送达
+    import sqlite3
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        assert conn.execute("SELECT kind, state, last_error FROM outbox").fetchall() == [
+            ("remember", "uncertain", "Hub 拒收：empty_content")]
+
+
+def test_remember_skipped_without_hub_identity_or_when_writes_off(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"aion": "claude"})
+    assert not bridge.can_remember("ai3") and _remember(items=[{"content": "x"}]) == []
+    _write(isolated_config, enabled=True, url=fake_hub, actors={"ai3": "jasper"}, capture_enabled=False)
+    assert _remember(items=[{"content": "x"}]) == [] and not CALLS

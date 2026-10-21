@@ -599,7 +599,22 @@ def wish_ability_text() -> str:
             "愿望会记录为你自己的愿望，内容直接写愿望本身即可。禁止滥用。")
 
 
-def seat_ability_texts(user_name: str) -> list[str]:
+def seat_memory_ability_text(user_name: str) -> str:
+    """座位记事：写进 Memory Hub（三位 AI 共用），按 Hub 窗口 2026-10-20 的约定写。"""
+    return (
+        f"[MEMORY:内容|分类] — 当{user_name}明确让你记住某件事，或认真说起关于自己的重要的事时，"
+        "把它记进你们共用的记忆库（小克和 Lucien 也看得到）。"
+        f"一条只写一件事，用第三人称、200 字以内，例如 [MEMORY:{user_name}喜欢吃芒果|preferences]。"
+        f"只记{user_name}本人说的、关于自己的事；群里别人说的话不要写成{user_name}的事；"
+        "明显在玩梗、角色扮演的不要当成事实记（真要记，内容开头写 [梗]）；"
+        f"建议、看法、劝别人的话不是待办，除非{user_name}明确说自己要去做。"
+        "分类可以省略，可选：preferences（长期喜好）、people（身边的人）、bond（你和"
+        f"{user_name}之间）、health、career、psychology、learning、social、animal_dorm（动物宿舍设定）。"
+        "说的是别人时写成 [MEMORY:内容|people|那个人的名字]。一次最多记 3 条，记过的事不要再记。"
+    )
+
+
+def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
     """座位 3～6 已经接好的聊天内能力（第二批）：点歌、联网搜索、自拍 / 画画、许愿。按各自开关给。"""
     texts = []
     if is_capability_enabled("music"):
@@ -618,6 +633,10 @@ def seat_ability_texts(user_name: str) -> list[str]:
         texts.append(cam_check_ability_text(user_name))
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
         texts.append(activity_check_ability_text(user_name))
+    if actor and is_capability_enabled("memory_write"):
+        import memory_hub_bridge
+        if memory_hub_bridge.can_remember(actor):
+            texts.append(seat_memory_ability_text(user_name))
     if is_capability_enabled("schedule"):
         texts.extend([
             "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会叫你来提醒用户。日期时间用ISO格式。",

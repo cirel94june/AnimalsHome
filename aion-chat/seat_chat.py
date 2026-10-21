@@ -172,7 +172,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         )},
         {"role": "assistant", "content": "明白了。"},
     ]
-    abilities = _ability_lines(user_name, group)
+    abilities = _ability_lines(user_name, group, actor_id)
     if proactive_line(actor_id):
         abilities.append(proactive_line(actor_id))
     if is_capability_enabled("transfer"):  # 转账要带上 TA 自己钱包的余额
@@ -198,10 +198,10 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
     return messages
 
 
-def _ability_lines(user_name: str, group: bool) -> list[str]:
+def _ability_lines(user_name: str, group: bool, actor_id: str = "") -> list[str]:
     """座位目前能用的指令：点歌、联网搜索、自拍 / 画画、许愿（第二批）；群里说悄悄话、私聊里去群里说（第一批）。"""
     from capabilities import is_capability_enabled, seat_ability_texts
-    lines = seat_ability_texts(user_name)
+    lines = seat_ability_texts(user_name, actor_id)
     if group and is_capability_enabled("private_whisper"):
         lines.append(
             f"[悄悄话：内容] — 当你想私下和{user_name}说悄悄话，不让别人听见时用。"

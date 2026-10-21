@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -312,10 +313,19 @@ def _outbox() -> sqlite3.Connection:
     # 入队时就把「记到谁名下、哪个平台、发往哪个 Hub」固定下来（快照）：之后改 AI 名片上的身份或换 Hub，
     # 已经排队的旧对话也不会跟着变成别人的。没有快照的旧记录不自动发送。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(outbox)")}
-    for col in ("event_id", "source_ai", "platform", "hub"):
+    for col in ("event_id", "source_ai", "platform", "hub", "payload"):
         if col not in cols:
             conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+    # kind：capture = 一轮对话原话（Hub 自己提取）；remember = AI 明确要记的一件事（Hub 的 remember 工具）
+    if "kind" not in cols:
+        conn.execute("ALTER TABLE outbox ADD COLUMN kind TEXT NOT NULL DEFAULT 'capture'")
     conn.commit()
+    # 最近记过的事（按内容去掉标点后的指纹）：同一件事一段时间内只发一次
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS remembered ("
+        " source_ai TEXT NOT NULL, digest TEXT NOT NULL, created_at REAL NOT NULL,"
+        " PRIMARY KEY (source_ai, digest))"
+    )
     # 每位 AI 最近一次聊天的时间（判断「新对话」、安静 30 分钟后写交接卡）和最近几轮私聊原话
     conn.execute(
         "CREATE TABLE IF NOT EXISTS activity ("
@@ -424,6 +434,85 @@ def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) ->
         return int(cur.lastrowid)
 
 
+# ── AI 明确要记的事：Hub 的 remember（2026-10-20 Hub 窗口约定）──
+# 一条只写一件事、第三人称、200 字内；不自动进客厅（living_room 只放小猫的核心身份，AI 不能指定）
+REMEMBER_ROOMS = ("preferences", "people", "bond", "health", "career", "psychology", "learning", "social",
+                  "animal_dorm")
+REMEMBER_MAX_CHARS = 200
+REMEMBER_MAX_PER_REPLY = 3
+REMEMBER_DEDUP_SECONDS = 24 * 3600
+
+
+def _memory_digest(content: str) -> str:
+    """只差标点、空格、大小写的算同一件事。"""
+    normalized = re.sub(r"[\W_]+", "", content or "").lower()
+    return hashlib.sha1(normalized.encode()).hexdigest()[:20] if normalized else ""
+
+
+def can_remember(actor: str) -> bool:
+    """这位 AI 记的事能不能送进 Hub：Hub 开着、允许写入、这位 AI 有 Hub 身份。"""
+    cfg = load_config()
+    return _is_active(cfg) and bool(cfg.get("capture_enabled", True)) and bool(source_ai_for(actor, cfg))
+
+
+def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: str) -> list[str]:
+    """把 AI 明确要记的事放进 outbox，后台送到 Hub；返回这次真正排上队的内容。
+
+    items：[{content, room, subject_name, speaker_name, importance}]。request_key 是这条回复的固定编号，
+    每条的 client_request_id = aionshome-mem-<request_key>-<序号>，outbox 重发时 Hub 认得是同一条。
+    一次最多 REMEMBER_MAX_PER_REPLY 条；同一件事 24 小时内（这次回复里或之前）只发一次。
+    """
+    global _dropped
+    cfg = load_config()
+    if not can_remember(actor):
+        return []
+    source_ai = source_ai_for(actor, cfg)
+    platform = str(cfg.get("platform") or "aionshome")
+    queued: list[str] = []
+    now = time.time()
+    try:
+        with closing(_outbox()) as conn, conn:
+            conn.execute("DELETE FROM remembered WHERE created_at<?", (now - REMEMBER_DEDUP_SECONDS,))
+            for index, item in enumerate(items):
+                if len(queued) >= REMEMBER_MAX_PER_REPLY:
+                    break
+                content = str(item.get("content") or "").strip()[:REMEMBER_MAX_CHARS]
+                digest = _memory_digest(content)
+                if not digest:
+                    continue
+                if conn.execute("SELECT 1 FROM remembered WHERE source_ai=? AND digest=?",
+                                (source_ai, digest)).fetchone():
+                    continue
+                (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
+                if pending >= OUTBOX_MAX:
+                    _dropped += 1
+                    log.warning("[MemoryHub] 待补传队列已满（%s 条），这条记忆没有排上", OUTBOX_MAX)
+                    break
+                room = str(item.get("room") or "").strip()
+                payload = {
+                    "content": content,
+                    "room": room if room in REMEMBER_ROOMS else "",
+                    "speaker_name": str(item.get("speaker_name") or "").strip()[:40],
+                    "subject_name": str(item.get("subject_name") or "").strip()[:40],
+                    "importance": max(0.0, min(0.8, float(item.get("importance") or 0.5))),
+                }
+                conn.execute(
+                    "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
+                    " source_ai, platform, hub, kind, payload) VALUES (?,?,?,?,?,0,?,?,?,?,'remember',?)",
+                    (actor, "", content, "private", now, f"aionshome-mem-{request_key}-{index}",
+                     source_ai, platform, hub_id(cfg), json.dumps(payload, ensure_ascii=False)),
+                )
+                conn.execute("INSERT OR REPLACE INTO remembered (source_ai, digest, created_at) VALUES (?,?,?)",
+                             (source_ai, digest, now))
+                queued.append(content)
+    except Exception as error:
+        log.warning("[MemoryHub] 记忆写入待补传队列失败：%s", error)
+        return []
+    if queued:
+        _kick_drain()
+    return queued
+
+
 def recover_outbox() -> None:
     """启动时调用：上次退出时正在发送的条目可能已经写进 Hub。
 
@@ -462,8 +551,39 @@ def _hold_reason(cfg: dict[str, Any], row: sqlite3.Row) -> str:
     return ""
 
 
+async def _send_remember(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
+    """AI 明确要记的事：调 Hub 的 remember。Hub 明确拒收（status=error）返回 rejected，不再重发。"""
+    try:
+        arguments = json.loads(row["payload"] or "{}")
+    except ValueError:
+        return "rejected", "记忆内容损坏"
+    arguments = {k: v for k, v in arguments.items() if v not in ("", None)}
+    arguments["source_ai"] = row["source_ai"]
+    arguments["client_request_id"] = row["event_id"]
+    sent: list = []
+    try:
+        raw = await asyncio.wait_for(
+            _call_tool(cfg, "remember", arguments, sent),
+            timeout=float(cfg.get("capture_timeout_seconds") or 20.0),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        _trip(cfg, error, "write")
+        return ("uncertain" if sent else "not_sent"), str(error)[:300]
+    try:
+        reply = json.loads(raw)
+    except ValueError:
+        return "ok", ""
+    if isinstance(reply, dict) and reply.get("status") == "error":
+        return "rejected", f"Hub 拒收：{reply.get('error') or ''} {reply.get('hint') or ''}".strip()[:300]
+    return "ok", ""
+
+
 async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
     """只用入队时的快照发送。返回 ("ok"|"not_sent"|"uncertain", 错误说明)。"""
+    if row["kind"] == "remember":
+        return await _send_remember(cfg, row)
     arguments = {
         "action": "log",
         "source_ai": row["source_ai"],
@@ -547,6 +667,9 @@ async def drain_outbox() -> int:
                     if outcome == "ok":
                         conn.execute("DELETE FROM outbox WHERE id=?", (row["id"],))
                         sent_count += 1
+                    elif outcome == "rejected":
+                        # Hub 收到了但明确不收（内容为空等）：重发也一样，留在状态页可查，不挡后面的
+                        conn.execute("UPDATE outbox SET state='uncertain', last_error=? WHERE id=?", (error, row["id"]))
                     elif outcome == "uncertain" and not row["event_id"]:
                         # 没有编号的旧记录：Hub 可能已经收到，重发会重复记录，所以不自动重发
                         conn.execute("UPDATE outbox SET state='uncertain', last_error=? WHERE id=?", (error, row["id"]))
@@ -557,7 +680,7 @@ async def drain_outbox() -> int:
                             "UPDATE outbox SET state='pending', attempts=attempts+1, next_at=?, last_error=? WHERE id=?",
                             (time.time() + delay, error, row["id"]),
                         )
-                if outcome != "ok":
+                if outcome not in ("ok", "rejected"):
                     break
     return sent_count
 

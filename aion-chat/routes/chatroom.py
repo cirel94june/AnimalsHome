@@ -3925,13 +3925,41 @@ def _transfer_recipient(recipient: str | None, room_seat: str, names: dict[str, 
     return room_seat or "connor"
 
 
+def _seat_memory_items(matches: list[str], user_name: str, user_text: str) -> list[dict]:
+    """[MEMORY:内容|分类|关于谁] → Hub remember 的条目。说话人按约定填小猫；没写关于谁就是小猫本人。
+    小猫这一句明确说了「记住」时重要度 0.75，否则 0.5。"""
+    importance = 0.75 if "记住" in (user_text or "") else 0.5
+    items = []
+    for raw in matches:
+        parts = [p.strip() for p in re.split(r"[|｜]", raw)]
+        content = parts[0] if parts else ""
+        if not content:
+            continue
+        room = parts[1].lower() if len(parts) > 1 else ""
+        subject = parts[2] if len(parts) > 2 and parts[2] else user_name
+        items.append({"content": content, "room": room, "speaker_name": user_name,
+                      "subject_name": subject, "importance": importance})
+    return items
+
+
 async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, msg_id: str,
-                                 _q: asyncio.Queue) -> tuple[str, dict]:
+                                 _q: asyncio.Queue, *, user_text: str = "") -> tuple[str, dict]:
     """座位 3～6 回复里的聊天内指令（第二批）：点歌、许愿当场做；自拍 / 画画、联网搜索记下来，回复存好后再做。
     都按这位座位自己的身份记：歌记在 TA 名下、愿望是 TA 的、自拍用 TA 的参考照。开关关着的只去掉不做。"""
     from ws import manager as ws_manager
     triggered: dict = {}
     label = _name_for_identity(actor_id)
+
+    # ── 记住事情：写进 Memory Hub（开关 memory_write；这位座位有 Hub 身份才写）──
+    memory_matches = MEMORY_CMD_PATTERN.findall(full_text)
+    if memory_matches:
+        full_text = MEMORY_CMD_PATTERN.sub("", full_text)
+        if is_capability_enabled("memory_write"):
+            from config import load_worldbook
+            user_name = (load_worldbook().get("user_name") or "").strip() or "用户"
+            items = _seat_memory_items(memory_matches, user_name, user_text)
+            for content in memory_hub_bridge.schedule_remember(actor_id, items, request_key=msg_id):
+                await _chatroom_sys_msg(room_id, f"💾 {label}记住了：{content[:50]}", _q, after_msg_id=msg_id)
 
     # ── 点歌 ──
     music_matches = MUSIC_CMD_PATTERN.findall(full_text)
@@ -4237,7 +4265,9 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         command_text, posted = await group_post.process_with_result(command_text, actor_id)
         if posted:
             side_effect_notice = f"（{seat_chat.actors.display_name(actor_id)}去群里说了一句）"
-    command_text, triggered = await _process_seat_commands(command_text, room_id, actor_id, msg_id, _q)
+    command_text, triggered = await _process_seat_commands(
+        command_text, room_id, actor_id, msg_id, _q,
+        user_text="" if extra_prompt else memory_hub_bridge.paired_user_message(msgs, actor_id))
     clean_text = _visible_chatroom_text(command_text).strip()
     music_atts = _music_attachments_from_triggered(triggered)
     if not clean_text and music_atts:  # 只点了歌：用歌名当 TA 的这条消息，播放卡片挂在上面
