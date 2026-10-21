@@ -642,6 +642,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(activity_check_ability_text(user_name))
     if is_capability_enabled("wechat_message"):
         texts.append(wechat_message_ability_text(user_name))
+    if is_capability_enabled("inner_monologue"):  # 和小克 / Lucien 同一段说明；前端对所有 AI 的消息都特殊显示
+        texts.append(INNER_MONOLOGUE_ABILITY_TEXT)
     if actor and is_capability_enabled("memory_write"):
         import memory_hub_bridge
         if memory_hub_bridge.can_remember(actor):

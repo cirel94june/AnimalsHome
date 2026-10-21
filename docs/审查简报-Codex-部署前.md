@@ -657,3 +657,9 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **E2 等模型期间导入的人设被覆盖**：调用模型前，在构建提示词的同一时刻读取 `prompt_sections`，`_collect_section_updates` 也基于它解析。模型返回后再读一次当前分区；凡是本次要更新、但从 prompt_sections 到现在已经被改过的分区，都去掉不应用（逐个分区做 compare-and-swap），并在记录里写明「复盘期间这些分区被改过，没有应用：…」。没有冲突的分区照常更新。小克 / Lucien 也走同一逻辑（只有等待期间人设被改时才生效）。
 - **E3 取消顺序**：`seat_persona_evolution_task` 移到 lifespan finally 的最前面，和 Hub、日记任务一起 cancel + gather，排在 `post_sentinel.stop` 等调用之前。
 - 测试 `test_seat_persona_evolution.py` +3（共 8 项）：同键改绑时不调模型、人设不变、状态 failed；等待期间导入的分区不被覆盖、其他分区照常更新；finally 中取消在 `post_sentinel.stop()` 之前。用 HEAD 版本的源码跑这 3 项全部失败。
+
+## 59. 狗蛋补能力：内心旁白
+
+- 内心旁白不是后台指令：模型写 `[心里嘀咕：…]`，保留在回复正文里，前端 `crMessageContentItems` / `crRenderInnerMonologues` 对所有非用户消息都特殊显示（不看发言人）；TTS、微信模式会去掉它，这些已经适用于所有人。
+- 改动：`seat_ability_texts` 在 inner_monologue 开关开着时，加入和主 AI 相同的 `INNER_MONOLOGUE_ABILITY_TEXT`。
+- 测试 `test_seat_inner_monologue.py` 2 项：提示词随开关出现；座位回复（分两段流式）原样保存这个标记，流式显示时也不被吞掉。
