@@ -648,3 +648,12 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 原用例改成真实写入 `diary_entries`，只替换广播。
   - 新增 D1 四种空日记；D2 在广播时取消任务，结果库里 1 篇、锚点已推进，再跑一次时这一段不再写；D3 读消息期间改了线路的模型，结果是跳过、不调模型、不计失败；D4 300 条只读最近 80 条，提示词里没有更早的，日记起止按整段。
   - 共 16 项通过；日记、总结、座位相关的 17 个文件共 157 项通过。
+
+## 58. §56（d029f6b）人格成长审查修复（E1–E3）
+
+注：上一轮审到 d029f6b，§55 日记的 D1–D4 当时还没修；它们已在 **e9c2dee**（§57）修好，请一并复审。
+
+- **E1 线路同键改绑**：`run_persona_evolution` 中，`_actor_model(座位)` 返回后（座位分支内部没有 await）立即 `model_snapshot`。`_call_actor_model(..., pinned=)` 在座位分支里依次 `check_ready`、比较所选键、`ensure_model_unchanged(model_key, pinned)`，之后直接调用模型，中间没有 await。线路被改绑会抛错，这次复盘记为 failed，不调模型、不改人设。
+- **E2 等模型期间导入的人设被覆盖**：调用模型前，在构建提示词的同一时刻读取 `prompt_sections`，`_collect_section_updates` 也基于它解析。模型返回后再读一次当前分区；凡是本次要更新、但从 prompt_sections 到现在已经被改过的分区，都去掉不应用（逐个分区做 compare-and-swap），并在记录里写明「复盘期间这些分区被改过，没有应用：…」。没有冲突的分区照常更新。小克 / Lucien 也走同一逻辑（只有等待期间人设被改时才生效）。
+- **E3 取消顺序**：`seat_persona_evolution_task` 移到 lifespan finally 的最前面，和 Hub、日记任务一起 cancel + gather，排在 `post_sentinel.stop` 等调用之前。
+- 测试 `test_seat_persona_evolution.py` +3（共 8 项）：同键改绑时不调模型、人设不变、状态 failed；等待期间导入的分区不被覆盖、其他分区照常更新；finally 中取消在 `post_sentinel.stop()` 之前。用 HEAD 版本的源码跑这 3 项全部失败。

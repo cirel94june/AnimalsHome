@@ -607,13 +607,16 @@ async def _actor_model(actor: str) -> str:
     return await _main_ai_model()
 
 
-async def _call_actor_model(actor: str, messages: list[dict], model_key: str) -> str:
+async def _call_actor_model(actor: str, messages: list[dict], model_key: str, *, pinned: dict | None = None) -> str:
     actor = _require_actor(actor)
     if actor in SEAT_ACTORS:
         import seat_chat
+        from config import ensure_model_unchanged
         _, current = seat_chat.check_ready(actor)
         if current != model_key:
             raise RuntimeError("座位刚刚换了模型，这次复盘不做")
+        if pinned is not None:
+            ensure_model_unchanged(model_key, pinned)  # 同一个模型键被改绑了线路，也不做
     if actor == ACTOR_CONNOR:
         from chatroom import simple_connor_cli_call
 
@@ -1314,6 +1317,10 @@ async def run_persona_evolution(
     feedback_items = await fetch_actor_feedback(actor, start_ts, end_ts)
     daily_memory_summaries = await fetch_actor_daily_memory_summaries(actor, start_ts, end_ts)
     model_key = await _actor_model(actor)
+    pinned = None
+    if actor in SEAT_ACTORS:  # 座位：拿到模型键后马上固定线路，之后线路被改绑就不做
+        from config import model_snapshot
+        pinned = model_snapshot(model_key)
     feedback_fingerprint = _evolution_input_fingerprint(feedback_items, daily_memory_summaries)
     if not feedback_items:
         if trigger != "scheduled":
@@ -1356,16 +1363,26 @@ async def run_persona_evolution(
     status = "reviewed"
     auto_count = 0
     try:
+        prompt_sections = _current_actor_sections(actor)  # 模型看到的人设（和下面的提示词同一时刻读取）
         raw_response = await _call_actor_model(
             actor,
             _build_prompt(actor, feedback_items, label, daily_memory_summaries),
             model_key,
+            pinned=pinned,
         )
         before_sections = _current_actor_sections(actor)
         parsed, parse_error = _parse_response(raw_response)
         summary = _safe_short(str(parsed.get("summary") or ""), 1200)
         user_message = _safe_short(str(parsed.get("user_message") or ""), 1200)
-        updates = _collect_section_updates(parsed, raw_response, before_sections)
+        updates = _collect_section_updates(parsed, raw_response, prompt_sections)
+        # 等模型的这段时间里，她改过（比如重新导入人设包）的分区不用旧提示词的结果覆盖
+        conflicts = sorted(key for key in updates if before_sections.get(key) != prompt_sections.get(key))
+        for key in conflicts:
+            updates.pop(key, None)
+        if conflicts:
+            labels = _section_label_map_for_actor(actor)
+            note = "复盘期间这些分区被改过，没有应用：" + "、".join(labels.get(k, k) for k in conflicts)
+            parse_error = f"{parse_error}；{note}" if parse_error else note
         should_update = bool(parsed.get("should_update", parsed.get("should_patch"))) or bool(updates)
         after_sections = dict(before_sections)
         if should_update and updates:

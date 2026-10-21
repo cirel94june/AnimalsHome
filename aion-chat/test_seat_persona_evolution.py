@@ -151,3 +151,55 @@ def test_seat_messages_can_be_rated(monkeypatch, tmp_path):
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         asyncio.run(chatroom_routes.update_message_feedback("c", body))
+
+
+def test_route_rebound_while_waiting_does_not_rewrite(env, monkeypatch):
+    """§56 复审 E1：拿到模型键后线路被改绑（键不变、模型变了），这次复盘不调模型、不改人设。"""
+    import time
+    import config
+    monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-m": {"provider": "custom_openai", "model": "ORIGINAL"}})
+    env["add"]("m2", "s3", "ai3", time.time() - 60, "dislike", "太冲了")
+    original = pe._latest_run_for_feedback
+
+    async def rebind(*a, **k):
+        config.MODELS["seat-m"] = {"provider": "custom_openai", "model": "OTHER_MODEL"}
+        return await original(*a, **k)
+    monkeypatch.setattr(pe, "_latest_run_for_feedback", rebind)
+    called = []
+
+    async def model(*a, **k):
+        called.append(1)
+        return json.dumps({"section_updates": [{"section": "communication_style", "content": "被改了"}]})
+    monkeypatch.setattr(pe, "simple_ai_call", model)
+    result = asyncio.run(pe.run_persona_evolution("ai3", trigger="manual", window_mode="current"))
+    assert not called and result.get("status") == "failed"
+    assert actors.persona_sections("ai3")["communication_style"] == "说话很冲"
+
+
+def test_sections_changed_while_waiting_are_not_overwritten(env, monkeypatch):
+    """§56 复审 E2：等模型期间她重新导入了某个分区，旧提示词的结果不覆盖它；其他分区照常更新。"""
+    import time
+    env["add"]("m2", "s3", "ai3", time.time() - 60, "dislike", "太冲了")
+
+    async def model(messages, model_key, **kw):
+        sections = actors.persona_sections("ai3")
+        sections["communication_style"] = "她刚导入的说话方式"
+        actors.save_persona_sections("ai3", sections)
+        return json.dumps({"should_update": True, "section_updates": [
+            {"section": "communication_style", "content": "OLD_PROMPT_REPLACEMENT", "reason": "x"},
+            {"section": "personality_core", "content": "更体贴", "reason": "y"},
+        ]}, ensure_ascii=False)
+    monkeypatch.setattr(pe, "simple_ai_call", model)
+    result = asyncio.run(pe.run_persona_evolution("ai3", trigger="manual", window_mode="current"))
+    sections = actors.persona_sections("ai3")
+    assert sections["communication_style"] == "她刚导入的说话方式"
+    assert sections["personality_core"] == "更体贴"
+    assert result.get("status") == "applied"
+
+
+def test_seat_evolution_task_is_cancelled_before_other_services_stop():
+    """§56 复审 E3：人格成长任务和日记 / Hub 任务一起最先取消，不依赖后面 stop 成功。"""
+    from pathlib import Path
+    source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
+    finally_block = source[source.index("        yield\n    finally:"):]
+    assert finally_block.index("seat_persona_evolution_task.cancel()") < finally_block.index("post_sentinel.stop()")

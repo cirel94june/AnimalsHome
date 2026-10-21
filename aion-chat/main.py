@@ -234,7 +234,9 @@ async def lifespan(app: FastAPI):
         memory_hub_outbox_task.cancel()
         memory_hub_jobs_task.cancel()
         seat_diary_task.cancel()
-        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, seat_diary_task, return_exceptions=True)
+        seat_persona_evolution_task.cancel()
+        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, seat_diary_task,
+                             seat_persona_evolution_task, return_exceptions=True)
         await post_sentinel.stop()
         try:
             from billiards.service import get_service as billiards_service
@@ -249,13 +251,12 @@ async def lifespan(app: FastAPI):
             idle_autonomy_mgr.stop()
             await board_patrol_mgr.stop()
             connor_persona_evolution_task.cancel()
-            seat_persona_evolution_task.cancel()
             persona_evolution_task.cancel()
             cr_digest_task.cancel()
             digest_task.cancel()
             compression_task.cancel()
             await asyncio.gather(
-                connor_persona_evolution_task, persona_evolution_task, seat_persona_evolution_task,
+                connor_persona_evolution_task, persona_evolution_task,
                 cr_digest_task, digest_task, compression_task,
                 return_exceptions=True,
             )
