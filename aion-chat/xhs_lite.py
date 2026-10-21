@@ -49,6 +49,9 @@ def _seat_ready(actor: str) -> bool:
         return False
 
 
+_ROAM_LOCKS: dict[str, asyncio.Lock] = {}
+
+
 def known_actors() -> tuple[str, ...]:
     return ("aion", "connor", *SEAT_ACTORS)
 
@@ -443,8 +446,38 @@ def is_ready_for_auto(actor: str | None = None) -> bool:
 async def run_actor_roam(actor: str, *, manual: bool = False) -> dict:
     if actor not in known_actors():
         raise RuntimeError("未知小红书巡游角色")
-    if actor in SEAT_ACTORS and not _seat_ready(actor):
-        raise RuntimeError(f"{actor_label(actor)} 还没准备好（停用、没人设或没选模型）")
+    lock = _ROAM_LOCKS.setdefault(actor, asyncio.Lock())
+    if lock.locked():  # 同一位正在巡游：不重复启动、不重复外发
+        raise RuntimeError(f"{actor_label(actor)} 正在巡游小红书，这次没有重复发起")
+    async with lock:
+        return await _run_actor_roam(actor, manual=manual)
+
+
+def _still_allowed_to_write(actor: str) -> str:
+    """真正发评论前再看一眼：总开关、写评论开关、这一位的开关，座位还要核对身份和线路。返回拦下的原因。"""
+    cfg = load_config()
+    if not cfg.get("enabled"):
+        return "小红书 Lite 已关闭"
+    if not cfg.get("allow_write_comments"):
+        return "写评论开关已关闭"
+    if not cfg.get("actors", {}).get(actor, {}).get("enabled", True):
+        return f"{actor_label(actor)} 的小红书巡游已关闭"
+    if actor in SEAT_ACTORS:
+        try:
+            from autonomy import verify_seat_pin
+            verify_seat_pin(actor)
+        except Exception as exc:
+            return str(exc) or "座位设置变了"
+    return ""
+
+
+async def _run_actor_roam(actor: str, *, manual: bool = False) -> dict:
+    if actor in SEAT_ACTORS:
+        try:
+            from autonomy import pin_seat
+            pin_seat(actor)  # 这一次巡游的身份和线路在任何等待之前固定
+        except Exception as exc:
+            raise RuntimeError(f"{actor_label(actor)} 还没准备好（停用、没人设或没选模型）") from exc
     cfg = load_config()
     if not cfg.get("enabled"):
         raise RuntimeError("小红书 Lite 尚未启用")
@@ -532,7 +565,11 @@ async def run_actor_roam(actor: str, *, manual: bool = False) -> dict:
     else:
         delay = max(5.0, float(cfg.get("write_delay_seconds") or 5))
         await asyncio.sleep(delay)
-        if action == "reply" and str(decision.get("comment_id") or "").strip():
+        blocked = _still_allowed_to_write(actor)  # 和下面发出之间没有别的等待
+        if blocked:
+            result["status"] = "drafted"
+            result["error"] = f"{blocked}，已生成草稿但未发送"
+        elif action == "reply" and str(decision.get("comment_id") or "").strip():
             posted = await _run_worker(
                 "reply-comment",
                 {

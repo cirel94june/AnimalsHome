@@ -796,6 +796,7 @@ async function loadConfig(options = {}) {
   updateOverview();
   if (!options.silent) setStatus('设置已加载。');
 }
+let xhsRunning = false;  // 有一次巡游还没结束时，所有「跑一次」按钮都不能点（重建按钮也一样）
 // 狗蛋等座位：和小克 / Lucien 一样有启用开关和「跑一次」按钮（名字用 textContent）
 function seatIds() {
   return Object.keys((currentConfig && currentConfig.actor_labels) || {}).filter(id => /^ai[3-6]$/.test(id));
@@ -819,6 +820,7 @@ function renderSeatActors() {
     top.append(info, label); card.append(top); cards.append(card);
     const btn = document.createElement('button'); btn.className = 'secondary'; btn.type = 'button';
     btn.dataset.seatRun = id; btn.textContent = '让' + actorName(id) + '跑一次';
+    btn.disabled = xhsRunning;
     btn.addEventListener('click', () => runOnce(id));
     btns.append(btn);
   });
@@ -909,6 +911,8 @@ async function checkLogin() {
   }
 }
 async function runOnce(actor) {
+  if (xhsRunning) return;
+  xhsRunning = true;
   $('runPrimaryBtn').disabled = true;
   $('runSecondaryBtn').disabled = true;
   document.querySelectorAll('[data-seat-run]').forEach(b => { b.disabled = true; });
@@ -921,6 +925,7 @@ async function runOnce(actor) {
   } catch (err) {
     setStatus({ ok:false, error:err.message || String(err) });
   } finally {
+    xhsRunning = false;
     $('runPrimaryBtn').disabled = false;
     $('runSecondaryBtn').disabled = false;
     document.querySelectorAll('[data-seat-run]').forEach(b => { b.disabled = false; });

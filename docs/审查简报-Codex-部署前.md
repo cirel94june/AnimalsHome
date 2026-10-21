@@ -719,3 +719,22 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_autonomy_more.py` 8 项：可选活动（含暂缓项不出现）；找谁聊天；回话走对方自己的路径（小克 / 座位）；座位的旧记忆是自己的日记；私聊去她最近说话的地方、force_private 时去私聊；调侃发动态的人；小红书的名字、列表、开关、就绪检查。
   - `test_autonomy_seats.py` 中座位可选活动的期望更新。
   - 相关 34 个文件：330 通过，5 个失败是既有失败（taobao_native_mcp ×4；`test_idle_autonomy_actions…friend_visit_action_is_available…` 改动前同样失败）。`test_idle_autonomy_friend_visit.py` 在本机改动前后都卡住超时（AI 好友小猫暂缓）。
+
+## 64. §59–63（903b21f）复审修复（M1–M3、L1）
+
+- **M1 座位自主活动没有固定身份和线路**（`autonomy.py`）：
+  - 新增 `_SEAT_PINS` ContextVar 和 `pin_seat(actor)`：同步执行 `check_ready`，固定所选模型、`background_model(actor, model)` 后台线路和 `model_snapshot(route)`，没有 await。
+  - `verify_seat_pin(actor)`：再做一次 `check_ready`，要求所选模型和后台线路都与固定值相同，再 `ensure_model_unchanged(route, snapshot)`；不满足就抛错。
+  - `_call_actor(座位)` 改为 `verify_seat_pin` 后直接用固定的线路 `stream_ai`，中间没有 await，不再临时读当前模型。
+  - 固定点：`_run_actor_once` 在选动作之前；淘宝 `_roam` 开头（选方向、挑商品两次调用共用同一份）；小红书 `_run_actor_roam` 开头（在解析账号等任何等待之前）。`_seat_actor_context` 第一次等待之前如果还没有固定也会固定。每个入口都重新固定，上一轮的旧值不会一直卡住。
+  - 主 AI 路径不变。
+- **M2 小红书发出前没有再核对**：发送延迟结束后、对外写入之前（中间没有别的等待）调用 `_still_allowed_to_write(actor)`：重新读配置，检查总开关、写评论开关、这一位的开关；座位还要 `verify_seat_pin`。不满足就记为 drafted（保留草稿），不发送。不检查 `auto_enabled`，手动运行不受自动开关影响。
+- **M3 重复巡游**：
+  - 服务端：`run_actor_roam` 对每一位加 `asyncio.Lock`，手动接口和自动巡游都经过这里；同一位正在巡游时直接报「正在巡游，没有重复发起」。
+  - 前端：新增 `xhsRunning` 状态。`renderSeatActors` 重建按钮时按这个状态禁用，`runOnce` 运行中不能再次进入，结束后恢复。
+- **L1 点名找错人**：`_pick_partner` 先按精确编号匹配；不是编号时只有恰好一位叫这个名字才选 TA，重名不猜、按默认安排。提示词要求写编号。
+- 测试：
+  - `test_seat_autonomy_guard.py` 13 项：准备上下文期间同键改绑、停用、改选模型、换后台线路，都不调模型；没有变化时调用自己的线路；每次入口重新固定；小红书等待发出期间停用座位、关这一位的开关、关写评论开关、关总开关，都不发；没有变化时正常发；同一位并发第二次直接报忙、只发一条；编号优先、重名不猜。
+  - `test_xhs_seat_run_ui.js`：运行中保存配置重建的座位按钮仍然禁用、`runOnce` 不能再次进入、名字是纯文本。
+  - 用 HEAD 版本的 autonomy / xhs_lite 跑新测试，全部失败或报错。
+  - 相关测试：343 通过，5 个失败都是既有失败（同 §63）；淘宝和小红书前端 5 个 node 测试通过。

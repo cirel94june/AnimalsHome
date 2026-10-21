@@ -32,6 +32,40 @@ from autonomy_niches import archive_album_event, create_niche_card, recent_niche
 
 _AUTONOMY_WAKE_INTERNAL = ContextVar("autonomy_wake_internal", default=False)
 _AUTONOMY_WAKE_MONITOR_CONTEXT = ContextVar("autonomy_wake_monitor_context", default=None)
+# 座位这一次活动固定下来的身份：所选模型、后台线路、线路快照。活动入口设置，调模型前核对。
+_SEAT_PINS: ContextVar[dict | None] = ContextVar("autonomy_seat_pins", default=None)
+
+
+def pin_seat(actor: str) -> dict:
+    """座位开始一次活动：确认就绪，固定所选模型、后台线路和线路快照（同步，中间没有 await）。
+    同一个任务里之后的上下文准备和模型调用都用这份；入口再调一次就换成新的一份。"""
+    import seat_chat
+    from config import model_snapshot
+    from memory_hub_jobs import background_model
+    _, model = seat_chat.check_ready(actor)
+    route = background_model(actor, model)
+    pin = {"model": model, "route": route, "snapshot": model_snapshot(route)}
+    pins = dict(_SEAT_PINS.get() or {})
+    pins[actor] = pin
+    _SEAT_PINS.set(pins)
+    return pin
+
+
+def _seat_pin(actor: str) -> dict:
+    return (_SEAT_PINS.get() or {}).get(actor) or pin_seat(actor)
+
+
+def verify_seat_pin(actor: str) -> dict:
+    """调模型 / 对外发东西之前：仍启用、有人设、所选模型和后台线路都还是开始时那份，线路配置没被改绑。"""
+    import seat_chat
+    from config import ensure_model_unchanged
+    from memory_hub_jobs import background_model
+    pin = _seat_pin(actor)
+    _, model = seat_chat.check_ready(actor)
+    if model != pin["model"] or background_model(actor, model) != pin["route"]:
+        raise RuntimeError(f"{_actor_label(actor)} 刚刚换了模型，这次活动停下")
+    ensure_model_unchanged(pin["route"], pin["snapshot"])
+    return pin
 
 
 ACTION_DEFS = {
@@ -416,11 +450,9 @@ async def _call_actor(actor: str, messages: list[dict]) -> str:
     # 自主活动算后台：名片里选了「后台用的线路」（同一个模型、换一家中转站）就走它
     from memory_hub_jobs import background_model
     if _is_seat(actor):
-        from seat_chat import seat_model
-        model = seat_model(actor)
-        if not model:
-            raise RuntimeError(f"{_actor_label(actor)} 还没有选模型")
-        return await _collect(stream_ai(messages, background_model(actor, model), {}))
+        # 用活动开始时固定的那份身份；核对到发起调用之间没有 await
+        pin = verify_seat_pin(actor)
+        return await _collect(stream_ai(messages, pin["route"], {}))
     if actor == "connor":
         usual = _connor_model()
         chosen = background_model("connor", usual)
@@ -483,6 +515,7 @@ async def _seat_actor_context(actor: str, limit: int, *, include_history: bool) 
     from memory_hub_jobs import _persona_messages
     from seat_chat import _history
 
+    _seat_pin(actor)  # 还没固定过就在第一次等待之前固定
     wb = load_worldbook()
     messages = _persona_messages(actor)
     if wb.get("user_persona"):
@@ -730,7 +763,7 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         f"{rest_hint}\n\n"
         f"{options}{niche_hint}\n\n"
         "reason 请保留你选择它的真实动机。"
-        + (f"如果选 role_chat，可以在 target 里写想找谁聊（{_partner_hint(actor)}），不写就由系统安排。"
+        + (f"如果选 role_chat，可以在 target 里写想找谁聊的编号（{_partner_hint(actor)}，写等号前的编号），不写就由系统安排。"
            if "role_chat" in enabled else "")
         + "如果 action 是 private_chat 或 role_chat，message 就是本次要实际发送的正式聊天正文："
         "private_chat 是对用户说，role_chat 是对另一位家庭成员说。"
@@ -1323,9 +1356,11 @@ def _pick_partner(actor: str, wanted: str = "") -> str:
     """点名的家人在名单里就找 TA（写 id 或名字都行）；否则小克 / Lucien 照旧找对方，座位随机找一位。"""
     partners = _family_partners(actor)
     wanted = (wanted or "").strip()
-    for partner in partners:
-        if wanted and wanted in (partner, _actor_label(partner)):
-            return partner
+    if wanted in partners:
+        return wanted
+    named = [partner for partner in partners if wanted and _actor_label(partner) == wanted]
+    if len(named) == 1:  # 重名就不猜，按默认安排
+        return named[0]
     if actor in ("aion", "connor"):
         return "connor" if actor == "aion" else "aion"
     return random.choice(partners) if partners else "aion"
@@ -2313,6 +2348,8 @@ async def _run_mcp_outing(actor: str) -> dict:
 
 
 async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int = 0) -> dict:
+    if _is_seat(actor):
+        pin_seat(actor)  # 这一次活动的身份在选动作之前就固定下来
     selected = await _select_action(actor, manual=manual, idle_minutes=idle_minutes)
     action = selected["action"]
     actor_name = _actor_label(actor)

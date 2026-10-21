@@ -341,7 +341,9 @@ async def roam(actor: str, store: TaobaoStore):
 async def _roam(actor: str, store: TaobaoStore, trip_id: str):
     """Choose a topic from persona/context, then choose only verified candidates."""
     actor_id(actor)
-    from autonomy import _actor_context, _call_actor, _json_extract
+    from autonomy import _actor_context, _call_actor, _is_seat, _json_extract, pin_seat
+    if _is_seat(actor):
+        pin_seat(actor)  # 选方向、挑商品两次调用都要是这一份身份和线路，中途变了就停
     context = await _actor_context(actor)
     recent = [{"title": p["title"], "reflection": p["reflection"]} for p in (await store.list_items(actor))[:15]]
     instruction = (
