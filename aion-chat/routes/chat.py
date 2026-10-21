@@ -3161,70 +3161,11 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
 # ── 服务端 POI 搜索 + 自动追加 Core 回复 ─────────
 async def perform_poi_check(conv_id: str, model_key: str, categories: list[str]):
     """Core 主动搜索周边 POI：拿最新坐标 → 搜索 → 携带结果自动追加一轮 Core 回复"""
-    from location import (
-        load_location_config, load_location_status, save_location_status,
-        amap_poi_search, amap_regeo, format_location_for_prompt,
-    )
+    from location import format_location_for_prompt, search_nearby_pois_text
 
-    cfg = load_location_config()
-    amap_key = cfg.get("amap_key", "")
-    if not amap_key:
+    poi_text = await search_nearby_pois_text(categories)
+    if not poi_text:
         return
-
-    # 1. 取最新坐标（直接用缓存的最新 GPS 上报坐标，而不是上次 API 坐标）
-    status = load_location_status()
-    lng = status.get("lng", 0)
-    lat = status.get("lat", 0)
-    if not lng or not lat:
-        return
-
-    # 2. 用最新坐标重新做逆地理编码，更新地址
-    geo_info = await amap_regeo(lng, lat, amap_key)
-    if geo_info:
-        status["address"] = geo_info["address"]
-        status["adcode"] = geo_info["adcode"]
-
-    # 3. 搜索用户指定的 POI 类别
-    poi_types = cfg.get("poi_types", {})
-    search_results = {}
-    for cat in categories:
-        cat = cat.strip()
-        type_code = poi_types.get(cat)
-        if type_code:
-            pois = await amap_poi_search(lng, lat, type_code, amap_key, cfg.get("poi_radius", 2000))
-            search_results[cat] = pois
-            # 更新缓存
-            if "nearby_pois" not in status:
-                status["nearby_pois"] = {}
-            status["nearby_pois"][cat] = pois
-
-    # 更新 last_api 坐标
-    status["last_api_lng"] = lng
-    status["last_api_lat"] = lat
-    save_location_status(status)
-
-    if not search_results:
-        return
-
-    # 4. 格式化搜索结果
-    result_lines = []
-    for cat, pois in search_results.items():
-        if not pois:
-            result_lines.append(f"【{cat}】附近暂无相关结果")
-            continue
-        result_lines.append(f"【{cat}】")
-        for p in pois[:10]:
-            entry = f"  - {p['name']}"
-            if p.get("distance"):
-                entry += f"（{int(p['distance'])}m）"
-            if p.get("rating") and p["rating"] != "[]":
-                entry += f" ⭐{p['rating']}"
-            if p.get("cost") and p["cost"] != "[]":
-                entry += f" 人均¥{p['cost']}"
-            if p.get("address") and p["address"] != "[]":
-                entry += f" | {p['address']}"
-            result_lines.append(entry)
-    poi_text = "\n".join(result_lines)
 
     # 5. 构建消息上下文，携带 POI 搜索结果，让 Core 追加一轮回复
     wb = load_worldbook()

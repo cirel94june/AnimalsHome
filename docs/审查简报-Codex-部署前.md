@@ -669,3 +669,18 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 座位回复本来就会经过 `process_note_commands(raw_text, actor_id)`（以座位身份写便笺，主 AI 也一样不按开关过滤处理）。桌面页 `desk.js` 用 actors 列表显示署名和头像，座位已包含在内。缺的只是能力说明。
 - 改动：抽出 `desk_note_ability_text(user_name)`（主 AI 文字不变）；`seat_ability_texts` 在 desk_note 开关开着时加入。
 - 测试 `test_seat_desk_note.py` 2 项：提示词随开关出现；座位回复中的 `[NOTE:…]` 被去掉，以 ai3 署名写入便笺。原 `test_actors_desk_notes.py` 照样通过。
+
+## 61. 狗蛋补能力：位置和周边
+
+- **位置上下文**：`seat_chat.location_line()` 在 location_context 开关开着、位置追踪开启时，把 `【位置信息】format_location_for_prompt()` 加进座位的背景（和日程列表同一段），条件与主 AI 的 `build_ability_block` 相同。
+- **周边搜索**：
+  - `routes/chat.py::perform_poi_check` 中「取最新坐标 → 逆地理 → 按类型搜索 → 写缓存 → 格式化」整段原样移到 `location.search_nearby_pois_text(categories)`，小克私聊改为调用它，行为不变。
+  - 座位：`_process_seat_commands` 解析 `[POI_SEARCH:类型]`。和主 AI 一样，poi_search 开关开着且 `_is_outside_location()` 为真时，房间里显示「📍 狗蛋搜了搜附近的…」，最多 3 类，交给 `_spawn_seat_followups` → `_chatroom_poi_search`（带主回复的线路快照）。条件不满足时只去掉指令。
+  - `_chatroom_poi_search`（只给座位用）：开始时 `_seat_still_ready`；搜索；没结果时说明「没搜到」；发请求前再做 `_seat_still_ready` + `ensure_model_unchanged`，中间没有 await，不满足就说明后返回。用座位的人设和模型，提示词「从结果里挑几个自然推荐，不编造」。保存前去掉 POI 指令和未执行的转账标签，`auto_tts=False`，不跑后台指令。
+  - 能力说明抽成 `poi_search_ability_text`（主 AI 文字不变），座位只在户外时给出。
+- 测试 `test_seat_location.py` 8 项：
+  - 位置这一行随开关和位置追踪变化；座位上下文里带位置；
+  - 只在户外才搜；提示词只在户外给出；
+  - 用座位的人设、模型推荐，并去掉转账标签；搜索期间改选模型则不回复；没结果时说明；
+  - 共用搜索函数的格式化、缓存，没有 Key 时返回空。
+  - 相关测试 268 通过，9 个失败均为既有失败（chatroom 前端、wechat_mode、bubble parity）。

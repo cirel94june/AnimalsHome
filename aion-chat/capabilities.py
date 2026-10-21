@@ -614,6 +614,15 @@ def seat_memory_ability_text(user_name: str) -> str:
     )
 
 
+def poi_search_ability_text(user_name: str) -> str:
+    return (
+        f"[POI_SEARCH:类型名] — 搜索{user_name}当前位置周边的POI信息。"
+        "可用类型：餐饮美食、风景名胜、休闲娱乐、购物。"
+        f"使用后系统会自动搜索并将结果发给你，你再根据结果回答{user_name}。"
+        "一次只搜一个类型即可，搜索前不要编造内容。"
+    )
+
+
 def desk_note_ability_text(user_name: str) -> str:
     return (
         f"[NOTE:内容] — 在{user_name}手机桌面的便笺上留一句短短的话（一两句以内），"
@@ -650,6 +659,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(activity_check_ability_text(user_name))
     if is_capability_enabled("wechat_message"):
         texts.append(wechat_message_ability_text(user_name))
+    if is_capability_enabled("poi_search") and _is_outside_location():  # 和小克一样：在户外才给
+        texts.append(poi_search_ability_text(user_name))
     if is_capability_enabled("desk_note"):  # 便笺指令座位回复里本来就会处理，这里把能力告诉 TA
         texts.append(desk_note_ability_text(user_name))
     if is_capability_enabled("inner_monologue"):  # 和小克 / Lucien 同一段说明；前端对所有 AI 的消息都特殊显示
@@ -760,12 +771,7 @@ async def build_capability_prompt_items(
         abilities.append(activity_check_ability_text(user_name))
 
     if is_capability_enabled("poi_search") and _is_outside_location():
-        abilities.append(
-            f"[POI_SEARCH:类型名] — 搜索{user_name}当前位置周边的POI信息。"
-            "可用类型：餐饮美食、风景名胜、休闲娱乐、购物。"
-            f"使用后系统会自动搜索并将结果发给你，你再根据结果回答{user_name}。"
-            "一次只搜一个类型即可，搜索前不要编造内容。"
-        )
+        abilities.append(poi_search_ability_text(user_name))
 
     if is_capability_enabled("web_search") and _is_web_search_available():
         abilities.append(web_search_ability_text())

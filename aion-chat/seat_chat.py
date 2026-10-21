@@ -158,6 +158,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules(viewer=actor_id)))
         except Exception:
             pass
+    background.append(location_line())  # 和小克一样：位置上下文开关开着时带上她的位置
     messages += [
         {"role": "user", "content": "\n\n".join(b for b in background if b)},
         {"role": "assistant", "content": "收到。"},
@@ -196,6 +197,21 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         ]
     messages += _history(actor_id, msgs, context_limit, group=group, user_name=user_name)
     return messages
+
+
+def location_line() -> str:
+    """和小克一样：位置上下文开关开着、位置追踪开着时，带上她现在的位置和天气。"""
+    from capabilities import is_capability_enabled
+    if not is_capability_enabled("location_context"):
+        return ""
+    try:
+        from location import format_location_for_prompt, load_location_config
+        if not load_location_config().get("enabled"):
+            return ""
+        text = format_location_for_prompt()
+    except Exception:
+        return ""
+    return f"【位置信息】\n{text}" if text else ""
 
 
 def _ability_lines(user_name: str, group: bool, actor_id: str = "") -> list[str]:

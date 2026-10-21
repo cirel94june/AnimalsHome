@@ -1012,3 +1012,68 @@ async def _call_core_location(
     }
     append_monitor_log(core_log)
     await manager.broadcast({"type": "monitor_log", "data": core_log})
+
+
+async def search_nearby_pois_text(categories: list[str]) -> str:
+    """按类型搜索她当前位置周边（取最新 GPS 坐标、刷新地址和缓存），返回给 AI 看的结果文字；
+    没配高德 Key、没有坐标或一个类型都没搜成时返回空串。小克私聊和座位共用。"""
+    cfg = load_location_config()
+    amap_key = cfg.get("amap_key", "")
+    if not amap_key:
+        return ""
+
+    # 1. 取最新坐标（直接用缓存的最新 GPS 上报坐标，而不是上次 API 坐标）
+    status = load_location_status()
+    lng = status.get("lng", 0)
+    lat = status.get("lat", 0)
+    if not lng or not lat:
+        return ""
+
+    # 2. 用最新坐标重新做逆地理编码，更新地址
+    geo_info = await amap_regeo(lng, lat, amap_key)
+    if geo_info:
+        status["address"] = geo_info["address"]
+        status["adcode"] = geo_info["adcode"]
+
+    # 3. 搜索用户指定的 POI 类别
+    poi_types = cfg.get("poi_types", {})
+    search_results = {}
+    for cat in categories:
+        cat = cat.strip()
+        type_code = poi_types.get(cat)
+        if type_code:
+            pois = await amap_poi_search(lng, lat, type_code, amap_key, cfg.get("poi_radius", 2000))
+            search_results[cat] = pois
+            # 更新缓存
+            if "nearby_pois" not in status:
+                status["nearby_pois"] = {}
+            status["nearby_pois"][cat] = pois
+
+    # 更新 last_api 坐标
+    status["last_api_lng"] = lng
+    status["last_api_lat"] = lat
+    save_location_status(status)
+
+    if not search_results:
+        return ""
+
+    # 4. 格式化搜索结果
+    result_lines = []
+    for cat, pois in search_results.items():
+        if not pois:
+            result_lines.append(f"【{cat}】附近暂无相关结果")
+            continue
+        result_lines.append(f"【{cat}】")
+        for p in pois[:10]:
+            entry = f"  - {p['name']}"
+            if p.get("distance"):
+                entry += f"（{int(p['distance'])}m）"
+            if p.get("rating") and p["rating"] != "[]":
+                entry += f" ⭐{p['rating']}"
+            if p.get("cost") and p["cost"] != "[]":
+                entry += f" 人均¥{p['cost']}"
+            if p.get("address") and p["address"] != "[]":
+                entry += f" | {p['address']}"
+            result_lines.append(entry)
+    poi_text = "\n".join(result_lines)
+    return poi_text

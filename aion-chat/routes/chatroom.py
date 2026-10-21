@@ -3977,6 +3977,16 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
         from wechat_bridge import extract_wechat_messages
         full_text, _ = extract_wechat_messages(full_text)
 
+    # ── 周边搜索：和小克一样，开关开着且她在户外才搜；结果由 TA 自己接着说 ──
+    poi_matches = [m.strip() for m in POI_SEARCH_PATTERN.findall(full_text) if m.strip()]
+    if poi_matches:
+        full_text = POI_SEARCH_PATTERN.sub("", full_text)
+        from capabilities import _is_outside_location
+        if is_capability_enabled("poi_search") and _is_outside_location():
+            await _chatroom_sys_msg(room_id, f"📍 {label}搜了搜附近的{'、'.join(poi_matches[:3])}", _q,
+                                    after_msg_id=msg_id)
+            triggered["poi_search"] = poi_matches[:3]
+
     # ── 记住事情：写进 Memory Hub（开关 memory_write；这位座位有 Hub 身份才写）──
     # 模型照老习惯写了 [MEMORY:[梗]…]：先改成「梗：」，否则第一个 ] 就把指令截断了
     full_text = _MEMORY_JOKE_PREFIX.sub(r"\1梗：", full_text)
@@ -4205,6 +4215,64 @@ async def _seat_schedule_commands(full_text: str, room_id: str, actor_id: str, l
     return _strip_schedule_commands(full_text)
 
 
+async def _chatroom_poi_search(room_id: str, sender: str, model_key: str, categories: list[str], *,
+                               pinned: dict | None = None):
+    """座位的周边搜索：搜到的结果交给 TA 自己，用 TA 的人设和模型在原房间接着说。
+    开始和发请求前都核对 TA 仍就绪、线路没变；不换模型、不跑后台指令、不自动朗读。"""
+    from config import ensure_model_unchanged, load_worldbook, model_snapshot
+    from location import format_location_for_prompt, search_nearby_pois_text
+
+    if sender not in seat_chat.SEAT_ACTORS or not _seat_still_ready(sender, model_key):
+        return
+    if pinned is None:
+        pinned = model_snapshot(model_key)
+    sender_label = _name_for_identity(sender)
+    try:
+        poi_text = await search_nearby_pois_text(categories)
+    except Exception as e:
+        poi_text = ""
+        print(f"[CHATROOM_POI] {sender} 周边搜索失败: {e}")
+    if not poi_text:
+        await _chatroom_sys_msg(room_id, f"（{sender_label}没搜到附近的结果）", asyncio.Queue())
+        return
+    user_name = load_worldbook().get("user_name", "用户")
+    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    recent = _render_recent_room_messages_for_ai(msgs)
+    loc_info = format_location_for_prompt() or ""
+    prompt = (
+        f"{sender_label}刚才帮{user_name}搜了她附近的地方，系统已经搜完。以下是结果：\n\n{poi_text}\n\n"
+        + (f"{loc_info}\n\n" if loc_info else "")
+        + f"请以{sender_label}自己的口吻，从结果里挑几个合适的自然推荐给{user_name}，"
+        "不要逐条复述，不要编造结果里没有的地方，也不要再输出 [POI_SEARCH:...]。"
+    )
+    messages = [
+        {"role": "user", "content": f"[你的角色设定]\n你是{sender_label}。\n\n{seat_chat._persona_text(sender)}"},
+        {"role": "assistant", "content": "收到，我会按照设定做自己。"},
+        *recent,
+        {"role": "user", "content": prompt},
+    ]
+    full_text = ""
+    try:
+        try:
+            if not _seat_still_ready(sender, model_key):  # 搜索期间停用 / 清空人设 / 换了模型
+                raise RuntimeError("seat changed")
+            ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await
+        except Exception:
+            await _chatroom_sys_msg(room_id, f"（{sender_label}的设置刚刚变了，这次搜到的结果没能回复）",
+                                    asyncio.Queue())
+            return
+        async for chunk in stream_ai(messages, model_key):
+            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                full_text += chunk
+    except Exception as e:
+        print(f"[CHATROOM_POI] {sender} 回复失败: {e}")
+        return
+    full_text = _normalize_cli_bubble_breaks(
+        _visible_chatroom_text(_strip_unexecuted_transfers(POI_SEARCH_PATTERN.sub("", full_text))), model_key)
+    if full_text.strip():
+        await _save_msg(room_id, sender, full_text, msg_id=f"cm_{time.time_ns()}_{sender[:1]}", auto_tts=False)
+
+
 def _seat_still_ready(sender: str, model_key: str) -> bool:
     """座位仍启用、有人设、而且现在选的还是这条模型线路。"""
     try:
@@ -4228,6 +4296,9 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
         spawn_generation_task(_chatroom_image_gen(room_id, actor_id, ig["prompt"], ig["is_selfie"]))
     if triggered.get("web_search"):
         spawn_generation_task(_chatroom_web_search(room_id, actor_id, model_key, triggered["web_search"],
+                                                   pinned=pinned))
+    if triggered.get("poi_search"):
+        spawn_generation_task(_chatroom_poi_search(room_id, actor_id, model_key, triggered["poi_search"],
                                                    pinned=pinned))
     if triggered.get("cam_check"):
         spawn_generation_task(_chatroom_cam_check(room_id, actor_id, model_key,
