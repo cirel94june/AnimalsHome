@@ -268,6 +268,14 @@ def _is_schedule_time_stale(dt_text: str, *, grace_seconds: int = 90) -> bool:
 
 
 # ── ScheduleManager ───────────────────────────────
+def _proactive_switched_off(item: dict) -> bool:
+    """主动陪伴计时器已认领、正在准备开口时，这位 AI 的开关被关掉了。"""
+    if item.get("type") != PROACTIVE_TYPE:
+        return False
+    from proactive_companionship import is_proactive_enabled
+    return not is_proactive_enabled(item.get("origin", "aion"))
+
+
 class ScheduleManager:
     def __init__(self):
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -796,6 +804,8 @@ class ScheduleManager:
                 )
 
             async def content_stream():
+                if _proactive_switched_off(item):  # 准备期间开关被关了：不调模型（紧贴模型调用前）
+                    return
                 async for chunk in _stream_connor_model(messages, _connor_model, usage_meta):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         continue
@@ -815,11 +825,15 @@ class ScheduleManager:
             _temp = SETTINGS.get("temperature")
 
             async def content_stream():
+                if _proactive_switched_off(item):  # 准备期间开关被关了：不调模型（紧贴模型调用前）
+                    return
                 async for chunk in stream_ai(messages, model_key, meta=usage_meta, temperature=_temp):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         continue
                     yield chunk
 
+        if _proactive_switched_off(item):  # 截图、取记忆、拼上下文期间开关被关了：不开口
+            return
         if use_realtime_wakeup:
             transport_outcome = await _consume_background_realtime_stream(
                 content_stream,
@@ -1142,6 +1156,8 @@ class ScheduleManager:
                 )
 
             async def content_stream():
+                if _proactive_switched_off(item):  # 准备期间开关被关了：不调模型（紧贴模型调用前）
+                    return
                 async for chunk in _stream_connor_model(messages, _connor_model, usage_meta):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         continue
@@ -1160,11 +1176,15 @@ class ScheduleManager:
             _temp = SETTINGS.get("temperature")
 
             async def content_stream():
+                if _proactive_switched_off(item):  # 准备期间开关被关了：不调模型（紧贴模型调用前）
+                    return
                 async for chunk in stream_ai(messages, model_key, meta=usage_meta, temperature=_temp):
                     if chunk.startswith(CLI_STATUS_PREFIX):
                         continue
                     yield chunk
 
+        if _proactive_switched_off(item):  # 截图、取记忆、拼上下文期间开关被关了：不开口
+            return
         if use_realtime_wakeup:
             transport_outcome = await _consume_background_realtime_stream(
                 content_stream,

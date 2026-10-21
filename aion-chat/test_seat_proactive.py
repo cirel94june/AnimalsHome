@@ -160,3 +160,69 @@ def test_switched_off_while_waiting_seat_does_not_speak(monkeypatch):
                                                      extra_prompt="[主动陪伴触发]", proceed_check=lambda: False))
     assert not called
     saved.assert_not_called()
+
+
+def _main_ai_monitor_setup(db, monkeypatch, origin, flip_at):
+    """主 AI 主动陪伴：认领、开关检查都过了，flip_at 指定的那一步里开关被关掉。"""
+    async def tables():
+        async with aiosqlite.connect(db) as conn:
+            await conn.execute("CREATE TABLE IF NOT EXISTS conversations (id TEXT, model TEXT, updated_at REAL, title TEXT)")
+            await conn.execute("CREATE TABLE IF NOT EXISTS messages (id TEXT, conv_id TEXT, role TEXT, content TEXT, "
+                               "created_at REAL, attachments TEXT DEFAULT '[]')")
+            await conn.execute("INSERT INTO conversations VALUES ('c1', '', 1, 't')")
+            await conn.commit()
+    asyncio.run(tables())
+    _add_timer(db, "pcm", origin)
+    key = f"proactive_companionship_{origin}_enabled"
+    monkeypatch.setitem(pc.SETTINGS, key, True)
+    switch_off = lambda: pc.SETTINGS.__setitem__(key, False)  # noqa: E731
+    monkeypatch.setattr(schedule.ScheduleManager, "_resolve_target", lambda self, item: {"type": "private"})
+    import context_builder
+    monkeypatch.setattr(context_builder, "fetch_merged_timeline", AsyncMock(return_value=[]))
+    monkeypatch.setattr(context_builder, "render_merged_timeline", lambda *a, **k: [])
+    import camera
+    from types import SimpleNamespace
+
+    async def acquire(*a, **k):
+        if flip_at == "prepare":
+            switch_off()
+        return SimpleNamespace(image_result=SimpleNamespace(no_image_context="", source="none"), prompt_attachment="")
+    monkeypatch.setattr(camera, "acquire_prompt_monitor_context", acquire)
+    model_calls = []
+
+    async def stream(*a, **k):
+        model_calls.append(1)
+        yield "嗨"
+    monkeypatch.setattr(schedule, "stream_ai", stream)
+    monkeypatch.setattr(schedule, "_load_connor_stream_runtime",
+                        lambda: (lambda m: "cm", lambda *a, **k: stream(), lambda: {}))
+    consumed = []
+
+    async def consume(gen, *a, **k):
+        consumed.append(1)
+        if flip_at == "stream":
+            switch_off()
+        async for _ in gen:
+            pass
+        from types import SimpleNamespace as NS
+        return NS(committed_text="", stop_reason=None, diagnostic_error=None, notice="")
+    monkeypatch.setattr(schedule, "_consume_background_stream", consume)
+    item = {"id": "pcm", "type": "proactive", "trigger_at": "2000-01-01 08:00:00", "content": "",
+            "origin": origin, "origin_room_id": ""}
+    return item, model_calls, consumed
+
+
+@pytest.mark.parametrize("origin", ["aion", "connor"])
+@pytest.mark.parametrize("flip_at", ["prepare", "stream"])
+def test_main_ai_switched_off_after_claim_never_calls_model(db, monkeypatch, origin, flip_at):
+    """§47 复审 R1：认领后截图 / 取上下文期间、或进模型前一刻关开关，主 AI 都不调模型。"""
+    item, model_calls, consumed = _main_ai_monitor_setup(db, monkeypatch, origin, flip_at)
+    asyncio.run(schedule.ScheduleManager()._fire_monitor(item))
+    assert not model_calls
+    assert consumed == ([] if flip_at == "prepare" else [1])
+
+
+def test_main_ai_still_speaks_when_switch_stays_on(db, monkeypatch):
+    item, model_calls, consumed = _main_ai_monitor_setup(db, monkeypatch, "aion", "never")
+    asyncio.run(schedule.ScheduleManager()._fire_monitor(item))
+    assert model_calls == [1]

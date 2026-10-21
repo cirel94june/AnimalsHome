@@ -606,7 +606,7 @@ def seat_memory_ability_text(user_name: str) -> str:
         "把它记进你们共用的记忆库（小克和 Lucien 也看得到）。"
         f"一条只写一件事，用第三人称、200 字以内，例如 [MEMORY:{user_name}喜欢吃芒果|preferences]。"
         f"只记{user_name}本人说的、关于自己的事；群里别人说的话不要写成{user_name}的事；"
-        "明显在玩梗、角色扮演的不要当成事实记（真要记，内容开头写 [梗]）；"
+        "明显在玩梗、角色扮演的不要当成事实记（真要记，内容开头写「梗：」，内容里不要用方括号）；"
         f"建议、看法、劝别人的话不是待办，除非{user_name}明确说自己要去做。"
         "分类可以省略，可选：preferences（长期喜好）、people（身边的人）、bond（你和"
         f"{user_name}之间）、health、career、psychology、learning、social、animal_dorm（动物宿舍设定）。"

@@ -3925,6 +3925,9 @@ def _transfer_recipient(recipient: str | None, room_seat: str, names: dict[str, 
     return room_seat or "connor"
 
 
+_MEMORY_JOKE_PREFIX = re.compile(r"(\[\s*MEMORY\s*[：:]\s*)[\[［【]\s*梗\s*[\]］】]\s*", re.IGNORECASE)
+
+
 def _seat_memory_items(matches: list[str], user_name: str, user_text: str) -> list[dict]:
     """[MEMORY:内容|分类|关于谁] → Hub remember 的条目。说话人按约定填小猫；没写关于谁就是小猫本人。
     小猫这一句明确说了「记住」时重要度 0.75，否则 0.5。"""
@@ -3951,6 +3954,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     label = _name_for_identity(actor_id)
 
     # ── 记住事情：写进 Memory Hub（开关 memory_write；这位座位有 Hub 身份才写）──
+    # 模型照老习惯写了 [MEMORY:[梗]…]：先改成「梗：」，否则第一个 ] 就把指令截断了
+    full_text = _MEMORY_JOKE_PREFIX.sub(r"\1梗：", full_text)
     memory_matches = MEMORY_CMD_PATTERN.findall(full_text)
     if memory_matches:
         full_text = MEMORY_CMD_PATTERN.sub("", full_text)
@@ -3958,6 +3963,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
             from config import load_worldbook
             user_name = (load_worldbook().get("user_name") or "").strip() or "用户"
             items = _seat_memory_items(memory_matches, user_name, user_text)
+            if items:  # 记过的事被去重、没新排上队也算处理过了，只写了记忆的回复不算失败
+                triggered["memory"] = True
             for content in memory_hub_bridge.schedule_remember(actor_id, items, request_key=msg_id):
                 await _chatroom_sys_msg(room_id, f"💾 {label}记住了：{content[:50]}", _q, after_msg_id=msg_id)
 

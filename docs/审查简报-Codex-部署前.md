@@ -494,3 +494,16 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_memory_hub_bridge.py` +6，假 Hub 加了 remember 工具：参数和固定编号、不进客厅且截断长度和重要度、标点变体去重和每条回复的上限、断线后用同一编号补传且只记一次、拒收后停放且不挡后面的对话、没有 Hub 身份或写入关闭时不发。
   - 新文件 `test_seat_memory.py` 5 项：解析分类和关于谁并显示提示、默认值以及没排上队时不显示提示、关开关只去掉、提示词按 Hub 身份给、系统触发的回复不传小猫原话。
   - 相关测试：303 通过，8 个失败均为既有失败（同 §47）。
+
+## 49. §47–48（d7ac282）复审修复（R1、R2、R3）
+
+- **R1 主 AI 认领后等待期间关开关仍调模型**：`schedule._proactive_switched_off(item)`（主动陪伴计时器且这位 AI 的开关已关）。`_fire_alarm` / `_fire_monitor` 两条主 AI 路径（小克 / Lucien 各一个 `content_stream`，共 4 处）：
+  - 所有截图、记忆、上下文等待之后、进入 `_consume_background_*` 之前查一次，关了直接返回（不建 TTS 输出、不保存）；
+  - 每个 `content_stream` 生成器开头再查一次，紧贴 `stream_ai` / `_stream_connor_model` 调用，中间没有 await；关了就是空流，后面按原逻辑「没正文就返回」。
+  - 关开关清计时器、认领后检查都保留。
+- **R2 `[梗]` 截断 MEMORY**：提示词改成内容开头写「梗：」并说明内容里不要用方括号。座位解析前把 `[MEMORY:[梗]` / `【梗】` / `［梗］` 统一改成 `[MEMORY:梗：`（`_MEMORY_JOKE_PREFIX`，只在座位入口，没有改共享的 `MEMORY_CMD_PATTERN`，主 AI 入口不变）。
+- **R3 只写记忆的回复被记成空回复失败**：只要解析出有效条目且开关开着，就设置 `triggered["memory"]`，无论新排上队还是因去重没排上，纯指令回复都走 `seat_done(message=None)` 正常结束。只有新排上队的才显示「💾 记住了」；去重时不显示，也不记成失败。
+- 测试：
+  - `test_seat_proactive.py` +5：小克 / Lucien × 在准备阶段关、在进模型前一刻关（换掉 consume，先关再迭代真实 `content_stream`），模型都没被调用；开关一直开着的对照组正常调用。拿掉修复后其中 4 项失败。
+  - `test_seat_memory.py` +5：`[梗]`、`梗：`、`【梗】` 三种写法从真实指令一路到真实 SQLite outbox 的 payload，内容是「梗：小猫是猫王」、分类保留、正文干净；提示词不再出现 `[梗]`；只写记忆的回复（新排上队 / 被去重两种）不调 `_save_chatroom_reply_failure`，以 `seat_done(message=None)` 结束。
+  - 相关测试：313 通过、9 失败，其中 8 个为既有失败（同 §47），`test_memory_hub_bridge::test_slow_hub_times_out_without_blocking_chat` 是本机计时问题，拿掉本轮改动后同样失败。
