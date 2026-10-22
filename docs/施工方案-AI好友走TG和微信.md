@@ -84,6 +84,33 @@
 
 **对本方案的影响**：记忆 B 改为——朋友群照旧自动交给 Hub（Hub 只取小猫自己的事）；「AI 挑重点 remember」这一步先不做。找朋友后的见闻写在 AionsHome 本地（家庭动态 / 日记），AI 之后翻日记、看家庭动态时仍会想起去找过谁、聊了什么。等 Hub 支持朋友后再接 remember。
 
+## 2026-10-22 补充（Hub 新参数约定 + 网络现状）
+
+- Hub 窗口：以后支持记朋友的事时，每条朋友笔记都要带朋友的 TG 账号（如 `telegram:12345`），朋友家 AI 带它 bot 的账号。所以**好友名单每位都要存 TG 账号 id**（真人存本人 id，朋友家 AI 存 bot id）。TG 机器人在群里已经记录每个人的 id（observe_identity），名单页可以从「群里见过的人」里选。
+- 网络：AionsHome 只在小猫的 Tailscale 私网里（8443），**Render 上的 TG 机器人连不进来**；只有 Hub 有公网域名（xiaokememory.camdvr.org）。AionsHome 主动连 Render 的机器人没问题（机器人有公网地址）。
+
+## 分两期
+
+### 第一期：找朋友（不需要开放 AionsHome）
+
+方向全是「AionsHome → 机器人」，AionsHome 不用暴露到公网。
+
+TG 机器人（三个仓库各改，走 PR）：
+1. `POST /api/aionshome/visit`（请求头带共享密钥 `AIONSHOME_BRIDGE_SECRET`，Render 上配环境变量）：参数 群 id、开场白、朋友的 TG id、visit_id。机器人确认自己在这个群里，把开场白以自己的身份发出去，记进这个群的历史，并开一段「拜访」：这段时间里朋友（那个 TG id）的消息算是在跟自己说话（照样受冷却和最多轮数限制，比如 6 轮），聊完或安静 15 分钟就结束。
+2. `GET /api/aionshome/visit/<visit_id>`（同样带密钥）：返回这次拜访的状态和对话记录（只含这个群、这段时间）。
+3. Render 免费层会睡觉：第一次调用可能要等几十秒唤醒，AionsHome 这边等得起。
+
+AionsHome（照常交 Codex 审）：
+1. 好友名单页（替换会客厅好友页）：名字、是人还是别人家的 AI、TG 账号 id、在哪个群、谁能去找（小克 / Lucien / 狗蛋 → 对应哪个机器人的地址）、能不能自主去、冷却。机器人地址和密钥存服务器 data/，不进仓库。
+2. 自主活动「去找朋友」：AI 想好开场白 → 调对应机器人的 visit → 过一阵去取对话记录 → 用 AI 自己的人设写见闻进家庭动态 / 日记。小猫也可以在名单页手动点「让 TA 去找」。
+3. 记忆：朋友群的对话机器人照旧交给 Hub（Hub 只取小猫自己的事）；见闻留在 AionsHome 本地。Hub 支持记朋友后再接 remember（带 telegram:<id>）。
+
+### 第二期：TG 上借用 AionsHome 的工具（要先定网络）
+
+机器人在 TG 里要用 AionsHome 的工具（上网搜、设闹铃、记事、看监控、生图），需要机器人能连到 AionsHome。两种办法，**需要小猫选**：
+- A：给 AionsHome 开一个公网地址，但**只开放这几个工具接口**，带密钥、限频，其余页面仍只在 Tailscale 里。
+- B：不开放 AionsHome，让机器人把工具请求放到 Hub（已有公网）上排队，AionsHome 去 Hub 取、做完再放回去。不用开放 AionsHome，但要 Hub 配合加功能（Hub 在大修），而且会慢一些。
+
 ## 要小猫做 / 确认的
 
 1. TG：告诉我有哪些群、群里有哪些朋友的机器人和真人朋友（名单可以在页面上自己填）。
