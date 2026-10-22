@@ -738,3 +738,12 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_xhs_seat_run_ui.js`：运行中保存配置重建的座位按钮仍然禁用、`runOnce` 不能再次进入、名字是纯文本。
   - 用 HEAD 版本的 autonomy / xhs_lite 跑新测试，全部失败或报错。
   - 相关测试：343 通过，5 个失败都是既有失败（同 §63）；淘宝和小红书前端 5 个 node 测试通过。
+
+## 65. 哨兵走 Codex 登录态时模型可以自己选
+
+背景：2026-10-22 服务器上装了官方 Codex CLI 并用小猫的 ChatGPT 账号登录（不是代码改动；AionsHome 原有的 codex_cli / app-server 路径已实测可用）。原来哨兵的 codex_luna 线路写死为 `gpt-5.6-luna`，小猫希望以后模型下架时能自己换。
+
+- `config.normalize_sentinel_codex_model`：模型名只允许 `[A-Za-z0-9][A-Za-z0-9._-]{0,79}`，不合法或为空时回退 `gpt-5.6-luna`（`DEFAULT_SENTINEL_CODEX_MODEL`，没选过的照旧）。`get_sentinel_config()` 的 codex_luna 分支改为读取 `SETTINGS["sentinel_codex_model"]`。
+- `routes/settings.py`：`SettingsUpdate.sentinel_codex_model` 写入时同样规范化，GET 时一并返回。新增 `GET /api/settings/codex-models`：读取 Codex 自己缓存的 `models_cache.json`（`_CODEX_HOME` 和 chat home 里较新的那一份；不另外请求、不调模型），列出 visibility 不是 hide 的模型，带 `vision`（input_modalities 是否含 image）。读不到时返回空列表。
+- 设置页：线路名改为「Codex 登录态（模型可选）」，只有选了这条线路时才显示「Codex 模型」下拉框。选项用 textContent 填；当前的模型如果已经不在账号的模型列表里，会照实显示并提示换一个；不能看图的模型会标出来。
+- 测试 `test_sentinel_codex_model.py` 4 项：名字校验和默认值；哨兵配置使用所选模型；模型目录（隐藏的不列、能否看图、没缓存或坏缓存）；设置的保存和读取。相关 sentinel / settings / camera / location 测试 126 通过，2 个失败是既有的 `test_sentinel_routes`。设置页内联脚本 `node --check` 通过。

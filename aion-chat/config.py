@@ -85,6 +85,14 @@ def save_settings(data: dict):
 SETTINGS = load_settings()
 
 SENTINEL_ROUTES = {"original", "codex_luna"}
+DEFAULT_SENTINEL_CODEX_MODEL = "gpt-5.6-luna"
+_CODEX_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+
+
+def normalize_sentinel_codex_model(value) -> str:
+    """哨兵走 Codex 登录态时用哪个模型：小猫在设置里自己选，模型下架了能换新的。不合法就用默认。"""
+    model = str(value or "").strip()
+    return model if _CODEX_MODEL_ID.match(model) else DEFAULT_SENTINEL_CODEX_MODEL
 
 
 def normalize_sentinel_route(value) -> str:
@@ -115,7 +123,7 @@ def get_sentinel_config() -> dict:
             "provider": "codex",
             "base_url": "",
             "api_key": "",
-            "model": "gpt-5.6-luna",
+            "model": normalize_sentinel_codex_model(SETTINGS.get("sentinel_codex_model")),
             "reasoning_effort": "none",
             "use_openai": False,
             "ready": True,

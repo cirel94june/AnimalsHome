@@ -798,8 +798,12 @@ body[data-theme="light"] .transport-mode-btn.is-active {
               <label class="form-label" for="sentinelRouteInput">当前巡逻线路</label>
               <select class="form-input" id="sentinelRouteInput" onchange="updateSentinelRouteUi()">
                 <option value="original">原线路（自定义 / Qwen / Gemini）</option>
-                <option value="codex_luna">GPT-5.6 Luna（Codex 登录态）</option>
+                <option value="codex_luna">Codex 登录态（模型可选）</option>
               </select>
+            </div>
+            <div class="field full" id="sentinelCodexModelField">
+              <label class="form-label" for="sentinelCodexModelInput">Codex 模型</label>
+              <select class="form-input" id="sentinelCodexModelInput"></select>
             </div>
           </div>
           <p class="hint" id="sentinelRouteHint">原线路继续使用下方配置；留空则走 Gemini 官方 API + 上方 Free Key。</p>
@@ -1330,16 +1334,37 @@ function collectCustomRoutes() {
   return routes;
 }
 
+// 哨兵的 Codex 模型：列出账号当前能用的（名字用 textContent），选过的模型下架了也照实显示，方便换新
+async function loadSentinelCodexModels(current) {
+  var select = $("sentinelCodexModelInput");
+  var models = [];
+  try { models = (await api("GET", "/api/settings/codex-models")).models || []; } catch (e) {}
+  var options = models.map(function (m) {
+    return [m.id, m.name + (m.vision ? "" : "（不能看图）")];
+  });
+  if (!options.some(function (o) { return o[0] === current; })) {
+    options.unshift([current, current + (models.length ? "（账号里已没有这个模型，请换一个）" : "")]);
+  }
+  select.replaceChildren.apply(select, options.map(function (o) {
+    var option = document.createElement("option");
+    option.value = o[0];
+    option.textContent = o[1];
+    return option;
+  }));
+  select.value = current;
+}
+
 function updateSentinelRouteUi() {
   var route = $("sentinelRouteInput").value;
   var useLuna = route === "codex_luna";
+  $("sentinelCodexModelField").style.display = useLuna ? "" : "none";
   var fields = $("sentinelOriginalFields");
   fields.style.opacity = useLuna ? "0.48" : "1";
   fields.querySelectorAll("input").forEach(function(input) {
     input.disabled = useLuna;
   });
   $("sentinelRouteHint").textContent = useLuna
-    ? "Luna 使用本机 Codex / ChatGPT 登录态，支持看图；推理固定关闭（none），优先缩短巡逻等待。下方原线路配置会保留。"
+    ? "使用服务器上的 Codex / ChatGPT 登录态（扣订阅额度，不另外花 API 钱）。模型在上面选，推荐 Luna（快、省额度、能看图）；模型下架了换一个即可。推理固定关闭，下方原线路配置会保留。"
     : "原线路继续使用下方配置；留空则走 Gemini 官方 API + 上方 Free Key。";
 }
 
@@ -1372,6 +1397,7 @@ function updateAsrProviderUi(usePreset) {
   $("geminiKeyInput").value = s.gemini_key || "";
   $("geminiFreeKeyInput").value = s.gemini_free_key || "";
   $("sentinelRouteInput").value = s.sentinel_route === "codex_luna" ? "codex_luna" : "original";
+  loadSentinelCodexModels(s.sentinel_codex_model || "gpt-5.6-luna");
   $("sentinelBaseUrlInput").value = s.sentinel_base_url || "";
   $("sentinelApiKeyInput").value = s.sentinel_api_key || "";
   $("sentinelModelInput").value = s.sentinel_model || "";
@@ -1494,6 +1520,7 @@ async function saveSettings() {
     sentinel_base_url: $("sentinelBaseUrlInput").value.trim(),
     sentinel_api_key: $("sentinelApiKeyInput").value.trim(),
     sentinel_model: $("sentinelModelInput").value.trim(),
+    sentinel_codex_model: $("sentinelCodexModelInput").value,
     embedding_base_url: $("embeddingBaseUrlInput").value.trim(),
     embedding_api_key: $("embeddingApiKeyInput").value.trim(),
     embedding_model: $("embeddingModelInput").value.trim(),
