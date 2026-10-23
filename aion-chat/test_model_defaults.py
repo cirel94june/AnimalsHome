@@ -26,7 +26,9 @@ def models(monkeypatch, tmp_path):
     home.mkdir()
     monkeypatch.setattr(ai_providers, "_CODEX_HOME", str(home))
     monkeypatch.setattr(ai_providers, "_CODEX_CHAT_HOME", str(tmp_path / "chat"))
-    monkeypatch.setattr(codex_models, "_DYNAMIC_KEYS", set())
+    monkeypatch.setattr(codex_models, "_OWNED", {})
+    monkeypatch.setattr(codex_models, "_TRUSTED", None)
+    monkeypatch.setattr(codex_models, "_trusted_copy_path", lambda: tmp_path / "trusted.json")
     monkeypatch.setitem(config.SETTINGS, "default_model", "")
 
     def cache(*slugs):
@@ -100,3 +102,32 @@ def test_codex_without_model_name_uses_codex_default(models):
     cache("gpt-7-nova")
     assert config.model_usable({"provider": "codex_cli"})  # 没写模型名：用 Codex 自己的默认
     assert not config.model_usable({"provider": "codex_cli", "model": "gpt-1-old"})
+
+
+def test_unreadable_cache_keeps_the_last_trusted_catalog(models):
+    """§66 复审 M2：缓存坏了不等于模型下架；明确的空目录才算都没了。"""
+    table, cache = models
+    cache("gpt-7-nova")
+    codex_models.sync_models()
+    home = __import__("pathlib").Path(__import__("ai_providers")._CODEX_HOME)
+    (home / "models_cache.json").write_text("{broken", encoding="utf-8")
+    table.pop("Codex-7-Nova")  # 模拟 MODELS 重建
+    codex_models.sync_models()
+    assert table["Codex-7-Nova"]["model"] == "gpt-7-nova"
+    (home / "models_cache.json").write_text(json.dumps({"models": []}), encoding="utf-8")
+    codex_models.sync_models()
+    assert "Codex-7-Nova" not in table and codex_models.available_slugs() == set()
+
+
+def test_user_route_with_same_name_is_never_overwritten(models):
+    """§66 复审 M1：同名的自定义线路归小猫，Codex 同步不覆盖、不删除。"""
+    table, cache = models
+    cache("gpt-7-nova")
+    codex_models.sync_models()
+    mine = {"provider": "custom_openai", "model": "MY_OWN", "route_id": "custom_route_9"}
+    table["Codex-7-Nova"] = mine  # 重建后同名位置是小猫自己的线路
+    codex_models.sync_models()
+    assert table["Codex-7-Nova"] is mine
+    cache("gpt-6.1-sol")
+    codex_models.sync_models()
+    assert table["Codex-7-Nova"] is mine

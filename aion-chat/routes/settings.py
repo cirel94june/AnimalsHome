@@ -317,6 +317,11 @@ async def get_settings():
 
 @router.put("/api/settings")
 async def update_settings(body: SettingsUpdate):
+    if body.default_model is not None:
+        chosen = body.default_model.strip()
+        # 在改任何设置之前校验：不通过就整次不写（内存里也不动）
+        if chosen and (chosen not in dict(iter_selectable_models()) or not is_shared_model(chosen)):
+            raise HTTPException(400, "这个模型现在用不了，换一个")
     new_routes = None
     if body.custom_model_routes is not None and body.custom_routes_rev != routes_rev():
         # 打开设置页之后，中转站在别处（比如 AI 名片）改过：整次保存都不写，请刷新后再改
@@ -331,6 +336,10 @@ async def update_settings(body: SettingsUpdate):
         if clash:
             # 和某位 AI 自己的线路重名：在改任何设置之前就拒绝，整次保存都不写
             raise HTTPException(400, f"模型名和 AI 名片里的专属线路重名了：{'、'.join(sorted(clash))}，换个名字再保存")
+        import codex_models
+        clash = route_model_keys(new_routes) & codex_models.owned_keys()
+        if clash:
+            raise HTTPException(400, f"模型名和 Codex 登录态的模型重名了：{'、'.join(sorted(clash))}，换个名字再保存")
     asr_config = {}
     if any(getattr(body, field) is not None for field in ASR_FIELDS):
         proposed = {field: getattr(body, field) if getattr(body, field) is not None else SETTINGS.get(field) for field in ASR_FIELDS}
@@ -406,10 +415,7 @@ async def update_settings(body: SettingsUpdate):
     if body.sentinel_codex_model is not None:
         SETTINGS["sentinel_codex_model"] = normalize_sentinel_codex_model(body.sentinel_codex_model)
     if body.default_model is not None:
-        chosen = body.default_model.strip()
-        if chosen and (chosen not in dict(iter_selectable_models()) or not is_shared_model(chosen)):
-            raise HTTPException(400, "这个模型现在用不了，换一个")
-        SETTINGS["default_model"] = chosen
+        SETTINGS["default_model"] = body.default_model.strip()  # 已在开头校验过
     if body.embedding_base_url is not None:
         SETTINGS["embedding_base_url"] = body.embedding_base_url
     if body.embedding_api_key is not None:
@@ -860,6 +866,6 @@ async def refresh_codex_models():
     import codex_models
     try:
         models = await codex_models.refresh()
-    except (RuntimeError, OSError, asyncio.TimeoutError, ValueError) as error:
+    except (RuntimeError, OSError, TimeoutError, ValueError) as error:
         raise HTTPException(400, f"没能刷新：{error}")
     return {"models": models}

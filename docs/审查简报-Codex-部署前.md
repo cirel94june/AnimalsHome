@@ -773,3 +773,12 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_model_defaults.py` 6 项：旧默认值换成她选的；在但用不了的不换；没选时取第一个能用的共用模型、不取专属线路；Codex 目录增减和下架；重建列表时保留补进来的 Codex 模型；默认模型的保存校验（专属线路、用不了的、不存在的都返回 400）；没写模型名的 Codex 也算可用。
   - `test_deprecated_cli_models::…falls_back…` 改为固定默认模型。这条用例原来依赖「第一个可见模型」，现在的回退目标是默认模型。
   - 相关 71 个测试文件：其余失败都是既有失败（chatroom 前端、wechat_mode、deprecated_cli ×3、model_transport_mode ×3、model_audio_input、sentinel_routes ×2、bubble parity、lounge_friends_routes 的 main 注册用例，改动前都失败）。
+
+## 67. §65–66（9d99317）审查修复（M1–M4、L1）
+
+- **M1 同名覆盖**：`codex_models._OWNED` 记「名字 → 补进去的那个 dict 对象」，同步时只覆盖 / 删除 `MODELS.get(key) is _OWNED[key]` 的条目，同名的内置条目或小猫自己存的线路一律不碰。`update_settings` 保存中转站时，模型名不能和 `owned_keys()` 重名（返回 400，在改任何设置之前）。
+- **M2 三态目录**：`_read_cache()` 读到返回列表（可能为空），没有或损坏返回 None。`current_catalog()` 读到时记为可信目录，并原子写一份副本到 `data/codex_models_catalog.json`；读不到时用内存里的或副本里的可信目录。`available_slugs()` 目录未知返回 None，明确为空返回空集合。明确的空目录会去掉补进来的条目；损坏的缓存不会。
+- **M3 清理**：Linux 下用 `start_new_session=True` 启动（独立进程组）。`_stop()`：先关 stdin 等 3 秒，不退出就 `os.killpg(pid, SIGKILL)`（只杀这一组；Windows 用 `terminate_process_tree`），再等 3 秒，每一步都有时限。整个刷新过程最多约 timeout + 9 秒。
+- **M4 先校验**：`default_model` 的校验移到 `update_settings` 最开头，不通过时内存里的设置也不会被改动。
+- **L1**：刷新 Codex 目录后，同时以当前选择重新加载哨兵下拉框。
+- 测试：`test_model_defaults.py` 新增：缓存损坏时保留可信目录、明确空目录时去掉；同名自定义线路不被覆盖也不被删除。fixture 改为隔离 `_OWNED`、`_TRUSTED` 和副本路径。`test_sentinel_codex_model.py` 中「坏缓存返回空」改为「坏缓存用上一份可信目录」。

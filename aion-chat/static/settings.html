@@ -1391,6 +1391,7 @@ async function refreshCodexModels() {
   $("codexModelsHint").textContent = "正在问 Codex…";
   try {
     showCodexModels((await api("POST", "/api/settings/codex-models/refresh")).models || []);
+    loadSentinelCodexModels($("sentinelCodexModelInput").value || "gpt-5.6-luna");  // 哨兵下拉也换成新目录，保留当前选择
     var rows = await api("GET", "/api/models");
     fillDefaultModel(Array.isArray(rows) ? rows : [], $("defaultModelInput").value);
   } catch (e) {

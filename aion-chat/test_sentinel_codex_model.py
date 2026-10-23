@@ -31,6 +31,9 @@ def test_codex_model_list_comes_from_the_codex_cache(monkeypatch, tmp_path):
     home.mkdir()
     monkeypatch.setattr(ai_providers, "_CODEX_HOME", str(home))
     monkeypatch.setattr(ai_providers, "_CODEX_CHAT_HOME", str(chat_home))
+    import codex_models
+    monkeypatch.setattr(codex_models, "_TRUSTED", None)
+    monkeypatch.setattr(codex_models, "_trusted_copy_path", lambda: tmp_path / "trusted.json")
     assert settings_routes.list_codex_models() == []  # 还没登录 / 没缓存
     (home / "models_cache.json").write_text(json.dumps({"models": [
         {"slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "input_modalities": ["text", "image"], "visibility": "list"},
@@ -42,7 +45,7 @@ def test_codex_model_list_comes_from_the_codex_cache(monkeypatch, tmp_path):
         {"id": "text-only", "name": "Text Only", "vision": False},
     ]
     (home / "models_cache.json").write_text("not json", encoding="utf-8")
-    assert settings_routes.list_codex_models() == []
+    assert [m["id"] for m in settings_routes.list_codex_models()] == ["gpt-6-luna", "text-only"]  # 坏了用上一份可信的
 
 
 def test_settings_save_and_read_the_codex_model(monkeypatch):
