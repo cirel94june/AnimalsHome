@@ -782,3 +782,9 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **M4 先校验**：`default_model` 的校验移到 `update_settings` 最开头，不通过时内存里的设置也不会被改动。
 - **L1**：刷新 Codex 目录后，同时以当前选择重新加载哨兵下拉框。
 - 测试：`test_model_defaults.py` 新增：缓存损坏时保留可信目录、明确空目录时去掉；同名自定义线路不被覆盖也不被删除。fixture 改为隔离 `_OWNED`、`_TRUSTED` 和副本路径。`test_sentinel_codex_model.py` 中「坏缓存返回空」改为「坏缓存用上一份可信目录」。
+
+## 68. §67（fb28318）复审修复（R1、R2）
+
+- **R1 结构坏的目录被当成空目录**：`_parse` 改为先校验、再过滤。顶层必须是带 `models` 列表的对象；每一项必须是 dict，带非空字符串 slug（或副本格式的 id）；display_name / name、visibility 必须是字符串，input_modalities 必须是字符串列表，vision 必须是布尔值。任何一项不合格，整份目录都返回 None（当作读不到），继续用上一份可信目录，内存和磁盘副本都不更新。只有结构完全正确的空列表才算明确为空。隐藏模型仍然合法，只是不列出。
+- **R2 刷新准备阻塞主循环**：`_build_codex_chat_environment(prepare_catalog=False)` 跳过陪聊模型目录的准备步骤（那一步会同步跑 `debug models --bundled` 子进程）。只问 `model/list` 不需要它，剩下的同步工作只是复制登录文件。`refresh` 从一开始就定好 deadline，准备、启动、问答共用这一个时限；清理沿用 §67 自己的上限。
+- 测试：`test_model_defaults.py` 新增：6 种结构坏的缓存（`[None]`、`[{}]`、空 slug、`input_modalities: 42`、models 不是列表、顶层是列表）都保留动态模型，模拟重启后能从副本恢复；刷新时调用环境构造带 `prepare_catalog=False`。模型、Codex 相关 5 个测试文件共 27 项通过。

@@ -33,21 +33,29 @@ def _trusted_copy_path() -> Path:
 
 
 def _parse(data) -> list[dict] | None:
-    models = data.get("models") if isinstance(data, dict) else data
+    """校验并整理目录。结构或字段类型不对就整份当作「读不到」（返回 None），用上一份可信的；
+    只有结构完全正确的空列表才算「明确是空的」。隐藏的模型合法但不列出。
+    同时认 Codex 缓存的格式（slug / display_name / input_modalities）和本模块副本的格式（id / name / vision）。"""
+    models = data.get("models") if isinstance(data, dict) else None
     if not isinstance(models, list):
         return None
     result = []
     for item in models:
-        if not isinstance(item, dict) or item.get("visibility") == "hide":
+        if not isinstance(item, dict):
+            return None
+        slug = item.get("slug", item.get("id"))
+        if not isinstance(slug, str) or not slug.strip():
+            return None
+        name = item.get("display_name", item.get("name", slug))
+        modalities = item.get("input_modalities", [])
+        vision = item.get("vision", False)
+        visibility = item.get("visibility", "list")
+        if (not isinstance(name, str) or not isinstance(visibility, str) or not isinstance(vision, bool)
+                or not isinstance(modalities, list) or not all(isinstance(m, str) for m in modalities)):
+            return None
+        if visibility == "hide":
             continue
-        slug = str(item.get("slug") or item.get("id") or "").strip()
-        if not slug:
-            continue
-        result.append({
-            "id": slug,
-            "name": str(item.get("display_name") or item.get("name") or slug),
-            "vision": bool(item.get("vision")) or "image" in (item.get("input_modalities") or []),
-        })
+        result.append({"id": slug.strip(), "name": name or slug.strip(), "vision": vision or "image" in modalities})
     return result
 
 
@@ -177,7 +185,10 @@ async def refresh(timeout: float = 40.0) -> list[dict]:
     import ai_providers
     if not ai_providers._CODEX_SCRIPT:
         raise RuntimeError("服务器上没有装 Codex")
-    env = ai_providers._build_codex_chat_environment()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout  # 准备、启动、问答共用这一个时限；清理另有自己的上限
+    # 只问模型列表不需要准备陪聊用的模型目录（那一步会同步跑子进程、卡住主循环）；这里只剩复制登录文件
+    env = ai_providers._build_codex_chat_environment(prepare_catalog=False)
     extra = {} if os.name == "nt" else {"start_new_session": True}  # 独立进程组，清理时整组结束
     process = await asyncio.create_subprocess_exec(
         shutil.which("node") or "node", ai_providers._CODEX_SCRIPT, "app-server", "--stdio",
@@ -206,7 +217,7 @@ async def refresh(timeout: float = 40.0) -> list[dict]:
                 return
 
     try:
-        await asyncio.wait_for(ask(), timeout=timeout)
+        await asyncio.wait_for(ask(), timeout=max(0.0, deadline - loop.time()))
     finally:
         await _stop(process)
     sync_models()

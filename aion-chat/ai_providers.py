@@ -1429,8 +1429,11 @@ def _discover_codex_skill_files() -> tuple[str, ...]:
     return _find_codex_skill_files(_codex_skill_search_roots())
 
 
-def _build_codex_chat_environment(base_env: dict | None = None) -> dict:
-    """Create a minimal Codex home for the companion-chat subprocess."""
+def _build_codex_chat_environment(base_env: dict | None = None, *, prepare_catalog: bool = True) -> dict:
+    """Create a minimal Codex home for the companion-chat subprocess.
+
+    prepare_catalog=False skips the (blocking) companion model catalog step; only asking
+    Codex which models exist (model/list) does not need it."""
     chat_home = Path(_CODEX_CHAT_HOME)
     desktop_auth = Path(_CODEX_HOME) / "auth.json"
     chat_auth = chat_home / "auth.json"
@@ -1450,7 +1453,7 @@ def _build_codex_chat_environment(base_env: dict | None = None) -> dict:
         key: value for key, value in (base_env if base_env is not None else os.environ).items()
         if key not in excluded
     }
-    if _CODEX_SCRIPT:
+    if _CODEX_SCRIPT and prepare_catalog:
         prepare_chat_model_catalog(
             chat_home, shutil.which("node") or "node", _CODEX_SCRIPT,
             source_cache=Path(_CODEX_HOME) / "models_cache.json",

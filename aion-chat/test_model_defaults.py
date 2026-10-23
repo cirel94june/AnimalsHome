@@ -131,3 +131,35 @@ def test_user_route_with_same_name_is_never_overwritten(models):
     cache("gpt-6.1-sol")
     codex_models.sync_models()
     assert table["Codex-7-Nova"] is mine
+
+
+@pytest.mark.parametrize("broken", [
+    {"models": [None]}, {"models": [{}]}, {"models": [{"slug": ""}]},
+    {"models": [{"slug": "gpt-x", "input_modalities": 42}]}, {"models": "nope"}, [],
+])
+def test_structurally_broken_cache_counts_as_unreadable(models, broken):
+    """§67 复审 R1：结构或字段类型不对的目录不算「空目录」，用上一份可信的，也不覆盖可信副本。"""
+    table, cache = models
+    cache("gpt-7-nova")
+    codex_models.sync_models()
+    home = __import__("pathlib").Path(__import__("ai_providers")._CODEX_HOME)
+    (home / "models_cache.json").write_text(json.dumps(broken), encoding="utf-8")
+    codex_models.sync_models()
+    assert table["Codex-7-Nova"]["model"] == "gpt-7-nova"
+    codex_models._TRUSTED = None  # 模拟重启：从副本恢复
+    assert codex_models.available_slugs() == {"gpt-7-nova"}
+
+
+def test_refresh_skips_the_blocking_catalog_step(monkeypatch):
+    """§67 复审 R2：刷新只问模型列表，不跑会卡住主循环的陪聊目录准备。"""
+    import ai_providers
+    seen = {}
+
+    def env(*a, **k):
+        seen.update(k)
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(ai_providers, "_CODEX_SCRIPT", "/codex.js")
+    monkeypatch.setattr(ai_providers, "_build_codex_chat_environment", env)
+    with pytest.raises(RuntimeError, match="stop here"):
+        asyncio.run(codex_models.refresh(timeout=1))
+    assert seen == {"prepare_catalog": False}
