@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from config import normalize_sentinel_codex_model
+from config import default_model_key, is_shared_model, normalize_sentinel_codex_model
 from config import SEAT_ROUTE_PREFIX, SEAT_ROUTES_KEY, route_model_keys, SETTINGS, save_settings, get_key, get_sentinel_config, load_worldbook, save_worldbook, load_chat_status, TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES, THEATER_TTS_CACHE_DIR, normalize_custom_model_routes, normalize_model_transport_modes, normalize_sentinel_route, refresh_custom_models, iter_visible_models, iter_selectable_models, resolve_model_transport_mode, model_supports_safe_live
 from tts import cleanup_tts_cache_dir, _request_tts_audio, EDGE_VOICES, MINIMAX_TTS_MODELS, MINIMAX_VOICE_PREFIX
 from ws import manager
@@ -40,9 +40,13 @@ async def list_models():
         }, persist=True)
     except (antigravity_cli.AntigravityError, OSError, TimeoutError) as error:
         print(f"[AGY models] {error}")
+    import codex_models
+    codex_models.sync_models()
     rows = [
         {
             "key": k,
+            "is_default": k == default_model_key(),
+            "shared": is_shared_model(k),
             "provider": v["provider"],
             "custom": v.get("provider") == "custom_openai",
             "route_name": v.get("route_name", ""),
@@ -204,6 +208,7 @@ class SettingsUpdate(BaseModel):
     sentinel_api_key: Optional[str] = None
     sentinel_model: Optional[str] = None
     sentinel_codex_model: Optional[str] = None
+    default_model: Optional[str] = None
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
     embedding_model: Optional[str] = None
@@ -284,6 +289,7 @@ async def get_settings():
         "sentinel_api_key": SETTINGS.get("sentinel_api_key", ""),
         "sentinel_model": SETTINGS.get("sentinel_model", ""),
         "sentinel_codex_model": normalize_sentinel_codex_model(SETTINGS.get("sentinel_codex_model")),
+        "default_model": default_model_key(),
         "embedding_base_url": SETTINGS.get("embedding_base_url", ""),
         "embedding_api_key": SETTINGS.get("embedding_api_key", ""),
         "embedding_model": SETTINGS.get("embedding_model", ""),
@@ -399,6 +405,11 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["sentinel_model"] = body.sentinel_model
     if body.sentinel_codex_model is not None:
         SETTINGS["sentinel_codex_model"] = normalize_sentinel_codex_model(body.sentinel_codex_model)
+    if body.default_model is not None:
+        chosen = body.default_model.strip()
+        if chosen and (chosen not in dict(iter_selectable_models()) or not is_shared_model(chosen)):
+            raise HTTPException(400, "这个模型现在用不了，换一个")
+        SETTINGS["default_model"] = chosen
     if body.embedding_base_url is not None:
         SETTINGS["embedding_base_url"] = body.embedding_base_url
     if body.embedding_api_key is not None:
@@ -834,36 +845,21 @@ async def set_edge_voice_favorite(body: EdgeVoiceFavorite):
 
 
 def list_codex_models() -> list[dict]:
-    """Codex 登录态现在能用的模型（读 Codex 自己的 models_cache.json；隐藏的不列）。读不到就返回空列表。"""
-    import json
-    from pathlib import Path as _Path
-    import ai_providers
-    candidates = [_Path(ai_providers._CODEX_HOME) / "models_cache.json",
-                  _Path(ai_providers._CODEX_CHAT_HOME) / "models_cache.json"]
-    files = [path for path in candidates if path.is_file()]
-    if not files:
-        return []
-    newest = max(files, key=lambda path: path.stat().st_mtime_ns)
-    try:
-        data = json.loads(newest.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    models = data.get("models") if isinstance(data, dict) else data
-    result = []
-    for item in models if isinstance(models, list) else []:
-        if not isinstance(item, dict) or item.get("visibility") == "hide":
-            continue
-        slug = str(item.get("slug") or item.get("id") or "").strip()
-        if not slug:
-            continue
-        result.append({
-            "id": slug,
-            "name": str(item.get("display_name") or slug),
-            "vision": "image" in (item.get("input_modalities") or []),
-        })
-    return result
+    import codex_models
+    return codex_models.list_codex_models()
 
 
 @router.get("/api/settings/codex-models")
 async def get_codex_models():
     return {"models": list_codex_models(), "current": normalize_sentinel_codex_model(SETTINGS.get("sentinel_codex_model"))}
+
+
+@router.post("/api/settings/codex-models/refresh")
+async def refresh_codex_models():
+    """问一次 Codex 账号现在有哪些模型（不调模型、不扣额度），新模型会出现在各处的下拉框里。"""
+    import codex_models
+    try:
+        models = await codex_models.refresh()
+    except (RuntimeError, OSError, asyncio.TimeoutError, ValueError) as error:
+        raise HTTPException(400, f"没能刷新：{error}")
+    return {"models": models}

@@ -691,12 +691,31 @@ body[data-theme="light"] .transport-mode-btn.is-active {
     <details class="settings-card" open>
       <summary>
         <div class="summary-title">
-          <strong>🧭 自定义主模型线路</strong>
-          <span>添加多个 OpenAI 兼容中转站，每条线路下可放多个模型</span>
+          <strong>🧭 模型线路</strong>
+          <span>默认模型、Codex 登录态、各个中转站，都在这里管</span>
         </div>
         <span class="summary-chevron">›</span>
       </summary>
       <div class="card-body">
+        <div class="sub-block">
+          <p class="sub-title">默认模型</p>
+          <div class="settings-grid">
+            <div class="field full">
+              <label class="form-label" for="defaultModelInput">没单独选过模型的地方都用它</label>
+              <select class="form-input" id="defaultModelInput"></select>
+            </div>
+          </div>
+          <p class="hint">新对话、还没给自己选模型的 AI、选过但那个模型已经没了的地方，都会用这个。各位 AI 的专属线路不会出现在这里。</p>
+        </div>
+        <div class="sub-block">
+          <p class="sub-title">Codex 登录态（用订阅，不另外花 API 钱）</p>
+          <p class="hint" id="codexModelsHint">读取中…</p>
+          <div id="codexModelsList" class="route-list"></div>
+          <div class="section-actions">
+            <button class="ghost-btn" type="button" id="codexModelsRefreshBtn" onclick="refreshCodexModels()">⟳ 刷新 Codex 模型</button>
+          </div>
+        </div>
+        <p class="sub-title">中转站</p>
         <p class="hint">Base URL 可填根域名或 <code>/v1</code>；显示名会进入模型列表。</p>
         <div id="customRoutesList" class="route-list"></div>
         <div class="section-actions">
@@ -1334,6 +1353,53 @@ function collectCustomRoutes() {
   return routes;
 }
 
+// 默认模型：只列大家都能用的线路（名字用 textContent）
+function fillDefaultModel(rows, current) {
+  var select = $("defaultModelInput");
+  var shared = rows.filter(function (row) { return row.shared !== false; });
+  select.replaceChildren.apply(select, shared.map(function (row) {
+    var option = document.createElement("option");
+    option.value = row.key;
+    option.textContent = row.key + (row.route_name ? "（" + row.route_name + "）" : "");
+    return option;
+  }));
+  if (current) select.value = current;
+}
+
+// Codex 登录态：账号里现在有的模型；刷新会问一次 Codex（不调模型、不扣额度）
+function showCodexModels(models) {
+  var list = $("codexModelsList");
+  $("codexModelsHint").textContent = models.length
+    ? "账号里现在有这些模型，在 AI 名片、默认模型、哨兵里都能直接选。新模型出来点一下刷新就会出现，下架的会自动消失。"
+    : "还没读到 Codex 的模型（服务器上没装 Codex 或还没登录）。";
+  list.replaceChildren.apply(list, models.map(function (m) {
+    var row = document.createElement("div");
+    row.className = "hint";
+    row.textContent = "· " + m.name + "（" + m.id + "）" + (m.vision ? "" : "，不能看图");
+    return row;
+  }));
+}
+
+async function renderCodexModels() {
+  try { showCodexModels((await api("GET", "/api/settings/codex-models")).models || []); }
+  catch (e) { $("codexModelsHint").textContent = "读取 Codex 模型失败：" + e.message; }
+}
+
+async function refreshCodexModels() {
+  var btn = $("codexModelsRefreshBtn");
+  btn.disabled = true;
+  $("codexModelsHint").textContent = "正在问 Codex…";
+  try {
+    showCodexModels((await api("POST", "/api/settings/codex-models/refresh")).models || []);
+    var rows = await api("GET", "/api/models");
+    fillDefaultModel(Array.isArray(rows) ? rows : [], $("defaultModelInput").value);
+  } catch (e) {
+    $("codexModelsHint").textContent = "刷新失败：" + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // 哨兵的 Codex 模型：列出账号当前能用的（名字用 textContent），选过的模型下架了也照实显示，方便换新
 async function loadSentinelCodexModels(current) {
   var select = $("sentinelCodexModelInput");
@@ -1398,6 +1464,8 @@ function updateAsrProviderUi(usePreset) {
   $("geminiFreeKeyInput").value = s.gemini_free_key || "";
   $("sentinelRouteInput").value = s.sentinel_route === "codex_luna" ? "codex_luna" : "original";
   loadSentinelCodexModels(s.sentinel_codex_model || "gpt-5.6-luna");
+  fillDefaultModel(Array.isArray(loaded[1]) ? loaded[1] : [], s.default_model || "");
+  renderCodexModels();
   $("sentinelBaseUrlInput").value = s.sentinel_base_url || "";
   $("sentinelApiKeyInput").value = s.sentinel_api_key || "";
   $("sentinelModelInput").value = s.sentinel_model || "";
@@ -1521,6 +1589,7 @@ async function saveSettings() {
     sentinel_api_key: $("sentinelApiKeyInput").value.trim(),
     sentinel_model: $("sentinelModelInput").value.trim(),
     sentinel_codex_model: $("sentinelCodexModelInput").value,
+    default_model: $("defaultModelInput").value,
     embedding_base_url: $("embeddingBaseUrlInput").value.trim(),
     embedding_api_key: $("embeddingApiKeyInput").value.trim(),
     embedding_model: $("embeddingModelInput").value.trim(),

@@ -1,0 +1,102 @@
+"""线路管理：默认模型由小猫自己选（不再落到不存在的旧默认值上）；Codex 的模型跟着账号自动更新。"""
+
+import asyncio
+import json
+
+import pytest
+
+import ai_providers
+import codex_models
+import config
+import routes.settings as settings_routes
+
+
+@pytest.fixture
+def models(monkeypatch, tmp_path):
+    table = {
+        "Codex-6.1-Sol": {"provider": "codex_cli", "model": "gpt-6.1-sol", "vision": True},
+        "红豆沙·claude": {"provider": "custom_openai", "model": "claude", "route_id": "custom_route_1", "route_name": "红豆沙"},
+        "狗蛋专属": {"provider": "custom_openai", "model": "gem", "route_id": "seat_ai3", "route_name": "狗蛋"},
+        "官Gem": {"provider": "gemini", "model": "gemini-x"},
+    }
+    monkeypatch.setattr(config, "MODELS", table)
+    monkeypatch.setattr(config, "get_key", lambda provider: "")  # 没填 Gemini Key → 官Gem 用不了
+    monkeypatch.setattr(ai_providers, "_CODEX_SCRIPT", "/codex.js")
+    home = tmp_path / "codex"
+    home.mkdir()
+    monkeypatch.setattr(ai_providers, "_CODEX_HOME", str(home))
+    monkeypatch.setattr(ai_providers, "_CODEX_CHAT_HOME", str(tmp_path / "chat"))
+    monkeypatch.setattr(codex_models, "_DYNAMIC_KEYS", set())
+    monkeypatch.setitem(config.SETTINGS, "default_model", "")
+
+    def cache(*slugs):
+        (home / "models_cache.json").write_text(json.dumps({"models": [
+            {"slug": s, "display_name": s.upper(), "input_modalities": ["text", "image"], "visibility": "list"}
+            for s in slugs]}), encoding="utf-8")
+    return table, cache
+
+
+def test_stale_default_resolves_to_her_choice(models):
+    table, cache = models
+    config.SETTINGS["default_model"] = "红豆沙·claude"
+    assert config.resolve_model_key("Gemini-3.5-flash") == "红豆沙·claude"  # 原作者写死、早已不存在的旧默认
+    assert config.resolve_model_key("") == "红豆沙·claude"
+    assert config.resolve_model_key("官Gem") == "官Gem"  # 还在、只是暂时用不了的不偷偷换
+
+
+def test_without_a_choice_the_first_usable_shared_model_is_used(models):
+    table, cache = models
+    assert config.default_model_key() in ("Codex-6.1-Sol", "红豆沙·claude")
+    assert config.default_model_key() != "狗蛋专属"  # 别人的专属线路不拿来当默认
+    config.SETTINGS["default_model"] = "狗蛋专属"
+    assert config.default_model_key() != "狗蛋专属"
+    config.SETTINGS["default_model"] = "官Gem"  # 选了但用不了
+    assert config.default_model_key() != "官Gem"
+
+
+def test_codex_models_follow_the_account(models):
+    table, cache = models
+    assert config.model_usable(table["Codex-6.1-Sol"])  # 还没有目录时照旧可用
+    cache("gpt-6.1-sol", "gpt-7-nova")
+    assert codex_models.codex_model_key("gpt-6.1-sol") == "Codex-6.1-Sol"
+    assert codex_models.codex_model_key("gpt-7-nova") == "Codex-7-Nova"
+    assert codex_models.sync_models() == ["Codex-7-Nova"]  # 写死的不重复加
+    assert table["Codex-7-Nova"]["model"] == "gpt-7-nova" and config.model_usable(table["Codex-7-Nova"])
+    cache("gpt-7-nova")  # 6.1 下架了
+    assert not config.model_usable(table["Codex-6.1-Sol"])
+    cache("gpt-6.1-sol")  # 7 下架了：补进来的条目去掉
+    codex_models.sync_models()
+    assert "Codex-7-Nova" not in table
+
+
+def test_rebuilding_the_model_list_keeps_codex_models(models, monkeypatch):
+    table, cache = models
+    cache("gpt-6.1-sol", "gpt-7-nova")
+    monkeypatch.setattr(config, "BUILTIN_MODELS", {"Codex-6.1-Sol": table["Codex-6.1-Sol"]})
+    monkeypatch.setattr(config, "ANTIGRAVITY_MODELS", {})
+    monkeypatch.setitem(config.SETTINGS, "custom_model_routes", [])
+    monkeypatch.setitem(config.SETTINGS, config.SEAT_ROUTES_KEY, [])
+    monkeypatch.setattr(config, "save_settings", lambda *a, **k: None)
+    config.refresh_custom_models()
+    assert "Codex-7-Nova" in config.MODELS  # 选过它的 AI 不会被悄悄换成默认
+
+
+def test_settings_default_model_validation(models, monkeypatch):
+    table, cache = models
+    monkeypatch.setattr(settings_routes, "save_settings", lambda *a, **k: None)
+    monkeypatch.setattr(settings_routes, "iter_selectable_models",
+                        lambda: [(k, v) for k, v in table.items() if config.model_usable(v)])
+    asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(default_model="红豆沙·claude")))
+    assert config.SETTINGS["default_model"] == "红豆沙·claude"
+    from fastapi import HTTPException
+    for bad in ("狗蛋专属", "官Gem", "不存在"):
+        with pytest.raises(HTTPException):
+            asyncio.run(settings_routes.update_settings(settings_routes.SettingsUpdate(default_model=bad)))
+    assert config.SETTINGS["default_model"] == "红豆沙·claude"
+
+
+def test_codex_without_model_name_uses_codex_default(models):
+    table, cache = models
+    cache("gpt-7-nova")
+    assert config.model_usable({"provider": "codex_cli"})  # 没写模型名：用 Codex 自己的默认
+    assert not config.model_usable({"provider": "codex_cli", "model": "gpt-1-old"})

@@ -474,6 +474,13 @@ def refresh_custom_models() -> None:
                 "cache_marker": route.get("cache_marker", True) is not False,
                 "cache_ttl": route.get("cache_ttl", "1h"),
             }
+    # Codex 账号里的模型也是运行时补进来的：重建列表时一起补回去（启动时由 main 补一次）
+    if "ai_providers" in sys.modules:
+        try:
+            import codex_models
+            codex_models.sync_models()
+        except Exception as error:
+            print(f"[codex models] 同步失败: {type(error).__name__}")
 
 
 def replace_antigravity_models(models: dict, *, persist: bool = False) -> None:
@@ -537,7 +544,13 @@ def model_usable(cfg: dict) -> bool:
     try:
         if provider == "codex_cli":
             import ai_providers
-            return bool(ai_providers._CODEX_SCRIPT)
+            if not ai_providers._CODEX_SCRIPT:
+                return False
+            import codex_models
+            available = codex_models.available_slugs()
+            model = str(cfg.get("model") or "")
+            # 没写模型名的用 Codex 自己的默认模型；账号目录未知时照旧可用
+            return available is None or not model or model in available
         if provider == "gemini_cli":
             import ai_providers
             return bool(ai_providers._GEMINI_SCRIPT)
@@ -609,14 +622,29 @@ def same_underlying_model(a: str, b: str) -> bool:
     return same_model_id((MODELS.get(a) or {}).get("model", ""), (MODELS.get(b) or {}).get("model", ""))
 
 
-def resolve_model_key(model_key: str | None) -> str:
-    candidates = [_clean_text(model_key), _clean_text(DEFAULT_MODEL)]
-    for key in candidates:
-        if key in MODELS and not is_model_deprecated(key):
+def default_model_key() -> str:
+    """默认模型：小猫在设置里选的（还能用的话）；没选或已不能用时，取第一个这台服务器上能用的。"""
+    chosen = _clean_text(SETTINGS.get("default_model"))
+    if chosen in MODELS and is_shared_model(chosen) and not is_model_deprecated(chosen) and model_usable(MODELS[chosen]):
+        return chosen
+    for key, _cfg in iter_selectable_models():
+        if is_shared_model(key):
             return key
-    for key, _cfg in iter_visible_models():
+    return _clean_text(DEFAULT_MODEL)
+
+
+def is_shared_model(model_key: str) -> bool:
+    """大家都能用的线路；某位 AI 自己填的专属线路（座位线路）不拿来当别人的默认。"""
+    return not str((MODELS.get(model_key) or {}).get("route_id") or "").startswith(SEAT_ROUTE_PREFIX)
+
+
+def resolve_model_key(model_key: str | None) -> str:
+    """选过的模型还在就用它；空的、已不存在或已停用的（比如原作者写死的旧默认值）换成默认模型。
+    还在、只是暂时用不了的不偷偷换（座位等「必须用自己的模型」的规矩靠这个）。"""
+    key = _clean_text(model_key)
+    if key in MODELS and not is_model_deprecated(key):
         return key
-    return candidates[0] or candidates[1]
+    return default_model_key()
 
 # ── 摄像头默认配置 ───────────────────────────────
 DEFAULT_CAM_CFG = {

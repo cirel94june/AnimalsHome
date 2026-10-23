@@ -82,9 +82,11 @@ class DeprecatedCliModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved, "Visible")
 
     async def test_stream_ai_falls_back_instead_of_calling_gemini_cli(self):
+        # 已停用的模型退回「默认模型」（2026-10-23 起由小猫在设置里选）；这里把默认固定成一个硅基模型
         with (
             patch("ai_providers.call_siliconflow", new=fake_siliconflow),
             patch("ai_providers.call_gemini_cli", new=fake_gemini_cli),
+            patch("config.default_model_key", return_value="硅基GLM-5.2"),
         ):
             chunks = [
                 chunk

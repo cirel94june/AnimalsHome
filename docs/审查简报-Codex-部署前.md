@@ -747,3 +747,29 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - `routes/settings.py`：`SettingsUpdate.sentinel_codex_model` 写入时同样规范化，GET 时一并返回。新增 `GET /api/settings/codex-models`：读取 Codex 自己缓存的 `models_cache.json`（`_CODEX_HOME` 和 chat home 里较新的那一份；不另外请求、不调模型），列出 visibility 不是 hide 的模型，带 `vision`（input_modalities 是否含 image）。读不到时返回空列表。
 - 设置页：线路名改为「Codex 登录态（模型可选）」，只有选了这条线路时才显示「Codex 模型」下拉框。选项用 textContent 填；当前的模型如果已经不在账号的模型列表里，会照实显示并提示换一个；不能看图的模型会标出来。
 - 测试 `test_sentinel_codex_model.py` 4 项：名字校验和默认值；哨兵配置使用所选模型；模型目录（隐藏的不列、能否看图、没缓存或坏缓存）；设置的保存和读取。相关 sentinel / settings / camera / location 测试 126 通过，2 个失败是既有的 `test_sentinel_routes`。设置页内联脚本 `node --check` 通过。
+
+## 66. 线路管理：默认模型自己选、Codex 模型跟着账号走
+
+小猫 2026-10-23：找不到怎么换 Codex 模型；内置模型默认还是 Gemini；希望存好线路后能直接拉取、选择。
+
+- **默认模型**（`config`）：
+  - 原来 `DEFAULT_MODEL = "Gemini-3.5-flash"` 早就不在 MODELS 里，服务器上也没有 Gemini Key。`resolve_model_key` 的回退顺序是「这个不存在的默认 → 第一个可见模型」，可见不等于可用，可能落到没 Key 的模型上。
+  - 新增 `default_model_key()`：优先用 `SETTINGS["default_model"]`（必须是共用线路、没停用、在这台服务器上可用）；否则取 `iter_selectable_models()` 里第一个共用线路的模型；最后才是旧常量。
+  - `is_shared_model`：`route_id` 以 `seat_` 开头的座位专属线路不能当默认，也不出现在默认模型下拉框里。
+  - `resolve_model_key(key)`：key 在 MODELS 里且没停用就原样返回；空的、不存在的、已停用的才换成 `default_model_key()`。在、只是暂时用不了的不偷偷换（座位「必须用自己的模型」靠 check_ready）。所有经过 `resolve_model_key` 的地方都会生效，包括新建对话、stream_ai、各处 `resolve_model_key(conv["model"] or DEFAULT_MODEL)`。
+- **Codex 模型目录**（新模块 `codex_models.py`）：
+  - `list_codex_models()` 读 Codex 自己的 `models_cache.json`（从 routes/settings 挪过来）。
+  - `codex_model_key("gpt-6.1-sol") = "Codex-6.1-Sol"`，和原来写死的名字一致，以前选过的照样认得。
+  - `sync_models()` 把账号里有、MODELS 里没有的补进来（provider codex_cli、safe_live、vision 按目录），并去掉以前补进来、现在账号里没有的；写死的条目不动。
+  - `model_usable(codex_cli)`：装了 Codex，并且（目录未知 / 没写模型名 / 模型在账号目录里）才算可用。下架的模型自动从下拉框里消失；选过它的地方 key 还在，不会被偷偷换掉。
+  - `refresh()`：用 `_build_codex_chat_environment()` 启动一次 `codex app-server`，只发 initialize + `model/list`（不开 thread、不调模型），让 Codex 更新缓存，再 sync。40 秒超时，结束后 kill。
+  - `refresh_custom_models()` 会 `MODELS.clear()` 重建列表，所以末尾补一次 `sync_models()`（只在 ai_providers 已加载时，避免循环导入）；`main.lifespan` 启动时也 sync 一次，选了补进来的模型的 AI 重启后照样认得。
+- **接口**：
+  - `GET /api/models` 先 sync，每行加 `is_default`、`shared`。
+  - 设置项 `default_model`：GET 返回当前生效的默认；PUT 时必须是可选的共用模型，否则 400，空串表示恢复「第一个能用的」。
+  - `POST /api/settings/codex-models/refresh`。
+- **设置页**：「🧭 模型线路」卡片里依次是「默认模型」（只列共用线路）、「Codex 登录态」（列出账号里的模型，带能否看图，「⟳ 刷新 Codex 模型」按钮）、中转站（原有功能：存线路、拉取模型列表、勾选）。名字都用 textContent。
+- 测试：
+  - `test_model_defaults.py` 6 项：旧默认值换成她选的；在但用不了的不换；没选时取第一个能用的共用模型、不取专属线路；Codex 目录增减和下架；重建列表时保留补进来的 Codex 模型；默认模型的保存校验（专属线路、用不了的、不存在的都返回 400）；没写模型名的 Codex 也算可用。
+  - `test_deprecated_cli_models::…falls_back…` 改为固定默认模型。这条用例原来依赖「第一个可见模型」，现在的回退目标是默认模型。
+  - 相关 71 个测试文件：其余失败都是既有失败（chatroom 前端、wechat_mode、deprecated_cli ×3、model_transport_mode ×3、model_audio_input、sentinel_routes ×2、bubble parity、lounge_friends_routes 的 main 注册用例，改动前都失败）。

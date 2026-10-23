@@ -157,6 +157,11 @@ async def _auto_digest_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:  # Codex 账号里的模型补进模型列表，选过它们的 AI 重启后照样认得
+        import codex_models
+        codex_models.sync_models()
+    except Exception as error:
+        print(f"[codex models] 启动同步失败: {type(error).__name__}")
     try:
         await post_sentinel.start()
     except Exception:
