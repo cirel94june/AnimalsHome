@@ -2,11 +2,14 @@
 
 狗蛋等座位的记忆只在 Hub 里（AionsHome 本地没有他们的记忆库），小克 / Lucien 在 Hub 里也有一份。
 Hub 的管理接口要 HUB_SECRET（就是 MEMORY_HUB_TOKEN），只在服务器这边带上，浏览器永远拿不到。
+Hub 上线「主人钥匙」后，在 /etc/aionshome.env 设 MEMORY_HUB_OWNER_SECRET：这一页就改用它，
+小猫在这里改的记忆会被 Hub 记成「小猫亲手确认」（同样只放服务器）。
 这些接口给小猫的页面用，不进任何 AI 的能力里（AI 读不到这里）。
 """
 
 from __future__ import annotations
 
+import os
 import re
 from urllib.parse import quote
 
@@ -31,6 +34,10 @@ def _hub() -> tuple[str, dict[str, str]]:
     base = str(cfg["url"]).rstrip("/")
     if base.endswith("/mcp"):
         base = base[: -len("/mcp")]
+    owner = os.environ.get("MEMORY_HUB_OWNER_SECRET", "").strip()
+    if owner:  # 小猫的主人钥匙：Hub 按钥匙认「小猫亲手改的」
+        cfg = {**cfg, "token": owner, "headers": {k: v for k, v in (cfg.get("headers") or {}).items()
+                                                  if str(k).lower() != "authorization"}}
     return base, memory_hub_bridge._headers(cfg)
 
 
@@ -101,6 +108,15 @@ async def edit_memory(memory_id: str, body: MemoryEdit):
 @router.post("/{memory_id}/archive")
 async def archive_memory(memory_id: str):
     return await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive")
+
+
+@router.post("/{memory_id}/unarchive")
+async def unarchive_memory(memory_id: str):
+    """找回：已归档（或自动淡出）的记忆恢复成正在用。"""
+    result = await _call("POST", f"/api/memory/{_memory_id(memory_id)}/unarchive")
+    if result.get("status") == "not_found":
+        raise HTTPException(404, "Hub 里没有这条记忆")
+    return result
 
 
 @router.delete("/{memory_id}")

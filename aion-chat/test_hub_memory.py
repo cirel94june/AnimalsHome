@@ -83,3 +83,21 @@ def test_hub_not_connected(monkeypatch):
     with pytest.raises(HTTPException) as err:
         asyncio.run(hub.list_memories("ai3", status="active", page=1, per_page=20))
     assert err.value.status_code == 503
+
+
+def test_unarchive_and_owner_key(fake_hub, monkeypatch):
+    asyncio.run(hub.unarchive_memory("abc-1"))
+    assert fake_hub[-1].method == "POST" and fake_hub[-1].url.path == "/api/memory/abc-1/unarchive"
+    assert fake_hub[-1].headers["authorization"] == "Bearer SECRET"
+    monkeypatch.setenv("MEMORY_HUB_OWNER_SECRET", "OWNER")  # 主人钥匙上线后：这一页改用它
+    asyncio.run(hub.archive_memory("abc-1"))
+    assert fake_hub[-1].headers["authorization"] == "Bearer OWNER"
+
+
+def test_unarchive_not_found(monkeypatch, fake_hub):
+    async def call(method, path, **kw):
+        return {"status": "not_found"}
+    monkeypatch.setattr(hub, "_call", call)
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(hub.unarchive_memory("abc-1"))
+    assert err.value.status_code == 404

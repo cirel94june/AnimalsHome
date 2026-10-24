@@ -1,4 +1,4 @@
-// Hub 记忆：选一位 AI，看 TA 在 Memory Hub 里的记忆；可以改、归档，已归档的可以彻底删除（要确认两次）。
+// Hub 记忆：选一位 AI，看 TA 在 Memory Hub 里的记忆；可以改、归档，已归档的可以找回或彻底删除（删除要确认两次）。
 // 所有请求都走 AionsHome 服务器（/api/hub-memory），Hub 的密钥不经过浏览器。
 (function () {
   const $ = id => document.getElementById(id);
@@ -123,6 +123,10 @@
         catch (e) { toast(e.message); }
       } }));
     } else {
+      actions.push(el('button', { type: 'button', textContent: '找回', onclick: async () => {
+        try { await api('POST', `/api/hub-memory/${encodeURIComponent(m.id)}/unarchive`); toast('找回来了，在「正在用」里'); load(); }
+        catch (e) { toast(e.message); }
+      } }));
       actions.push(el('button', { type: 'button', className: 'danger', textContent: '彻底删除', onclick: async () => {
         if (!confirm('彻底删除后找不回来了，确定吗？')) return;
         if (!confirm('再确认一次：真的彻底删除这条记忆？')) return;

@@ -1017,3 +1017,13 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - `test_seat_pages.py` +2：出主意的人和 can_steer；both 的顺序是 小克 → 狗蛋 → Lucien。
   - `test_repair_room.py` 中「大家」用例固定只有小克出主意（这条测试写于有座位之前）。
   - 约 890 项相关测试中，失败的与之前的既有失败一致。
+
+## 77. Hub 记忆：「找回」+ 预留主人钥匙
+
+Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动淡出的记忆恢复成 active；找不到时返回 `{"status": "not_found"}`。
+- `routes/hub_memory.py`：
+  - 新增 `POST /api/hub-memory/{id}/unarchive`，id 校验同其他接口，`not_found` 转成 404。
+  - Hub 的「主人钥匙」上线后（Hub PR #98），在 `/etc/aionshome.env` 设 `MEMORY_HUB_OWNER_SECRET`，这一页就改用它：用它改的记忆，Hub 会记成「小猫亲手确认」。没设时照旧用 `MEMORY_HUB_TOKEN`。替换时同时去掉 cfg.headers 里自带的 Authorization，避免两把钥匙混用。只在服务器上用。
+  - 不再传 edited_by_owner：Hub 按钥匙判断。
+- 页面：已归档的记忆多一个「找回」按钮。
+- 测试 `test_hub_memory.py` +2：找回走 unarchive 接口；设了主人钥匙后改用它；not_found 返回 404。
