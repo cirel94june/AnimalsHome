@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Any
 
-from config import DEFAULT_MODEL, MODELS, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
+from config import DEFAULT_MODEL, MODELS, aion_model_key as private_model_key, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
 from database import get_db
 from ws import manager
 from reply_timing import model_started
@@ -426,7 +426,7 @@ def _is_ai_error_text(text: str) -> bool:
 
 def _conversation_dict(row) -> dict:
     data = dict(row)
-    data["model"] = resolve_model_key(data.get("model"))
+    data["model"] = private_model_key(data.get("model"))
     return data
 
 
@@ -1048,7 +1048,7 @@ async def list_conversations():
 async def create_conversation(body: ConvCreate):
     now = time.time()
     conv_id = f"conv_{int(now*1000)}"
-    model = resolve_model_key(body.model)
+    model = private_model_key(body.model)
     async with get_db() as db:
         await db.execute(
             "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?,?,?,?,?)",
@@ -1062,7 +1062,7 @@ async def create_conversation(body: ConvCreate):
 
 @router.put("/api/conversations/{conv_id}")
 async def update_conversation(conv_id: str, body: ConvUpdate):
-    model = resolve_model_key(body.model) if body.model is not None else None
+    model = private_model_key(body.model) if body.model is not None else None
     async with get_db() as db:
         if body.title is not None:
             await db.execute("UPDATE conversations SET title=?, updated_at=? WHERE id=?",
@@ -1344,7 +1344,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
         conv = await cur.fetchone()
-        model_key = resolve_model_key(conv["model"] if conv else DEFAULT_MODEL)
+        model_key = private_model_key(conv["model"] if conv else "")
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
     merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id, stable_window=True)
@@ -1947,7 +1947,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
         conv = await cur.fetchone()
-        model_key = resolve_model_key(conv["model"] if conv else DEFAULT_MODEL)
+        model_key = private_model_key(conv["model"] if conv else "")
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
     merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id, stable_window=True)
@@ -3439,7 +3439,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
         conv = await cur.fetchone()
-        model_key = resolve_model_key(conv["model"] if conv else DEFAULT_MODEL)
+        model_key = private_model_key(conv["model"] if conv else "")
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
     merged = await fetch_merged_timeline("aion", context_limit, conv_id=conv_id, stable_window=True)

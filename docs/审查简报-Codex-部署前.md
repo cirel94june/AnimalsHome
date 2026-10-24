@@ -802,3 +802,13 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 拒绝：http 回 403 JSON；WebSocket 发 `websocket.close` 1008。
 - 测试 `test_cf_access.py` 17 项：有效凭证（请求头 / Cookie）放行且公钥只取一次；空、格式错、别的钥匙签的、别的 aud、别的 iss、过期、未生效、alg=none、陌生 kid、签名被改全部 403；Host 不同但带 cf-ray 也要验；WebSocket 无凭证关闭、有 Cookie 放行；Tailscale 请求不受影响也不去取公钥；未配置时不做事；钥匙轮换后重取一次能验过，刚取过时陌生 kid 不再重取；取公钥失败拒绝。security_access / request_limits / model_defaults 相关 56 项通过。
 - 部署后要在 `/etc/aionshome.env` 加上三个环境变量（AUD 来自 Access 应用）。
+
+## 70. 小克私聊落到 Codex（GPT 顶着小克人设说话）+ 私聊页看不出是谁
+
+2026-10-24 小猫在 home.animalshome.top 打开「聊天」（小克的私聊页），标题还是 Aion Chat、看不出是谁；她喊「狐狸」，回话的是 GPT 顶着小克的人设。原因：服务器上只有 Codex 线路，新对话取下拉框第一项 / 默认模型「第一个能用的共用模型」都落到了 Codex（存下的会话模型是 `Codex-5.6-Sol`）。小猫定过：Codex 是 GPT，只给 Lucien。
+
+- `config.is_shared_model`：`codex_cli` 不算共用线路 → 不当默认模型（设置页也不能选它当默认）。`default_model_key()` 一条都没有时返回空串（不再回到不存在的 `Gemini-3.5-flash`）。
+- 新 `config.aion_model_key(key)`：先 `resolve_model_key`，结果是 codex_cli 就换成默认模型（可能为空）。用在：私聊 `_conversation_dict`、新建 / 改会话、三处发送 / 重新生成（替换 `resolve_model_key(conv["model"] or DEFAULT_MODEL)`）；群聊 5 个接口的 `model_key = body.model` 和环境语音的 aion_model；自主活动 `_aion_model()`。Lucien 的线路走 `_resolve_connor_model`，不受影响。
+- `_stream_ai`：模型键为空时提示「还没有能用的线路：请到 设置 → 🧭 模型线路 接一条中转站（Codex 只给 Lucien 用）」，不拿别的模型顶替。
+- 前端：私聊页下拉框不列 codex_cli，默认模型排第一（新对话就用它），没线路时显示提示项；用 `new Option` 代替拼 HTML。顶部加名字徽章（世界书 ai_name），标签页标题「小克 · 私聊」。群聊设置里小克的模型下拉框同样不列 Codex，Lucien 的照旧。
+- 测试：`test_model_defaults.py` 改 1 项、新增 2 项（Codex 不当默认、存过的 Codex 换掉、没有别的线路时返回空不顶替；空模型给明确提示）。聊天 / 群聊 / 自主活动 / 座位相关 27 个测试文件改动前后结果一致（6 个既有失败）。

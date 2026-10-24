@@ -11,7 +11,7 @@ import aiosqlite
 
 from ai_providers import CLI_STATUS_PREFIX, stream_ai
 from album import get_album_store
-from config import DEFAULT_MODEL, SETTINGS, load_worldbook, save_settings
+from config import DEFAULT_MODEL, SETTINGS, aion_model_key, load_worldbook, save_settings
 from context_builder import fetch_merged_timeline, render_merged_timeline
 from database import get_db
 from link_preview import build_link_preview_attachments, strip_urls_for_message
@@ -422,11 +422,11 @@ async def _aion_model() -> str:
             from chatroom import load_chatroom_config
             model = (load_chatroom_config().get("aion_model") or "").strip()
             if model:
-                return model
+                return aion_model_key(model)
         except Exception:
             pass
     _, model = await _latest_conversation()
-    return model or DEFAULT_MODEL
+    return aion_model_key(model)
 
 
 def _connor_model() -> str:

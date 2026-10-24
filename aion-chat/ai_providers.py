@@ -13,7 +13,7 @@ from generation_control import own_stream, own_process
 import httpx
 import tempfile
 
-from config import get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated, LIVE_STATE_HEADING, CUSTOM_OPENAI_PROVIDER
+from config import NO_ROUTE_HINT, get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated, LIVE_STATE_HEADING, CUSTOM_OPENAI_PROVIDER
 from codex_app_server import (
     CodexAppServerEvent,
     build_codex_app_server_command,
@@ -2021,7 +2021,7 @@ async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, t
         normalized.append(nm)
     cfg = MODELS.get(model_key)
     if not cfg:
-        yield f"[错误] 未知模型: {model_key}"
+        yield f"[错误] {NO_ROUTE_HINT}" if not model_key else f"[错误] 未知模型: {model_key}"
         return
     if is_model_deprecated(model_key):
         yield f"[错误] 模型线路已停用: {model_key}"

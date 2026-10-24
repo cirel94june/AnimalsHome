@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Aion Chat</title>
+<title>私聊</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/public/icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="/public/icon-192.png">
@@ -147,7 +147,8 @@
     <div class="chat-header">
       <button class="home-btn" onclick="openSubPage('/')" title="返回主页">⬅</button>
       <button class="menu-btn" onclick="openSidebar()">☰</button>
-      <div class="title" id="chatTitle" onclick="renameCurrent()">Aion Chat</div>
+      <div class="chat-who" id="chatWho" title="现在在和谁聊"></div>
+      <div class="title" id="chatTitle" onclick="renameCurrent()">私聊</div>
       <div class="tts-toggle" title="自动语音播放">
         <span class="tts-label">🔊</span>
         <label class="toggle-switch">

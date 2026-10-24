@@ -630,12 +630,28 @@ def default_model_key() -> str:
     for key, _cfg in iter_selectable_models():
         if is_shared_model(key):
             return key
-    return _clean_text(DEFAULT_MODEL)
+    return ""  # 一条能用的共用线路都没有：调用时会提示去设置里接线路，不拿别的模型顶替
+
+
+NO_ROUTE_HINT = "还没有能用的线路：请到 设置 → 🧭 模型线路 接一条中转站（Codex 只给 Lucien 用）"
 
 
 def is_shared_model(model_key: str) -> bool:
-    """大家都能用的线路；某位 AI 自己填的专属线路（座位线路）不拿来当别人的默认。"""
-    return not str((MODELS.get(model_key) or {}).get("route_id") or "").startswith(SEAT_ROUTE_PREFIX)
+    """大家都能用的线路。不算：某位 AI 自己填的专属线路（座位线路）；Codex 登录态（是 GPT，只给 Lucien 用，
+    不能当默认落到小克等别人身上，否则就是 GPT 顶着别人的人设说话）。"""
+    cfg = MODELS.get(model_key) or {}
+    if cfg.get("provider") == "codex_cli":
+        return False
+    return not str(cfg.get("route_id") or "").startswith(SEAT_ROUTE_PREFIX)
+
+
+def aion_model_key(model_key: str | None) -> str:
+    """小克用的模型（私聊、群聊、自主活动）：Codex 是 GPT、只给 Lucien，这里不用——
+    选了或以前存过的 Codex 换成默认模型；没有能用的线路时返回空，调用时提示去接线路。"""
+    key = resolve_model_key(model_key)
+    if (MODELS.get(key) or {}).get("provider") == "codex_cli":
+        return default_model_key()
+    return key
 
 
 def resolve_model_key(model_key: str | None) -> str:

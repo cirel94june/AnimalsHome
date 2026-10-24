@@ -2149,9 +2149,13 @@ async function fetchCurrentModel(configPromise) {
   updateHeaderActions();
 }
 
-function renderModelOptions(selected) {
-  const keys = chatroomModels.length ? chatroomModels.map(m => m.key) : [chatroomModel || 'Codex', 'Codex'];
-  return [...new Set(keys.filter(Boolean))].map(k => `<option value="${esc(k)}"${k === selected ? ' selected' : ''}>${esc(k)}</option>`).join('');
+function renderModelOptions(selected, { withoutCodex = false } = {}) {
+  // Codex 是 GPT，只给 Lucien：小克的下拉框里不列（服务器也不会让小克用）
+  const usable = withoutCodex ? chatroomModels.filter(m => m.provider !== 'codex_cli') : chatroomModels;
+  const keys = chatroomModels.length ? usable.map(m => m.key) : (withoutCodex ? [] : [chatroomModel || 'Codex', 'Codex']);
+  const options = [...new Set(keys.filter(Boolean))].map(k => `<option value="${esc(k)}"${k === selected ? ' selected' : ''}>${esc(k)}</option>`);
+  if (withoutCodex && !options.length) return '<option value="">还没有线路（去设置 → 🧭 模型线路 接中转站）</option>';
+  return (withoutCodex && selected && !keys.includes(selected) ? ['<option value="">默认模型</option>'] : []).concat(options).join('');
 }
 
 function updateHeaderActions() {
@@ -4212,7 +4216,7 @@ function crPopulateSettings(room, cfg = {}) {
   document.getElementById('setAiRounds').value = room.ai_chat_rounds || 1;
   chatroomModel = cfg.aion_model || chatroomModel;
   chatroomConnorModel = cfg.connor_model || chatroomConnorModel || 'Codex';
-  document.getElementById('setAionModel').innerHTML = renderModelOptions(chatroomModel);
+  document.getElementById('setAionModel').innerHTML = renderModelOptions(chatroomModel, { withoutCodex: true });
   document.getElementById('setConnorModel').innerHTML = renderModelOptions(chatroomConnorModel);
   document.getElementById('setAionModel').value = chatroomModel || '';
   document.getElementById('setConnorModel').value = chatroomConnorModel || 'Codex';

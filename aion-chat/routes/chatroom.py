@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from config import DEFAULT_MODEL, DATA_DIR, CODEX_UPLOADS_DIR, ALBUM_IMAGES_DIR, MODELS, SETTINGS, get_sentinel_config, resolve_model_key, resolve_model_transport_mode
+from config import DEFAULT_MODEL, DATA_DIR, aion_model_key, CODEX_UPLOADS_DIR, ALBUM_IMAGES_DIR, MODELS, SETTINGS, get_sentinel_config, resolve_model_key, resolve_model_transport_mode
 from database import get_db
 from ws import manager
 from reply_timing import model_started
@@ -3494,7 +3494,7 @@ async def send_message(room_id: str, body: MsgSend):
 
     room_type = room["type"]
     await record_chatroom_active(room_id, room_type)
-    model_key = body.model
+    model_key = aion_model_key(body.model)
     connor_model_key = _resolve_connor_model(body.connor_model)
 
     # ── 更新用户最后活跃窗口追踪 ──
@@ -3566,7 +3566,7 @@ async def reply_once(room_id: str, body: ReplyOnceTrigger):
 
     context_limit = room.get("context_minutes", 30)
     query_text = msgs[-1]["content"] if msgs else ""
-    model_key = body.model
+    model_key = aion_model_key(body.model)
     connor_model_key = _resolve_connor_model(body.connor_model)
 
     _q: asyncio.Queue = GenerationQueue()
@@ -3705,7 +3705,7 @@ async def ambient_voice_evaluate(room_id: str, body: AmbientVoiceEvaluate):
         speaker=speaker,
     )
     _AMBIENT_LAST_TRIGGER_BY_ROOM[room_id] = now
-    model_key = (body.model or cfg.get("aion_model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    model_key = aion_model_key((body.model or cfg.get("aion_model") or "").strip())
     connor_model_key = _resolve_connor_model(body.connor_model or cfg.get("connor_model"))
 
     spawn_generation_task(_run_ambient_voice_reply(
@@ -3775,7 +3775,7 @@ async def edit_resend_chatroom_message(msg_id: str, body: MsgEditResend):
 
     room_type = room["type"]
     await record_chatroom_active(room_id, room_type)
-    model_key = body.model
+    model_key = aion_model_key(body.model)
     connor_model_key = _resolve_connor_model(body.connor_model)
     context_limit = room.get("context_minutes", 30)
     if room_type == "group":
@@ -3856,7 +3856,7 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
 
     context_limit = room.get("context_minutes", 30)
     query_text = msgs[-1]["content"] if msgs else ""
-    model_key = body.model
+    model_key = aion_model_key(body.model)
     connor_model_key = _resolve_connor_model(body.connor_model)
     _q: asyncio.Queue = GenerationQueue()
 
@@ -4932,7 +4932,7 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
         raise HTTPException(409, "只有群聊可以让 AI 们互相聊天")
 
     max_rounds = body.rounds or room.get("ai_chat_rounds", 1)
-    model_key = body.model
+    model_key = aion_model_key(body.model)
     connor_model_key = _resolve_connor_model(body.connor_model)
     context_limit = room.get("context_minutes", 30)
     tts_enabled = body.tts_enabled

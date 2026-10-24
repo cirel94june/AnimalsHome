@@ -132,6 +132,7 @@ async function init() {
     .catch(() => { chatroomConfig = {}; });
   loadProactiveCompanionshipStatus();
   [worldBook, conversations] = await bootstrap;
+  showWhoseChat();
   const initParams = new URLSearchParams(location.search);
   const targetConvId = initParams.get('conv');
   const targetMsgId = initParams.get('msg');
@@ -1745,10 +1746,20 @@ function formatPrivateSystemNoticeContent(content) {
 
 // ── 渲染 ──
 function renderModelSelect() {
-  const visibleModels = models.filter(m => !DEPRECATED_MODEL_PROVIDERS.has(m.provider));
-  $("modelSelect").innerHTML = visibleModels.map(m =>
-    `<option value="${m.key}">${m.key}</option>`
-  ).join("");
+  // 这是小克的私聊：Codex 是 GPT、只给 Lucien，不列出来；默认模型排第一个，新对话就用它
+  const visibleModels = models.filter(m => !DEPRECATED_MODEL_PROVIDERS.has(m.provider) && m.provider !== 'codex_cli')
+    .sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0));
+  const select = $("modelSelect");
+  select.replaceChildren(...visibleModels.map(m => new Option(m.key, m.key)));
+  if (!visibleModels.length) select.append(new Option('还没有线路（去设置 → 🧭 模型线路 接中转站）', ''));
+}
+
+function showWhoseChat() {
+  // 页面顶部和标签页标题写明是在和谁聊
+  const name = String((worldBook && worldBook.ai_name) || '').trim() || 'AI';
+  document.title = `${name} · 私聊`;
+  const who = $("chatWho");
+  if (who) who.textContent = name;
 }
 
 function renderConvList() {

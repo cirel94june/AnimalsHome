@@ -48,7 +48,7 @@ def test_stale_default_resolves_to_her_choice(models):
 
 def test_without_a_choice_the_first_usable_shared_model_is_used(models):
     table, cache = models
-    assert config.default_model_key() in ("Codex-6.1-Sol", "红豆沙·claude")
+    assert config.default_model_key() == "红豆沙·claude"  # Codex 只给 Lucien，不当默认
     assert config.default_model_key() != "狗蛋专属"  # 别人的专属线路不拿来当默认
     config.SETTINGS["default_model"] = "狗蛋专属"
     assert config.default_model_key() != "狗蛋专属"
@@ -163,3 +163,27 @@ def test_refresh_skips_the_blocking_catalog_step(monkeypatch):
     with pytest.raises(RuntimeError, match="stop here"):
         asyncio.run(codex_models.refresh(timeout=1))
     assert seen == {"prepare_catalog": False}
+
+
+def test_codex_never_lands_on_xiaoke(models):
+    """2026-10-24 小猫：小克私聊落到了 Codex，GPT 顶着小克的人设说话。Codex 只给 Lucien。"""
+    table, cache = models
+    assert not config.is_shared_model("Codex-6.1-Sol")
+    assert config.aion_model_key("Codex-6.1-Sol") == "红豆沙·claude"  # 以前存过的也换掉
+    assert config.aion_model_key("红豆沙·claude") == "红豆沙·claude"
+    config.SETTINGS["default_model"] = "Codex-6.1-Sol"
+    assert config.default_model_key() == "红豆沙·claude"
+    table.pop("红豆沙·claude")
+    assert config.default_model_key() == ""  # 没有别的线路：不拿 Codex 顶替
+    assert config.aion_model_key("Codex-6.1-Sol") == ""
+
+
+def test_no_route_gives_a_clear_hint(models):
+    table, cache = models
+    table.pop("红豆沙·claude")
+
+    async def collect():
+        return [c async for c in ai_providers._stream_ai([{"role": "user", "content": "hi"}], "",
+                                                         include_device_context=False)]
+    chunks = asyncio.run(collect())
+    assert chunks and "模型线路" in chunks[0] and "Lucien" in chunks[0]
