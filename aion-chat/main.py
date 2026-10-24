@@ -315,6 +315,8 @@ app.add_middleware(NoCacheStaticMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 app.add_middleware(SecurityAccessMiddleware, service=security_access_service)
 app.add_middleware(BodySizeLimitMiddleware)  # 最外层：超大请求在进入任何接口前拒绝
+from cf_access import CloudflareAccessMiddleware
+app.add_middleware(CloudflareAccessMiddleware)  # 更外层：经过 Cloudflare 来的请求先验 Access 登录凭证（第二道锁）
 
 # 静态文件
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

@@ -788,3 +788,17 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - **R1 结构坏的目录被当成空目录**：`_parse` 改为先校验、再过滤。顶层必须是带 `models` 列表的对象；每一项必须是 dict，带非空字符串 slug（或副本格式的 id）；display_name / name、visibility 必须是字符串，input_modalities 必须是字符串列表，vision 必须是布尔值。任何一项不合格，整份目录都返回 None（当作读不到），继续用上一份可信目录，内存和磁盘副本都不更新。只有结构完全正确的空列表才算明确为空。隐藏模型仍然合法，只是不列出。
 - **R2 刷新准备阻塞主循环**：`_build_codex_chat_environment(prepare_catalog=False)` 跳过陪聊模型目录的准备步骤（那一步会同步跑 `debug models --bundled` 子进程）。只问 `model/list` 不需要它，剩下的同步工作只是复制登录文件。`refresh` 从一开始就定好 deadline，准备、启动、问答共用这一个时限；清理沿用 §67 自己的上限。
 - 测试：`test_model_defaults.py` 新增：6 种结构坏的缓存（`[None]`、`[{}]`、空 slug、`input_modalities: 42`、models 不是列表、顶层是列表）都保留动态模型，模拟重启后能从副本恢复；刷新时调用环境构造带 `prepare_catalog=False`。模型、Codex 相关 5 个测试文件共 27 项通过。
+
+## 69. 公网访问：App 地址换成 home.animalshome.top + Cloudflare Access 登录凭证校验（第二道锁）
+
+背景：小猫不想再用 Tailscale（和 VPN 互斥、很慢），已改为 Cloudflare Tunnel + Access（只允许她的邮箱一次性 PIN 登录）。隧道 `aionshome` 只转发到 `http://127.0.0.1:8080`，未登录访问 `/`、`/api/*`、`/ws`、`/uploads/*.apk`、`/static/*` 等一律 302 到 `claudexiaoke.cloudflareaccess.com`（已实测）。服务器原有的另一个隧道 `xiaoke-memory`（服务名 `cloudflared`）没动。
+
+- **cafdd44 App**：`ConnectionEndpoint.CLOUDFLARE_HOST` 从占位的 `chat.example.com` 改成 `home.animalshome.top`，后台推送 / 截屏上传等走这个域名时会带上 `CF_Authorization` Cookie（原作者已有的逻辑）。4 个单测里的域名同步更新。CI 构建 40071854565 通过。
+- **新 `aion-chat/cf_access.py`（纯 ASGI，main.py 里加在最外层）**：
+  - 配置：`AIONSHOME_CF_ACCESS_TEAM`、`AIONSHOME_CF_ACCESS_AUD`、`AIONSHOME_PUBLIC_HOST` 三个都设了才生效，否则完全不做事（本地开发）。
+  - 适用范围：Host 等于公开域名，**或者**带任何 Cloudflare 请求头（cf-ray / cf-connecting-ip / cf-access-jwt-assertion / cdn-loop）。Tailscale / 本机请求不受影响。
+  - 凭证：`Cf-Access-Jwt-Assertion` 请求头优先，其次 `CF_Authorization` Cookie。
+  - 校验：手写 RS256（用已有依赖 `cryptography`，不改 requirements.txt，避免 1G 服务器重建 venv）。只接受 `alg=RS256` 且带 kid；公钥从 `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` 取，缓存 1 小时；遇到陌生 kid 最多 60 秒重取一次（防被刷）；取失败保留旧公钥、验不过就拒绝。核对 `aud` 包含 AUD、`iss` 等于团队域名、`exp` / `nbf`（各留 60 秒时钟误差）。
+  - 拒绝：http 回 403 JSON；WebSocket 发 `websocket.close` 1008。
+- 测试 `test_cf_access.py` 17 项：有效凭证（请求头 / Cookie）放行且公钥只取一次；空、格式错、别的钥匙签的、别的 aud、别的 iss、过期、未生效、alg=none、陌生 kid、签名被改全部 403；Host 不同但带 cf-ray 也要验；WebSocket 无凭证关闭、有 Cookie 放行；Tailscale 请求不受影响也不去取公钥；未配置时不做事；钥匙轮换后重取一次能验过，刚取过时陌生 kid 不再重取；取公钥失败拒绝。security_access / request_limits / model_defaults 相关 56 项通过。
+- 部署后要在 `/etc/aionshome.env` 加上三个环境变量（AUD 来自 Access 应用）。
