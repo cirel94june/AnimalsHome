@@ -71,13 +71,19 @@ async def restart_home(store, task_id):
 AION_DISCUSSION_TIMEOUT = 45
 
 
-async def reply_aion(store, job):
-    from config import DEFAULT_MODEL
+async def reply_aion(store, job, actor='aion'):
+    """出主意的人回复（小克或已入住的座位）。没有本机工具，只分析和建议。"""
     from chatroom import load_chatroom_config
     from ai_providers import stream_ai, CLI_STATUS_PREFIX
     from repair_context import build_context
 
-    task_id, actor = job['task_id'], 'aion'
+    task_id = job['task_id']
+    pinned = None
+    if actor != 'aion':  # 座位：用 TA 自己的模型；没准备好就报错，不换别的模型
+        import seat_chat
+        from config import model_snapshot
+        _, key = seat_chat.check_ready(actor)
+        pinned = model_snapshot(key)
     instructions, context = await build_context(store, task_id, actor)
     extra = "\n当前由你参与讨论，无本机工具。提出你的分析和建议，不要冒充执行者或声称查过文件；发给大家时执行者会在你之后自行调查，不要让用户再按按钮。"
     messages = [{"role": "system", "content": instructions}, {"role": "user", "content": context + extra}]
@@ -94,9 +100,16 @@ async def reply_aion(store, job):
                 image_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
     if image_parts:
         messages[-1]["content"] = [{"type": "text", "text": context + extra}, *image_parts[-4:]]
-    cfg = load_chatroom_config()
-    from config import aion_model_key
-    key = aion_model_key(cfg.get("aion_model"))  # 小克在维修室：不用 Codex
+    if actor == 'aion':
+        from config import aion_model_key
+        key = aion_model_key(load_chatroom_config().get("aion_model"))  # 小克在维修室：不用 Codex
+    else:
+        import seat_chat
+        from config import ensure_model_unchanged
+        _, current = seat_chat.check_ready(actor)  # 读材料期间换了模型 / 停用：不做，不换模型
+        if current != key:
+            raise RuntimeError("模型线路刚刚变了，这次不回复")
+        ensure_model_unchanged(key, pinned)
     result = ""
     meta = {}
     stream_id = job["id"] + actor
@@ -123,20 +136,25 @@ async def discuss(store, job):
     from repair_context import build_context
     from repair_codex import run_codex
 
+    from repair_context import repair_advisors, repair_names
+
     task_id = job['task_id']
     recipient = job['payload'].get('recipient', 'connor')
-    actors = ['aion', 'connor'] if recipient == 'both' else [recipient]
+    advisors = repair_advisors()
+    actors = [*advisors, 'connor'] if recipient == 'both' else [recipient]
     if job['kind'] == 'plan':
         actors = ['connor']
-    _, aion_name, connor_name = get_chatroom_names()
+    names = repair_names()
+    connor_name = names['connor']
     for actor in actors:
         if store.cancelled(job['id']):
             raise asyncio.CancelledError()
-        if actor == 'aion':
+        if actor != 'connor':
+            aion_name = names.get(actor, actor)
             store.event(task_id, 'status', {'who': actor, 'text': f'正在连接讨论线路，最多等待 {AION_DISCUSSION_TIMEOUT} 秒。'})
             try:
                 async with asyncio.timeout(AION_DISCUSSION_TIMEOUT):
-                    await reply_aion(store, job)
+                    await reply_aion(store, job, actor)
             except Exception as exc:
                 reason = '回复等待超时' if isinstance(exc, TimeoutError) else '讨论线路连接或回复失败'
                 detail = f'{type(exc).__name__}: {exc}'

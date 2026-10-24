@@ -983,3 +983,37 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 约 870 项相关测试中，失败的都是既有失败（新增出现的 taobao_native_mcp ×4 早就在既有失败名单里，需要本机淘宝工具）。
 
 **还没做**：记忆库（座位的记忆在 Hub，等 Hub 窗口回复）、维修室、声音设置。
+
+## 76. 记忆库的「Hub 记忆」页 + 维修室让座位一起出主意
+
+**Hub 记忆**：狗蛋等座位的记忆只在 Memory Hub 里。按 Hub 窗口的约定，用 Hub 的管理接口（REST + HUB_SECRET），不用 MCP。
+- 新 `routes/hub_memory.py`：
+  - 地址取 `MEMORY_HUB_URL` 去掉 `/mcp`；认证复用 `memory_hub_bridge._headers`，即 `MEMORY_HUB_TOKEN`，只在服务器上用，返回给浏览器的内容里没有。
+  - `GET /api/hub-memory/list?actor=`：actor 必须是六个位置之一，Hub 身份取 `actors.memory_hub_id`（没入住或没接 Hub 的返回 400，未知的返回 404，都不会请求 Hub）。返回字段白名单，去掉向量、历史等。
+  - `PUT /{id}`：只能改 content、importance 1–10、category，带上 `changed_by="ceci"`。
+  - `POST /{id}/archive`。
+  - `DELETE /{id}?confirm=delete`：页面两次确认后才带 confirm。
+  - id 用正则 `^[A-Za-z0-9_-]{1,80}$` 校验并 quote，防路径注入。
+  - Hub 不可用时返回 503；Hub 返回 404 时原样传 404；其他错误返回 502，不透传 Hub 的错误正文。
+- 新页面 `/hub-memory`（hub-memory.html / js / css）：
+  - 选人（六个位置，空位灰着）；
+  - 「正在用 / 已归档」两栏，翻页；
+  - 正在用的可以改、归档；已归档的可以彻底删除（两次确认）；
+  - 所有文字用 textContent 渲染。
+- 记忆库页面加入口。
+- 只给小猫的页面用，不进任何 AI 的能力。页面在 Cloudflare Access 和第二道锁后面。
+- 已实测服务器上 Hub 的管理接口认这个 token：只取了条数和字段名，没有读内容。jasper 199 条、claude 514 条、lucien 315 条；id 格式符合校验。
+- Hub 没有「取消归档」接口，已归档的只能看和彻底删除，待问 Hub 窗口。
+
+**维修室**：小猫想要「小克或 Lucien 干活、狗蛋出主意」。动手只能是 Lucien，因为执行靠 Codex CLI；小克要动手得在那台机器上装好并登录 Claude Code，目前没有。
+- `repair_context.repair_advisors()`：小克加上已经入住、check_ready 通过的座位。`repair_names()` 把这些座位的名字补进 names。
+- `build_context`：座位用自己的人设；协作者列表和「分工」写出所有出主意的人，执行者只有 Lucien。
+- `repair_worker`：`reply_aion(store, job, actor='aion')` 通用化（保留原名，旧测试按原名 patch）。座位用自己的模型：先 `check_ready` 固定快照，生成前再核一次 `check_ready` 和 `ensure_model_unchanged`，变了就不回复、不换模型。`discuss` 的 both 顺序是：所有出主意的人，然后执行者。
+- `repair_routes`：`recipient` 用正则 `both|aion|connor|ai3–6`，并且必须是 both、connor 或当前出主意的人，否则返回 400。bootstrap 返回 advisors。
+- `repair_store.can_steer`：只有发给执行者或大家时才能中途补充（原来是「不是 aion 就行」，否则发给座位也会被当成能补充给执行者）。
+- `repair.js`：参与者显示所有出主意的人；收件人下拉加上入住的座位。
+- 测试：
+  - 新 `test_hub_memory.py` 9 项（假 Hub）：走管理接口并带密钥；字段白名单；密钥不出现在返回里；没入住或未知的座位不发请求；改、归档、删除（删除必须带确认）；5 种坏 id 不发到 Hub；Hub 未接返回 503。
+  - `test_seat_pages.py` +2：出主意的人和 can_steer；both 的顺序是 小克 → 狗蛋 → Lucien。
+  - `test_repair_room.py` 中「大家」用例固定只有小克出主意（这条测试写于有座位之前）。
+  - 约 890 项相关测试中，失败的与之前的既有失败一致。

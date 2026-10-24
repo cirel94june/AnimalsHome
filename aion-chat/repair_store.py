@@ -130,7 +130,9 @@ class RepairStore:
     @staticmethod
     def can_steer(job):
         payload = json.loads(job['payload']) if isinstance(job['payload'], str) else job['payload']
-        return job['kind'] in ('execute', 'inspect', 'plan') or (job['kind'] == 'discuss' and payload.get('recipient', 'connor') != 'aion')
+        # 只有发给执行者（Lucien）或大家时才能中途补充；只发给出主意的人（小克 / 座位）不行
+        return job['kind'] in ('execute', 'inspect', 'plan') or (
+            job['kind'] == 'discuss' and payload.get('recipient', 'connor') in ('connor', 'both'))
 
     def save_plan(self, task_id, plan, revision):
         with self.connect() as db:

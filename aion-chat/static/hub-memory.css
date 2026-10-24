@@ -1,0 +1,47 @@
+/* Hub 记忆：选一位 AI，看 / 改 / 归档 TA 在 Memory Hub 里的记忆 */
+body.hub-memory-page { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+.hm-header {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.hm-header h1 { margin: 0; font-size: 18px; white-space: nowrap; }
+.hm-hint { margin-left: auto; min-width: 0; font-size: 12px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.back-btn { background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 4px; }
+.hm-main { box-sizing: border-box; max-width: 720px; margin: 0 auto; padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); }
+
+.hm-people { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; scrollbar-width: none; }
+.hm-people::-webkit-scrollbar { display: none; }
+.hm-person {
+  flex: none; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface2);
+  color: var(--text2); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.hm-person[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.hm-person.placeholder { opacity: .45; border-style: dashed; cursor: default; }
+
+.hm-tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.hm-tab { padding: 5px 12px; border: 1px solid var(--border); border-radius: 8px; background: none; color: var(--text2); font: inherit; font-size: 13px; cursor: pointer; }
+.hm-tab[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.hm-count { margin-left: auto; font-size: 12px; color: var(--text3); }
+.hm-status { min-height: 1em; margin: 4px 0 8px; font-size: 13px; color: var(--text2); }
+
+.hm-list { list-style: none; margin: 0; padding: 0; }
+.hm-item { margin-bottom: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.hm-content { margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hm-meta { margin-top: 6px; font-size: 11px; color: var(--text3); }
+.hm-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.hm-actions button { padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.hm-actions .danger { color: var(--danger); border-color: var(--danger); }
+.hm-edit textarea {
+  box-sizing: border-box; width: 100%; min-height: 90px; padding: 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface2); color: var(--text); font: inherit; font-size: 14px; line-height: 1.5; resize: vertical;
+}
+.hm-edit label { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; color: var(--text2); }
+.hm-edit select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+.hm-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; font-size: 13px; color: var(--text2); }
+.hm-pager button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font: inherit; cursor: pointer; }
+.hm-pager button:disabled { opacity: .4; cursor: default; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hm-toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  max-width: calc(100% - 32px); padding: 8px 14px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 13px;
+}

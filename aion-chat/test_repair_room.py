@@ -247,7 +247,8 @@ class RepairRoomTests(unittest.TestCase):
             self.assertEqual(store.messages(job['task_id'])[-1]['who'], 'aion')
         self.store.enqueue(self.task_id, 'discuss', {'recipient':'both','text':'这个按钮好像不对'})
         job = self.store.claim()
-        with patch('repair_context.build_context', new_callable=AsyncMock, return_value=('','')), patch('ai_providers.stream_ai', response), patch('repair_codex.run_codex', new_callable=AsyncMock, side_effect=investigate) as run:
+        # 只有小克出主意（座位没入住）：大家 = 小克先说、执行者接着
+        with patch('repair_context.repair_advisors', return_value=['aion']), patch('repair_context.build_context', new_callable=AsyncMock, return_value=('','')), patch('ai_providers.stream_ai', response), patch('repair_codex.run_codex', new_callable=AsyncMock, side_effect=investigate) as run:
             asyncio.run(discuss(self.store, job))
             run.assert_awaited_once()
 

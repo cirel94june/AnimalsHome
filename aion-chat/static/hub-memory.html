@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#050923">
+  <title>Hub 记忆</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/hub-memory.css?v=20261024">
+  <script src="/static/theme.js"></script>
+  <script defer src="/static/seats.js"></script>
+  <script defer src="/static/hub-memory.js?v=20261024"></script>
+</head>
+<body class="hub-memory-page" data-theme="dark">
+  <header class="hm-header">
+    <button type="button" class="back-btn" id="backBtn" aria-label="返回记忆库">⬅</button>
+    <h1>Hub 记忆</h1>
+    <span class="hm-hint">每位 AI 在 Memory Hub 里记住的事</span>
+  </header>
+  <main class="hm-main">
+    <div class="hm-people" id="people" role="group" aria-label="看谁的记忆"></div>
+    <div class="hm-tabs" role="group" aria-label="记忆状态">
+      <button type="button" class="hm-tab" data-status="active" aria-pressed="true">正在用</button>
+      <button type="button" class="hm-tab" data-status="archived" aria-pressed="false">已归档</button>
+      <span class="hm-count" id="count"></span>
+    </div>
+    <p class="hm-status" id="status" role="status"></p>
+    <ul class="hm-list" id="list"></ul>
+    <nav class="hm-pager" aria-label="翻页">
+      <button type="button" id="prev">上一页</button>
+      <span id="pageLabel"></span>
+      <button type="button" id="next">下一页</button>
+    </nav>
+  </main>
+  <div id="toast" class="hm-toast" role="status" hidden></div>
+</body>
+</html>

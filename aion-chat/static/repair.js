@@ -345,8 +345,12 @@
     const data=await api('/bootstrap');showModel(data.work_model);
     $('pairing').hidden=data.authorized;$('workspace').hidden=!data.authorized;
     if(!data.authorized)return;
-    state.names=data.names;$('participants').textContent=[data.names.user,data.names.aion,data.names.connor].join(' · ');
+    state.names=data.names;const advisors=data.advisors||['aion'];
+    $('participants').textContent=[data.names.user,...advisors.map(a=>data.names[a]),data.names.connor].join(' · ');
     for(const actor of ['aion','connor'])$('recipient').querySelector('[value='+actor+']').textContent=data.names[actor];
+    // 出主意的座位（狗蛋等）也能单独发给 TA；动手的只有执行者
+    $('recipient').querySelectorAll('[data-seat]').forEach(o=>o.remove());
+    for(const actor of advisors.filter(a=>a!=='aion')){const opt=document.createElement('option');opt.value=actor;opt.dataset.seat='1';opt.textContent=data.names[actor]||actor;$('recipient').append(opt);}
     $('recipient').value='connor';recipientHint();
     if(data.pairing_code){$('pairDetails').hidden=false;$('localCode').textContent=data.pairing_code;}
     const tasks=await refreshTasks();

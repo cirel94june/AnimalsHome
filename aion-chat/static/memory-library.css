@@ -214,3 +214,6 @@ dialog[open]{display:flex;flex-direction:column;position:fixed;top:calc(var(--di
 }
 
 .source-jump{display:inline-block;font-size:11px;color:var(--accent);margin-top:7px;text-decoration:none;padding:3px 0}.source-jump:hover{text-decoration:underline}
+
+/* 去 Hub 记忆（狗蛋等座位的记忆只在 Hub 里） */
+.hub-memory-link{display:block;margin-top:6px;padding:7px 10px;border:1px dashed var(--border);border-radius:9px;color:var(--accent);font-size:12px;text-decoration:none}

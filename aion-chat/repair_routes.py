@@ -121,11 +121,11 @@ async def set_model(body: ModelBody, store=Depends(access)):
 
 @router.get("/api/repair/bootstrap")
 async def bootstrap(request: Request):
-    from chatroom import get_chatroom_names
+    from repair_context import repair_advisors, repair_names
     store = default_store()
     ok = authorized(request, store)
-    user, aion, connor = get_chatroom_names() if ok else ("用户", "AI", "第二AI")
-    data = {"authorized": ok, "names": {"user": user, "aion": aion, "connor": connor, "system": "任务记录"}}
+    names = repair_names() if ok else {"user": "用户", "aion": "AI", "connor": "第二AI", "system": "任务记录"}
+    data = {"authorized": ok, "names": names, "advisors": repair_advisors() if ok else ["aion"]}
     if is_local(request):
         data["pairing_code"] = pairing_code(store)
     if ok:
@@ -182,7 +182,7 @@ async def task(task_id: str, after: int = 0, message_after: int = 0, store=Depen
 
 class SendBody(BaseModel):
     text: str = Field(default="", max_length=16000)
-    recipient: Literal["both", "aion", "connor"] = "connor"
+    recipient: str = Field(default="connor", pattern="^(both|aion|connor|ai[3-6])$")
     kind: Literal["discuss", "plan", "inspect"] = "discuss"
     attachments: list[str] = Field(default_factory=list, max_length=4)
     revision: int | None = None
@@ -215,6 +215,9 @@ def launch(store, task_id, kind, payload):
 @router.post("/api/repair/tasks/{task_id}/send")
 async def send(task_id: str, body: SendBody, store=Depends(access)):
     from repair_dialogue import is_confirmation
+    from repair_context import repair_advisors
+    if body.recipient not in ("both", "connor", *repair_advisors()):
+        raise HTTPException(400, "这位还没入住或还没准备好，不能发给 TA。")
     current = checked_task(store, task_id)
     if (body.kind == 'discuss' and body.recipient in {'both', 'connor'} and not body.attachments
             and is_confirmation(body.text) and current['proposal_valid']):

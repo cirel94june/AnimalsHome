@@ -114,3 +114,49 @@ def test_wish_can_be_announced_to_a_seat(seats, monkeypatch):
 
 async def _none():
     return None
+
+
+def test_repair_room_advisors_and_roles(seats, monkeypatch):
+    """维修室：狗蛋（已入住、准备好）能出主意；动手的只有 Lucien；没入住的座位发不过去。"""
+    import repair_context
+    import repair_store
+    import seat_chat
+
+    def check_ready(actor):
+        if actor != "ai3":
+            raise seat_chat.SeatNotReady("还没入住")
+        return {}, "m"
+    monkeypatch.setattr(seat_chat, "check_ready", check_ready)
+    assert repair_context.repair_advisors() == ["aion", "ai3"]
+    import chatroom
+    monkeypatch.setattr(chatroom, "get_chatroom_names", lambda: ("小猫", "小克", "Lucien"))
+    assert repair_context.repair_names()["ai3"] == "Jasper"
+    steer = repair_store.RepairStore.can_steer
+    assert steer({"kind": "discuss", "payload": {"recipient": "connor"}})
+    assert steer({"kind": "discuss", "payload": {"recipient": "both"}})
+    assert not steer({"kind": "discuss", "payload": {"recipient": "ai3"}})  # 只发给出主意的人：不能中途补充给执行者
+    assert not steer({"kind": "discuss", "payload": {"recipient": "aion"}})
+
+
+def test_repair_both_goes_advisors_then_executor(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock, patch
+    import repair_worker
+    order = []
+
+    async def advisor(store, job, actor="aion"):
+        order.append(actor)
+
+    async def executor(store, job, instructions, context):
+        order.append("connor")
+
+    class Store:
+        def cancelled(self, job_id): return False
+        def event(self, *a, **k): pass
+        def message(self, *a, **k): pass
+    job = {"id": "j1", "task_id": "t1", "kind": "discuss", "payload": {"recipient": "both"}}
+    with patch("repair_context.repair_advisors", return_value=["aion", "ai3"]), \
+            patch("repair_context.repair_names", return_value={"user": "小猫", "aion": "小克", "connor": "Lucien", "ai3": "Jasper"}), \
+            patch("repair_context.build_context", new_callable=AsyncMock, return_value=("", "")), \
+            patch.object(repair_worker, "reply_aion", advisor), patch("repair_codex.run_codex", executor):
+        asyncio.run(repair_worker.discuss(Store(), job))
+    assert order == ["aion", "ai3", "connor"]

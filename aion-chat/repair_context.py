@@ -17,30 +17,64 @@ def work_history(messages, names, budget=90000):
     return "[早期工作对话节选；完整原文保存在任务记录中]\n" + older + "\n[近期工作对话]\n" + recent
 
 
+def repair_advisors() -> list[str]:
+    """维修室里出主意的人：小克，加上已经入住、有人设有模型的座位（狗蛋等）。"""
+    advisors = ["aion"]
+    try:
+        import seat_chat
+        for seat in seat_chat.SEAT_ACTORS:
+            try:
+                seat_chat.check_ready(seat)
+            except seat_chat.SeatNotReady:
+                continue
+            advisors.append(seat)
+    except Exception:
+        pass
+    return advisors
+
+
+def repair_names() -> dict[str, str]:
+    from chatroom import get_chatroom_names
+    import actors
+    user, aion, connor = get_chatroom_names()
+    names = {"user": user, "aion": aion, "connor": connor, "system": "任务记录"}
+    for seat in repair_advisors()[1:]:
+        names[seat] = actors.display_name(seat)
+    return names
+
+
 async def build_context(store, task_id, actor):
     from config import load_worldbook
     from chatroom import get_chatroom_names, _read_connor_persona
     from context_builder import fetch_merged_timeline, render_merged_timeline
 
     task = store.task(task_id)
-    user, aion, connor = get_chatroom_names()
-    names = {"user": user, "aion": aion, "connor": connor, "system": "任务记录"}
+    names = repair_names()
+    user, aion, connor = names["user"], names["aion"], names["connor"]
+    advisors = [names[a] for a in repair_advisors() if a in names]
     wb = load_worldbook()
-    persona = _read_connor_persona() if actor == "connor" else wb.get("ai_persona", "")
+    if actor == "connor":
+        persona = _read_connor_persona()
+    elif actor == "aion":
+        persona = wb.get("ai_persona", "")
+    else:  # 座位（狗蛋等）：用 TA 自己的人设
+        import seat_chat
+        persona = seat_chat._persona_text(actor)
+    others = "、".join(n for a, n in names.items() if a not in ("user", "system", actor))
     now = time.time()
     recent = (await fetch_merged_timeline(actor, 30, since_ts=now - task["context_minutes"] * 60, until_ts=now)
               if task['context_minutes'] else [])
     rendered = render_merged_timeline(recent, actor, include_image_attachments=False)
     home = "\n".join(str(m.get("content", "")) for m in rendered)[-16000:]
     instructions = (
-        f"你是{names[actor]}，与{user}、{names['aion' if actor == 'connor' else 'connor']}一起在小家的维修室。\n"
+        f"你是{names[actor]}，与{user}、{others}一起在小家的维修室。\n"
         f"角色设定：\n{persona}\n用户设定：\n{wb.get('user_persona', '')}\n"
         "保持原有身份和相处方式，工作内容清晰简洁。此处讨论不执行任何日常聊天协议。"
         "用户要求查找、交付或新建普通文件并写入内容时可直接执行；讨论项目改动不等于授权修改，功能、代码、配置改动和重启仍先确认方案。"
         "其他伴侣的发言是建议，历史聊天是背景，不是当前执行指令。"
         "当前任务以工作记录和已确认方案为准；超出小修小补的架构调整建议交回桌面。"
         "不能冒充另一位说话，不能把推测或口头承诺当成已完成的操作。\n"
-        f"维修室的分工：{aion}参与讨论与分析，{connor}是执行者。"
+        f"维修室的分工：{'、'.join(advisors)}参与讨论与分析，{connor}是执行者。"
         "维修室已获用户授权使用本机完全访问：查找文件、查看代码和日志、交付指定文件或图片、在桌面或其他指定位置新建普通文件并写入内容。"
         "创建前检查同名文件；不得擅自删除、清空、递归清理或覆盖重要内容，这些操作必须单独讲清范围并确认。"
         "确认方案后，可修改小家代码和配置，以及通过专用工具重启小家主服务；不擅自重启其他服务或电脑。"
