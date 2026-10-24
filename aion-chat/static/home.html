@@ -585,8 +585,8 @@ body[data-theme="dark"] .gsi-title { color: rgba(244,246,255,0.70); }
 <script>
 /* ── 应用注册表 ─────────────────────────────────── */
 const APPS = [
-  { id: 'chat',     name: '聊天',     icon: '/public/funIcon_0005_聊天.png',   url: '/chat',  dock: true },
-  { id: 'chatroom', name: '聊天室', icon: '/public/funIcon_0020_聊天室.png', url: '/chatroom' ,  dock: true  },
+  { id: 'chat',     name: '私聊',     icon: '/public/funIcon_0005_聊天.png',   url: '/chat',  dock: true },
+  { id: 'chatroom', name: '群聊', icon: '/public/funIcon_0020_聊天室.png', url: '/chatroom' ,  dock: true  },
   { id: 'memory',   name: '记忆库',   icon: '/public/funIcon_0006_日记本.png',  url: '/memory' ,  dock: true },
   { id: 'moments',  name: '朋友圈',   icon: '/public/funIcon_0010_朋友圈.png',  url: '/moments' ,  dock: true },
   { id: 'music-station', name: '点歌台', icon: '/public/funIcon_0032_点歌台.png', url: '/music-station' },
@@ -888,6 +888,15 @@ function makeCellMap() {
   return map;
 }
 
+// 「私聊」写上是和谁（世界书里的 AI 名字，比如「小克私聊」）；其他人的私聊和大家的群聊都在「群聊」里
+fetch('/api/worldbook').then(res => res.json()).then(wb => {
+  const name = String((wb && wb.ai_name) || '').trim();
+  const chat = APPS.find(app => app.id === 'chat');
+  if (!name || !chat) return;
+  chat.name = `${name}私聊`;
+  renderApps();
+}).catch(() => {});
+
 function renderApps() {
   const track = document.getElementById('appPagesTrack');
   const dots = document.getElementById('pageDots');
@@ -933,8 +942,8 @@ function appHTML(app, options = {}) {
        data-grid-app="${options.grid ? '1' : '0'}"
        ${options.grid ? `data-cell="${options.cell}"` : ''}
        aria-label="${escapeAttr(app.name)}">
-      <div class="icon-img"><img src="${app.icon}" alt="${app.name}" draggable="false"><div class="badge-dot" ${badgeId}></div></div>
-      <span class="icon-label">${app.name}</span>
+      <div class="icon-img"><img src="${app.icon}" alt="${escapeAttr(app.name)}" draggable="false"><div class="badge-dot" ${badgeId}></div></div>
+      <span class="icon-label">${escapeAttr(app.name)}</span>
     </button>`;
 }
 
