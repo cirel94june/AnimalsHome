@@ -1475,7 +1475,7 @@ async def _chatroom_cam_check(
     ai_name = wb.get("ai_name", "AI")
 
     # 获取聊天室最近消息作为上下文
-    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    msgs = await _load_followup_messages(room_id, limit=10)
     recent = _render_recent_room_messages_for_ai(msgs)
 
     cam_prompt = (
@@ -1585,7 +1585,7 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
     minutes = n * 10
 
     # 获取聊天室最近消息作为上下文
-    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    msgs = await _load_followup_messages(room_id, limit=10)
     recent = _render_recent_room_messages_for_ai(msgs)
 
     activity_prompt = (
@@ -1737,7 +1737,7 @@ async def _chatroom_poi_check(room_id: str, sender: str, model_key: str, categor
         f"请根据搜索结果，自然地向{user_name}推荐或回答。不需要再说\"让我帮你搜一下\"之类的话，直接根据结果回复即可。"
     )
 
-    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    msgs = await _load_followup_messages(room_id, limit=10)
     recent = _render_recent_room_messages_for_ai(msgs)
 
     prefix_msgs = []
@@ -1813,7 +1813,7 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     ai_name = wb.get("ai_name", "AI")
     sender_label = _name_for_identity(sender)
 
-    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    msgs = await _load_followup_messages(room_id, limit=10)
     recent = _render_recent_room_messages_for_ai(msgs)
 
     prefix_msgs = []
@@ -1971,7 +1971,7 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
             {"role": "user", "content": ability_block},
             {"role": "assistant", "content": "好的，需要时我会使用这些指令。"},
         ])
-    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    msgs = await _load_followup_messages(room_id, limit=10)
     recent = _render_recent_room_messages_for_ai(msgs)
     memory_prompt = (
         f"{sender_label}刚才为了回答{user_name}的这个原始问题而翻找了自己的记忆：\n"
@@ -3404,6 +3404,29 @@ async def _save_msg(
     return msg
 
 
+async def _load_followup_messages(room_id: str, limit: int = 10) -> list[dict]:
+    """工具追加回复（搜索、看监控、周边等）用的最近聊天：私聊窗口算上这位 AI 和她所有的私聊窗口
+    （窗口只帮她整理），群就是这个群。追加回复仍存回 room_id。"""
+    room, msgs = await _load_room_and_messages(room_id, limit=limit)
+    if not room or room.get("type") not in ("connor_1v1", seat_chat.SEAT_ROOM_TYPE):
+        return msgs
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT m.* FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE r.type = ? AND (r.type = 'connor_1v1' OR r.actor = ?) "
+            "ORDER BY m.created_at DESC LIMIT ?",
+            (room["type"], room.get("actor") or "", limit),
+        )
+        rows = await cur.fetchall()
+    out = []
+    for r in reversed(rows):
+        d = dict(r)
+        d["attachments"] = json.loads(d.get("attachments") or "[]") if d.get("attachments") else []
+        out.append(d)
+    return out
+
+
 async def _load_room_and_messages(room_id: str, limit: int = 50) -> tuple[dict, list[dict]]:
     """加载房间信息和最近消息"""
     async with get_db() as db:
@@ -4279,7 +4302,7 @@ async def _chatroom_poi_search(room_id: str, sender: str, model_key: str, catego
         await _chatroom_sys_msg(room_id, f"（{sender_label}没搜到附近的结果）", asyncio.Queue())
         return
     user_name = load_worldbook().get("user_name", "用户")
-    _, msgs = await _load_room_and_messages(room_id, limit=10)
+    msgs = await _load_followup_messages(room_id, limit=10)
     recent = _render_recent_room_messages_for_ai(msgs)
     loc_info = format_location_for_prompt() or ""
     prompt = (

@@ -33,6 +33,9 @@ def seat_model(actor_id: str) -> str:
     key = str(actor.get("model") or "").strip()
     if not key or key not in MODELS or is_model_deprecated(key):
         return ""
+    from config import codex_forbidden
+    if codex_forbidden(actor_id, key):  # 每次都核：启动时目录里还没有、后来才出现的 Codex 键也挡得住
+        return ""
     return key
 
 
@@ -46,6 +49,9 @@ def check_ready(actor_id: str) -> tuple[dict, str]:
         raise SeatNotReady(f"{actor['name']} 还没有人设，请先导入人设包")
     model = seat_model(actor_id)
     if not model:
+        from config import CODEX_ONLY_FOR_LUCIEN, codex_forbidden
+        if codex_forbidden(actor_id, actor.get("model")):
+            raise SeatNotReady(f"{actor['name']} 选的是 Codex（{CODEX_ONLY_FOR_LUCIEN}），请在相遇卡里换一个模型")
         raise SeatNotReady(f"还没给 {actor['name']} 选模型（相遇卡 → 编辑 → 模型）")
     return actor, model
 

@@ -2878,10 +2878,11 @@ async def _private_memory_recent_messages(conv_id: str, limit: int = 8) -> list[
     import aiosqlite
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
+        # 窗口只帮她整理：小克所有私聊窗口最近的几条都算（回复仍存在当前窗口）
         cur = await db.execute(
-            "SELECT role, content FROM messages WHERE conv_id=? AND role IN ('user','assistant') "
+            "SELECT role, content FROM messages WHERE role IN ('user','assistant') "
             "ORDER BY created_at DESC LIMIT ?",
-            (conv_id, limit),
+            (limit,),
         )
         rows = await cur.fetchall()
     return [
@@ -3068,8 +3069,9 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT role, content, attachments FROM messages WHERE conv_id=? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6",
-            (conv_id,),
+            # 窗口只帮她整理：小克所有私聊窗口最近的几条都算（回复仍存在当前窗口）
+            "SELECT role, content, attachments FROM messages WHERE role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6",
+            (),
         )
         rows = await cur.fetchall()
     recent = []
@@ -3188,8 +3190,9 @@ async def perform_poi_check(conv_id: str, model_key: str, categories: list[str])
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT role, content, attachments FROM messages WHERE conv_id=? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6",
-            (conv_id,)
+            # 窗口只帮她整理：小克所有私聊窗口最近的几条都算（回复仍存在当前窗口）
+            "SELECT role, content, attachments FROM messages WHERE role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6",
+            (),
         )
         rows = await cur.fetchall()
     recent = []
@@ -3331,8 +3334,9 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute(
-            "SELECT role, content, attachments FROM messages WHERE conv_id=? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6",
-            (conv_id,)
+            # 窗口只帮她整理：小克所有私聊窗口最近的几条都算（回复仍存在当前窗口）
+            "SELECT role, content, attachments FROM messages WHERE role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6",
+            (),
         )
         rows = await cur.fetchall()
     recent = []

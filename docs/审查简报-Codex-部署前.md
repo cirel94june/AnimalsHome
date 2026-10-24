@@ -910,3 +910,26 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 小克私聊页的发送、重新生成、重发三处，以及闹铃、定时监控（schedule ×2）、监控唤醒（camera ×2）、定位唤醒（location），取上下文时不再传 `conv_id`，都是「小克所有私聊窗口 + 群聊」。这和他在群聊里本来的取法（chatroom.py 里不传 conv_id）一致。消息仍然存到当前窗口。
 - 保留不变的：多窗口本身、`new_window`、启动不合并、联系人页、座位翻聊天记录（更早的内容靠它）、主动消息去她最后说话的窗口（§72 M3）。
 - 测试：`test_multi_window_chat.py` 的两条「只看本窗口」改成「看得到 TA 所有窗口、看不到别的座位」；新增静态检查，确认上面四个文件里小克取上下文时不再按 conv_id 过滤。相关约 790 项测试的失败与改动前的既有失败一致。
+
+## 74. 8a5e851 复审修复（R1–R3）
+
+- **R1 兼容监控接口**：`camera.perform_cam_check` 第一步就用 `aion_model_key(model_key)`。不管 `/api/cam-check-trigger` 或其他调用方传进来什么，都在生成边界核一次，不依赖客户端，也不依赖启动清理。
+- **R2 座位运行时限制**：
+  - `seat_chat.seat_model` 每次都用 `codex_forbidden` 核对：启动清理时目录里还没有、刷新后才出现的 Codex 键，同样返回空。
+  - `check_ready` 遇到这种情况抛 `SeatNotReady`，提示「X 选的是 Codex（Codex 是 GPT，只给 Lucien 用），请在相遇卡里换一个模型」。明确停下，不换别的模型。
+  - 座位的主回复、追加回复、自主活动、人格成长都经过 `check_ready` / `seat_model`；后台线路之前已由 `own_model` / `background_model` 挡住。
+- **R3 工具追加回复跨窗口**：
+  - **小克私聊页**：`_private_memory_recent_messages`（记忆搜索追加轮）和联网搜索、周边搜索、查看动态三处「最近 6 条」去掉 `conv_id` 过滤，取小克所有私聊窗口最近的消息。回复仍存在当前窗口。
+  - **聊天室**：新增 `_load_followup_messages(room_id)`：
+    - Lucien 的私聊窗口取他所有私聊窗口；
+    - 座位的私聊窗口取这位座位自己的所有私聊窗口（不含别的座位）；
+    - 群聊只取这个群。
+    - 替换了看监控、查看动态、周边检查、联网搜索、记忆搜索、周边搜索这 6 个追加回复里的 `_load_room_and_messages(room_id, limit=10)`。追加回复仍存回 room_id。
+- **测试**
+  - `test_codex_only_lucien.py` +2：
+    - 监控入口第一步就用传入的 Codex 键过身份核对；
+    - 座位名片存了 Codex 时 `seat_model` 返回空，`check_ready` 明确报错、提到 Lucien。
+  - `test_multi_window_chat.py` +2，真实 SQLite：
+    - 聊天室追加读取：座位、Lucien 跨窗口，不串到别的座位，群只读本群；
+    - 小克私聊追加读取跨窗口；静态检查确认「当前窗口最近 6 条」的旧查询已全部去掉。
+  - 相关约 790 项测试中，失败的都与此前的既有失败一致。

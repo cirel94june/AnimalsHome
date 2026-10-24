@@ -4,6 +4,7 @@
 import asyncio
 import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -126,3 +127,28 @@ def test_standalone_contacts_new_xiaoke_window_opens_a_new_one():
     new_branch = text.index("initParams.get('new') === '1'")
     assert new_branch < text.index("lastId && conversations.find(c => c.id === lastId)")
     assert "await newConversation()" in text[new_branch:new_branch + 400]
+
+
+def test_tool_followups_read_across_windows(db):
+    """§74 R3：搜索 / 看监控 / 周边等追加回复也读本人所有私聊窗口最近的聊天；群就是这个群。"""
+    import routes.chatroom as chatroom_routes
+    seat = asyncio.run(chatroom_routes._load_followup_messages("s2", limit=10))
+    assert {m["content"] for m in seat} == {"和狗蛋聊过海边旅行", "狗蛋窗口二聊作业"}  # 不含别的座位、不含群
+    lucien = asyncio.run(chatroom_routes._load_followup_messages("c1", limit=10))
+    assert {m["content"] for m in lucien} == {"窗口一聊猫粮", "窗口二聊电影"}
+    group = asyncio.run(chatroom_routes._load_followup_messages("g1", limit=10))
+    assert [m["content"] for m in group] == ["群里说今天下雨"]
+
+
+def test_xiaoke_private_followups_read_across_windows(db):
+    import routes.chat as chat_routes
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES ('a','A','',1,1), ('b','B','',2,2);
+            INSERT INTO messages (id,conv_id,role,content,created_at) VALUES
+              ('p1','b','user','在窗口B说不吃香菜',1), ('p2','a','user','窗口A问晚饭吃什么',2);
+        """)
+    rows = asyncio.run(chat_routes._private_memory_recent_messages("a"))
+    assert [r["content"] for r in rows] == ["在窗口B说不吃香菜", "窗口A问晚饭吃什么"]
+    text = (Path(__file__).parent / "routes" / "chat.py").read_text(encoding="utf-8")
+    assert "WHERE conv_id=? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6" not in text

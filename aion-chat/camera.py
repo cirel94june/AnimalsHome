@@ -2687,6 +2687,8 @@ def save_monitor_camera_snapshot(
 
 async def perform_cam_check(conv_id: str, model_key: str):
     """Core 在聊天中主动请求查看监控画面：截图 → 发给 Core → 保存为新消息"""
+    from config import aion_model_key
+    model_key = aion_model_key(model_key)  # 是小克在看：不管调用方传了什么，都不用 Codex（只给 Lucien）
     image_result = await acquire_monitor_image(
         "ai_cam_check",
         force_pc_screen=True,

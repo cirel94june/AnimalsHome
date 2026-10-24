@@ -126,3 +126,36 @@ XIAOKE_ENTRY_POINTS = {
 def test_xiaoke_entry_points_use_the_identity_resolver(name, count):
     text = (HERE / name).read_text(encoding="utf-8")
     assert len(re.findall(r"aion_model_key\(", text)) >= count
+
+
+def test_cam_check_entry_normalizes_whatever_model_it_was_given(models, monkeypatch):
+    """§74 R1：兼容接口 /api/cam-check-trigger 直接传 model_key 进来，也要在生成边界换掉 Codex。"""
+    import camera
+    seen = []
+
+    def spy(key):
+        seen.append(key)
+        return config.aion_model_key.__wrapped__(key) if hasattr(config.aion_model_key, "__wrapped__") else "红豆沙·claude"
+
+    class Stop(Exception):
+        pass
+
+    async def stop(*a, **k):
+        raise Stop
+    monkeypatch.setattr(config, "aion_model_key", spy)
+    monkeypatch.setattr(camera, "acquire_monitor_image", stop)
+    with pytest.raises(Stop):
+        asyncio.run(camera.perform_cam_check("conv1", "GPT"))
+    assert seen == ["GPT"]  # 第一步就过身份核对，之后才截图、生成
+
+
+def test_seat_with_codex_card_stops_instead_of_switching(cards, monkeypatch):
+    """§74 R2：座位名片里存着 Codex（启动清理时目录里还没有这个键，后来才出现）：每次回复前都挡，明确停下。"""
+    import seat_chat
+    cards["seats"]["ai3"]["model"] = "GPT"
+    monkeypatch.setattr(seat_chat, "MODELS", config.MODELS)
+    monkeypatch.setattr(actors, "persona_sections", lambda actor_id: {"identity_core": "我是狗蛋"})
+    assert seat_chat.seat_model("ai3") == ""
+    with pytest.raises(seat_chat.SeatNotReady) as err:
+        seat_chat.check_ready("ai3")
+    assert "Codex" in str(err.value) and "Lucien" in str(err.value)
