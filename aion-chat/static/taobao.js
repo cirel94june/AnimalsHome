@@ -201,17 +201,31 @@
     $('empty').hidden = items.length > 0;
     $('recentProducts').replaceChildren(...state.items.slice(0,8).map(p=>card(p,true)));
     $('recentEmpty').hidden = state.items.length > 0;
-    $('companionCards').replaceChildren(...['connor','aion',...Object.keys(state.names).filter(a=>!['connor','aion'].includes(a))].map(actor=>{
-      const card = node('div','companion'); card.dataset.actor = actor;
-      const img = node('img','portrait'); img.src = state.portraits?.[actor] || state.avatars?.[actor]; img.alt = state.names[actor];
-      img.onerror = () => {img.onerror=null; img.src=state.avatars?.[actor] || '/public/funIcon_0034_逛淘宝.png';};
-      const active = state.active_trips?.find(t=>t.actor===actor);
-      const text = node('div'); text.append(node('h2','',state.names[actor]),node('p','companion-status',active ? phaseName[active.phase] || '正在逛街' : '这会儿没在逛'));
-      card.append(img,text); return card;
-    }));
+    renderCompanions();
     renderTrips();
     busy();
   }
+  let seats = null;  // 家里六个位置（含还没入住的空位）
+  function renderCompanions() {
+    const list = seats || ['aion','connor',...Object.keys(state.names).filter(a=>!['connor','aion'].includes(a))]
+      .map(id => ({id, name: state.names[id] || id, open: true}));
+    $('companionCards').replaceChildren(...list.map(seat=>{
+      const actor = seat.id;
+      const card = node('div','companion' + (seat.open ? '' : ' placeholder')); card.dataset.actor = actor;
+      const img = node('img','portrait');
+      img.alt = '';
+      if (seat.open) {
+        img.src = state.avatars?.[actor] || seat.avatar || '/public/AIIcon.png';
+        img.onerror = () => {img.onerror=null; img.src='/public/AIIcon.png';};
+      }
+      const active = seat.open && state.active_trips?.find(t=>t.actor===actor);
+      const status = !seat.open ? '空位' : active ? phaseName[active.phase] || '正在逛街' : '这会儿没在逛';
+      const text = node('div','companion-text');
+      text.append(node('h2','',seat.open ? (state.names[actor] || seat.name) : seat.name),node('p','companion-status',status));
+      card.append(seat.open ? img : node('span','portrait empty-seat','＋'), text); return card;
+    }));
+  }
+  window.AionSeats?.load().then(list => { seats = list; if (state) renderCompanions(); }).catch(() => {});
   async function refresh() {
     state = await api('/state'); tripsHaveMore = state.trips?.length === 20; render();
     if (linkedTrip) {

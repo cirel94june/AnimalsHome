@@ -620,6 +620,15 @@ def _name_for_identity(identity: str) -> str:
     return {"user": user_name, "aion": ai_name, "connor": connor_name}.get(identity, identity)
 
 
+def _is_ai_sender(sender: str) -> bool:
+    """小克、Lucien、座位 3～6 说的话都是 AI 说的（别把狗蛋的话当成小猫说的）。"""
+    return sender in ("aion", "connor") or sender in seat_chat.SEAT_ACTORS
+
+
+def _seat_name_map() -> dict[str, str]:
+    return {seat: actors_registry.display_name(seat) for seat in seat_chat.SEAT_ACTORS}
+
+
 def _prefix_for_sender(sender: str) -> str:
     if sender in ("aion", "connor"):
         return f"[{_name_for_identity(sender)}] "
@@ -2757,7 +2766,7 @@ def _chatroom_source_score(mem, row, keywords: list[str], needles: list[str]) ->
 async def _fetch_chatroom_source_rows_by_ids(source_ids: list[str]) -> list[dict]:
     rows = []
     user_name, ai_name, connor_name = get_chatroom_names()
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name, **_seat_name_map()}
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         for source_id in source_ids:
@@ -2774,7 +2783,7 @@ async def _fetch_chatroom_source_rows_by_ids(source_ids: list[str]) -> list[dict
             if row:
                 rows.append({
                     "id": f"chatroom:{row['id']}",
-                    "role": "assistant" if row["sender"] in ("aion", "connor") else "user",
+                    "role": "assistant" if _is_ai_sender(row["sender"]) else "user",
                     "name": name_map.get(row["sender"], row["sender"]),
                     "content": row["content"],
                     "created_at": row["created_at"],
@@ -3261,7 +3270,7 @@ async def update_message(msg_id: str, body: MsgUpdate):
         msg = await cur.fetchone()
         if not msg:
             raise HTTPException(status_code=404, detail="消息不存在")
-        if msg["sender"] not in ("aion", "connor"):
+        if not _is_ai_sender(msg["sender"]):
             raise HTTPException(status_code=400, detail="这里只能编辑 AI 回复")
         await db.execute("UPDATE chatroom_messages SET content=? WHERE id=?", (body.content, msg_id))
         await db.commit()
@@ -3617,8 +3626,13 @@ async def reply_once(room_id: str, body: ReplyOnceTrigger):
         return {"error": "仅群聊支持指定回复"}
 
     speaker = (body.speaker or "").strip().lower()
-    if speaker not in ("aion", "connor"):
-        return {"error": "speaker must be 'aion' or 'connor'"}
+    if speaker in seat_chat.SEAT_ACTORS:  # 手动轮流也能点狗蛋等座位说话（要已经入住、准备好）
+        try:
+            seat_chat.check_ready(speaker)
+        except seat_chat.SeatNotReady as exc:
+            return {"error": str(exc)}
+    elif speaker not in ("aion", "connor"):
+        return {"error": "speaker must be 'aion', 'connor' or a seat"}
 
     cam.reset_patrol_timer()
 
@@ -3631,7 +3645,9 @@ async def reply_once(room_id: str, body: ReplyOnceTrigger):
 
     async def _bg_generate():
         try:
-            if speaker == "aion":
+            if speaker in seat_chat.SEAT_ACTORS:
+                await _generate_seat_reply(room_id, room, msgs, _q, context_limit, actor=speaker, group=True)
+            elif speaker == "aion":
                 await _reply_aion(
                     room_id, msgs, context_limit, query_text, model_key, _q,
                     tts_enabled=body.tts_enabled,
@@ -4639,7 +4655,7 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
         if sender not in ("user", "aion", "connor"):
             continue
         recent_for_digest.append({
-            "role": "assistant" if sender in ("aion", "connor") else "user",
+            "role": "assistant" if _is_ai_sender(sender) else "user",
             "sender": sender,
             "content": str(msg.get("content") or "")[:200],
         })
@@ -5235,11 +5251,11 @@ async def get_memory_source_legacy(mem_id: str):
         )
         rows = await cur.fetchall()
 
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name, **_seat_name_map()}
     messages = []
     for r in rows:
         messages.append({
-            "role": "assistant" if r["sender"] in ("aion", "connor") else "user",
+            "role": "assistant" if _is_ai_sender(r["sender"]) else "user",
             "name": name_map.get(r["sender"], r["sender"]),
             "content": r["content"],
             "created_at": r["created_at"],
@@ -5270,7 +5286,7 @@ async def get_memory_source(mem_id: str):
         return {"ok": False, "message": "No source messages for this memory"}
 
     user_name, ai_name, connor_name = get_chatroom_names()
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name, **_seat_name_map()}
     messages = []
     if mem["source_start_ts"] and mem["source_end_ts"]:
         async with get_db() as db:
@@ -5284,7 +5300,7 @@ async def get_memory_source(mem_id: str):
             for row in await cur.fetchall():
                 messages.append({
                     "id": f"chatroom:{row['id']}",
-                    "role": "assistant" if row["sender"] in ("aion", "connor") else "user",
+                    "role": "assistant" if _is_ai_sender(row["sender"]) else "user",
                     "name": name_map.get(row["sender"], row["sender"]),
                     "content": row["content"],
                     "created_at": row["created_at"],

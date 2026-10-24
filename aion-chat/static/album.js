@@ -27,16 +27,21 @@
     const tabs = $('albumTabs');
     tabs.replaceChildren();
     [{ id: '', name: '全部照片' }, ...albums].forEach(album => {
-      const button = el('button', state.album === album.id ? 'active' : '', album.name);
+      const button = el('button', (state.album === album.id ? 'active' : '') + (album.placeholder ? ' placeholder' : ''), album.name);
       button.type = 'button';
+      if (album.placeholder) {  // 还没入住的座位：先留个位置
+        button.disabled = true;
+        button.title = '这个位置还空着';
+      }
       button.setAttribute('aria-pressed', String(state.album === album.id));
       button.onclick = () => { state.album = album.id; loadPhotos(); };
       tabs.append(button);
     });
+    const usable = albums.filter(album => !album.placeholder);
     ['photoAlbum', 'uploadAlbum', 'moveAlbum'].forEach(id => {
       const select = $(id);
       const selected = select.value || 'family';
-      select.replaceChildren(...albums.map(album => {
+      select.replaceChildren(...usable.map(album => {
         const option = el('option', '', album.name);
         option.value = album.id;
         return option;

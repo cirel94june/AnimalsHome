@@ -157,6 +157,7 @@ async function crLoadSeats() {
       AVATARS[a.id] = a.avatar || '/public/AIIcon.png';
     }
     crShowRoomWho();
+    updateHeaderActions();  // 座位名单读到了：手动轮流的按钮跟上
   } catch (e) { /* 登记表读不到时保持默认名字 */ }
 }
 
@@ -2179,6 +2180,7 @@ function updateHeaderActions() {
   if (aiChatBtn) aiChatBtn.style.display = isGroup ? '' : 'none';
   if (replyAionBtn) replyAionBtn.style.display = manualMode ? '' : 'none';
   if (replyConnorBtn) replyConnorBtn.style.display = manualMode ? '' : 'none';
+  crRenderSeatReplyButtons(manualMode);
 }
 
 // ══════════════════════════════════════════════════
@@ -2723,7 +2725,7 @@ function renderMessages(msgs) {
 
 function crMsgMenuHtml(sender, msgId, opts = {}) {
   if (!msgId) return '';
-  const editHtml = sender === 'aion' || sender === 'connor'
+  const editHtml = sender === 'aion' || sender === 'connor' || crIsSeat(sender)  // 狗蛋等座位的回复也能改
     ? `<button onclick="editChatroomAiMsg('${msgId}');closeMsgMenus()">编辑</button>` : '';
   const actionHtml = opts.deleteOnly || sender === 'system'
     ? ''
@@ -2857,6 +2859,12 @@ function crMessageContentItemsWithInlinePats(raw, isUser, notices) {
 let crProactiveCompanionshipStatus = { aion: false, connor: false };
 
 function crRenderProactiveOrbit() {
+  if (currentRoom?.type === 'seat_1v1') {
+    // 座位私聊：TA 的主动陪伴开着时，借用第二道光环显示（和 Lucien 私聊里一样）
+    const active = !!crProactiveCompanionshipStatus[currentRoom.actor];
+    window.ProactiveOrbit?.applyStatus({ connor: active }, ['connor']);
+    return;
+  }
   const visibleActors = currentRoom?.type === 'group'
     ? ['aion', 'connor']
     : (currentRoom?.type === 'connor_1v1' ? ['connor'] : []);
@@ -3284,8 +3292,7 @@ const _crControl = new ChatGenerationControl({
     removeAiChatStatus();
     crDismissSongGenIndicator();
     if (aiChatBtn) { aiChatBtn.disabled = false; aiChatBtn.textContent = '💬 让他们聊'; }
-    if (replyAionBtn) replyAionBtn.disabled = false;
-    if (replyConnorBtn) replyConnorBtn.disabled = false;
+    crReplyButtons().forEach(btn => { btn.disabled = false; });
     updateHeaderActions();
     crShowGenerationStop();
   },
@@ -4092,18 +4099,39 @@ async function triggerAiChat() {
   }
 }
 
+// 手动轮流：已经入住的座位（狗蛋等）也有自己的「X 说」按钮
+function crRenderSeatReplyButtons(show) {
+  const holder = document.getElementById('replySeatBtns');
+  if (!holder) return;
+  holder.style.display = show ? '' : 'none';
+  if (!show) return;
+  holder.replaceChildren(...SEAT_IDS.filter(id => crSeats[id]?.enabled).map(id => {
+    const btn = document.createElement('button');
+    btn.className = 'reply-once-btn seat';
+    btn.dataset.speaker = id;
+    btn.textContent = `${crName(id)} 说`;
+    btn.disabled = isReplyOnce || isAiChatting;
+    btn.addEventListener('click', () => triggerReplyOnce(id));
+    return btn;
+  }));
+}
+
+function crReplyButtons() {
+  return [replyAionBtn, replyConnorBtn, ...document.querySelectorAll('#replySeatBtns .reply-once-btn')].filter(Boolean);
+}
+
 async function triggerReplyOnce(speaker) {
   if (!crRequireModels()) return;
   if (!currentRoom || currentRoom.type !== 'group' || isSending || isAiChatting || isReplyOnce) return;
-  if (!['aion', 'connor'].includes(speaker)) return;
+  if (!['aion', 'connor'].includes(speaker) && !crSeats[speaker]?.enabled) return;
 
   const generation = _crControl.begin(currentRoom.id);
   isReplyOnce = true;
   isAiChatting = true;
-  if (replyAionBtn) replyAionBtn.disabled = true;
-  if (replyConnorBtn) replyConnorBtn.disabled = true;
+  crReplyButtons().forEach(btn => { btn.disabled = true; });
   if (aiChatBtn) aiChatBtn.disabled = true;
-  const activeBtn = speaker === 'aion' ? replyAionBtn : replyConnorBtn;
+  const activeBtn = speaker === 'aion' ? replyAionBtn : speaker === 'connor' ? replyConnorBtn
+    : document.querySelector(`#replySeatBtns [data-speaker="${speaker}"]`);
   const oldText = activeBtn ? activeBtn.textContent : '';
   if (activeBtn) activeBtn.textContent = `${crName(speaker)} 回复中...`;
 
@@ -4129,8 +4157,7 @@ async function triggerReplyOnce(speaker) {
     if (_crControl.isCurrent(generation)) {
       isReplyOnce = false;
       isAiChatting = false;
-      if (replyAionBtn) replyAionBtn.disabled = false;
-      if (replyConnorBtn) replyConnorBtn.disabled = false;
+      crReplyButtons().forEach(btn => { btn.disabled = false; });
       if (aiChatBtn) aiChatBtn.disabled = false;
       if (activeBtn) activeBtn.textContent = oldText;
       endStreamingBubble();

@@ -188,10 +188,29 @@ async def api_draw_specific_wish(wish_id: str):
     return {"ok": True, "wish": wish}
 
 
+async def _seat_private_window(actor: str) -> str:
+    """座位的私聊窗口：她最后说话的那个；还没说过话就用最近的 / 新建。"""
+    from database import get_db
+    from routes.chatroom import _get_or_create_seat_room
+    async with get_db() as db:
+        row = await (await db.execute(
+            "SELECT r.id FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE r.type = 'seat_1v1' AND r.actor = ? AND m.sender = 'user' ORDER BY m.created_at DESC LIMIT 1",
+            (actor,))).fetchone()
+    return row[0] if row else await _get_or_create_seat_room(actor)
+
+
 @router.post("/{wish_id}/announce")
 async def api_announce_wish(wish_id: str, body: WishAnnounce):
     target = (body.target or "").strip().lower()
-    if target not in {"aion", "connor", "group"}:
+    import seat_chat
+    seat_target = target in seat_chat.SEAT_ACTORS
+    if seat_target:  # 告诉狗蛋等座位：座位得已经入住
+        try:
+            seat_chat.check_ready(target)
+        except seat_chat.SeatNotReady as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    elif target not in {"aion", "connor", "group"}:
         raise HTTPException(status_code=400, detail="invalid target")
     wish = await get_wish(wish_id)
     if not wish:
@@ -220,9 +239,14 @@ async def api_announce_wish(wish_id: str, body: WishAnnounce):
         await _mark_wish_mentioned(wish["id"])
         return {"ok": True, "target": target, "message": message, "conv_id": conv_id, "url": "/chat"}
 
-    from routes.chatroom import _get_or_create_connor_private_room, _save_msg
+    from routes.chatroom import _get_or_create_connor_private_room, _get_or_create_seat_room, _save_msg
 
-    room_id = await _get_or_create_connor_private_room() if target == "connor" else await _get_or_create_group_room()
+    if seat_target:
+        room_id = await _seat_private_window(target)
+    elif target == "connor":
+        room_id = await _get_or_create_connor_private_room()
+    else:
+        room_id = await _get_or_create_group_room()
     message = await _save_msg(room_id, "user", message_text, msg_id=f"cm_{time.time_ns()}_wish", attachments=[attachment], auto_tts=False)
     await _mark_wish_mentioned(wish["id"])
     return {"ok": True, "target": target, "message": message, "room_id": room_id, "url": f"/chatroom?room={room_id}"}

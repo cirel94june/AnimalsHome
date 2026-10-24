@@ -241,6 +241,8 @@ body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-se
 .chat-header .header-actions .reply-once-btn.aion { background: #e3f4e8; color: #2f7a46; }
 .chat-header .header-actions .reply-once-btn.aion:hover { background: #d2ebda; }
 .chat-header .header-actions .reply-once-btn.connor { background: #f5e8f0; color: #9a4272; }
+.chat-header .header-actions .reply-seat-btns { display: contents; }
+.chat-header .header-actions .reply-once-btn.seat { background: #e8eef9; color: #3d5f96; }
 .chat-header .header-actions .reply-once-btn.connor:hover { background: #ecd6e3; }
 
 .chat-search-panel {

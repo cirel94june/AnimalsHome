@@ -17,7 +17,8 @@ from config import ALBUM_DIR
 
 MAX_IMAGE_BYTES = 40 * 1024 * 1024
 IMAGE_EXTENSIONS = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp", "GIF": "gif"}
-ALBUM_IDS = ("family", "aion", "connor")
+ACTOR_IDS = ("aion", "connor", "ai3", "ai4", "ai5", "ai6")  # 每位 AI 一本相册（座位 4～6 先占位）
+ALBUM_IDS = ("family", *ACTOR_IDS)
 
 
 class AlbumStore:
@@ -48,6 +49,9 @@ class AlbumStore:
                 db.execute("""UPDATE photos SET album_id = CASE
                     WHEN source='upload' THEN 'family'
                     WHEN actor='connor' THEN 'connor' ELSE 'aion' END""")
+            # 以前座位（狗蛋等）生成的照片被归进了小克的相册：挪回 TA 自己的相册（只挪确实是座位生成的）
+            db.execute("""UPDATE photos SET album_id=actor
+                WHERE source='generated' AND album_id='aion' AND actor IN ('ai3','ai4','ai5','ai6')""")
             db.execute("CREATE INDEX IF NOT EXISTS photos_album ON photos(album_id, removed_at)")
             db.execute("""CREATE TABLE IF NOT EXISTS photo_views (
                 actor TEXT NOT NULL, photo_id TEXT NOT NULL, viewed_at REAL NOT NULL,
@@ -85,7 +89,7 @@ class AlbumStore:
         if source not in ("generated", "upload"):
             raise ValueError("未知照片来源")
         taken_on = self._date(taken_on)
-        album_id = album_id or ("family" if source == "upload" else "connor" if actor == "connor" else "aion")
+        album_id = album_id or ("family" if source == "upload" else actor if actor in ACTOR_IDS else "aion")
         if album_id not in ALBUM_IDS:
             raise ValueError("未知相册分类")
         if not data or len(data) > MAX_IMAGE_BYTES:
@@ -188,7 +192,7 @@ class AlbumStore:
             return result.rowcount > 0
 
     def random_unseen_photos(self, actor: str, limit: int = 2) -> list[dict]:
-        if actor not in ("aion", "connor"):
+        if actor not in ACTOR_IDS:
             raise ValueError("未知浏览角色")
         selected = []
         with self._connect() as db:
@@ -214,7 +218,7 @@ class AlbumStore:
         return [dict(row) for row in rows]
 
     def mark_viewed(self, actor: str, photo_ids: list[str]) -> None:
-        if actor not in ("aion", "connor"):
+        if actor not in ACTOR_IDS:
             raise ValueError("未知浏览角色")
         with self._connect() as db:
             db.executemany("""INSERT OR IGNORE INTO photo_views(actor, photo_id, viewed_at)

@@ -512,7 +512,7 @@ function connectWS() {
       const msg = JSON.parse(e.data);
       const isPrivateAIMessage = msg.type === 'msg_created' && msg.data?.role === 'assistant';
       const isChatroomAIMessage = msg.type === 'chatroom_msg_created'
-        && (msg.data?.sender === 'aion' || msg.data?.sender === 'connor');
+        && /^(aion|connor|ai[3-6])$/.test(msg.data?.sender || '');  // 狗蛋等座位说话也冒泡
       if (isPrivateAIMessage || isChatroomAIMessage) {
         showBubble(msg.data.content);
       }

@@ -105,7 +105,9 @@ async function loadWakeTargetNames() {
     const status = await api("GET", "/api/cam/status");
     wakeTargetNames = {
       aion: (status.ai_name || "").trim() || "主 AI",
-      connor: (status.connor_name || "").trim() || "第二 AI"
+      connor: (status.connor_name || "").trim() || "第二 AI",
+      // 狗蛋等座位被叫醒时写名字，不写编号
+      ...Object.fromEntries((status.wake_seats || []).map(seat => [seat.id, seat.name || seat.id]))
     };
   } catch (e) {}
 }

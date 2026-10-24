@@ -933,3 +933,53 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
     - 聊天室追加读取：座位、Lucien 跨窗口，不串到别的座位，群只读本群；
     - 小克私聊追加读取跨窗口；静态检查确认「当前窗口最近 6 条」的旧查询已全部去掉。
   - 相关约 790 项测试中，失败的都与此前的既有失败一致。
+
+## 75. 排查「只认小克和 Lucien」的地方：AI 认人、相册、许愿、点名说话、人设编辑等（docs/排查-其他AI漏掉的地方.md）
+
+小猫发现记忆库看不到其他 AI，要求全面排查，并且给座位 4～6 在页面上留好位置（空着、灰色）。
+
+**AI 认人（影响模型输入）**
+- A1 `context_builder.render_merged_timeline`：座位说的话用 `_seat_display_name`（actors.display_name），不再写成编号「ai3」。
+- A2 / A3 `routes/chatroom.py`：新增 `_is_ai_sender`，座位也算 AI。替换了群聊 `recent_for_digest` 和三处记忆来源原文里的 `"assistant" if sender in ("aion","connor") else "user"`；name_map 补上座位名字（`_seat_name_map`）。
+
+**后台**
+- 相册 `album.py`：
+  - `ACTOR_IDS` = 六个位置，`ALBUM_IDS` = family + 六个。
+  - 生成照片默认进这位 AI 自己的相册（原来非 connor 的一律进 aion）。
+  - 启动迁移：`source='generated' AND album_id='aion' AND actor IN (ai3..ai6)` 的照片挪回 actor 自己的相册。
+  - 浏览 / 已看记录也接受座位。
+  - `routes/album.py`：分类按 `actors.list_actors()` 生成，没入住的座位带 `placeholder: true`；三处 album_id 正则加上 ai3–ai6；actor_name / viewed_by 用登记表名字。
+- 许愿池 `routes/wishes.py`：announce 的 target 可以是座位（先过 `seat_chat.check_ready`，没入住或没准备好返回 400），发到这位座位她最后说话的私聊窗口（`_seat_private_window`，没有就最近的 / 新建）。
+- 群聊手动轮流 `reply_once`：speaker 可以是座位（先 check_ready），走 `_generate_seat_reply(group=True)`。编辑 AI 回复 `update_message` 用 `_is_ai_sender`。
+- 人设编辑 `actors.py`：
+  - 新增 `GET / PUT /api/actors/{id}/persona`，只处理 connor 和 ai3–ai6，aion 返回 404（仍在世界书改）。
+  - PUT 用已有的 `_clean_sections` 校验（必须有 identity_core、分区必须认识、内容为字符串、不能全空），写错不会清空已有人设。
+  - connor 同时写 `connor_persona_sections` 和编译后的 `connor_persona`；座位写 `persona_sections`。
+
+**前端**
+- 新增 `static/seats.js`（`AionSeats.load()`）：六个位置，还没入住的标 placeholder。
+- 淘宝：伙伴卡片改成一行可横向滑动的小卡片（头像、名字、状态，空位灰着），原来左右两张叠在逛街面板上的 absolute 布局作废；去掉原作者的 app 图标。
+- 日记：座位空位标签灰着、不能点，标签行可横向滑动。
+- 许愿池：「去实现」按入住的人动态生成。作者选择那段代码页面上没有对应的框（死代码），一并改成 DOM 构建。
+- 相册：空位标签灰着；上传、移动的下拉只列入住的。
+- 礼物页、主页礼物弹窗：送礼人按名字显示。
+- 监控日志：叫醒对象写座位名字。
+- 聊天室：
+  - 座位私聊借第二道光环显示 TA 的主动陪伴；
+  - 手动轮流出现「狗蛋 说」等按钮（只列入住的）；
+  - 座位回复菜单里有「编辑」。
+- 壁纸：座位说话也冒泡。
+- 家庭动态：座位先找 `<座位>-door.webp`，没有就借 Lucien 的门。
+- 世界书「AI 人设」：顶部一排人（小克 / Lucien / 狗蛋 / 空位）。选小克是原来的编辑区；选其他人用同一套分区，单独「保存 X 的人设」。底部「保存」在看别人时也会先存 TA 的。
+
+**测试**
+- 新 `test_seat_pages.py` 6 项：
+  - 座位名字进时间线；座位算 AI；
+  - 相册每人一本、旧照片迁回、空位标记；
+  - 人设接口：读、写、四种坏输入拒绝、aion 拒绝、Lucien 写入编译文本；
+  - 手动轮流、编辑接受座位；
+  - 许愿通知座位：未入住和未知目标返回 400。
+- 本机实测（手机宽度）：淘宝卡片不再重叠，页面无横向溢出；日记、世界书人员切换和读取人设正常。
+- 约 870 项相关测试中，失败的都是既有失败（新增出现的 taobao_native_mcp ×4 早就在既有失败名单里，需要本机淘宝工具）。
+
+**还没做**：记忆库（座位的记忆在 Hub，等 Hub 窗口回复）、维修室、声音设置。

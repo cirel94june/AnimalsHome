@@ -7,12 +7,11 @@
   <title>淘宝心愿角 · 逛淘宝</title>
   <link rel="icon" href="/public/funIcon_0034_逛淘宝.png" type="image/png">
   <link id="aion-theme-css" rel="stylesheet" href="/static/theme.css">
-  <link rel="stylesheet" href="/static/taobao.css?v=20260905-warm-roam-select">
+  <link rel="stylesheet" href="/static/taobao.css?v=20261024-companion-row">
 </head>
 <body>
   <header class="topbar">
     <a id="backLink" class="back" href="/" aria-label="返回首页">‹</a>
-    <img class="app-image" src="/public/funIcon_0034_逛淘宝.png" alt="">
     <div><h1>淘宝心愿角</h1></div>
     <button id="settingsButton" type="button">连接设置</button>
   </header>
@@ -21,7 +20,7 @@
     <div id="notice" class="notice" role="status" aria-live="polite">正在打开我们的心愿角…</div>
     <section id="feedView">
       <article class="outing-panel">
-        <section class="companions" aria-label="两位 AI 的逛街状态"><div id="companionCards"></div></section>
+        <section class="companions" aria-label="大家的逛街状态"><div id="companionCards"></div></section>
         <div class="section-heading"><h2>最近逛街</h2><span class="small-label">只收藏，还没买</span></div>
         <div id="latestTrip"></div>
         <div class="section-heading recent-heading"><h3>最近带回的喜欢</h3><span class="muted">点开看小感想</span></div>
@@ -88,8 +87,9 @@
       <div class="dialog-actions"><button type="button" id="cancelSave">取消</button><button id="confirmSave" class="primary" type="submit">保存收藏</button></div>
     </form>
   </dialog>
+  <script src="/static/seats.js"></script>
   <script src="/static/theme.js"></script>
   <script src="/static/taobao-card.js?v=20260831-compact"></script>
-  <script src="/static/taobao.js?v=20260903-independent-delete-actions"></script>
+  <script src="/static/taobao.js?v=20261024-companion-row"></script>
 </body>
 </html>

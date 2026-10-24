@@ -356,6 +356,8 @@ html.aion-app.aion-iframe .wish-chrome {
 .wish-implement-sheet.show {
   display: grid;
 }
+.wish-implement-people { display: contents; }
+.wish-author-choice.placeholder { opacity: .4; border-style: dashed; cursor: default; }
 .wish-implement-option {
   min-height: 30px;
   border: 1px solid rgba(197, 224, 255, 0.20);
@@ -607,7 +609,7 @@ html.aion-app.aion-iframe .wish-chrome {
 }
 .wish-author-choices {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
 }
 .wish-author-choice {
@@ -758,8 +760,7 @@ html.aion-app.aion-iframe .wish-chrome {
     <div class="wish-scene-content" id="wishResultBody"></div>
     <button class="wish-scene-primary" type="button" id="wishResultImplementBtn" onclick="toggleImplementChoices()">去实现</button>
     <div class="wish-implement-sheet" id="wishImplementSheet">
-      <button class="wish-implement-option" type="button" data-target="aion" onclick="announceCurrentWish('aion')">告诉AI</button>
-      <button class="wish-implement-option" type="button" data-target="connor" onclick="announceCurrentWish('connor')">告诉第二位AI</button>
+      <span id="wishImplementPeople" class="wish-implement-people"></span>
       <button class="wish-implement-option" type="button" data-target="group" onclick="announceCurrentWish('group')">告诉群里</button>
     </div>
     <div class="wish-scene-foot-actions">
@@ -803,6 +804,7 @@ html.aion-app.aion-iframe .wish-chrome {
 </div>
 
 <script src="/static/common.js"></script>
+<script src="/static/seats.js"></script>
 <script>
 const WISH_CONTENT_MAX = 100;
 const WISH_LONG_PRESS_MS = 650;
@@ -832,16 +834,22 @@ function actorName(author) {
   return state.actors[author] || ({ user: '用户', aion: 'AI', connor: '第二位AI' }[author] || author);
 }
 
+let wishSeats = null;  // 家里六个位置（含还没入住的空位），来自 /static/seats.js
+
 function updateImplementLabels() {
-  const labels = {
-    aion: `告诉${actorName('aion')}`,
-    connor: `告诉${actorName('connor')}`,
-    group: '告诉群里',
-  };
-  document.querySelectorAll('.wish-implement-option').forEach(btn => {
-    const target = btn.dataset.target;
-    btn.textContent = labels[target] || btn.textContent;
-  });
+  // 「去实现」：告诉家里任何一位已经入住的 AI，或者告诉群里
+  const holder = document.getElementById('wishImplementPeople');
+  if (!holder) return;
+  const people = (wishSeats || [{ id: 'aion', open: true }, { id: 'connor', open: true }]).filter(seat => seat.open);
+  holder.replaceChildren(...people.map(seat => {
+    const btn = document.createElement('button');
+    btn.className = 'wish-implement-option';
+    btn.type = 'button';
+    btn.dataset.target = seat.id;
+    btn.textContent = `告诉${actorName(seat.id)}`;
+    btn.addEventListener('click', () => announceCurrentWish(seat.id));
+    return btn;
+  }));
 }
 
 function statusLabel(status) {
@@ -868,6 +876,7 @@ function overlayClose(event, id) {
 }
 
 async function loadActors() {
+  try { wishSeats = await window.AionSeats.load(); } catch (e) {}
   try {
     const data = await api('GET', '/api/wishes/actors');
     if (data.actors) state.actors = data.actors;
@@ -892,13 +901,18 @@ async function loadWishes() {
 function renderAuthorChoices() {
   const box = document.getElementById('wishAuthorChoices');
   if (!box) return;
-  const authors = ['user', 'aion', 'connor'];
-  box.innerHTML = authors.map(author => `
-    <button class="wish-author-choice ${state.selectedAuthor === author ? 'active' : ''}"
-      type="button" onclick="selectAuthor('${author}')" title="${escHtml(actorName(author))}">
-      ${escHtml(actorName(author))}
-    </button>
-  `).join('');
+  // 你自己 + 家里六个位置；还没入住的座位留个灰色空位
+  const seats = wishSeats || [{ id: 'aion', open: true }, { id: 'connor', open: true }];
+  box.replaceChildren(...[{ id: 'user', open: true }, ...seats].map(seat => {
+    const btn = document.createElement('button');
+    btn.className = 'wish-author-choice' + (state.selectedAuthor === seat.id ? ' active' : '') + (seat.open ? '' : ' placeholder');
+    btn.type = 'button';
+    btn.textContent = seat.open ? actorName(seat.id) : seat.name;
+    btn.title = seat.open ? btn.textContent : '这个位置还空着';
+    if (seat.open) btn.addEventListener('click', () => selectAuthor(seat.id));
+    else btn.disabled = true;
+    return btn;
+  }));
 }
 
 function selectAuthor(author) {

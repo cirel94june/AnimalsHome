@@ -98,6 +98,17 @@ def append_message_meta(content: str, created_at, label: str = "") -> str:
     return text
 
 
+def _seat_display_name(sender: str) -> str:
+    """座位 3～6 在聊天记录里用名字（狗蛋写「Jasper」，不写「ai3」）；不是座位就原样返回。"""
+    try:
+        import actors
+        if sender in actors.SEAT_IDS:
+            return actors.display_name(sender)
+    except Exception:
+        pass
+    return sender
+
+
 def _timeline_display_names() -> tuple[str, str, str]:
     wb = load_worldbook()
     user_name = wb.get("user_name") or "用户"
@@ -993,7 +1004,7 @@ def render_merged_timeline(
         elif sender == "connor":
             speaker = connor_name
         else:
-            speaker = sender or "未知说话人"
+            speaker = _seat_display_name(sender) or "未知说话人"
         label = "当前用户消息" if idx == last_user_idx and sender == "user" else "历史消息"
         content = f"{label} - {speaker}：{content}"
         role = "user"

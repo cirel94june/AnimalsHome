@@ -13,6 +13,11 @@
 .diary-tabs { display:flex; gap:6px; padding:0 0 10px; }
 .diary-tab { flex:1; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); color:var(--text2); font-size:13px; cursor:pointer; }
 .diary-tab.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+.diary-tabs { overflow-x:auto; scrollbar-width:none; }
+.diary-tabs::-webkit-scrollbar { display:none; }
+#seatTabs { display:contents; }
+.diary-tab { flex:1 0 auto; white-space:nowrap; }
+.diary-tab.placeholder { opacity:.45; border-style:dashed; cursor:default; }
 #seatTabs { display:contents; } /* 座位的标签和其他标签一样平分一行 */
 .diary-list { flex:1; overflow-y:auto; max-height:calc(100dvh - 132px); padding:2px 0; scrollbar-width:none; }
 .diary-list::-webkit-scrollbar { display:none; }
@@ -364,7 +369,13 @@ async function initNames() {
       btn.className = 'diary-tab';
       btn.dataset.author = a.id;
       btn.textContent = nameMap[a.id];
-      btn.addEventListener('click', () => switchAuthor(a.id));
+      if (!a.enabled) {  // 还没入住的座位：留个灰色空位，不能点
+        btn.classList.add('placeholder');
+        btn.disabled = true;
+        btn.title = '这个位置还空着';
+      } else {
+        btn.addEventListener('click', () => switchAuthor(a.id));
+      }
       holder.appendChild(btn);
     });
   } catch(e) {}

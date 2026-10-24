@@ -250,7 +250,12 @@ body { background: #1a1412; color: #e8ddd4; overflow: hidden; }
 
 <script src="/static/theme.js?v=theme-20260606"></script>
 <script src="/static/common.js"></script>
+<script src="/static/seats.js"></script>
 <script>
+// 送礼人写名字（小克、Lucien、狗蛋……都认），名字读到后重画一次
+let giftSenderNames = { aion: 'Aion', connor: 'Connor' };
+function giftSenderName(sender) { return giftSenderNames[sender] || sender; }
+window.AionSeats?.names().then(names => { giftSenderNames = { ...giftSenderNames, ...names }; if (typeof _allGifts !== 'undefined' && _allGifts.length) renderGrid(); }).catch(() => {});
 let _deleteId = null;
 let _allGifts = [];
 const GIFT_LIST_SNAPSHOT_KEY = 'gift_list_snapshot_v1';
@@ -315,7 +320,7 @@ function renderGrid() {
     return `
       <div class="gift-thumb" id="thumb_${g.id}" onclick="openDetail(${i})">
         <img class="gift-thumb-img" src="/api/gift/thumbnail/${encodeURIComponent(g.id)}" alt="礼物" loading="lazy" />
-        <div class="gift-thumb-date">${dateStr}${g.sender ? ' · from ' + escHtml(g.sender === 'connor' ? 'Connor' : 'Aion') : ''}</div>
+        <div class="gift-thumb-date">${dateStr}${g.sender ? ' · from ' + escHtml(giftSenderName(g.sender)) : ''}</div>
       </div>`;
   }).join('');
 }
@@ -329,7 +334,7 @@ function openDetail(idx) {
   box.innerHTML = `
     <img class="gift-detail-img" src="/uploads/${escHtml(g.image_path)}" alt="礼物" />
     <div class="gift-detail-body">
-      <div class="gift-detail-date">${dateStr}${g.sender ? ' · from ' + escHtml(g.sender === 'connor' ? 'Connor' : 'Aion') : ''}</div>
+      <div class="gift-detail-date">${dateStr}${g.sender ? ' · from ' + escHtml(giftSenderName(g.sender)) : ''}</div>
       <div class="gift-detail-msg">${escHtml(g.message)}</div>
       <div class="gift-detail-actions">
         <button class="btn-detail-close" onclick="closeDetail()">关闭</button>

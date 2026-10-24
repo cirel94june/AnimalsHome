@@ -7,6 +7,8 @@
   let subPageVisible = window.parent === window || window.frameElement?.dataset?.aionSubPageVisible === '1';
   let currentAlarmKey = null;
   let names = {};
+  let seatNames = {};  // 狗蛋等座位送的礼物写 TA 的名字
+  fetch('/api/actors').then(res => res.json()).then(data => { for (const a of data.actors || []) seatNames[a.id] = a.name; }).catch(() => {});
   let namesReady = false;
   let pendingRequest = null;
 
@@ -154,7 +156,7 @@
             <img class="gift-image" src="/uploads/${gift.image_path}" alt="礼物" />
           </div>
           <div class="gift-message-wrap" id="giftMessageWrap" style="display:none">
-            <p class="gift-message-from" style="text-align:center;opacity:0.7;font-size:0.85em;margin-bottom:4px">—— from ${escHtml(gift.sender === 'connor' ? (names.connor_name || '第二AI') : (names.ai_name || 'AI'))} ——</p>
+            <p class="gift-message-from" style="text-align:center;opacity:0.7;font-size:0.85em;margin-bottom:4px">—— from ${escHtml(gift.sender === 'connor' ? (names.connor_name || '第二AI') : gift.sender === 'aion' || !gift.sender ? (names.ai_name || 'AI') : (seatNames[gift.sender] || gift.sender))} ——</p>
             <p class="gift-message-text">${escHtml(gift.message)}</p>
           </div>
           <button class="gift-receive-btn" id="giftReceiveBtn" style="display:none" onclick="_receiveGift('${gift.id}')">💝 收下礼物</button>

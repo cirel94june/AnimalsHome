@@ -30,6 +30,15 @@ body { background: var(--bg); }
   font-size:13px; line-height:1.1; cursor:pointer; white-space:nowrap;
 }
 .wb-tab.active { background:var(--accent); color:#fff; }
+/* 「AI 人设」里先选是谁的：小克、Lucien、座位（还没入住的灰着） */
+.wb-people { display:flex; gap:6px; overflow-x:auto; padding:0 0 12px; scrollbar-width:none; }
+.wb-people::-webkit-scrollbar { display:none; }
+.wb-person { flex:none; padding:6px 12px; border:1px solid var(--border); border-radius:999px; background:var(--surface2); color:var(--text2); font-size:13px; cursor:pointer; white-space:nowrap; }
+.wb-person.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+.wb-person.placeholder { opacity:.45; border-style:dashed; cursor:default; }
+.wb-other-hint { margin:0 0 10px; font-size:12px; color:var(--text2); }
+.wb-other-actions { display:flex; align-items:center; gap:10px; margin-top:12px; }
+.wb-other-status { font-size:12px; color:var(--text2); }
 .wb-panel { display:none; }
 .wb-panel.active { display:block; }
 .wb-section-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
@@ -207,6 +216,8 @@ body[data-theme="dark"] .wb-fixed-head { background:rgba(5, 9, 35, .96); }
 
   <div class="page-content wb-shell">
     <section class="wb-panel active" id="panelAi">
+      <div class="wb-people" id="wbPeople" role="group" aria-label="谁的人设"></div>
+      <div id="aionPersona">
       <div class="wb-evolution-panel">
         <div class="wb-evolution-head">
           <div>
@@ -228,6 +239,15 @@ body[data-theme="dark"] .wb-fixed-head { background:rgba(5, 9, 35, .96); }
         </div>
       </div>
       <div class="wb-section-grid" id="aiSections"></div>
+      </div>
+      <div id="otherPersona" hidden>
+        <p class="wb-other-hint" id="otherPersonaHint"></p>
+        <div class="wb-section-grid" id="otherSections"></div>
+        <div class="wb-other-actions">
+          <button class="wb-small-btn" type="button" id="otherPersonaSave">保存</button>
+          <span class="wb-other-status" id="otherPersonaStatus" role="status"></span>
+        </div>
+      </div>
     </section>
 
     <section class="wb-panel" id="panelUser">
@@ -280,6 +300,7 @@ body[data-theme="dark"] .wb-fixed-head { background:rgba(5, 9, 35, .96); }
 
 <script src="/static/theme.js?v=theme-20260606"></script>
 <script src="/static/common.js"></script>
+<script src="/static/seats.js"></script>
 <script>
 connectCommonWS();
 
@@ -394,6 +415,61 @@ function renderSections(prefix, containerId, sections) {
       schedulePreviewSync();
     });
   });
+}
+
+// ── 「AI 人设」：小克的在下面原来的编辑区；Lucien、座位 3～6 用同一套分区，单独保存 ──
+let wbPerson = "aion";
+let wbSeats = [];
+
+async function renderPeople() {
+  try { wbSeats = await window.AionSeats.load(); } catch (e) { wbSeats = [{ id: "aion", name: currentAiName(), open: true }]; }
+  const box = $("wbPeople");
+  box.replaceChildren(...wbSeats.map(seat => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "wb-person" + (seat.id === wbPerson ? " active" : "") + (seat.open ? "" : " placeholder");
+    btn.textContent = seat.id === "aion" ? currentAiName() : seat.name;
+    btn.setAttribute("aria-pressed", String(seat.id === wbPerson));
+    if (seat.open) btn.addEventListener("click", () => selectPerson(seat.id));
+    else { btn.disabled = true; btn.title = "这个位置还空着"; }
+    return btn;
+  }));
+}
+
+async function selectPerson(id) {
+  wbPerson = id;
+  renderPeople();
+  const isAion = id === "aion";
+  $("aionPersona").hidden = !isAion;
+  $("otherPersona").hidden = isAion;
+  if (isAion) return;
+  const seat = wbSeats.find(s => s.id === id) || { name: id };
+  $("otherPersonaHint").textContent = `${seat.name} 的人设（保存后下一句话就生效）`;
+  $("otherPersonaSave").textContent = `保存 ${seat.name} 的人设`;
+  $("otherPersonaStatus").textContent = "正在读取…";
+  renderSections("other", "otherSections", AI_SECTIONS);
+  try {
+    const data = await api("GET", `/api/actors/${encodeURIComponent(id)}/persona`);
+    if (wbPerson !== id) return;
+    const sections = data.sections && Object.keys(data.sections).length
+      ? data.sections : migrateAiSections(data.legacy || "");
+    AI_SECTIONS.forEach(section => { $(fieldId("other", section.key)).value = sections[section.key] || ""; });
+    $("otherPersonaStatus").textContent = "";
+  } catch (e) {
+    $("otherPersonaStatus").textContent = "读取失败：" + (e.message || e);
+  }
+}
+
+async function saveOtherPersona() {
+  const id = wbPerson;
+  if (id === "aion") return;
+  $("otherPersonaStatus").textContent = "正在保存…";
+  try {
+    await api("PUT", `/api/actors/${encodeURIComponent(id)}/persona`, { sections: collectSections("other", AI_SECTIONS) });
+    if (wbPerson === id) $("otherPersonaStatus").textContent = "已保存";
+  } catch (e) {
+    if (wbPerson === id) $("otherPersonaStatus").textContent = "保存失败：" + (e.message || e);
+  }
 }
 
 function setPanel(panel) {
@@ -1000,8 +1076,10 @@ async function init() {
   $("wbAiName").addEventListener("input", schedulePreviewSync);
   $("wbUserName").addEventListener("input", schedulePreviewSync);
 
+  $("otherPersonaSave").addEventListener("click", saveOtherPersona);
   const wb = await api("GET", "/api/worldbook");
   $("wbAiName").value = wb.ai_name || "";
+  renderPeople();
   $("wbUserName").value = wb.user_name || "";
   $("wbSystemPromptEnabled").checked = wb.system_prompt_enabled !== false;
   $("wbPersonaEvolutionEnabled").checked = !!wb.persona_evolution_enabled;
@@ -1018,6 +1096,7 @@ async function init() {
 }
 
 async function saveWorldBook() {
+    if (wbPerson !== "aion") await saveOtherPersona();  // 正在看 Lucien / 座位的人设：底部「保存」也把 TA 的存上
     const saveBtn = $("saveBtn");
     saveBtn.disabled = true;
     try {

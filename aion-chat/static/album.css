@@ -35,6 +35,7 @@ dialog::backdrop { background:rgba(8,12,26,.76); }
 .photo-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .album-tabs { display:flex; gap:6px; overflow-x:auto; padding:0 0 12px; margin-bottom:12px; }
 .album-tabs button { flex-shrink:0; }
+.album-tabs button.placeholder { opacity:.45; border-style:dashed; cursor:default; }
 .album-tabs button.active { color:var(--accent); border-color:var(--accent); background:var(--surface2); }
 .album-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; }
 .filters { display:flex; gap:4px; flex-wrap:wrap; }

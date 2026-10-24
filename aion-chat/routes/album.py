@@ -11,28 +11,36 @@ from album import MAX_IMAGE_BYTES, get_album_store
 router = APIRouter(prefix="/api/album", tags=["album"])
 
 
+def _actor_names() -> dict[str, str]:
+    import actors
+    return {a["id"]: a["name"] for a in actors.list_actors()}
+
+
 def display_photo(photo):
     from chatroom import get_chatroom_names
-    user_name, ai_name, companion_name = get_chatroom_names()
-    names = {"user": user_name, "aion": ai_name, "connor": companion_name}
+    user_name, _, _ = get_chatroom_names()
+    names = {"user": user_name, **_actor_names()}
     photo["actor_name"] = names.get(photo["actor"], "AI") if photo["source"] == "generated" else user_name
     photo["prompt_display"] = photo["prompt"] or "（无）"
     return photo
 
 
 def album_categories():
-    from chatroom import get_chatroom_names
-    _, ai_name, companion_name = get_chatroom_names()
-    return [{"id": "family", "name": "家庭相册"},
-            {"id": "aion", "name": f"{ai_name}相册"},
-            {"id": "connor", "name": f"{companion_name}相册"}]
+    """家庭相册 + 每位 AI 一本；还没入住的座位留个空位（placeholder，页面上灰着、不能选）。"""
+    import actors
+    albums = [{"id": "family", "name": "家庭相册"}]
+    for actor in actors.list_actors():
+        open_seat = actor.get("builtin") or actor.get("enabled")
+        albums.append({"id": actor["id"], "name": f"{actor['name']}相册" if open_seat else actor["name"],
+                       "placeholder": not open_seat})
+    return albums
 
 
 @router.get("/photos")
 async def list_photos(offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=100),
                       source: str = Query("", pattern="^(generated|upload)?$"),
                       favorite: bool = False, query: str = Query("", max_length=200),
-                      album_id: str = Query("", pattern="^(family|aion|connor)?$")):
+                      album_id: str = Query("", pattern="^(family|aion|connor|ai3|ai4|ai5|ai6)?$")):
     result = await asyncio.to_thread(get_album_store().list_photos, offset=offset, limit=limit,
                                     source=source, favorite=favorite, query=query, album_id=album_id)
     result["photos"] = [display_photo(photo) for photo in result["photos"]]
@@ -60,9 +68,7 @@ async def get_photo(photo_id: str):
     photo = await asyncio.to_thread(store.get_photo, photo_id)
     if not photo:
         raise HTTPException(404, "照片已移出相册或不存在")
-    from chatroom import get_chatroom_names
-    _, ai_name, companion_name = get_chatroom_names()
-    names = {"aion": ai_name, "connor": companion_name}
+    names = _actor_names()
     views = await asyncio.to_thread(store.get_photo_views, photo_id)
     photo["viewed_by"] = [{**view, "name": names[view["actor"]]} for view in views if view["actor"] in names]
     return display_photo(photo)
@@ -70,7 +76,7 @@ async def get_photo(photo_id: str):
 
 class PhotoMove(BaseModel):
     photo_ids: list[str] = Field(min_length=1, max_length=1000)
-    album_id: str = Field(pattern="^(family|aion|connor)$")
+    album_id: str = Field(pattern="^(family|aion|connor|ai3|ai4|ai5|ai6)$")
 
 
 @router.post("/photos/move")
@@ -84,7 +90,7 @@ class PhotoUpdate(BaseModel):
     note: str | None = Field(None, max_length=5000)
     taken_on: str | None = None
     favorite: bool | None = None
-    album_id: str | None = Field(None, pattern="^(family|aion|connor)$")
+    album_id: str | None = Field(None, pattern="^(family|aion|connor|ai3|ai4|ai5|ai6)$")
 
 
 @router.put("/photos/{photo_id}")

@@ -35,3 +35,17 @@ button.primary,.view-tabs button[aria-pressed="true"]{color:#592909;background:l
 @media(max-width:700px){.outing-panel{margin-top:82px;padding-top:18px}.companions{top:-76px;left:6px;right:6px}.companion{height:80px;gap:3px}.portrait{height:88px;width:76px}.companion h2{font-size:15px}.companion-status{font-size:10px;margin-top:4px}.roam-bar label{font-size:11px}}
 @media(max-width:360px){.portrait{width:62px;height:80px}.companion h2{font-size:13px}.companion-status{font-size:9px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+
+/* 2026-10-24：大家（含还没入住的空位）排成一行可横向滑动的小卡片，不再左右两张叠在逛街面板上 */
+.outing-panel{margin-top:0}
+.companions{position:static;margin:0 0 14px;padding:0;border:0;background:none;box-shadow:none}
+#companionCards{display:flex;gap:10px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none}
+#companionCards::-webkit-scrollbar{display:none}
+.companion,.companion:nth-child(2){flex:none;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px;width:82px;height:auto;text-align:center;overflow:visible}
+.companion .portrait{align-self:center;width:56px;height:56px;border-radius:50%;object-fit:cover;object-position:center top;border:2px solid var(--tb-line);background:var(--tb-card);filter:none}
+.companion .portrait.empty-seat{display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--tb-muted);border-style:dashed}
+.companion-text{min-width:0;width:100%}
+.companion h2{font-size:14px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.companion-status{font-size:10px;margin:2px 0 0}
+.companion.placeholder{opacity:.5}
+@media(max-width:700px){.outing-panel{margin-top:0;padding-top:16px}.companion .portrait{width:50px;height:50px}.companion h2{font-size:13px}}

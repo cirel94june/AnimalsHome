@@ -405,6 +405,40 @@ def _clean_sections(raw: Any, allowed: set[str], *, who: str, required: str = ""
     return cleaned
 
 
+@router.get("/api/actors/{actor_id}/persona")
+async def api_get_persona(actor_id: str):
+    """世界书里编辑 Lucien、座位 3～6 的人设分区（小克的在世界书本身）。"""
+    if actor_id == "connor":
+        from chatroom import load_chatroom_config
+        cfg = load_chatroom_config()
+        return {"sections": cfg.get("connor_persona_sections") or {}, "legacy": cfg.get("connor_persona") or ""}
+    if actor_id not in SEAT_IDS or actor_id == "aion":
+        raise HTTPException(404, "这里只编辑 Lucien 和座位的人设")
+    return {"sections": persona_sections(actor_id), "legacy": ""}
+
+
+@router.put("/api/actors/{actor_id}/persona")
+async def api_save_persona(actor_id: str, request: Request):
+    from persona_evolution import _AI_SECTION_KEYS, _compile_ai_persona_sections
+    if actor_id not in SEAT_IDS or actor_id == "aion":
+        raise HTTPException(404, "这里只编辑 Lucien 和座位的人设")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "格式不正确")
+    sections = _clean_sections((body or {}).get("sections") if isinstance(body, dict) else None,
+                               set(_AI_SECTION_KEYS), who=display_name(actor_id), required="identity_core")
+    if actor_id == "connor":
+        from chatroom import load_chatroom_config, save_chatroom_config
+        cfg = load_chatroom_config()
+        cfg["connor_persona_sections"] = sections
+        cfg["connor_persona"] = _compile_ai_persona_sections(sections, actor="connor")
+        save_chatroom_config(cfg)
+    else:
+        save_persona_sections(actor_id, sections)
+    return {"ok": True, "sections": sections}
+
+
 @router.post("/api/actors/persona-pack")
 async def api_import_persona_pack(request: Request):
     """导入人设包：写入世界书（主 AI + 关于用户）、聊天室设置（第二位）和登记表（3～6 号）。
