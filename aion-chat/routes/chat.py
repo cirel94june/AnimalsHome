@@ -1347,7 +1347,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         model_key = private_model_key(conv["model"] if conv else "")
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
-    merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id, stable_window=True)
+    merged = await fetch_merged_timeline("aion", body.context_limit, stable_window=True)  # 所有私聊窗口 + 群聊
     history = render_merged_timeline(merged, "aion")
 
     # 图片保留最近两轮用户上下文 + 语音消息处理
@@ -1950,7 +1950,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         model_key = private_model_key(conv["model"] if conv else "")
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
-    merged = await fetch_merged_timeline("aion", body.context_limit, conv_id=conv_id, stable_window=True)
+    merged = await fetch_merged_timeline("aion", body.context_limit, stable_window=True)  # 所有私聊窗口 + 群聊
     history = render_merged_timeline(merged, "aion")
 
     # 图片保留发图当轮和后续一轮用户上下文
@@ -3442,7 +3442,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         model_key = private_model_key(conv["model"] if conv else "")
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
-    merged = await fetch_merged_timeline("aion", context_limit, conv_id=conv_id, stable_window=True)
+    merged = await fetch_merged_timeline("aion", context_limit, stable_window=True)  # 所有私聊窗口 + 群聊
     history = render_merged_timeline(merged, "aion")
 
     # 图片保留最近两轮用户上下文 + 语音消息处理（与 send_message 一致）

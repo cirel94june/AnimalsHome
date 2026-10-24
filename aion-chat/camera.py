@@ -2120,7 +2120,7 @@ class CameraMonitor:
 
         # 统一时间线：合并私聊 + 群聊消息
         from context_builder import fetch_merged_timeline, render_merged_timeline
-        merged = await fetch_merged_timeline("aion", 20, conv_id=conv_id)
+        merged = await fetch_merged_timeline("aion", 20)  # 所有私聊窗口 + 群聊
         history = render_merged_timeline(
             merged,
             "aion",
@@ -2715,7 +2715,7 @@ async def perform_cam_check(conv_id: str, model_key: str):
 
     # 获取最近对话上下文（统一时间线：合并私聊 + 群聊消息）
     from context_builder import fetch_merged_timeline, render_merged_timeline
-    merged = await fetch_merged_timeline("aion", 6, conv_id=conv_id)
+    merged = await fetch_merged_timeline("aion", 6)  # 所有私聊窗口 + 群聊
     recent = render_merged_timeline(
         merged,
         "aion",

@@ -739,7 +739,7 @@ class ScheduleManager:
         else:
             # Aion 来源 → 沿用原有逻辑
             from context_builder import fetch_merged_timeline, render_merged_timeline
-            merged = await fetch_merged_timeline("aion", 20, conv_id=conv_id)
+            merged = await fetch_merged_timeline("aion", 20)  # 所有私聊窗口 + 群聊
             history = render_merged_timeline(
                 merged,
                 "aion",
@@ -1125,7 +1125,7 @@ class ScheduleManager:
         else:
             # Aion 来源 → 沿用原有逻辑
             from context_builder import fetch_merged_timeline, render_merged_timeline
-            merged = await fetch_merged_timeline("aion", 20, conv_id=conv_id)
+            merged = await fetch_merged_timeline("aion", 20)  # 所有私聊窗口 + 群聊
             history = render_merged_timeline(
                 merged,
                 "aion",

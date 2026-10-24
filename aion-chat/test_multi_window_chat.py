@@ -1,7 +1,8 @@
-"""2026-10-24 小猫：每位 AI 的私聊都能开多个窗口。每个窗口各聊各的（只带这个窗口的私聊 + 群聊），
-别的窗口说过的事可以用 [MEMORY_SEARCH:…] 搜到；座位 3～6 和小克、Lucien 一样能搜。"""
+"""2026-10-24 小猫：每位 AI 的私聊都能开多个窗口。她选了折中：窗口只是帮她整理，TA 看得到和她所有私聊窗口
+里最近的聊天（加群聊），不会断片；更早的可以用 [MEMORY_SEARCH:…] 搜到。座位 3～6 和小克、Lucien 一样。"""
 
 import asyncio
+import re
 import sqlite3
 
 import pytest
@@ -37,18 +38,24 @@ def _contents(rows):
     return sorted(r["content"] for r in rows)
 
 
-def test_lucien_window_only_sees_its_own_private_chat(db):
-    rows = asyncio.run(context_builder.fetch_merged_timeline("connor", 50, private_room_id="c2"))
-    assert _contents(rows) == sorted(["群里说今天下雨", "窗口二聊电影"])
-    everything = asyncio.run(context_builder.fetch_merged_timeline("connor", 50))  # 后台用：所有窗口
-    assert "窗口一聊猫粮" in _contents(everything)
+def test_lucien_sees_all_his_windows(db):
+    rows = asyncio.run(context_builder.fetch_merged_timeline("connor", 50))
+    assert _contents(rows) == sorted(["群里说今天下雨", "窗口一聊猫粮", "窗口二聊电影"])
 
 
-def test_seat_window_only_sees_its_own_private_chat(db):
-    rows = asyncio.run(seat_chat.merged_messages("ai3", 50, "s2"))
-    assert _contents(rows) == sorted(["狗蛋窗口二聊作业", "群里说今天下雨"])
-    group_view = asyncio.run(seat_chat.merged_messages("ai3", 50))  # 在群里：自己所有私聊 + 群
-    assert "和狗蛋聊过海边旅行" in _contents(group_view) and "别的座位说海边旅行" not in _contents(group_view)
+def test_seat_sees_all_its_windows_but_not_other_seats(db):
+    rows = asyncio.run(seat_chat.merged_messages("ai3", 50))
+    assert _contents(rows) == sorted(["和狗蛋聊过海边旅行", "狗蛋窗口二聊作业", "群里说今天下雨"])
+
+
+def test_xiaoke_private_chat_reads_all_his_windows():
+    """小克私聊页、闹铃、监控、定位取上下文时不再按当前窗口过滤。"""
+    from pathlib import Path
+    here = Path(__file__).parent
+    for name in ("routes/chat.py", "schedule.py", "camera.py", "location.py"):
+        text = (here / name).read_text(encoding="utf-8")
+        assert 'fetch_merged_timeline("aion"' in text
+        assert not re.search(r'fetch_merged_timeline\("aion",[^)]*conv_id=', text), name
 
 
 def test_seat_can_search_its_other_windows_but_not_other_seats(db):

@@ -698,14 +698,10 @@ def _merged_timeline_sources(
     *,
     conv_id: str = None,
     room_id: str = None,
-    private_room_id: str = None,
     since_ts: float = None,
     until_ts: float = None,
 ) -> list[tuple[str, str, str, list[str], list]]:
-    """Return the visible timeline sources and their bound filter parameters.
-
-    private_room_id：Lucien 的私聊可以开多个窗口，给了就只取这一个窗口的私聊（群聊照旧都算），
-    和小克用 conv_id 只取当前窗口一样。"""
+    """Return the visible timeline sources and their bound filter parameters."""
     sources = []
 
     if who == "aion":
@@ -726,9 +722,6 @@ def _merged_timeline_sources(
     elif who == "connor":
         conditions = ["r.type = 'connor_1v1'"]
         params = []
-        if private_room_id:
-            conditions.append("m.room_id=?")
-            params.append(private_room_id)
         if since_ts is not None:
             conditions.append("m.created_at >= ?")
             params.append(since_ts)
@@ -763,7 +756,6 @@ async def _load_model_visible_merged_timeline(
     *,
     conv_id: str = None,
     room_id: str = None,
-    private_room_id: str = None,
     since_ts: float = None,
     until_ts: float = None,
     limit: int = None,
@@ -780,7 +772,7 @@ async def _load_model_visible_merged_timeline(
         # Keep both sources and all pages on the same SQLite read snapshot.
         await db.execute("BEGIN")
         for source, sender, from_sql, conditions, params in _merged_timeline_sources(
-            who, conv_id=conv_id, room_id=room_id, private_room_id=private_room_id,
+            who, conv_id=conv_id, room_id=room_id,
             since_ts=since_ts, until_ts=until_ts,
         ):
             prefix = "" if from_sql == "FROM messages" else "m."
@@ -848,7 +840,6 @@ async def fetch_merged_timeline(
     *,
     conv_id: str = None,
     room_id: str = None,
-    private_room_id: str = None,
     since_ts: float = None,
     until_ts: float = None,
     stable_window: bool = False,
@@ -868,7 +859,6 @@ async def fetch_merged_timeline(
         who,
         conv_id=conv_id,
         room_id=room_id,
-        private_room_id=private_room_id,
         since_ts=since_ts,
         until_ts=until_ts,
         limit=fetch_limit,
@@ -879,7 +869,7 @@ async def fetch_merged_timeline(
         else results
     )
     if stable_window:
-        results = _stable_window(results, normalized_limit, (who, conv_id, room_id, private_room_id, normalized_limit))
+        results = _stable_window(results, normalized_limit, (who, conv_id, room_id, normalized_limit))
     cards = [(message, trip_card(_parse_timeline_attachments(message.get("attachments", []))))
              for message in results if message.get("sender") == "system"]
     trip_ids = {card["trip_id"] for _, card in cards if card and card.get("trip_id")}

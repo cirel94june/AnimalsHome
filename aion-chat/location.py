@@ -865,7 +865,7 @@ async def _call_core_location(
     from config import aion_model_key
     model_key = aion_model_key(model_key)  # 小克说话：不用 Codex（只给 Lucien）
 
-    merged = await fetch_merged_timeline("aion", 20, conv_id=conv_id)
+    merged = await fetch_merged_timeline("aion", 20)  # 所有私聊窗口 + 群聊
     history = render_merged_timeline(
         merged,
         "aion",

@@ -1315,8 +1315,8 @@ async def build_connor_1v1_context(
                                               include_group_post=True)
     if ability_block:
         messages.append({"role": "user", "content": ability_block, "_context": "abilities"})
-    # 私聊可以开多个窗口：只看这个窗口的私聊 + 所有群聊；别的窗口说过的靠 [MEMORY_SEARCH:…|history] 搜
-    merged = await fetch_merged_timeline("connor", context_limit, private_room_id=room_id, stable_window=True)
+    # 私聊可以开多个窗口：都算（窗口只是帮她整理），加上所有群聊
+    merged = await fetch_merged_timeline("connor", context_limit, stable_window=True)
     if ability_block:
         messages.append({"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
 

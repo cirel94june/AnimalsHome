@@ -4376,7 +4376,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         async with asyncio.timeout(960):
             # 和小克、Lucien 一样：自己的私聊 + 所有家里群合成一条时间线
             try:
-                merged = await seat_chat.merged_messages(actor_id, context_limit, "" if group else room_id)
+                merged = await seat_chat.merged_messages(actor_id, context_limit)
             except Exception as exc:  # 读不出合并记录时退回本房间的记录，不耽误回复
                 print(f"[SEAT] 合并时间线读取失败，只用本房间记录: {type(exc).__name__}")
                 merged = []
