@@ -665,6 +665,14 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(desk_note_ability_text(user_name))
     if is_capability_enabled("inner_monologue"):  # 和小克 / Lucien 同一段说明；前端对所有 AI 的消息都特殊显示
         texts.append(INNER_MONOLOGUE_ABILITY_TEXT)
+    if is_capability_enabled("memory_search"):  # 长期记忆每轮已带上；这里是翻自己以前的聊天原文
+        texts.append(
+            "[MEMORY_SEARCH:关键词] — 当她问起以前聊过的具体事、某一天说过什么、或你在别的聊天窗口里提过的事，"
+            f"而眼前的记录不够时，搜你自己的聊天记录（你和{user_name}的所有私聊窗口，加上家里的群聊）。"
+            "一轮最多 5 条，用简短关键词；可加选项 latest、earliest、date=昨天/明确日期、range=开始..结束，"
+            "如 [MEMORY_SEARCH:看电影|latest]；用 open=回执里的来源ID 打开原文和前后消息。"
+            "决定搜时可以先随口应一句再写指令，不要在结果回来前猜答案。普通闲聊不要搜。"
+        )
     if actor and is_capability_enabled("memory_write"):
         import memory_hub_bridge
         if memory_hub_bridge.can_remember(actor):
@@ -836,7 +844,7 @@ async def build_capability_prompt_items(
             "一轮最多输出 5 条，查询应是互补的关键词或短语；选项可省略，"
             "直接写 [MEMORY_SEARCH:查询] 即按相关性搜索。选项可用 relevant（默认）、latest、"
             "earliest、date=昨天/前天/明确日期、range=开始日期..结束日期、detail。"
-            "摘要找不到细节时用 history 选项直接搜索自己可访问的历史聊天；"
+            "摘要找不到细节时用 history 选项直接搜索自己可访问的历史聊天（包括你别的私聊窗口）；"
             "用 open=检索回执中的来源ID 打开原文及前后消息。"
             "例如：[MEMORY_SEARCH:过敏药|latest] [MEMORY_SEARCH:开思亭|latest]。"
             "决定搜索时，可以先根据上下文随意、简短地自然回应一句，随后输出搜索指令；"

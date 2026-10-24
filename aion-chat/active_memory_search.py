@@ -278,16 +278,26 @@ def actor_memory_query(actor: Literal["aion", "connor"]) -> tuple[str, tuple]:
     raise ValueError("unsupported memory actor")
 
 
+def _seat_actors() -> tuple[str, ...]:
+    import actors
+    return tuple(a for a in actors.SEAT_IDS if a not in ("aion", "connor"))
+
+
 async def search_actor_memories(
-    actor: Literal["aion", "connor"],
+    actor: str,
     requests: Sequence[MemorySearchRequest],
     now: datetime | None = None,
 ) -> list[MemorySearchResult]:
-    if actor not in {"aion", "connor"}:
+    seat = actor in _seat_actors()
+    if actor not in {"aion", "connor"} and not seat:
         raise ValueError("unsupported memory actor")
     limited = list(requests[:MAX_REQUESTS])
     if not limited:
         return []
+    if seat:
+        # 座位 3～6 的长期记忆在 Memory Hub（每轮已经带上），本地没有记忆库：一律搜 TA 自己的聊天记录
+        from dataclasses import replace
+        limited = [r if r.source_id else replace(r, history=True) for r in limited]
     if any(request.history or request.source_id for request in limited):
         combined = []
         for request in limited:
@@ -365,6 +375,11 @@ async def _attach_source_details(
 
 
 def _history_sources(actor: str):
+    if actor in _seat_actors():
+        # 座位：自己名下所有私聊窗口 + 家里的群聊（不含台球等小游戏房间）。actor 已核对是座位编号
+        return [('chatroom', 'FROM chatroom_messages m JOIN chatroom_rooms r ON r.id=m.room_id',
+                 'm.sender', 'm.room_id',
+                 f"(r.type='group' OR (r.type='seat_1v1' AND r.actor='{actor}')) AND r.id NOT GLOB 'billiards_*'")]
     if actor not in {'aion', 'connor'}:
         raise ValueError('unsupported memory actor')
     sources = []
@@ -390,7 +405,11 @@ def _source_line(row: dict, query: str = '') -> str:
     names = {'user': user_name, 'assistant': ai_name,
              'aion': ai_name, 'connor': second_name,
              'system': '系统事件'}
-    return f"[{row['source_id']}｜{_format_time(row['created_at'])}｜{names.get(row['speaker'], row['speaker'])}] {_excerpt(row['content'], query)}"
+    speaker = names.get(row['speaker'])
+    if speaker is None:  # 座位 3～6 写名字，不写编号
+        import actors
+        speaker = actors.display_name(row['speaker']) if row['speaker'] in actors.SEAT_IDS else row['speaker']
+    return f"[{row['source_id']}｜{_format_time(row['created_at'])}｜{speaker}] {_excerpt(row['content'], query)}"
 
 
 async def _read_message(actor: str, source_id: str) -> dict | None:

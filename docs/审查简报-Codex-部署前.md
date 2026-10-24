@@ -813,3 +813,57 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
 - 前端：私聊页下拉框不列 codex_cli，默认模型排第一（新对话就用它），没线路时显示提示项；用 `new Option` 代替拼 HTML。顶部加名字徽章（世界书 ai_name），标签页标题「小克 · 私聊」。群聊设置里小克的模型下拉框同样不列 Codex，Lucien 的照旧。
 - 测试：`test_model_defaults.py` 改 1 项、新增 2 项（Codex 不当默认、存过的 Codex 换掉、没有别的线路时返回空不顶替；空模型给明确提示）。聊天 / 群聊 / 自主活动 / 座位相关 27 个测试文件改动前后结果一致（6 个既有失败）。
 - **补充（同属 §70）主页入口改名**：小猫反馈「点进聊天不知道在跟谁聊，群聊在哪里」。主页图标「聊天」→「私聊」，载入世界书后显示成「<AI 名字>私聊」（如「小克私聊」）；「聊天室」→「群聊」（里面有「群聊」「私聊」两个标签，Lucien 和座位 3～6 的私聊也在里面）。图标文字和 alt 改为 `escapeAttr` 转义（AI 名字来自世界书）。home.html 相关 27 项测试通过。
+
+## 71. 统一聊天入口：想跟谁聊就点谁，每位 AI 都能开多个窗口；换窗口能搜到别的窗口（方案：docs/施工方案-统一聊天入口.md）
+
+小猫：「聊天不应该是能切换我想跟谁聊就跟谁，自由切换，还能自由选每个角色下面的窗吗？」原作者的结构是小克一个页面（多窗口）、Lucien 在聊天室里（前端只给一个）、座位每人只能一个房间（唯一索引）。她选：一次做完；每个窗口各聊各的，但换窗口能搜到别的窗口说过的。
+
+**后台**
+- `database.init_db`：去掉「同一座位多个房间就合并（消息挪到最早的房间、删掉其余）」的启动迁移和唯一索引 `idx_chatroom_seat_room`（`DROP INDEX IF EXISTS`），改为普通索引 `(type, actor, updated_at DESC)`。否则她开的窗口每次重启都会被并掉。
+- `create_room`：`RoomCreate.new_window`。不带时座位私聊照旧返回 TA 最近用的房间（按 updated_at，原来是任意一个），带了就新建。去掉依赖唯一索引的 IntegrityError 分支。房间 ID 改成 `cr_{time_ns}{4 位随机十六进制}`：Windows 下连续建两个窗口时 time_ns 相同会撞主键，测试抓到了。`_get_or_create_seat_room`、`seat_target_room` 等「去 TA 的私聊」照旧取最近的那个。
+- 每个窗口各聊各的（和小克用 conv_id 只取当前窗口一样）：
+  - `context_builder` 的时间线加 `private_room_id`（只影响 connor 的私聊来源；stable_window 的 key 也带上它）。
+  - `build_connor_1v1_context(room_id)` 传入它。
+  - `seat_chat.merged_messages(actor, limit, room_id="")`：私聊窗口里只取这个房间，在群里照旧取 TA 所有私聊和群。
+  - 后台用的（自主活动、摘要等）不传，照旧看全部。
+  - `get_connor_1v1_recent` 改为取所有 Lucien 私聊窗口（原来只取最早建的那个房间）。
+- 换窗口能搜到：小克（私聊所有窗口 + 群聊）和 Lucien（所有私聊窗口 + 群聊）本来就能用 `[MEMORY_SEARCH:…|history]`。这次补座位 3～6（权限对等）：
+  - `active_memory_search._history_sources`：座位搜「自己名下所有 seat_1v1 + 群聊，不含 billiards_*」。actor 先核对是座位编号，才拼进 SQL。
+  - `search_actor_memories`：接受座位。座位没有本地记忆库（长期记忆在 Hub、每轮已带），非 open= 的请求一律当 history 搜。
+  - 来源行里座位显示名字。
+  - `routes/chatroom`：
+    - `_memory_actor_for_speaker` 认座位；
+    - `_process_seat_commands` 开头认 `[MEMORY_SEARCH:…]`（开关 memory_search，同小克 / Lucien：有指令就先搜，系统提示「X正在翻找记忆……」）；
+    - `_spawn_seat_followups` 起 `_chatroom_memory_search`。
+  - `_chatroom_memory_search` 的座位分支：
+    - 座位人设前缀，不给能力块；
+    - 生成前 `_seat_still_ready` + `ensure_model_unchanged(model_key, pinned)`，线路快照从主回复带过来；
+    - 存消息时同座位联网搜索的追加回复，只去掉指令、不执行。
+  - `capabilities.seat_ability_texts` 加一段座位用的搜索说明。小克 / Lucien 的说明补一句「包括你别的私聊窗口」。
+
+**前端**
+- 新页 `/contacts`（`contacts.html/css/js`）：
+  - 「私聊」列出每位 AI（`/api/actors` 里 builtin 或 enabled 的；头像、名字、窗口数、最近窗口），点开是 TA 名下所有窗口（按最近排序，可改名）和「＋ 和 TA 开新窗口」。
+  - 「群聊」列出群（不含 billiards_*）和「＋ 新群聊」。
+  - 所有文字用 textContent / DOM 构建。
+- 打开方式：
+  - 小克的窗口调外壳的新函数 `window.openAionConversation(convId|null)`：关子页面后 selectConv，或 newConversation。
+  - 其他的走 `openSubPage('/chatroom?room=…')`（已有逻辑：带参数会重新导航常驻的聊天室子页面）。
+- 主页「聊天」图标改指向 `/contacts`。撤掉上一提交里「小克私聊」改名那段；「群聊」图标保留。
+- 小克私聊页和聊天室顶部加「👥」（换个人 / 换窗口）和名字徽章。聊天室徽章按房间类型显示 TA 的名字，群聊显示「群聊」，名字读到后会刷新；标签页标题同步。
+- 本机实测（手机宽度）：
+  - 联系人页无横向溢出；
+  - 开 Jasper 新窗口 → 进聊天室显示「Jasper」徽章；
+  - 在应用外壳里点小克的窗口 → 关子页面并切到该对话；
+  - 点 Jasper 旧窗口 → 聊天室打开对应房间；
+  - 控制台无错误。
+
+**测试**
+- 新 `test_multi_window_chat.py` 6 项：
+  - Lucien、座位的窗口只看自己这个窗口的私聊加群聊，后台调用看全部；
+  - 座位搜得到自己别的窗口，搜不到、也打不开别的座位的私聊；
+  - Lucien 的搜索覆盖所有窗口；
+  - 未知 actor 仍然拒绝；
+  - 座位回复里的搜索指令会触发搜索，开关关着时不触发。
+- `test_seat_chat.py` 两项改写：开新窗口 / 回到最近窗口；重启不合并多个窗口，旧唯一索引会被去掉。
+- 相关约 480 项：失败的 10 项全是既有的（chatroom 前端 5 项、link_preview 2 项、health_ring 1 项，改动前就失败）。

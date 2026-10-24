@@ -640,20 +640,11 @@ async def init_db():
             await db.execute("ALTER TABLE chatroom_rooms ADD COLUMN actor TEXT DEFAULT ''")
         except Exception:
             pass
-        # 每个座位只能有一个私聊房间：先把并发留下的重复房间合并（消息挪到最早那个），再加唯一索引
-        cur = await db.execute(
-            "SELECT actor FROM chatroom_rooms WHERE type='seat_1v1' GROUP BY actor HAVING COUNT(*) > 1"
-        )
-        for (dup_actor,) in await cur.fetchall():
-            cur2 = await db.execute(
-                "SELECT id FROM chatroom_rooms WHERE type='seat_1v1' AND actor=? ORDER BY created_at, id", (dup_actor,)
-            )
-            ids = [row[0] for row in await cur2.fetchall()]
-            for extra in ids[1:]:
-                await db.execute("UPDATE chatroom_messages SET room_id=? WHERE room_id=?", (ids[0], extra))
-                await db.execute("DELETE FROM chatroom_rooms WHERE id=?", (extra,))
+        # 每位 AI 的私聊都可以开多个窗口（2026-10-24 小猫）：去掉原来「每个座位只能一个房间」的唯一索引，
+        # 也不再在启动时把同一座位的多个房间合并（否则她开的窗口一重启就被并掉）
+        await db.execute("DROP INDEX IF EXISTS idx_chatroom_seat_room")
         await db.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_chatroom_seat_room ON chatroom_rooms(actor) WHERE type='seat_1v1'"
+            "CREATE INDEX IF NOT EXISTS idx_chatroom_rooms_actor ON chatroom_rooms(type, actor, updated_at DESC)"
         )
         # ── 聊天室消息表 ──
         await db.execute("""

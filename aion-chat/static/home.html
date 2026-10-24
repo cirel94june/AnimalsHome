@@ -585,7 +585,7 @@ body[data-theme="dark"] .gsi-title { color: rgba(244,246,255,0.70); }
 <script>
 /* ── 应用注册表 ─────────────────────────────────── */
 const APPS = [
-  { id: 'chat',     name: '私聊',     icon: '/public/funIcon_0005_聊天.png',   url: '/chat',  dock: true },
+  { id: 'chat',     name: '聊天',     icon: '/public/funIcon_0005_聊天.png',   url: '/contacts',  dock: true },
   { id: 'chatroom', name: '群聊', icon: '/public/funIcon_0020_聊天室.png', url: '/chatroom' ,  dock: true  },
   { id: 'memory',   name: '记忆库',   icon: '/public/funIcon_0006_日记本.png',  url: '/memory' ,  dock: true },
   { id: 'moments',  name: '朋友圈',   icon: '/public/funIcon_0010_朋友圈.png',  url: '/moments' ,  dock: true },
@@ -887,15 +887,6 @@ function makeCellMap() {
   map.set(dropCell, { type: 'placeholder', appId: dragState.appId });
   return map;
 }
-
-// 「私聊」写上是和谁（世界书里的 AI 名字，比如「小克私聊」）；其他人的私聊和大家的群聊都在「群聊」里
-fetch('/api/worldbook').then(res => res.json()).then(wb => {
-  const name = String((wb && wb.ai_name) || '').trim();
-  const chat = APPS.find(app => app.id === 'chat');
-  if (!name || !chat) return;
-  chat.name = `${name}私聊`;
-  renderApps();
-}).catch(() => {});
 
 function renderApps() {
   const track = document.getElementById('appPagesTrack');

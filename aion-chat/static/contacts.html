@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#050923">
+  <title>聊天</title>
+  <link rel="stylesheet" href="/static/common.css">
+  <link rel="stylesheet" href="/static/contacts.css?v=20261024-windows">
+  <script src="/static/theme.js"></script>
+  <script defer src="/static/contacts.js?v=20261024-windows"></script>
+</head>
+<body class="contacts-page" data-theme="dark">
+  <header class="contacts-header">
+    <button type="button" class="back-btn" id="backBtn" aria-label="返回主页">⬅</button>
+    <h1>聊天</h1>
+    <span class="header-hint">点一位，选 TA 的窗口</span>
+  </header>
+  <main class="contacts-main">
+    <section aria-labelledby="peopleTitle">
+      <h2 id="peopleTitle" class="section-title">私聊</h2>
+      <ul id="people" class="people" aria-live="polite"><li class="loading">正在加载…</li></ul>
+    </section>
+    <section aria-labelledby="groupsTitle">
+      <div class="section-row">
+        <h2 id="groupsTitle" class="section-title">群聊</h2>
+        <button type="button" class="add-btn" id="newGroup">＋ 新群聊</button>
+      </div>
+      <ul id="groups" class="windows groups"></ul>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

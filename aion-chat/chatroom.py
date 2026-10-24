@@ -334,18 +334,13 @@ async def get_connor_1v1_recent(minutes: int = 30, limit: int = 40) -> list[dict
     cutoff = time.time() - minutes * 60
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
-        # 找到 connor_1v1 类型的房间
+        # Lucien 的私聊可能有好几个窗口：都算
         cur = await db.execute(
-            "SELECT id FROM chatroom_rooms WHERE type = 'connor_1v1' ORDER BY created_at ASC LIMIT 1"
-        )
-        room = await cur.fetchone()
-        if not room:
-            return []
-        cur = await db.execute(
-            "SELECT sender, content, created_at FROM chatroom_messages "
-            "WHERE room_id = ? AND created_at > ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (room["id"], cutoff, limit),
+            "SELECT m.sender, m.content, m.created_at FROM chatroom_messages m "
+            "JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE r.type = 'connor_1v1' AND m.created_at > ? "
+            "ORDER BY m.created_at DESC LIMIT ?",
+            (cutoff, limit),
         )
         rows = await cur.fetchall()
     return [dict(r) for r in reversed(rows)]
@@ -1320,7 +1315,8 @@ async def build_connor_1v1_context(
                                               include_group_post=True)
     if ability_block:
         messages.append({"role": "user", "content": ability_block, "_context": "abilities"})
-    merged = await fetch_merged_timeline("connor", context_limit, stable_window=True)
+    # 私聊可以开多个窗口：只看这个窗口的私聊 + 所有群聊；别的窗口说过的靠 [MEMORY_SEARCH:…|history] 搜
+    merged = await fetch_merged_timeline("connor", context_limit, private_room_id=room_id, stable_window=True)
     if ability_block:
         messages.append({"role": "assistant", "content": "好的，需要时我会使用这些指令。"})
 

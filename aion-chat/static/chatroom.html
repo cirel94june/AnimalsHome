@@ -59,6 +59,8 @@
     <div class="chat-area" id="chatArea">
       <div class="chat-header">
         <button class="menu-btn" id="menuBtn">☰</button>
+        <button type="button" class="contacts-btn" onclick="crOpenContacts()" title="换个人聊 / 换窗口" aria-label="换个人聊或换窗口">👥</button>
+        <span class="room-who" id="roomWho" title="现在在和谁聊"></span>
         <button type="button" class="room-title" id="roomTitle" onclick="renameCurrentRoom()" title="点击修改房间名称" aria-label="修改房间名称">聊天室</button>
         <div class="header-actions" id="headerActions">
           <button class="reply-once-btn aion" id="replyAionBtn" onclick="triggerReplyOnce('aion')" style="display:none">AI 说</button>

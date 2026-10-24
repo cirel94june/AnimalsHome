@@ -64,8 +64,9 @@ def _speaker_name(sender: str, user_name: str) -> str:
         return sender
 
 
-async def merged_messages(actor_id: str, limit: int) -> list[dict]:
+async def merged_messages(actor_id: str, limit: int, room_id: str = "") -> list[dict]:
     """这位座位自己的私聊 + 所有家里群（不含台球等小游戏房间），合成一条时间线（同小克、Lucien）。
+    私聊可以开多个窗口：给了 room_id（在某个私聊窗口里）就只取这个窗口的私聊，别的窗口靠搜聊天记录。
     每条带 source：private / group。系统消息不放进来。"""
     import json
     from database import get_db
@@ -74,9 +75,9 @@ async def merged_messages(actor_id: str, limit: int) -> list[dict]:
             "SELECT m.sender, m.content, m.created_at, m.attachments, r.type FROM chatroom_messages m "
             "JOIN chatroom_rooms r ON r.id = m.room_id "
             "WHERE m.sender != 'system' AND r.id NOT GLOB 'billiards_*' "
-            "AND (r.type = 'group' OR (r.type = ? AND r.actor = ?)) "
+            "AND (r.type = 'group' OR (r.type = ? AND r.actor = ? AND (? = '' OR r.id = ?))) "
             "ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?",
-            (SEAT_ROOM_TYPE, actor_id, max(1, int(limit)) * 2),
+            (SEAT_ROOM_TYPE, actor_id, room_id or "", room_id or "", max(1, int(limit)) * 2),
         )
         rows = await cur.fetchall()
     out = []

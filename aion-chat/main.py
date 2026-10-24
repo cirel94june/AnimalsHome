@@ -590,6 +590,12 @@ async def playground_page():
 async def playground_explore_page():
     return FileResponse(BASE_DIR / "static" / "playground.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
+@app.get("/contacts")
+async def contacts_page():
+    """统一聊天入口：选跟谁聊、选 TA 的哪个窗口。"""
+    return FileResponse(BASE_DIR / "static" / "contacts.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
 @app.get("/chatroom")
 async def chatroom_page():
     return FileResponse(BASE_DIR / "static" / "chatroom.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})

@@ -2541,6 +2541,17 @@ async function jumpToChatMessage(convId, msgId) {
   }
 }
 
+// 聊天入口页（/contacts）点了小克的某个窗口：关掉子页面，在这里切过去；没给窗口就开一个新的
+window.openAionConversation = async function(convId) {
+  closeSubPage(true);
+  if (convId && conversations.find(c => c.id === convId)) await selectConv(convId);
+  else if (convId) {
+    conversations = await api("GET", "/api/conversations");
+    renderConvList();
+    if (conversations.find(c => c.id === convId)) await selectConv(convId);
+  } else await newConversation();
+};
+
 window.jumpToGlobalSearchTarget = async function(target) {
   if (!target) return;
   if (target.source === 'aion_private') {

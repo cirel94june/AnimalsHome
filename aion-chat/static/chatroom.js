@@ -156,12 +156,26 @@ async function crLoadSeats() {
       crSeats[a.id] = a;
       AVATARS[a.id] = a.avatar || '/public/AIIcon.png';
     }
+    crShowRoomWho();
   } catch (e) { /* 登记表读不到时保持默认名字 */ }
 }
 
 function crName(sender) {
   if (crIsSeat(sender)) return crSeats[sender]?.name || sender;
   return { user: crUserName || '我', aion: crAiName || 'AI', connor: crConnorName || '第二AI' }[sender] || sender;
+}
+
+// 顶部写明在和谁聊（私聊写 TA 的名字，群聊写「群聊」）
+function crShowRoomWho(room = currentRoom) {
+  const who = document.getElementById('roomWho');
+  if (!who) return;
+  who.textContent = !room ? '' : room.type === 'group' ? '群聊' : crName(crRoomAi(room));
+  document.title = room ? `${who.textContent} · ${room.title || ''}` : '聊天室';
+}
+
+function crOpenContacts() {
+  if (window.parent !== window && typeof window.parent.openSubPage === 'function') window.parent.openSubPage('/contacts');
+  else location.href = '/contacts';
 }
 
 // 当前房间里回复的那位 AI
@@ -189,6 +203,7 @@ function applyChatroomNames(cfg = {}) {
   crAiName = cfg.ai_name || crAiName || 'AI';
   crUserName = cfg.user_name || crUserName || '我';
   crConnorName = cfg.connor_name || crConnorName || '第二AI';
+  crShowRoomWho();  // 名字读到了再刷新顶部
 
   const aionVoice = document.getElementById('setTtsAionVoice');
   if (aionVoice?.previousElementSibling) aionVoice.previousElementSibling.textContent = `${crAiName} 音色`;
@@ -2275,6 +2290,7 @@ async function selectRoom(roomId) {
   if (activeTab !== room.type) switchTab(room.type);
   else renderRoomList();
   roomTitleEl.textContent = room.title;
+  crShowRoomWho(room);
   // 退出语音模式（如果在语音模式中切换房间）
   if (_crVoiceMode) {
     _crVoiceMode = false;

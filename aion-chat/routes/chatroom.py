@@ -3,7 +3,7 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 聊天室 API 路由：房间 CRUD、发消息(SSE)、AI 互聊、记忆接口
 """
 
-import json, time, asyncio, random, re, mimetypes
+import json, time, asyncio, random, re, mimetypes, secrets
 import memory_hub_bridge
 import seat_chat
 import actors as actors_registry
@@ -125,7 +125,10 @@ def _chatroom_memory_search_parse(
 
 
 def _memory_actor_for_speaker(speaker: str) -> str:
-    return "connor" if str(speaker).strip().lower() == "connor" else "aion"
+    who = str(speaker).strip().lower()
+    if who == "connor" or who in seat_chat.SEAT_ACTORS:  # 座位 3～6 搜自己的聊天记录
+        return who
+    return "aion"
 
 
 def _chatroom_memory_status_text(speaker: str) -> str:
@@ -1905,6 +1908,14 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
     if not requests:
         return
     actor = _memory_actor_for_speaker(sender)
+    is_seat = actor in seat_chat.SEAT_ACTORS
+    if is_seat and not _seat_still_ready(actor, model_key):
+        await _complete_chatroom_memory_search_status(room_id, str(payload.get("system_msg_id") or ""), actor)
+        return  # 座位已停用 / 没人设 / 换了模型：这次不接着说
+    pinned = payload.get("pinned")
+    if is_seat and pinned is None:
+        from config import model_snapshot
+        pinned = model_snapshot(model_key)  # 在任何等待之前固定线路
     try:
         results = await asyncio.wait_for(
             search_actor_memories(actor, requests), timeout=30.0
@@ -1922,7 +1933,12 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
     ai_name = wb.get("ai_name", "AI")
     sender_label = _name_for_identity(actor)
     prefix_msgs: list[dict] = []
-    if actor == "connor":
+    if is_seat:
+        prefix_msgs.extend([
+            {"role": "user", "content": f"[你的角色设定]\n你是{sender_label}。\n\n{seat_chat._persona_text(actor)}"},
+            {"role": "assistant", "content": "收到，我会按照设定做自己。"},
+        ])
+    elif actor == "connor":
         from chatroom import _read_connor_persona
         connor_persona = _read_connor_persona()
         if connor_persona:
@@ -1937,7 +1953,7 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
             {"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"},
             {"role": "assistant", "content": "收到，我会记住你的信息。"},
         ])
-    ability_block = await build_ability_block(
+    ability_block = "" if is_seat else await build_ability_block(  # 座位追加回复里不执行别的指令
         user_name,
         who=actor,
         model_key=model_key,
@@ -1963,7 +1979,15 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
     async def generate_search_reply(search_messages):
         nonlocal full_text
         full_text = ''
-        if actor == "aion":
+        if is_seat:
+            from config import ensure_model_unchanged
+            if not _seat_still_ready(actor, model_key):
+                raise RuntimeError("seat changed")
+            ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await：线路变了就不回复，不换模型
+            async for chunk in stream_ai(search_messages, model_key):
+                if not chunk.startswith(CLI_STATUS_PREFIX):
+                    full_text += chunk
+        elif actor == "aion":
             async for chunk in stream_ai(search_messages, model_key, temperature=SETTINGS.get("temperature")):
                 if not chunk.startswith(CLI_STATUS_PREFIX):
                     full_text += chunk
@@ -1985,8 +2009,14 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
     full_text, _ignored = extract_memory_search_requests(full_text, enabled=True)
     if not full_text.strip():
         return
-    from schedule import _process_background_reply_commands
     reply_msg_id = f"cm_{time.time_ns()}_{actor[:1]}"
+    if is_seat:  # 和座位的联网搜索追加回复一样：只去掉指令，不执行
+        full_text = _normalize_cli_bubble_breaks(
+            _visible_chatroom_text(_strip_unexecuted_transfers(clean_web_command_text(full_text))), model_key)
+        if full_text.strip():
+            await _save_msg(room_id, actor, full_text, msg_id=reply_msg_id, auto_tts=False)
+        return
+    from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
         full_text,
         target={"type": "chatroom", "room_id": room_id},
@@ -2495,6 +2525,7 @@ class RoomCreate(BaseModel):
     title: str = "新聊天室"
     type: str = "group"  # "group" | "connor_1v1" | "seat_1v1"
     actor: str = ""  # seat_1v1：ai3～ai6
+    new_window: bool = False  # 私聊开新窗口；不开就返回 TA 最近用的那个（还没有才新建）
 
 
 class RoomUpdate(BaseModel):
@@ -3014,7 +3045,8 @@ async def patch_room_settings(room_id: str, body: ChatroomSettingsUpdate):
 @router.post("/rooms")
 async def create_room(body: RoomCreate):
     now = time.time()
-    room_id = f"cr_{int(now * 1000)}"
+    # 一下子开好几个窗口时时间戳可能相同（Windows 时钟精度粗）：加一段随机数防撞
+    room_id = f"cr_{time.time_ns()}{secrets.token_hex(2)}"
     actor = ""
     title = body.title
     if body.type == seat_chat.SEAT_ROOM_TYPE:
@@ -3024,33 +3056,26 @@ async def create_room(body: RoomCreate):
             raise HTTPException(status_code=400, detail="没有这个座位，或座位还没启用")
         if title in ("", "新聊天室"):
             title = f"和 {seat['name']} 私聊"
-        room_id = f"cr_{int(now * 1000)}_{actor}"
+        room_id = f"cr_{time.time_ns()}{secrets.token_hex(2)}_{actor}"
     elif body.type not in ("group", "connor_1v1"):
         raise HTTPException(status_code=400, detail="不认识的房间类型")
 
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
-        if actor:
-            # 每个座位只有一个私聊房间，重复创建直接返回已有的
-            cur = await db.execute("SELECT id FROM chatroom_rooms WHERE type=? AND actor=?", (body.type, actor))
+        if actor and not body.new_window:
+            # 「去和 TA 私聊」：回到 TA 最近用的那个窗口；要开新的窗口时带 new_window
+            cur = await db.execute(
+                "SELECT id FROM chatroom_rooms WHERE type=? AND actor=? ORDER BY updated_at DESC LIMIT 1",
+                (body.type, actor))
             existing = await cur.fetchone()
             if existing:
                 return await get_room(existing["id"])
-        try:
-            await db.execute(
-                "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, actor, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (room_id, title, body.type, "", "", actor, now, now),
-            )
-            await db.commit()
-        except aiosqlite.IntegrityError:
-            # 两个请求同时为同一座位建房间：唯一索引挡下后一个，返回先建好的那个
-            await db.rollback()
-            cur = await db.execute("SELECT id FROM chatroom_rooms WHERE type=? AND actor=?", (body.type, actor))
-            existing = await cur.fetchone()
-            if existing:
-                return await get_room(existing["id"])
-            raise
+        await db.execute(
+            "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, actor, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (room_id, title, body.type, "", "", actor, now, now),
+        )
+        await db.commit()
 
     room = {
         "id": room_id, "title": title, "type": body.type, "actor": actor,
@@ -3956,6 +3981,14 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     triggered: dict = {}
     label = _name_for_identity(actor_id)
 
+    # ── 翻聊天记录：和小克 / Lucien 一样，有这条指令就先去搜（搜自己所有私聊窗口 + 群聊），搜完再接着说 ──
+    memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
+    if memory_requests:
+        notice = await _chatroom_sys_msg(room_id, _chatroom_memory_status_text(actor_id), _q, after_msg_id=msg_id)
+        triggered["memory_search"] = {"requests": memory_requests, "original_question": user_text,
+                                      "system_msg_id": notice["id"]}
+        return memory_clean_text.strip(), triggered
+
     # ── 微信消息：和小克 / Lucien 一样，开关开着才发；以 TA 的名字发到她的微信，房间里留记录 ──
     if is_capability_enabled("wechat_message"):
         async def _save_wechat_system(system_text: str):
@@ -4306,6 +4339,9 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
     if triggered.get("activity"):
         spawn_generation_task(_chatroom_activity_check(room_id, actor_id, model_key, triggered["activity"],
                                                        pinned=pinned))
+    if triggered.get("memory_search"):
+        spawn_generation_task(_chatroom_memory_search(room_id, actor_id, model_key,
+                                                      {**triggered["memory_search"], "pinned": pinned}))
 
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
@@ -4330,7 +4366,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         async with asyncio.timeout(960):
             # 和小克、Lucien 一样：自己的私聊 + 所有家里群合成一条时间线
             try:
-                merged = await seat_chat.merged_messages(actor_id, context_limit)
+                merged = await seat_chat.merged_messages(actor_id, context_limit, "" if group else room_id)
             except Exception as exc:  # 读不出合并记录时退回本房间的记录，不耽误回复
                 print(f"[SEAT] 合并时间线读取失败，只用本房间记录: {type(exc).__name__}")
                 merged = []
