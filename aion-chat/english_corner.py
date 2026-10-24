@@ -253,7 +253,8 @@ async def _main_generation_model_key() -> str:
             "SELECT model FROM conversations ORDER BY updated_at DESC LIMIT 1"
         )
         row = await cursor.fetchone()
-    return (row[0] if row and row[0] else DEFAULT_MODEL) or DEFAULT_MODEL
+    from config import aion_model_key
+    return aion_model_key(row[0] if row and row[0] else "")  # 小克那一份：不用 Codex
 
 
 def _second_generation_model_key() -> str:

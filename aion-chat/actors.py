@@ -248,6 +248,9 @@ async def api_update_actor(actor_id: str, request: Request):
             value = str(value or "").strip()
             if value and value not in MODELS:
                 raise HTTPException(400, "没有这个模型，请先在设置里添加线路")
+            from config import CODEX_ONLY_FOR_LUCIEN, codex_forbidden
+            if value and codex_forbidden(actor_id, value):
+                raise HTTPException(400, CODEX_ONLY_FOR_LUCIEN)
             updates[key] = value
         else:
             updates[key] = str(value or "").strip()[:200]

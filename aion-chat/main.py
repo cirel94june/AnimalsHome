@@ -162,6 +162,13 @@ async def lifespan(app: FastAPI):
         codex_models.sync_models()
     except Exception as error:
         print(f"[codex models] 启动同步失败: {type(error).__name__}")
+    try:  # 以前给小克 / 座位存下的 Codex 清掉（Codex 只给 Lucien）
+        from config import scrub_codex_choices
+        cleaned = await scrub_codex_choices()
+        if cleaned:
+            print(f"[codex models] 已把小克 / 座位的 Codex 选择换掉: {', '.join(cleaned)}")
+    except Exception as error:
+        print(f"[codex models] 清理旧选择失败: {type(error).__name__}")
     try:
         await post_sentinel.start()
     except Exception:

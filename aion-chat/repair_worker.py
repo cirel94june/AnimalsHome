@@ -95,7 +95,8 @@ async def reply_aion(store, job):
     if image_parts:
         messages[-1]["content"] = [{"type": "text", "text": context + extra}, *image_parts[-4:]]
     cfg = load_chatroom_config()
-    key = cfg.get("aion_model") or DEFAULT_MODEL
+    from config import aion_model_key
+    key = aion_model_key(cfg.get("aion_model"))  # 小克在维修室：不用 Codex
     result = ""
     meta = {}
     stream_id = job["id"] + actor

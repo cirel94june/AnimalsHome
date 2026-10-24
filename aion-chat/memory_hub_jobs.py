@@ -53,20 +53,26 @@ def own_model(actor: str) -> str:
         return ""
     if not key or key not in MODELS or is_model_deprecated(key):
         return ""
+    from config import codex_forbidden
+    if codex_forbidden(actor, key):  # 以前存进去的 Codex：小克 / 座位不用它，当作没设
+        return ""
     return key
 
 
 def background_model(actor: str, usual: str = "") -> str:
     """后台活动用的模型。名片里选了「后台用的线路」、而且和平时是同一个模型时用它（只是换一家中转站，
     比如聊天走按次、后台走按量）；否则照旧用平时的（usual，不传就是 TA 自己的模型）。"""
-    from config import same_underlying_model
+    from config import codex_forbidden, same_underlying_model
     base = usual or own_model(actor)
+    if codex_forbidden(actor, base):
+        base = ""  # 小克 / 座位：没有合法线路就是没有，调用方会提示去接线路，不回到 Codex
     try:
         import actors
         chosen = str((actors.get_actor(actor) or {}).get("background_model") or "").strip()
     except Exception:
         return base
-    if not chosen or not base or chosen not in MODELS or is_model_deprecated(chosen):
+    if (not chosen or not base or chosen not in MODELS or is_model_deprecated(chosen)
+            or codex_forbidden(actor, chosen)):
         return base
     if same_underlying_model(chosen, base):
         return chosen

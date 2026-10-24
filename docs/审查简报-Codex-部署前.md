@@ -867,3 +867,37 @@ Hub 接口（`docs/施工方案-跨端接续.md` 第 4 节）：incremental 带 
   - 座位回复里的搜索指令会触发搜索，开关关着时不触发。
 - `test_seat_chat.py` 两项改写：开新窗口 / 回到最近窗口；重启不合并多个窗口，旧唯一索引会被去掉。
 - 相关约 480 项：失败的 10 项全是既有的（chatroom 前端 5 项、link_preview 2 项、health_ring 1 项，改动前就失败）。
+
+## 72. 1c2a113..7829e17 审查修复（M1–M3、L1–L3）
+
+- **M1 Codex 只给 Lucien，按三层补齐**
+  - **规则**：`config.codex_forbidden(actor, key)` = actor 不是 connor 且模型是 codex_cli。
+  - **第一层，存的时候就挡**：`actors.api_update_actor` 的 model / background_model（小克和座位，返回 400「Codex 是 GPT，只给 Lucien 用」）；聊天室设置 `_apply_config_update` 的 aion_model（400）。Lucien 的不受影响。
+  - **第二层，启动清旧数据**：`config.scrub_codex_choices()` 在 lifespan 里、`codex_models.sync_models()` 之后运行。私聊会话里存的 Codex 换成默认模型（可能为空）；聊天室 aion_model、名片里小克和座位的 model / background_model 清空；connor 不动。日志只记位置，不记内容。
+  - **第三层，以小克身份生成时再核**，全部走 `aion_model_key()`：
+    - 闹铃、定时监控（schedule ×2，origin≠connor）；
+    - 监控唤醒（camera）、定位唤醒（location）；
+    - 朋友圈评论（moments）；
+    - 基金分析、礼物、英文角小克那一份、记忆整理用的「最近会话模型」（memory._get_active_model_and_conv）；
+    - 维修室小克、悬浮聊天的发送选项；
+    - 约会剧场候选里的聊天室小克模型改用 codex_forbidden 过滤。
+  - **人格成长**：`_main_ai_model()` 走 aion_model_key，没有合法线路就报错、这次不做；`_call_actor_model` 对非 connor 在调用前再核一次（紧贴调用、中间无 await）。
+  - **复审反例二**：`memory_hub_jobs.own_model` 对小克 / 座位忽略名片里的 Codex（当作没设）。`background_model` 的 base 是 Codex 时视为没有合法线路，返回空，调用方会提示去接线路，不会从名片取回 Codex；后台线路选了 Codex 也不用。
+  - 小剧场（theater_conversations 自带角色）和 Seeky 不是小克身份，没有改。
+- **M2 公钥冷启动积压**：`_Certs` 改为记录 `attempted_at`（任何一次尝试，None = 还没取过）和 `fetched_at`（上次成功）。锁内先看是否已有新鲜的 kid，再看冷却：成功、失败、取到空列表都算一次尝试，60 秒内不再取，排队的这一批也一样，拿到同一个结果。
+- **M3 主动消息去错窗口**：`seat_target_room` 查到她最后说话的地方（群，或这位座位的某个私聊窗口）就直接用；只有她还没说过话才取最近 / 新建。Lucien 的 `_get_or_create_connor_private_room` 同样改为先找她最后说话的 Lucien 窗口，没有再按 updated_at。
+- **L1**：`refresh` 中子进程启动也计入同一个 deadline（`wait_for(shield(spawn))`）。超时或被取消时由 `_reap_late` 后台等待：启动迟到的进程照样用有时限的 `_stop` 收掉（任务引用保存在模块集合里）。
+- **L2**：header、payload 必须是对象；kid 必须是非空字符串；exp 必须是有限数值（排除 bool、NaN、Infinity）；nbf 如果存在也必须是有限数值。类型不对直接返回 False，不靠扩大异常捕获。
+- **L3**：`chat.js` 初始化识别 `?new=1`，优先于恢复旧窗口。等模型列表就绪后新建；启动等待期间她已经自己选了窗口就不覆盖；用 replaceState 去掉参数。
+- **测试**
+  - 新 `test_codex_only_lucien.py` 16 项：
+    - 名片和后台线路的 Codex 对小克 / 座位无效，Lucien 照旧，覆盖空 usual 的反例；
+    - 小克 / 座位保存 Codex 返回 400，聊天室小克模型返回 400，Lucien 可以；
+    - 人格成长的两层挡；
+    - 启动清理：会话、聊天室、名片三处被清，Lucien 不动；
+    - 12 个小克身份入口都调用 aion_model_key（防以后新加入口漏掉）。闹铃、监控、定位的整条流程依赖太多，没做端到端测试，用这条静态回归和共用解析函数的行为测试覆盖。
+  - `test_cf_access.py` 新增 15 项：空缓存 + 6 个并发 + 取失败 / 取到空，只取一次；6 种坏 header 稳定拒绝；7 种坏时间字段拒绝。钥匙轮换用例改为推冷却时间。
+  - `test_multi_window_chat.py` 新增 3 项：座位、Lucien 都去她最后说话的窗口；入口页 new=1 分支在恢复旧窗口之前。
+  - `test_model_defaults.py` 新增 1 项：启动慢于时限时，0.02 秒的时限在 0.15 秒内返回，迟到的进程被收掉一次。
+  - `test_english_corner` / `test_floating_chat` 各有 1 项用了不在模型表里的假模型名，现在会被身份解析换成默认，所以在测试里登记这两个名字（以前它们在真正调用模型时也会被换掉，最终结果不变）。
+  - 约 790 项相关测试里，失败的都是既有失败（chatroom 前端 5、link_preview 2、health_ring 1、english_corner 2 和另外 3 个文件级，与改动前一致）。

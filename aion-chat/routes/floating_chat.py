@@ -66,7 +66,8 @@ async def get_context():
         room_config = get_chatroom_config()
         options = {key: value for key, value in room_config.items()
                    if key in {"connor_model", "tts_enabled", "tts_aion_voice", "tts_connor_voice"}}
-        options["model"] = room_config.get("aion_model") or DEFAULT_MODEL
+        from config import aion_model_key
+        options["model"] = aion_model_key(room_config.get("aion_model"))
     encoded_id = quote(target["id"], safe="")
     return {
         "target": target,

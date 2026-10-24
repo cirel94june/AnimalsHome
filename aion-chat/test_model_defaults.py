@@ -187,3 +187,34 @@ def test_no_route_gives_a_clear_hint(models):
                                                          include_device_context=False)]
     chunks = asyncio.run(collect())
     assert chunks and "模型线路" in chunks[0] and "Lucien" in chunks[0]
+
+
+def test_refresh_deadline_covers_process_start(monkeypatch):
+    """§72 修复审 L1：启动子进程也算在时限里；启动迟到的进程事后照样收掉。"""
+    import ai_providers
+    import time as _time
+    stopped = []
+
+    class Proc:
+        returncode = None
+
+    async def slow_spawn(*a, **k):
+        await asyncio.sleep(0.2)
+        return Proc()
+
+    async def fake_stop(process):
+        stopped.append(process)
+    monkeypatch.setattr(ai_providers, "_CODEX_SCRIPT", "/codex.js")
+    monkeypatch.setattr(ai_providers, "_build_codex_chat_environment", lambda *a, **k: {})
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", slow_spawn)
+    monkeypatch.setattr(codex_models, "_stop", fake_stop)
+
+    async def run():
+        started = _time.monotonic()
+        with pytest.raises(asyncio.TimeoutError):
+            await codex_models.refresh(timeout=0.02)
+        elapsed = _time.monotonic() - started
+        await asyncio.sleep(0.3)  # 迟到的进程启动起来后被收掉
+        return elapsed
+    assert asyncio.run(run()) < 0.15
+    assert len(stopped) == 1

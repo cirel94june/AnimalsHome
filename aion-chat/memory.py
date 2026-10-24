@@ -1106,9 +1106,10 @@ async def _get_active_model_and_conv() -> tuple[str, str | None]:
             "ORDER BY c.updated_at DESC LIMIT 1"
         )
         row = await cur.fetchone()
+    from config import aion_model_key
     if row:
-        return row["model"] or DEFAULT_MODEL, row["id"]
-    return DEFAULT_MODEL, None
+        return aion_model_key(row["model"]), row["id"]  # 小克的记忆整理：不用 Codex
+    return aion_model_key(""), None
 
 
 async def _generate_digest_diary(

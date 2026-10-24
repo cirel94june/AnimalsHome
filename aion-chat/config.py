@@ -645,6 +645,50 @@ def is_shared_model(model_key: str) -> bool:
     return not str(cfg.get("route_id") or "").startswith(SEAT_ROUTE_PREFIX)
 
 
+CODEX_ONLY_FOR_LUCIEN = "Codex 是 GPT，只给 Lucien 用"
+
+
+def codex_forbidden(actor: str, model_key: str | None) -> bool:
+    """Codex 登录态（GPT）只给 Lucien（connor）；小克和座位 3～6 不能用它（会变成 GPT 顶着别人的人设）。"""
+    return actor != "connor" and (MODELS.get(_clean_text(model_key)) or {}).get("provider") == "codex_cli"
+
+
+async def scrub_codex_choices() -> list[str]:
+    """启动时清一次以前存下的「小克 / 座位用 Codex」：小克私聊窗口存的模型换成默认模型（可能为空），
+    聊天室的小克模型、名片里小克和座位的模型 / 后台线路清空。Lucien 的不动。返回改了哪些（只记位置不记内容）。"""
+    changed: list[str] = []
+    codex_keys = [key for key, cfg in MODELS.items() if cfg.get("provider") == "codex_cli"]
+    if codex_keys:
+        from database import get_db
+        replacement = default_model_key()
+        marks = ",".join("?" for _ in codex_keys)
+        async with get_db() as db:
+            cur = await db.execute(f"UPDATE conversations SET model=? WHERE model IN ({marks})",
+                                   (replacement, *codex_keys))
+            if cur.rowcount:
+                changed.append(f"conversations×{cur.rowcount}")
+            await db.commit()
+    from chatroom import load_chatroom_config, save_chatroom_config
+    room_cfg = load_chatroom_config()
+    if codex_forbidden("aion", room_cfg.get("aion_model")):
+        room_cfg["aion_model"] = ""
+        save_chatroom_config(room_cfg)
+        changed.append("chatroom.aion_model")
+    import actors
+    raw = actors._load_raw()
+    seats = raw.get("seats") if isinstance(raw.get("seats"), dict) else {}
+    for actor_id, stored in seats.items():
+        if not isinstance(stored, dict):
+            continue
+        for field in ("model", "background_model"):
+            if codex_forbidden(actor_id, stored.get(field)):
+                stored[field] = ""
+                changed.append(f"{actor_id}.{field}")
+    if any("." in item and not item.startswith("chatroom") for item in changed):
+        actors._save_raw(raw)
+    return changed
+
+
 def aion_model_key(model_key: str | None) -> str:
     """小克用的模型（私聊、群聊、自主活动）：Codex 是 GPT、只给 Lucien，这里不用——
     选了或以前存过的 Codex 换成默认模型；没有能用的线路时返回空，调用时提示去接线路。"""

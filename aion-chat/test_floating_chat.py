@@ -37,7 +37,7 @@ class FloatingChatTests(unittest.IsolatedAsyncioTestCase):
         from routes import floating_chat
         with patch("database.get_db", self.db), patch.object(floating_chat, "get_db", self.db), \
                 patch.object(floating_chat, "get_chatroom_names", return_value=("用户", "甲", "乙")), \
-                patch.object(floating_chat, "get_chatroom_config", return_value={"aion_model": "group-model"}):
+                patch.object(floating_chat, "get_chatroom_config", return_value={"aion_model": "group-model"}),                 patch.dict("config.MODELS", {"group-model": {"provider": "custom_openai", "model": "g"}}):
             return await floating_chat.get_context()
 
     async def test_latest_user_send_selects_group_despite_new_private_ai_reply(self):

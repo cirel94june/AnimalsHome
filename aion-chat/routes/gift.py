@@ -114,7 +114,8 @@ async def api_test():
     if not conv_row:
         return {"ok": False, "message": "没有对话，无法测试"}
 
-    model_key = conv_row["model"] or DEFAULT_MODEL
+    from config import aion_model_key
+    model_key = aion_model_key(conv_row["model"])  # 小克收礼物：不用 Codex
     conv_id = conv_row["id"]
 
     # 获取最近聊天上下文

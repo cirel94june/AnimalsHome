@@ -729,10 +729,17 @@ async def _send_aion_private_whisper(content: str):
 async def _get_or_create_connor_private_room() -> str:
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
+        # Lucien 的私聊可能有好几个窗口：去她最近说话的那个；她还没说过话才按最近更新的
         cur = await db.execute(
-            "SELECT id FROM chatroom_rooms WHERE type = 'connor_1v1' ORDER BY updated_at DESC LIMIT 1"
+            "SELECT r.id FROM chatroom_messages m JOIN chatroom_rooms r ON r.id = m.room_id "
+            "WHERE r.type = 'connor_1v1' AND m.sender = 'user' ORDER BY m.created_at DESC LIMIT 1"
         )
         row = await cur.fetchone()
+        if not row:
+            cur = await db.execute(
+                "SELECT id FROM chatroom_rooms WHERE type = 'connor_1v1' ORDER BY updated_at DESC LIMIT 1"
+            )
+            row = await cur.fetchone()
         if row:
             return row["id"]
 
@@ -2807,6 +2814,9 @@ class ChatroomSettingsUpdate(ConfigUpdate):
 
 def _apply_config_update(cfg: dict, body: ConfigUpdate) -> dict:
     values = body.model_dump(exclude_none=True)
+    from config import CODEX_ONLY_FOR_LUCIEN, codex_forbidden
+    if codex_forbidden("aion", values.get("aion_model")):
+        raise HTTPException(status_code=400, detail=CODEX_ONLY_FOR_LUCIEN)
     allowed = {
         "connor_url", "connor_poll_interval", "connor_poll_timeout", "connor_name",
         "connor_persona", "connor_persona_sections", "connor_persona_evolution_enabled",

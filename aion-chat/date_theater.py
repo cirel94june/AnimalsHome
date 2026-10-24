@@ -91,8 +91,9 @@ def resolve_date_model(*, requested: str = "", cfg: dict | None = None, chatroom
     candidates = [requested]
     if cfg.get("model_locked"):
         candidates.append(cfg.get("model"))
+    from config import codex_forbidden
     candidates.extend([
-        chatroom_cfg.get("aion_model"),
+        "" if codex_forbidden("aion", chatroom_cfg.get("aion_model")) else chatroom_cfg.get("aion_model"),
         cfg.get("model"),
         DEFAULT_MODEL,
     ])

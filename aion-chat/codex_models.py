@@ -178,6 +178,22 @@ async def _stop(process) -> None:
         pass
 
 
+_LATE_REAPERS: set[asyncio.Task] = set()
+
+
+def _reap_late(spawn: asyncio.Future) -> None:
+    """启动超时或被取消时：子进程如果已经（或之后）启动起来了，照常有时限地结束它。"""
+    async def reap():
+        try:
+            process = await spawn
+        except BaseException:
+            return  # 没启动起来，没有要收的
+        await _stop(process)
+    task = asyncio.ensure_future(reap())
+    _LATE_REAPERS.add(task)
+    task.add_done_callback(_LATE_REAPERS.discard)
+
+
 async def refresh(timeout: float = 40.0) -> list[dict]:
     """启动一次 codex app-server，只问模型列表，让 Codex 更新它的缓存，再同步进 MODELS。
     整个过程（含清理）最多约 timeout + 3×CLEANUP_SECONDS 秒。"""
@@ -190,11 +206,16 @@ async def refresh(timeout: float = 40.0) -> list[dict]:
     # 只问模型列表不需要准备陪聊用的模型目录（那一步会同步跑子进程、卡住主循环）；这里只剩复制登录文件
     env = ai_providers._build_codex_chat_environment(prepare_catalog=False)
     extra = {} if os.name == "nt" else {"start_new_session": True}  # 独立进程组，清理时整组结束
-    process = await asyncio.create_subprocess_exec(
+    spawn = asyncio.ensure_future(asyncio.create_subprocess_exec(
         shutil.which("node") or "node", ai_providers._CODEX_SCRIPT, "app-server", "--stdio",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
         env=env, **extra,
-    )
+    ))
+    try:  # 启动也算在同一个时限里
+        process = await asyncio.wait_for(asyncio.shield(spawn), timeout=max(0.0, deadline - loop.time()))
+    except BaseException:
+        _reap_late(spawn)  # 超时 / 被取消：之后才启动起来的进程也要收掉，不留孤儿
+        raise
 
     async def send(payload: dict) -> None:
         process.stdin.write((json.dumps(payload) + "\n").encode())

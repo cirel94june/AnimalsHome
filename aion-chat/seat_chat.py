@@ -213,8 +213,8 @@ async def seat_target_room(actor_id: str) -> tuple[str, str]:
             (SEAT_ROOM_TYPE, actor_id),
         )
         row = await cur.fetchone()
-    if row and row[1] == "group":
-        return row[0], "group"
+    if row:  # 她最近说话的地方：群，或 TA 的某一个私聊窗口（可能有好几个，就用她说话的那个）
+        return row[0], row[1]
     import routes.chatroom as chatroom_routes
     return await chatroom_routes._get_or_create_seat_room(actor_id), SEAT_ROOM_TYPE
 

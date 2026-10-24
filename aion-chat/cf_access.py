@@ -21,6 +21,7 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import time
 
@@ -57,29 +58,36 @@ def _b64int(value: str) -> int:
 class _Certs:
     def __init__(self):
         self.keys: dict[str, rsa.RSAPublicKey] = {}
-        self.fetched_at = 0.0
+        self.fetched_at = 0.0           # 上次成功取到公钥的时间
+        self.attempted_at: float | None = None  # 上次去取（不论成败）的时间；None = 还没取过
         self.lock = asyncio.Lock()
 
+    def _fresh(self, kid: str, now: float) -> bool:
+        return kid in self.keys and now - self.fetched_at <= CERTS_TTL_SECONDS
+
     async def get(self, issuer: str, kid: str, *, fetch=None) -> rsa.RSAPublicKey | None:
-        now = time.monotonic()
-        stale = now - self.fetched_at > CERTS_TTL_SECONDS
-        missing = kid not in self.keys and now - self.fetched_at > CERTS_MIN_REFETCH_SECONDS
-        if stale or missing:
-            async with self.lock:
-                if time.monotonic() - self.fetched_at > CERTS_MIN_REFETCH_SECONDS or not self.keys:
-                    try:
-                        payload = await (fetch or _fetch_certs)(issuer)
-                        keys = {}
-                        for item in payload.get("keys", []):
-                            if item.get("kty") == "RSA" and item.get("kid"):
-                                keys[item["kid"]] = rsa.RSAPublicNumbers(
-                                    _b64int(item["e"]), _b64int(item["n"])).public_key()
-                        if keys:
-                            self.keys = keys
-                        self.fetched_at = time.monotonic()
-                    except Exception as error:  # 取公钥失败：保留旧的，验证不过就拒绝
-                        log.warning("[cf_access] 取公钥失败：%s", type(error).__name__)
-                        self.fetched_at = time.monotonic()
+        if self._fresh(kid, time.monotonic()):
+            return self.keys[kid]
+        async with self.lock:
+            now = time.monotonic()
+            if self._fresh(kid, now):  # 排队期间别人已经取到了
+                return self.keys[kid]
+            # 成功、失败、取到空列表都算一次尝试：60 秒内不再去取（排队的这一批也不例外）
+            if self.attempted_at is not None and now - self.attempted_at < CERTS_MIN_REFETCH_SECONDS:
+                return self.keys.get(kid)
+            self.attempted_at = now
+            try:
+                payload = await (fetch or _fetch_certs)(issuer)
+                keys = {}
+                for item in payload.get("keys", []):
+                    if item.get("kty") == "RSA" and item.get("kid"):
+                        keys[item["kid"]] = rsa.RSAPublicNumbers(
+                            _b64int(item["e"]), _b64int(item["n"])).public_key()
+                if keys:
+                    self.keys = keys
+                    self.fetched_at = time.monotonic()
+            except Exception as error:  # 取公钥失败：保留旧的，验证不过就拒绝
+                log.warning("[cf_access] 取公钥失败：%s", type(error).__name__)
         return self.keys.get(kid)
 
 
@@ -99,7 +107,9 @@ async def verify(token: str, cfg: dict, *, now: float | None = None, certs: _Cer
         header_b64, payload_b64, signature_b64 = token.split(".")
         header = json.loads(_b64url(header_b64))
         payload = json.loads(_b64url(payload_b64))
-        if header.get("alg") != "RS256" or not header.get("kid"):
+        if not isinstance(header, dict) or not isinstance(payload, dict):
+            return False
+        if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str) or not header["kid"]:
             return False
         key = await (certs or _CERTS).get(cfg["issuer"], header["kid"])
         if key is None:
@@ -113,12 +123,18 @@ async def verify(token: str, cfg: dict, *, now: float | None = None, certs: _Cer
     auds = aud if isinstance(aud, list) else [aud]
     if cfg["aud"] not in auds or payload.get("iss") != cfg["issuer"]:
         return False
-    exp, nbf = payload.get("exp"), payload.get("nbf", 0)
-    if not isinstance(exp, (int, float)) or now > exp + CLOCK_SKEW_SECONDS:
+    exp = payload.get("exp")
+    if not _finite_number(exp) or now > exp + CLOCK_SKEW_SECONDS:
         return False
-    if isinstance(nbf, (int, float)) and now + CLOCK_SKEW_SECONDS < nbf:
-        return False
+    if "nbf" in payload:  # 有 nbf 就必须是正常的数字
+        nbf = payload["nbf"]
+        if not _finite_number(nbf) or now + CLOCK_SKEW_SECONDS < nbf:
+            return False
     return True
+
+
+def _finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _token_from(headers: dict[str, str]) -> str:

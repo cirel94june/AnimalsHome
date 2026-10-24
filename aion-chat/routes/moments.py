@@ -476,7 +476,8 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
                     "SELECT model FROM conversations ORDER BY updated_at DESC LIMIT 1"
                 )
                 _row = await _cur.fetchone()
-            _model = resolve_model_key(_row["model"] if _row else DEFAULT_MODEL)
+            from config import aion_model_key
+            _model = aion_model_key(_row["model"] if _row else "")  # 小克评论：不用 Codex
             _temp = SETTINGS.get("temperature")
             model_messages = await _prepare_moment_messages_for_model(messages, _model)
             async for chunk in stream_ai(model_messages, _model, temperature=_temp):

@@ -681,6 +681,9 @@ class ScheduleManager:
             _cr_model = _lcc().get("aion_model", "").strip()
             if _cr_model:
                 model_key = _cr_model
+        if origin != "connor":  # 小克说话：不用 Codex（只给 Lucien）
+            from config import aion_model_key
+            model_key = aion_model_key(model_key)
 
         # 根据来源构建不同的上下文
         debug_recalled = []
@@ -1030,6 +1033,9 @@ class ScheduleManager:
             _cr_model = _lcc().get("aion_model", "").strip()
             if _cr_model:
                 model_key = _cr_model
+        if origin != "connor":  # 小克说话：不用 Codex（只给 Lucien）
+            from config import aion_model_key
+            model_key = aion_model_key(model_key)
 
         now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
 

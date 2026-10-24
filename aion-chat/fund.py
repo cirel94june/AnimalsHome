@@ -340,7 +340,8 @@ async def run_fund_analysis(manual: bool = False):
         if not conv:
             return {"ok": False, "reason": "无对话"}
         conv_id = conv["id"]
-        model_key = conv["model"] or DEFAULT_MODEL
+        from config import aion_model_key
+        model_key = aion_model_key(conv["model"])  # 小克分析：不用 Codex
 
         cur = await db.execute(
             "SELECT role, content, attachments FROM messages WHERE conv_id=? "

@@ -92,3 +92,30 @@ def test_seat_reply_with_search_command_triggers_search(monkeypatch):
     text, triggered = asyncio.run(chatroom_routes._process_seat_commands(
         "嗯[MEMORY_SEARCH:海边旅行]", "s2", "ai3", "msg2", asyncio.Queue()))
     assert "memory_search" not in triggered
+
+
+def test_seat_goes_to_the_window_where_she_last_spoke(db):
+    """§72 修复审 M3：她最后在窗口一说话，窗口二后来被后台消息 / 改名更新了，也要去窗口一。"""
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
+            INSERT INTO chatroom_messages (id,room_id,sender,content,created_at) VALUES ('m9','s1','user','在窗口一说的',20);
+            UPDATE chatroom_rooms SET updated_at=99 WHERE id='s2';
+        """)
+    assert asyncio.run(seat_chat.seat_target_room("ai3")) == ("s1", "seat_1v1")
+
+
+def test_lucien_goes_to_the_window_where_she_last_spoke(db):
+    import routes.chatroom as chatroom_routes
+    with sqlite3.connect(db) as conn:
+        conn.executescript("UPDATE chatroom_rooms SET updated_at=99 WHERE id='c2';"
+                           "INSERT INTO chatroom_messages (id,room_id,sender,content,created_at) VALUES ('m8','c1','user','x',30);")
+    assert asyncio.run(chatroom_routes._get_or_create_connor_private_room()) == "c1"
+
+
+def test_standalone_contacts_new_xiaoke_window_opens_a_new_one():
+    """§72 修复审 L3：单独打开的入口页点「和小克开新窗口」→ /chat?new=1 要新建，不回旧窗口。"""
+    from pathlib import Path
+    text = (Path(__file__).parent / "static" / "chat.js").read_text(encoding="utf-8")
+    new_branch = text.index("initParams.get('new') === '1'")
+    assert new_branch < text.index("lastId && conversations.find(c => c.id === lastId)")
+    assert "await newConversation()" in text[new_branch:new_branch + 400]

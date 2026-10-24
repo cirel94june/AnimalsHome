@@ -426,7 +426,7 @@ async def _aion_model() -> str:
         except Exception:
             pass
     _, model = await _latest_conversation()
-    return aion_model_key(model)
+    return aion_model_key(model)  # 可能为空：background_model 不会因此回到名片里的 Codex
 
 
 def _connor_model() -> str:

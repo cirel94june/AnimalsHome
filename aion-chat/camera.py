@@ -2115,6 +2115,8 @@ class CameraMonitor:
                     model_key = chatroom_model
             except Exception:
                 pass
+        from config import aion_model_key
+        model_key = aion_model_key(model_key)  # 小克说话：不用 Codex（只给 Lucien）
 
         # 统一时间线：合并私聊 + 群聊消息
         from context_builder import fetch_merged_timeline, render_merged_timeline

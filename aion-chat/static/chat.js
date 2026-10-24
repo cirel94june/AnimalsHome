@@ -144,6 +144,11 @@ async function init() {
   } else if (targetConvId && conversations.find(c => c.id === targetConvId)) {
     await selectConv(targetConvId);
     if (targetMsgId) setTimeout(() => jumpToChatMessage(targetConvId, targetMsgId), 100);
+  } else if (initParams.get('new') === '1') {
+    // 从聊天入口页（单独打开时）点了「和小克开新窗口」：开新的，不回到旧窗口
+    history.replaceState(null, '', location.pathname);
+    await modelReady;
+    if (!currentConvId) await newConversation();
   } else if (lastId && conversations.find(c => c.id === lastId)) {
     await selectConv(lastId);
   } else if (conversations.length === 0) {

@@ -862,6 +862,8 @@ async def _call_core_location(
                 model_key = chatroom_model
         except Exception:
             pass
+    from config import aion_model_key
+    model_key = aion_model_key(model_key)  # 小克说话：不用 Codex（只给 Lucien）
 
     merged = await fetch_merged_timeline("aion", 20, conv_id=conv_id)
     history = render_merged_timeline(

@@ -137,7 +137,7 @@ def test_unknown_key_triggers_one_refetch_after_rotation(configured, monkeypatch
         configured.append(issuer)
         return rotated
     monkeypatch.setattr(cf_access, "_fetch_certs", fetch)
-    cf_access._CERTS.fetched_at -= cf_access.CERTS_MIN_REFETCH_SECONDS + 1
+    cf_access._CERTS.attempted_at -= cf_access.CERTS_MIN_REFETCH_SECONDS + 1  # 过了冷却时间
     assert asyncio.run(cf_access.verify(token(key=OTHER_KEY, kid="k2"), cf_access.settings()))
     assert len(configured) == 2
     # 刚取过：陌生的 kid 不会每次请求都去取（防止被刷）
@@ -151,3 +151,39 @@ def test_cert_fetch_failure_rejects(configured, monkeypatch):
     monkeypatch.setattr(cf_access, "_fetch_certs", fail)
     calls, sent = _run(_scope(host=HOST, cf_access_jwt_assertion=token()))
     assert calls == [] and sent[0]["status"] == 403
+
+
+@pytest.mark.parametrize("result", ["fail", "empty"])
+def test_cold_cache_burst_fetches_once(configured, monkeypatch, result):
+    """§72 修复审 M2：空缓存时一批并发请求、取公钥失败或取到空列表，也只去取一次。"""
+    calls = []
+
+    async def fetch(issuer):
+        calls.append(issuer)
+        await asyncio.sleep(0.01)
+        if result == "fail":
+            raise OSError("down")
+        return {"keys": []}
+    monkeypatch.setattr(cf_access, "_fetch_certs", fetch)
+
+    async def burst():
+        cfg = cf_access.settings()
+        return await asyncio.gather(*(cf_access.verify(token(), cfg) for _ in range(6)))
+    assert asyncio.run(burst()) == [False] * 6
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("header", [[], None, 42, "x", {"alg": "RS256", "kid": 7}, {"alg": "RS256", "kid": ""}])
+def test_malformed_header_is_a_clean_rejection(configured, header):
+    """§72 修复审 L2：header 不是对象 / kid 不是字符串：稳定返回拒绝，不抛异常。"""
+    bad = token().split(".")
+    bad[0] = _b64(json.dumps(header).encode())
+    assert asyncio.run(cf_access.verify(".".join(bad), cf_access.settings())) is False
+
+
+@pytest.mark.parametrize("claims", [
+    {"nbf": "tomorrow"}, {"nbf": None}, {"nbf": True},
+    {"exp": float("nan")}, {"exp": float("inf")}, {"exp": True}, {"exp": "later"},
+])
+def test_time_claims_must_be_finite_numbers(configured, claims):
+    assert asyncio.run(cf_access.verify(token(**claims), cf_access.settings())) is False

@@ -520,6 +520,7 @@ class EnglishCornerGenerationTests(unittest.IsolatedAsyncioTestCase):
             patch("context_builder.count_merged_timeline", new=count),
             patch("context_builder.fetch_merged_timeline", new=fetch),
             patch("context_builder.render_merged_timeline", return_value=rendered) as render,
+            patch.dict("config.MODELS", {"Latest-Main-Model": {"provider": "custom_openai", "model": "m"}}),
             patch(
                 "config.load_worldbook",
                 return_value={

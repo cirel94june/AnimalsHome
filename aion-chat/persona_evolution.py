@@ -584,15 +584,20 @@ async def fetch_actor_daily_memory_summaries(actor: str, start_ts: float, end_ts
 
 
 async def _main_ai_model() -> str:
+    """小克的人格成长用的模型：不用 Codex（只给 Lucien）；没有合法线路时报错，这次不做。"""
+    from config import aion_model_key
     cfg = _chatroom_config()
     configured_model = (cfg.get("aion_model") or "").strip()
-    if configured_model:
-        return configured_model
-    async with get_db() as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT model FROM conversations ORDER BY updated_at DESC LIMIT 1")
-        row = await cur.fetchone()
-    return (row["model"] if row and row["model"] else DEFAULT_MODEL) or DEFAULT_MODEL
+    if not configured_model:
+        async with get_db() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT model FROM conversations ORDER BY updated_at DESC LIMIT 1")
+            row = await cur.fetchone()
+        configured_model = row["model"] if row and row["model"] else ""
+    key = aion_model_key(configured_model)
+    if not key:
+        raise RuntimeError("小克还没有能用的线路，这次复盘不做")
+    return key
 
 
 async def _actor_model(actor: str) -> str:
@@ -617,6 +622,10 @@ async def _call_actor_model(actor: str, messages: list[dict], model_key: str, *,
             raise RuntimeError("座位刚刚换了模型，这次复盘不做")
         if pinned is not None:
             ensure_model_unchanged(model_key, pinned)  # 同一个模型键被改绑了线路，也不做
+    if actor != ACTOR_CONNOR:
+        from config import CODEX_ONLY_FOR_LUCIEN, codex_forbidden
+        if codex_forbidden("aion", model_key):  # 紧贴调用前再核一次：Codex 不参与改小克 / 座位的人设
+            raise RuntimeError(CODEX_ONLY_FOR_LUCIEN)
     if actor == ACTOR_CONNOR:
         from chatroom import simple_connor_cli_call
 
