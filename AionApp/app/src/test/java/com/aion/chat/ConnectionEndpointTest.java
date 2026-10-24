@@ -27,15 +27,15 @@ public class ConnectionEndpointTest {
     public void migratesLegacyCloudflareHost() {
         assertEquals(ConnectionEndpoint.CLOUDFLARE_PAGE_URL,
                 ConnectionEndpoint.normalizePageUrl("https://legacy-ws.example.com/chat"));
-        assertEquals("wss://chat.example.com/ws",
+        assertEquals("wss://home.animalshome.top/ws",
                 ConnectionEndpoint.toWebSocketUrl("wss://legacy-ws.example.com/ws"));
     }
 
     @Test
     public void buildsCloudflareWebSocketOnProtectedHost() {
-        assertEquals("wss://chat.example.com/ws",
-                ConnectionEndpoint.toWebSocketUrl("https://chat.example.com/chat"));
-        assertTrue(ConnectionEndpoint.isCloudflareHost("chat.example.com"));
+        assertEquals("wss://home.animalshome.top/ws",
+                ConnectionEndpoint.toWebSocketUrl("https://home.animalshome.top/chat"));
+        assertTrue(ConnectionEndpoint.isCloudflareHost("home.animalshome.top"));
     }
 
     @Test
@@ -45,7 +45,7 @@ public class ConnectionEndpointTest {
         assertEquals("ws://192.168.1.100:8080/ws",
                 ConnectionEndpoint.toWebSocketUrl("http://192.168.1.100:8080/chat"));
         assertFalse(ConnectionEndpoint.isCloudflareHost("100.64.0.1"));
-        assertFalse(ConnectionEndpoint.isCloudflareHost("chat.example.com.evil.example"));
+        assertFalse(ConnectionEndpoint.isCloudflareHost("home.animalshome.top.evil.example"));
     }
 
     @Test
@@ -76,20 +76,20 @@ public class ConnectionEndpointTest {
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL, true));
         assertFalse(ConnectionEndpoint.shouldBypassCloudflareMainDocument(
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL,
-                "https://chat.example.com/static/chatroom.css", false));
+                "https://home.animalshome.top/static/chatroom.css", false));
         assertFalse(ConnectionEndpoint.shouldBypassCloudflareMainDocument(
                 "http://100.64.0.1:8080/chat",
                 "http://100.64.0.1:8080/chat", true));
         assertFalse(ConnectionEndpoint.shouldBypassCloudflareMainDocument(
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL,
-                "https://chat.example.com.evil.example/chat", true));
+                "https://home.animalshome.top.evil.example/chat", true));
     }
 
     @Test
     public void allowsOnlyExactSelectedContentHost() {
         String tailscalePage = "http://100.64.0.1:8080/chat";
         assertTrue(ConnectionEndpoint.isAllowedContentHost("100.64.0.1", tailscalePage));
-        assertTrue(ConnectionEndpoint.isAllowedContentHost("chat.example.com",
+        assertTrue(ConnectionEndpoint.isAllowedContentHost("home.animalshome.top",
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL));
         assertFalse(ConnectionEndpoint.isAllowedContentHost(
                 "100.64.0.1.evil.example", tailscalePage));

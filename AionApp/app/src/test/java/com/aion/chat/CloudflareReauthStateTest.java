@@ -16,7 +16,7 @@ public class CloudflareReauthStateTest {
 
         assertFalse(state.shouldBypass(
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL,
-                "https://chat.example.com/static/chatroom.css", false));
+                "https://home.animalshome.top/static/chatroom.css", false));
         assertTrue(state.shouldBypass(
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL,
                 ConnectionEndpoint.CLOUDFLARE_PAGE_URL, true));

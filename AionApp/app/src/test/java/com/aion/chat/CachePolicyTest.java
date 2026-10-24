@@ -13,8 +13,8 @@ public class CachePolicyTest {
                 SharedAssetCache.buildManifestUrl("http://192.168.1.100:8080/chat"));
         assertEquals("http://100.64.0.1:8080/api/client-assets",
                 SharedAssetCache.buildManifestUrl("http://100.64.0.1:8080/chat"));
-        assertEquals("https://chat.example.com/api/client-assets",
-                SharedAssetCache.buildManifestUrl("https://chat.example.com/chat"));
+        assertEquals("https://home.animalshome.top/api/client-assets",
+                SharedAssetCache.buildManifestUrl("https://home.animalshome.top/chat"));
     }
 
     @Test

@@ -25,7 +25,7 @@ public class PushServiceStartPolicyTest {
 
         assertTrue(PushServiceStartPolicy.canReturnAfterLightweightAction(
                 AionPushService.ACTION_REFRESH_CLOUDFLARE_AUTH,
-                "wss://chat.example.com/ws",
+                "wss://home.animalshome.top/ws",
                 true));
     }
 
