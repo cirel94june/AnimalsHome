@@ -1046,3 +1046,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_hub_memory.py`：重要度改用 0–1；新增 1–10 整数被拒、3 种看不懂的回应不算成功且不带 Hub 原文、改动类只返回 id 和 status。
   - `test_seat_pages.py`：相册迁移只做一次（手动挪回小克相册后重开两次仍是小克）；旧用例改成模拟升级前没有迁移记号的库；维修室座位背景带自己的私聊、不带别的座位；摘要和世界书守卫的源码检查。
   - 约 900 项相关测试中，失败的与此前的既有失败一致。
+
+## 79. a8bed46 复审 L3 收尾：Hub 改动类操作要看到明确的成功状态
+
+- 按 Hub 实际协议（memory-hub `memory_ops`）：改 → `updated`，归档 → `archived`，找回 → `unarchived` / `already_active`，删除 → `deleted`；找不到 → `not_found`。
+- `_done(memory_id, data, success)`：
+  - `not_found` 一律转 404（四个接口统一）；
+  - `ok is False` 或 status 不在这次操作的成功集合里，就不算成功：带非空 status（如 guardrail_blocked、denied）返回 400 固定文案，空对象或无 status 返回 502；
+  - 成功只返回 `{ok, id, status}`。
+- 发现 Hub 那边的小问题（不在 AionsHome）：Hub 的 `archive_memory` 对不存在的 id 也返回 `archived`，这条要告诉 Hub 窗口。
+- 测试 `test_hub_memory.py`：假 Hub 改为按真实协议回 status；新增归档必须见到 archived（空对象、ok=false、denied、guardrail_blocked、别的操作的成功状态都不算），四个接口的 not_found 都是 404。共 25 项通过。

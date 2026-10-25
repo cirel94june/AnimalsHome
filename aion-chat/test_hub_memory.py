@@ -24,7 +24,12 @@ def fake_hub(monkeypatch):
                 {"id": "abc-1", "content": "狗蛋记得小猫爱吃草莓", "layer": "private", "embedding": [0.1], "history": ["x"]}]})
         if "/missing" in request.url.path:
             return httpx.Response(404, json={"detail": "nope"})
-        return httpx.Response(200, json={"ok": True})
+        status = {"PUT": "updated", "DELETE": "deleted"}.get(request.method)
+        if request.url.path.endswith("/archive"):
+            status = "archived"
+        if request.url.path.endswith("/unarchive"):
+            status = "unarchived"
+        return httpx.Response(200, json={"id": "abc-1", "status": status})
 
     transport = httpx.MockTransport(handler)
     real_client = httpx.AsyncClient
@@ -131,3 +136,28 @@ def test_mutations_return_only_id_and_status(monkeypatch, fake_hub):
         return {"status": "archived", "content": "私事", "embedding": [1], "history": ["x"]}
     monkeypatch.setattr(hub, "_call", call)
     assert asyncio.run(hub.archive_memory("abc-1")) == {"ok": True, "id": "abc-1", "status": "archived"}
+
+
+
+@pytest.mark.parametrize("reply", [{}, {"ok": False}, {"status": "denied"}, {"status": "guardrail_blocked"}, {"status": "updated"}])
+def test_archive_needs_hubs_success_status(monkeypatch, fake_hub, reply):
+    """§79：Hub 没明确说「archived」就不算成功（空对象、ok=false、别的状态、别的操作的成功状态都不算）。"""
+    async def call(method, path, **kw):
+        return reply
+    monkeypatch.setattr(hub, "_call", call)
+    with pytest.raises(HTTPException):
+        asyncio.run(hub.archive_memory("abc-1"))
+
+
+@pytest.mark.parametrize("op", ["edit", "archive", "delete", "unarchive"])
+def test_not_found_is_404_everywhere(monkeypatch, fake_hub, op):
+    async def call(method, path, **kw):
+        return {"status": "not_found"}
+    monkeypatch.setattr(hub, "_call", call)
+    run = {"edit": lambda: hub.edit_memory("abc-1", hub.MemoryEdit(content="x")),
+           "archive": lambda: hub.archive_memory("abc-1"),
+           "delete": lambda: hub.delete_memory("abc-1", confirm="delete"),
+           "unarchive": lambda: hub.unarchive_memory("abc-1")}[op]
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(run())
+    assert err.value.status_code == 404

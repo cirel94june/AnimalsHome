@@ -79,10 +79,17 @@ async def _call(method: str, path: str, **kwargs) -> dict:
     return data
 
 
-def _done(memory_id: str, data: dict) -> dict:
-    """改动类操作只回必要的几项，不把 Hub 的整条记录转给页面。"""
+def _done(memory_id: str, data: dict, success: tuple[str, ...]) -> dict:
+    """改动类操作：Hub 明确说成功了（对应的 status）才算成功；只回必要的几项，不把 Hub 的整条记录转给页面。
+    Hub 的约定：改 updated、归档 archived、找回 unarchived / already_active、删除 deleted。"""
     status = data.get("status")
-    return {"ok": True, "id": memory_id, "status": status if isinstance(status, str) else ""}
+    if status == "not_found":
+        raise HTTPException(404, "Hub 里没有这条记忆")
+    if data.get("ok") is False or status not in success:
+        if isinstance(status, str) and status:  # Hub 明确拒绝了（比如安全检查没过）
+            raise HTTPException(400, "Memory Hub 没能完成这次操作")
+        raise HTTPException(502, "Memory Hub 的回应看不懂，这次没有确认成功")
+    return {"ok": True, "id": memory_id, "status": status}
 
 
 @router.get("/list")
@@ -113,25 +120,24 @@ async def edit_memory(memory_id: str, body: MemoryEdit):
             raise HTTPException(400, "内容不能是空的")
     if not changes:
         raise HTTPException(400, "没有要改的内容")
-    return _done(memory_id, await _call("PUT", f"/api/memory/{_memory_id(memory_id)}", json={**changes, "changed_by": "ceci"}))
+    return _done(memory_id, await _call("PUT", f"/api/memory/{_memory_id(memory_id)}", json={**changes, "changed_by": "ceci"}),
+                 ("updated",))
 
 
 @router.post("/{memory_id}/archive")
 async def archive_memory(memory_id: str):
-    return _done(memory_id, await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive"))
+    return _done(memory_id, await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive"), ("archived",))
 
 
 @router.post("/{memory_id}/unarchive")
 async def unarchive_memory(memory_id: str):
     """找回：已归档（或自动淡出）的记忆恢复成正在用。"""
-    result = await _call("POST", f"/api/memory/{_memory_id(memory_id)}/unarchive")
-    if result.get("status") == "not_found":
-        raise HTTPException(404, "Hub 里没有这条记忆")
-    return _done(memory_id, result)
+    return _done(memory_id, await _call("POST", f"/api/memory/{_memory_id(memory_id)}/unarchive"),
+                 ("unarchived", "already_active"))
 
 
 @router.delete("/{memory_id}")
 async def delete_memory(memory_id: str, confirm: str = Query("")):
     if confirm != "delete":  # 彻底删除找不回来：页面二次确认后才带上
         raise HTTPException(400, "彻底删除需要确认")
-    return _done(memory_id, await _call("DELETE", f"/api/memory/{_memory_id(memory_id)}"))
+    return _done(memory_id, await _call("DELETE", f"/api/memory/{_memory_id(memory_id)}"), ("deleted",))
