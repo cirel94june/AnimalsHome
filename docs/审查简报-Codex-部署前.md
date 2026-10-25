@@ -1056,3 +1056,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 成功只返回 `{ok, id, status}`。
 - 发现 Hub 那边的小问题（不在 AionsHome）：Hub 的 `archive_memory` 对不存在的 id 也返回 `archived`，这条要告诉 Hub 窗口。
 - 测试 `test_hub_memory.py`：假 Hub 改为按真实协议回 status；新增归档必须见到 archived（空对象、ok=false、denied、guardrail_blocked、别的操作的成功状态都不算），四个接口的 not_found 都是 404。共 25 项通过。
+
+## 80. Hub 归档的新回应 + 主人钥匙上线
+
+- Hub 窗口修了归档：找不到 → `not_found`，已经归档过 → `already_archived`，正常 → `archived`，后台自动操作遇到锚定或保留的 → `refused`（带 reason）；DELETE 找不到也返回 `not_found`。
+- `routes/hub_memory.py`：归档的成功集合改为 `archived` + `already_archived`。`refused` 走已有的「Hub 明确拒绝」分支，返回 400 固定文案，不带 reason 原文。
+- 测试 +2：already_archived 算成功；refused 返回 400，且 detail 里不含 reason。
+- 运维（2026-10-25，已做）：
+  - Hub 主人钥匙已写进服务器 `/etc/aionshome.env` 的 `MEMORY_HUB_OWNER_SECRET`。文件权限 600 root，用 stdin 写入，没进命令行；原文件备份为 `.bak-20261025`（600）。重启后，Hub 记忆页列表用主人钥匙正常（小克 516、狗蛋 206），日志里没有钥匙。
+  - AI 和 bot 的记忆桥接继续用 `MEMORY_HUB_TOKEN`，§77 的代码只在 `_hub()` 里换钥匙。
+  - Codex 登录目录本来就是 700，auth.json 600。`/var/lib/aionshome/AppData`、`Local`、`AionsHome` 三层去掉组可写（775 → 755）。

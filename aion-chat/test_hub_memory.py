@@ -161,3 +161,18 @@ def test_not_found_is_404_everywhere(monkeypatch, fake_hub, op):
     with pytest.raises(HTTPException) as err:
         asyncio.run(run())
     assert err.value.status_code == 404
+
+
+
+@pytest.mark.parametrize("reply,ok", [({"status": "already_archived"}, True), ({"status": "refused", "reason": "anchored"}, False)])
+def test_archive_new_hub_replies(monkeypatch, fake_hub, reply, ok):
+    """§80：Hub 新协议：已经归档过的算成功；refused 算拒绝（不把 reason 原文给页面）。"""
+    async def call(method, path, **kw):
+        return reply
+    monkeypatch.setattr(hub, "_call", call)
+    if ok:
+        assert asyncio.run(hub.archive_memory("abc-1"))["status"] == "already_archived"
+    else:
+        with pytest.raises(HTTPException) as err:
+            asyncio.run(hub.archive_memory("abc-1"))
+        assert err.value.status_code == 400 and "anchored" not in str(err.value.detail)

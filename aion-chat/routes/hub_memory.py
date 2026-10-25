@@ -81,7 +81,8 @@ async def _call(method: str, path: str, **kwargs) -> dict:
 
 def _done(memory_id: str, data: dict, success: tuple[str, ...]) -> dict:
     """改动类操作：Hub 明确说成功了（对应的 status）才算成功；只回必要的几项，不把 Hub 的整条记录转给页面。
-    Hub 的约定：改 updated、归档 archived、找回 unarchived / already_active、删除 deleted。"""
+    Hub 的约定：改 updated、归档 archived / already_archived、找回 unarchived / already_active、删除 deleted；
+    找不到 not_found；后台自动操作才会出现的 refused 算 Hub 拒绝。"""
     status = data.get("status")
     if status == "not_found":
         raise HTTPException(404, "Hub 里没有这条记忆")
@@ -126,7 +127,8 @@ async def edit_memory(memory_id: str, body: MemoryEdit):
 
 @router.post("/{memory_id}/archive")
 async def archive_memory(memory_id: str):
-    return _done(memory_id, await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive"), ("archived",))
+    return _done(memory_id, await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive"),
+                 ("archived", "already_archived"))
 
 
 @router.post("/{memory_id}/unarchive")
