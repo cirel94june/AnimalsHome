@@ -49,9 +49,13 @@ class AlbumStore:
                 db.execute("""UPDATE photos SET album_id = CASE
                     WHEN source='upload' THEN 'family'
                     WHEN actor='connor' THEN 'connor' ELSE 'aion' END""")
-            # 以前座位（狗蛋等）生成的照片被归进了小克的相册：挪回 TA 自己的相册（只挪确实是座位生成的）
-            db.execute("""UPDATE photos SET album_id=actor
-                WHERE source='generated' AND album_id='aion' AND actor IN ('ai3','ai4','ai5','ai6')""")
+            # 以前座位（狗蛋等）生成的照片被归进了小克的相册：挪回 TA 自己的相册（只挪确实是座位生成的）。
+            # 只做一次，和「做过了」的记号在同一个事务里；之后她手动挪到哪本就是哪本
+            db.execute("CREATE TABLE IF NOT EXISTS album_migrations (name TEXT PRIMARY KEY, done_at REAL NOT NULL)")
+            if not db.execute("SELECT 1 FROM album_migrations WHERE name='seat_albums_v1'").fetchone():
+                db.execute("""UPDATE photos SET album_id=actor
+                    WHERE source='generated' AND album_id='aion' AND actor IN ('ai3','ai4','ai5','ai6')""")
+                db.execute("INSERT INTO album_migrations(name, done_at) VALUES ('seat_albums_v1', ?)", (time.time(),))
             db.execute("CREATE INDEX IF NOT EXISTS photos_album ON photos(album_id, removed_at)")
             db.execute("""CREATE TABLE IF NOT EXISTS photo_views (
                 actor TEXT NOT NULL, photo_id TEXT NOT NULL, viewed_at REAL NOT NULL,

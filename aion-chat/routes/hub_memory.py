@@ -57,6 +57,7 @@ def _memory_id(memory_id: str) -> str:
 
 
 async def _call(method: str, path: str, **kwargs) -> dict:
+    """调 Hub 管理接口。只认 JSON 对象；看不懂的回应（比如登录页）不当成功；Hub 的错误原文不往页面上传。"""
     base, headers = _hub()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -70,10 +71,18 @@ async def _call(method: str, path: str, **kwargs) -> dict:
     try:
         data = response.json()
     except ValueError:
-        return {}
-    if isinstance(data, dict) and data.get("error"):
-        raise HTTPException(400, str(data["error"])[:200])
-    return data if isinstance(data, dict) else {}
+        data = None
+    if not isinstance(data, dict):
+        raise HTTPException(502, "Memory Hub 的回应看不懂，这次没有确认成功")
+    if data.get("error"):
+        raise HTTPException(400, "Memory Hub 没能完成这次操作")
+    return data
+
+
+def _done(memory_id: str, data: dict) -> dict:
+    """改动类操作只回必要的几项，不把 Hub 的整条记录转给页面。"""
+    status = data.get("status")
+    return {"ok": True, "id": memory_id, "status": status if isinstance(status, str) else ""}
 
 
 @router.get("/list")
@@ -82,14 +91,16 @@ async def list_memories(actor: str, status: str = Query("active", pattern="^(act
     hub_id = _hub_id(actor)
     data = await _call("GET", "/api/memory/list",
                        params={"ai_id": hub_id, "status": status, "page": page, "per_page": per_page})
-    items = [{k: item.get(k) for k in _FIELDS} for item in (data.get("items") or []) if isinstance(item, dict)]
+    if not isinstance(data.get("items"), list):
+        raise HTTPException(502, "Memory Hub 的回应看不懂")
+    items = [{k: item.get(k) for k in _FIELDS} for item in data["items"] if isinstance(item, dict)]
     return {"total": int(data.get("total") or 0), "page": page, "per_page": per_page, "items": items,
             "hub_id": hub_id}
 
 
 class MemoryEdit(BaseModel):
     content: str | None = Field(None, min_length=1, max_length=4000)
-    importance: int | None = Field(None, ge=1, le=10)
+    importance: float | None = Field(None, ge=0, le=1)  # 和 Hub 一样是 0～1；页面上显示成 1～10 再换算回来
     category: str | None = Field(None, max_length=40)
 
 
@@ -102,12 +113,12 @@ async def edit_memory(memory_id: str, body: MemoryEdit):
             raise HTTPException(400, "内容不能是空的")
     if not changes:
         raise HTTPException(400, "没有要改的内容")
-    return await _call("PUT", f"/api/memory/{_memory_id(memory_id)}", json={**changes, "changed_by": "ceci"})
+    return _done(memory_id, await _call("PUT", f"/api/memory/{_memory_id(memory_id)}", json={**changes, "changed_by": "ceci"}))
 
 
 @router.post("/{memory_id}/archive")
 async def archive_memory(memory_id: str):
-    return await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive")
+    return _done(memory_id, await _call("POST", f"/api/memory/{_memory_id(memory_id)}/archive"))
 
 
 @router.post("/{memory_id}/unarchive")
@@ -116,11 +127,11 @@ async def unarchive_memory(memory_id: str):
     result = await _call("POST", f"/api/memory/{_memory_id(memory_id)}/unarchive")
     if result.get("status") == "not_found":
         raise HTTPException(404, "Hub 里没有这条记忆")
-    return result
+    return _done(memory_id, result)
 
 
 @router.delete("/{memory_id}")
 async def delete_memory(memory_id: str, confirm: str = Query("")):
     if confirm != "delete":  # 彻底删除找不回来：页面二次确认后才带上
         raise HTTPException(400, "彻底删除需要确认")
-    return await _call("DELETE", f"/api/memory/{_memory_id(memory_id)}")
+    return _done(memory_id, await _call("DELETE", f"/api/memory/{_memory_id(memory_id)}"))

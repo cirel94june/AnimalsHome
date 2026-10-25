@@ -46,8 +46,9 @@ def test_each_ai_has_an_album_and_seat_photos_go_home(tmp_path, seats):
     Image.new("RGB", (4, 4)).save(buf, format="PNG")
     mine = store.save_photo(buf.getvalue(), source="generated", actor="ai3", prompt="自拍")
     assert mine["album_id"] == "ai3"
-    with sqlite3.connect(root / "album.sqlite3") as db:  # 模拟旧数据：被归进了小克的相册
+    with sqlite3.connect(root / "album.sqlite3") as db:  # 模拟升级前的旧库：照片在小克相册、还没做过迁移
         db.execute("UPDATE photos SET album_id='aion' WHERE id=?", (mine["id"],))
+        db.execute("DELETE FROM album_migrations")
     album.AlbumStore(root)  # 重启时迁移
     with sqlite3.connect(root / "album.sqlite3") as db:
         assert db.execute("SELECT album_id FROM photos WHERE id=?", (mine["id"],)).fetchone()[0] == "ai3"
@@ -160,3 +161,47 @@ def test_repair_both_goes_advisors_then_executor(monkeypatch, tmp_path):
             patch.object(repair_worker, "reply_aion", advisor), patch("repair_codex.run_codex", executor):
         asyncio.run(repair_worker.discuss(Store(), job))
     assert order == ["aion", "ai3", "connor"]
+
+
+def test_album_seat_migration_runs_once(tmp_path, seats):
+    """§78 M2：挪回座位相册只做一次；之后她手动挪到小克相册的，重启不会被改回去。"""
+    root = tmp_path / "album"
+    store = album.AlbumStore(root)
+    from PIL import Image
+    import io
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4)).save(buf, format="PNG")
+    photo = store.save_photo(buf.getvalue(), source="generated", actor="ai3", prompt="自拍")
+    store.move_photos([photo["id"]], "aion")  # 她自己挪的
+    album.AlbumStore(root)
+    album.AlbumStore(root)
+    with sqlite3.connect(root / "album.sqlite3") as db:
+        assert db.execute("SELECT album_id FROM photos WHERE id=?", (photo["id"],)).fetchone()[0] == "aion"
+
+
+def test_repair_seat_context_has_own_private_chat(tmp_path, monkeypatch, seats):
+    """§78 L4：维修室里座位的生活背景带上 TA 自己的私聊，不带别的座位的。"""
+    import database
+    path = tmp_path / "chat.db"
+    monkeypatch.setattr(database, "DB_PATH", path)
+    asyncio.run(database.init_db())
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            INSERT INTO chatroom_rooms (id,title,type,actor,created_at,updated_at) VALUES
+              ('g','家','group','',1,1), ('s3','狗蛋','seat_1v1','ai3',1,1), ('s4','别人','seat_1v1','ai4',1,1);
+            INSERT INTO chatroom_messages (id,room_id,sender,content,created_at) VALUES
+              ('m1','g','user','群里',10), ('m2','s3','user','和狗蛋私聊',11), ('m3','s4','user','别人的私聊',12);
+        """)
+    rows = asyncio.run(context_builder.fetch_merged_timeline("ai3", 20))
+    assert sorted(r["content"] for r in rows) == ["和狗蛋私聊", "群里"]
+
+
+def test_group_digest_and_worldbook_guards_in_source():
+    """§78 L2：群聊摘要收座位的话；M1 / L1：世界书读到之前不能存、存失败底部按钮停下。"""
+    from pathlib import Path
+    here = Path(__file__).parent
+    chat = (here / "routes" / "chatroom.py").read_text(encoding="utf-8")
+    assert 'if sender != "user" and not _is_ai_sender(sender):' in chat and "**_seat_name_map()," in chat
+    wb = (here / "static" / "worldbook.html").read_text(encoding="utf-8")
+    assert "load !== wbPersonaLoad" in wb and "if (!wbPersonaLoaded)" in wb
+    assert '!(await saveOtherPersona())' in wb

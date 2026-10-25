@@ -10,6 +10,8 @@ import actors
 import memory_hub_bridge
 import routes.hub_memory as hub
 
+REAL_CLIENT = httpx.AsyncClient
+
 
 @pytest.fixture
 def fake_hub(monkeypatch):
@@ -54,11 +56,11 @@ def test_seat_without_hub_or_unknown_seat_is_refused(fake_hub):
 
 
 def test_edit_archive_delete(fake_hub):
-    asyncio.run(hub.edit_memory("abc-1", hub.MemoryEdit(content="  新内容 ", importance=7)))
+    asyncio.run(hub.edit_memory("abc-1", hub.MemoryEdit(content="  新内容 ", importance=0.7)))
     put = fake_hub[-1]
     assert put.method == "PUT" and put.url.path == "/api/memory/abc-1"
     import json
-    assert json.loads(put.content) == {"content": "新内容", "importance": 7, "changed_by": "ceci"}
+    assert json.loads(put.content) == {"content": "新内容", "importance": 0.7, "changed_by": "ceci"}
     asyncio.run(hub.archive_memory("abc-1"))
     assert fake_hub[-1].method == "POST" and fake_hub[-1].url.path == "/api/memory/abc-1/archive"
     with pytest.raises(HTTPException):  # 彻底删除必须带确认
@@ -101,3 +103,31 @@ def test_unarchive_not_found(monkeypatch, fake_hub):
     with pytest.raises(HTTPException) as err:
         asyncio.run(hub.unarchive_memory("abc-1"))
     assert err.value.status_code == 404
+
+
+def test_importance_uses_hubs_zero_to_one_scale():
+    """§78 M3：Hub 的重要度是 0～1；1～10 的整数不能直接写进去。"""
+    with pytest.raises(Exception):
+        hub.MemoryEdit(importance=5)
+    assert hub.MemoryEdit(importance=0.5).importance == 0.5
+
+
+@pytest.mark.parametrize("response", [
+    httpx.Response(200, text="<html>login</html>"),          # 登录页之类：不当成功
+    httpx.Response(200, json=["not", "an", "object"]),
+    httpx.Response(200, json={"error": "secret detail from hub"}),
+])
+def test_unclear_hub_responses_are_not_success(monkeypatch, fake_hub, response):
+    """§78 L3：看不懂的回应不算成功；Hub 的错误原文不传给页面。"""
+    transport = httpx.MockTransport(lambda request: response)
+    monkeypatch.setattr(hub.httpx, "AsyncClient", lambda **kw: REAL_CLIENT(transport=transport, **kw))
+    with pytest.raises(HTTPException) as err:
+        asyncio.run(hub.archive_memory("abc-1"))
+    assert "secret detail" not in str(err.value.detail)
+
+
+def test_mutations_return_only_id_and_status(monkeypatch, fake_hub):
+    async def call(method, path, **kw):
+        return {"status": "archived", "content": "私事", "embedding": [1], "history": ["x"]}
+    monkeypatch.setattr(hub, "_call", call)
+    assert asyncio.run(hub.archive_memory("abc-1")) == {"ok": True, "id": "abc-1", "status": "archived"}

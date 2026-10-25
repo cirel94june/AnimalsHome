@@ -98,6 +98,14 @@ def append_message_meta(content: str, created_at, label: str = "") -> str:
     return text
 
 
+def _is_seat(who: str) -> bool:
+    try:
+        import actors
+        return who in actors.SEAT_IDS and who not in ("aion", "connor")
+    except Exception:
+        return False
+
+
 def _seat_display_name(sender: str) -> str:
     """座位 3～6 在聊天记录里用名字（狗蛋写「Jasper」，不写「ai3」）；不是座位就原样返回。"""
     try:
@@ -733,6 +741,19 @@ def _merged_timeline_sources(
     elif who == "connor":
         conditions = ["r.type = 'connor_1v1'"]
         params = []
+        if since_ts is not None:
+            conditions.append("m.created_at >= ?")
+            params.append(since_ts)
+        if until_ts is not None:
+            conditions.append("m.created_at <= ?")
+            params.append(until_ts)
+        sources.append((
+            "private", "m.sender", "FROM chatroom_messages m "
+            "JOIN chatroom_rooms r ON r.id = m.room_id", conditions, params,
+        ))
+    elif _is_seat(who):  # 座位 3～6：TA 自己的私聊（所有窗口），不含别的座位
+        conditions = ["r.type = 'seat_1v1'", "r.actor = ?"]
+        params = [who]
         if since_ts is not None:
             conditions.append("m.created_at >= ?")
             params.append(since_ts)

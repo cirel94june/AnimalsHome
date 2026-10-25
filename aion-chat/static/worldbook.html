@@ -420,6 +420,14 @@ function renderSections(prefix, containerId, sections) {
 // ── 「AI 人设」：小克的在下面原来的编辑区；Lucien、座位 3～6 用同一套分区，单独保存 ──
 let wbPerson = "aion";
 let wbSeats = [];
+let wbPersonaLoad = 0;        // 每次读取的序号：只认最新一次
+let wbPersonaLoaded = false;  // 这位的人设读到了才能改、才能存（避免空表单把原来的分区覆盖掉）
+
+function setOtherPersonaEditable(editable) {
+  wbPersonaLoaded = editable;
+  $("otherPersonaSave").disabled = !editable;
+  document.querySelectorAll("#otherSections textarea").forEach(t => { t.readOnly = !editable; });
+}
 
 async function renderPeople() {
   try { wbSeats = await window.AionSeats.load(); } catch (e) { wbSeats = [{ id: "aion", name: currentAiName(), open: true }]; }
@@ -448,27 +456,38 @@ async function selectPerson(id) {
   $("otherPersonaSave").textContent = `保存 ${seat.name} 的人设`;
   $("otherPersonaStatus").textContent = "正在读取…";
   renderSections("other", "otherSections", AI_SECTIONS);
+  const load = ++wbPersonaLoad;
+  setOtherPersonaEditable(false);
   try {
     const data = await api("GET", `/api/actors/${encodeURIComponent(id)}/persona`);
-    if (wbPerson !== id) return;
+    if (wbPerson !== id || load !== wbPersonaLoad) return;  // 已经换人了，或者有更新的一次读取
     const sections = data.sections && Object.keys(data.sections).length
       ? data.sections : migrateAiSections(data.legacy || "");
     AI_SECTIONS.forEach(section => { $(fieldId("other", section.key)).value = sections[section.key] || ""; });
     $("otherPersonaStatus").textContent = "";
+    setOtherPersonaEditable(true);
   } catch (e) {
-    $("otherPersonaStatus").textContent = "读取失败：" + (e.message || e);
+    if (wbPerson !== id || load !== wbPersonaLoad) return;
+    $("otherPersonaStatus").textContent = "读取失败，先不能改（刷新页面再试）：" + (e.message || e);
   }
 }
 
+// 返回是否存上了（小克的那一份不归这里管，返回 true）
 async function saveOtherPersona() {
   const id = wbPerson;
-  if (id === "aion") return;
+  if (id === "aion") return true;
+  if (!wbPersonaLoaded) {
+    $("otherPersonaStatus").textContent = "人设还没读出来，先不能保存";
+    return false;
+  }
   $("otherPersonaStatus").textContent = "正在保存…";
   try {
     await api("PUT", `/api/actors/${encodeURIComponent(id)}/persona`, { sections: collectSections("other", AI_SECTIONS) });
     if (wbPerson === id) $("otherPersonaStatus").textContent = "已保存";
+    return true;
   } catch (e) {
     if (wbPerson === id) $("otherPersonaStatus").textContent = "保存失败：" + (e.message || e);
+    return false;
   }
 }
 
@@ -1096,7 +1115,11 @@ async function init() {
 }
 
 async function saveWorldBook() {
-    if (wbPerson !== "aion") await saveOtherPersona();  // 正在看 Lucien / 座位的人设：底部「保存」也把 TA 的存上
+    // 正在看 Lucien / 座位的人设：底部「保存」先存 TA 的；没存上就停下，不显示「已保存」
+    if (wbPerson !== "aion" && !(await saveOtherPersona())) {
+      if (typeof showToast === "function") showToast("这位的人设没存上，世界书也先没保存");
+      return;
+    }
     const saveBtn = $("saveBtn");
     saveBtn.disabled = true;
     try {

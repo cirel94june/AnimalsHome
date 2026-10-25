@@ -1027,3 +1027,22 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 不再传 edited_by_owner：Hub 按钥匙判断。
 - 页面：已归档的记忆多一个「找回」按钮。
 - 测试 `test_hub_memory.py` +2：找回走 unarchive 接口；设了主人钥匙后改用它；not_found 返回 404。
+
+## 78. eebfef2..d131505 审查修复（M1–M3、L1–L4）
+
+- **M1 世界书人设读取前可保存**：
+  - 每次读取有递增序号 `wbPersonaLoad`，回填时同时核对人和序号，`ai3→ai4→ai3` 迟到的结果不会回填。
+  - 读到之前文本框只读、保存按钮禁用（`setOtherPersonaEditable`）；`saveOtherPersona` 自己也检查 `wbPersonaLoaded`。
+  - 读取失败时保持只读，提示刷新，不会把空表单当成旧人设覆盖上去。
+- **L1**：`saveOtherPersona` 返回是否成功。底部「保存」在 Lucien / 座位那一份没存上时停下，提示「世界书也先没保存」，不再显示世界书保存成功。
+- **M2 相册迁移每次启动都执行**：新表 `album_migrations`。`seat_albums_v1` 迁移和「做过了」的记号在 `BEGIN IMMEDIATE` 的同一个事务里，只做一次；失败回滚后下次可以重试。之后她手动挪到哪本相册，不会再被改回去。
+- **M3 重要度尺度**：Hub 用 0–1 浮点。
+  - 后端 `MemoryEdit.importance` 改为 `float` 0–1。
+  - 页面显示成 1–10（`round(x*10)`）。编辑框默认「不改（现在 N）」：只改正文时不提交 importance；选了才提交 N/10。正文没变就不提交 content，什么都没改直接关闭。
+- **L3 Hub 回应校验**：`_call` 只接受 JSON 对象。非 JSON（如登录页）或非对象返回 502「这次没有确认成功」；带 error 的返回 400，用固定文案，不传 Hub 原文。列表要求 items 是列表。改动类操作（改、归档、找回、删除）只返回 `{ok, id, status}`。
+- **L2 群聊摘要漏座位**：`recent_for_digest` 改为收 user 或 `_is_ai_sender`；`group_participants` 补上座位名字。发言顺序策略不变。
+- **L4 维修室座位背景缺自己的私聊**：`context_builder._merged_timeline_sources` 新增座位分支，取 `seat_1v1 AND actor=?`（这位的所有私聊窗口，带时间窗），不含别的座位，不回退到 connor。目前只有 `repair_context` 用座位身份调用这个函数（英语角只传 aion / connor）。
+- **测试**：
+  - `test_hub_memory.py`：重要度改用 0–1；新增 1–10 整数被拒、3 种看不懂的回应不算成功且不带 Hub 原文、改动类只返回 id 和 status。
+  - `test_seat_pages.py`：相册迁移只做一次（手动挪回小克相册后重开两次仍是小克）；旧用例改成模拟升级前没有迁移记号的库；维修室座位背景带自己的私聊、不带别的座位；摘要和世界书守卫的源码检查。
+  - 约 900 项相关测试中，失败的与此前的既有失败一致。

@@ -4652,7 +4652,7 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
     recent_for_digest = []
     for msg in msgs[-6:]:
         sender = str(msg.get("sender") or "").strip().lower()
-        if sender not in ("user", "aion", "connor"):
+        if sender != "user" and not _is_ai_sender(sender):
             continue
         recent_for_digest.append({
             "role": "assistant" if _is_ai_sender(sender) else "user",
@@ -4666,6 +4666,7 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
                 "user": user_name,
                 "aion": ai_name,
                 "connor": connor_name,
+                **_seat_name_map(),
             },
         )
     except Exception:

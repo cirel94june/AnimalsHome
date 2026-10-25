@@ -37,11 +37,15 @@
     return Number.isNaN(d.getTime()) ? String(value).slice(0, 10) : `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
   }
 
+  // Hub 的重要度是 0～1；页面上显示成 1～10，保存时再除以 10
+  const shownImportance = v => (typeof v === 'number' && v > 0) ? Math.min(10, Math.max(1, Math.round(v * 10))) : null;
+
   function meta(m) {
+    const imp = shownImportance(m.importance);
     return [
       m.category, m.subject_name ? `关于 ${m.subject_name}` : '',
       m.layer === 'private' ? '私人' : m.layer === 'shared' ? '共享' : '',
-      m.importance ? `重要度 ${m.importance}` : '', when(m.event_date || m.created_at),
+      imp ? `重要度 ${imp}/10` : '', when(m.event_date || m.created_at),
     ].filter(Boolean).join(' · ');
   }
 
@@ -99,13 +103,20 @@
       const text = el('textarea', { value: m.content || '' });
       text.setAttribute('aria-label', '记忆内容');
       const imp = el('select');
+      imp.append(el('option', { value: '', textContent: '不改' }));  // 默认不动原来的重要度
       for (let i = 1; i <= 10; i++) imp.append(el('option', { value: String(i), textContent: String(i) }));
-      imp.value = String(m.importance || 5);
+      const current = shownImportance(m.importance);
+      imp.value = '';
+      if (current) imp.options[0].textContent = `不改（现在 ${current}）`;
       const save = el('button', { type: 'button', textContent: '保存' });
       save.onclick = async () => {
         save.disabled = true;
+        const body = {};
+        if (text.value.trim() !== (m.content || '').trim()) body.content = text.value;
+        if (imp.value) body.importance = Number(imp.value) / 10;
+        if (!Object.keys(body).length) { state.editing = null; render(); return; }
         try {
-          await api('PUT', `/api/hub-memory/${encodeURIComponent(m.id)}`, { content: text.value, importance: Number(imp.value) });
+          await api('PUT', `/api/hub-memory/${encodeURIComponent(m.id)}`, body);
           state.editing = null; toast('改好了'); load();
         } catch (e) { save.disabled = false; toast(e.message); }
       };
