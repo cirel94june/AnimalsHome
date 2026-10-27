@@ -171,6 +171,7 @@ function crShowRoomWho(room = currentRoom) {
   const who = document.getElementById('roomWho');
   if (!who) return;
   who.textContent = !room ? '' : room.type === 'group' ? '群聊' : crName(crRoomAi(room));
+  window.crSyncHeaderSpace?.();
   document.title = room ? `${who.textContent} · ${room.title || ''}` : '聊天室';
 }
 
@@ -212,6 +213,24 @@ window.onAionSubPageVisibilityChanged = visible => {
     crOpenLatestGroup().catch(() => {});
   }
 };
+
+// 顶栏是浮在消息上面的：按顶栏实际高度给消息区留出上边距（顶栏换成两行、按钮变多、字号变大都跟着变），
+// 不再靠写死的 72px，第一条消息的头像、名字、菜单不会被盖住
+(function crKeepMessagesBelowHeader() {
+  const header = document.querySelector('.chat-area .chat-header');
+  const list = document.getElementById('messages');
+  if (!header || !list || typeof ResizeObserver !== 'function') return;
+  let base = null;  // 样式表原本给的上边距：顶栏只有一行时照旧用它
+  const sync = () => {
+    if (base === null) base = parseFloat(getComputedStyle(list).paddingTop) || 0;
+    const needed = header.getBoundingClientRect().bottom - list.getBoundingClientRect().top + 8;
+    list.style.paddingTop = needed > base ? `${Math.ceil(needed)}px` : '';
+  };
+  window.crSyncHeaderSpace = sync;  // 顶栏内容一变（换房间、按钮增减）就直接再量一次，不只靠 ResizeObserver
+  new ResizeObserver(sync).observe(header);
+  window.addEventListener('resize', sync, { passive: true });
+  sync();
+})();
 
 // 群里有几个人：你 + 小克 + Lucien + 已入住的座位（狗蛋等）
 function crGroupSize() {
@@ -2222,6 +2241,7 @@ function updateHeaderActions() {
   if (replyAionBtn) replyAionBtn.style.display = manualMode ? '' : 'none';
   if (replyConnorBtn) replyConnorBtn.style.display = manualMode ? '' : 'none';
   crRenderSeatReplyButtons(manualMode);
+  window.crSyncHeaderSpace?.();
 }
 
 // ══════════════════════════════════════════════════

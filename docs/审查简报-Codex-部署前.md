@@ -1139,3 +1139,11 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_multi_window_chat.py` +2：真实 SQLite 并发两次 `ensure_group` 只建一个；前端单飞和发送占位的源码检查。
   - 相关 74 项通过。
 - **本机实测**：连点发送只新建 1 个窗口；联系人显示 3 位 + 3 个灰色空位；群聊空态显示「四人群聊」。
+
+## 86. cfa48d5 复审 V1：两行群聊顶栏盖住第一条消息
+
+- 原因：`.chat-header` 是绝对定位、浮在消息上面的，消息区靠写死的上边距（72px / 76px / 手机 62px+安全区）避开它。§85 让顶栏在手机上换成两行后，顶栏底部约 98px，第一条消息的头像、名字、菜单被盖住约 20～25px。
+- 修法（按你的建议，不再写死一个更大的数）：`chatroom.js` 新增 `crKeepMessagesBelowHeader`。量顶栏的实际底边（`getBoundingClientRect`，含安全区、换行、按钮多少、字号），给 `#messages` 设 `padding-top = 顶栏底边 − 消息区顶边 + 8px`。只在比样式表原本的上边距大时才设，顶栏一行时清掉内联值、回到原样。
+  - 触发：`ResizeObserver(顶栏)` + 窗口 resize。另外在 `updateHeaderActions()`（按钮增减）和 `crShowRoomWho()`（换房间、名字读到）里直接再量一次（`window.crSyncHeaderSpace`），不只依赖 ResizeObserver（页面在后台不绘制时它不触发）。
+- 本机实测 375×812，群里已有一条狗蛋的消息，手动轮流三个按钮：顶栏底边 98，第一条消息顶边 112，没有遮挡（修之前是 78，被盖 20）。切到狗蛋私聊（顶栏一行，底边 63）后上边距回到 72px。
+- 顺带查了缓存：`/static` 的回应本来就带 `Cache-Control: public, max-age=0, must-revalidate`，浏览器每次都会先确认有没有新版本，所以 `?v=` 版本号没跟着改不会让手机用到旧脚本，这次不需要改版本号。
