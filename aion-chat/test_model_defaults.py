@@ -234,3 +234,13 @@ def test_xiaoke_falls_back_to_his_own_model_not_the_global_default(models, monke
     assert config.aion_model_key("Codex-6.1-Sol") == "自己的·claude"  # Codex 只给 Lucien：换成他自己的
     monkeypatch.setattr(actors, "get_actor", lambda actor_id: {"model": "Codex-6.1-Sol"})  # 名片里是 Codex：不算
     assert config.aion_own_model() == "" and config.aion_model_key("") == "红豆沙·claude"
+
+
+def test_xiaoke_never_uses_someone_elses_private_route(models, monkeypatch):
+    """2026-10-27 巡检：小克私聊的模型列表里出现了「Jasper专属」线路。别人的专属线路不给小克用；小克自己的（seat_aion）可以。"""
+    table, cache = models
+    table["小克专属·claude"] = {"provider": "custom_openai", "model": "c", "route_id": "seat_aion"}
+    assert config.others_private_route("aion", "狗蛋专属") and not config.others_private_route("aion", "小克专属·claude")
+    assert not config.others_private_route("ai3", "狗蛋专属")
+    assert config.aion_model_key("狗蛋专属") != "狗蛋专属"       # 以前存过别人的专属线路：换掉
+    assert config.aion_model_key("小克专属·claude") == "小克专属·claude"

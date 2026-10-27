@@ -155,8 +155,8 @@ async function init() {
     await modelReady; // A brand-new conversation still needs its initial model.
     await newConversation();
   } else {
-    renderConvList();
-    renderMessages();
+    // 有对话但没记住上次开的是哪个：打开最近的那个，不要停在「选择或创建一个对话」
+    await selectConv(conversations[0].id);
   }
   // 恢复上下文数量设置
   const savedCtx = localStorage.getItem('aion_context_limit');
@@ -1752,7 +1752,9 @@ function formatPrivateSystemNoticeContent(content) {
 // ── 渲染 ──
 function renderModelSelect() {
   // 这是小克的私聊：Codex 是 GPT、只给 Lucien，不列出来；默认模型排第一个，新对话就用它
-  const visibleModels = models.filter(m => !DEPRECATED_MODEL_PROVIDERS.has(m.provider) && m.provider !== 'codex_cli')
+  // 别人的专属线路（seat_ai3 之类）也不列：只留共用线路和小克自己的（seat_aion）
+  const visibleModels = models.filter(m => !DEPRECATED_MODEL_PROVIDERS.has(m.provider) && m.provider !== 'codex_cli'
+      && !(String(m.route_id || '').startsWith('seat_') && m.route_id !== 'seat_aion'))
     .sort((a, b) => (b.aion_own ? 2 : b.is_default ? 1 : 0) - (a.aion_own ? 2 : a.is_default ? 1 : 0));  // 小克自己的模型排第一
   const select = $("modelSelect");
   select.replaceChildren(...visibleModels.map(m => new Option(m.key, m.key)));
@@ -2920,7 +2922,13 @@ async function send() {
   const input = $("input");
   const text = input.value.trim();
   if (pendingAttachments.some(a => a.uploading)) { alert('图片或附件还在上传，请稍等'); return; }
-  if ((!text && !pendingAttachments.length) || !currentConvId || sending) return;
+  if ((!text && !pendingAttachments.length) || sending) return;
+  if (!currentConvId) {
+    // 还没有打开任何对话就发了：先开一个新窗口再发，不要让字停在输入框里没反应
+    await privateModelReady;
+    if (!currentConvId) await newConversation();
+    if (!currentConvId) { alert('没能打开对话，请稍后再试'); return; }
+  }
 
   sending = true;
   _showStopBtn();

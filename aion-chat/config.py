@@ -648,6 +648,12 @@ def is_shared_model(model_key: str) -> bool:
 CODEX_ONLY_FOR_LUCIEN = "Codex 是 GPT，只给 Lucien 用"
 
 
+def others_private_route(actor: str, model_key: str | None) -> bool:
+    """别人的专属线路（座位自己填的 API：route_id = seat_<那位>）不给这位 AI 用，免得穿错衣服。"""
+    route_id = str((MODELS.get(_clean_text(model_key)) or {}).get("route_id") or "")
+    return route_id.startswith(SEAT_ROUTE_PREFIX) and route_id != f"{SEAT_ROUTE_PREFIX}{actor}"
+
+
 def codex_forbidden(actor: str, model_key: str | None) -> bool:
     """Codex 登录态（GPT）只给 Lucien（connor）；小克和座位 3～6 不能用它（会变成 GPT 顶着别人的人设）。"""
     return actor != "connor" and (MODELS.get(_clean_text(model_key)) or {}).get("provider") == "codex_cli"
@@ -705,17 +711,18 @@ def aion_own_model() -> str:
     for candidate in candidates:
         key = _clean_text(candidate)
         if (key in MODELS and not is_model_deprecated(key) and not codex_forbidden("aion", key)
-                and model_usable(MODELS[key])):
+                and not others_private_route("aion", key) and model_usable(MODELS[key])):
             return key
     return ""
 
 
 def aion_model_key(model_key: str | None) -> str:
-    """小克用的模型（私聊、群聊、自主活动）。选了、还在、不是 Codex 的就用它；
+    """小克用的模型（私聊、群聊、自主活动）。选了、还在、不是 Codex、不是别人专属线路的就用它；
     没选 / 已不存在 / 是 Codex（只给 Lucien）时，先用小克自己的模型（名片里选的），再退到默认模型；
     都没有时返回空，调用时提示去接线路。"""
     key = _clean_text(model_key)
-    if key in MODELS and not is_model_deprecated(key) and not codex_forbidden("aion", key):
+    if (key in MODELS and not is_model_deprecated(key) and not codex_forbidden("aion", key)
+            and not others_private_route("aion", key)):
         return key
     return aion_own_model() or default_model_key()
 
