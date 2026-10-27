@@ -181,9 +181,16 @@ function crOpenContacts() {
 
 // 主页「群聊」：一定打开群聊（最近的那个群），不会落到上次待过的私聊
 async function crOpenLatestGroup() {
-  const group = rooms.filter(r => r.type === 'group' && !String(r.id).startsWith('billiards_'))
+  let group = rooms.filter(r => r.type === 'group' && !String(r.id).startsWith('billiards_'))
     .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
   switchTab('group');
+  if (!group) {
+    // 还没有群：直接建一个「家」，不要停在「选择或创建一个聊天室」（创建按钮藏在侧栏里，找不到）
+    try {
+      group = await api('/rooms', { method: 'POST', body: JSON.stringify({ title: '家', type: 'group' }) });
+      await loadRooms();
+    } catch (e) { toast('没能建群聊，稍后再试'); return; }
+  }
   if (group && currentRoom?.id !== group.id && currentRoom?.type !== 'group') await selectRoom(group.id);
 }
 
@@ -193,6 +200,13 @@ window.onAionSubPageVisibilityChanged = visible => {
     crOpenLatestGroup().catch(() => {});
   }
 };
+
+// 群里有几个人：你 + 小克 + Lucien + 已入住的座位（狗蛋等）
+function crGroupSize() {
+  const zh = ['零', '一', '两', '三', '四', '五', '六', '七', '八'];
+  const n = 3 + SEAT_IDS.filter(id => crSeats[id]?.enabled).length;
+  return zh[n] || String(n);
+}
 
 // 当前房间里回复的那位 AI
 function crRoomAi(room = currentRoom) {
@@ -2727,7 +2741,7 @@ function renderMessages(msgs) {
     messagesEl.innerHTML = `
       <div class="empty-state">
         <div class="icon">${currentRoom.type === 'group' ? '👥' : '🤖'}</div>
-        <div>${currentRoom.type === 'group' ? '三人群聊，开始吧' : `和 ${esc(crName(crRoomAi()))} 开始私聊吧`}</div>
+        <div>${currentRoom.type === 'group' ? `${crGroupSize()}人群聊，开始吧` : `和 ${esc(crName(crRoomAi()))} 开始私聊吧`}</div>
       </div>`;
     return;
   }
