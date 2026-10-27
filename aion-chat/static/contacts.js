@@ -151,13 +151,28 @@
     ]);
     const byRecent = (a, b) => (b.updated_at || 0) - (a.updated_at || 0);
     const homeRooms = (rooms || []).filter(r => !String(r.id).startsWith('billiards_'));
-    const people = (actorData.actors || []).filter(a => a.enabled || a.builtin);
+    const all = actorData.actors || [];
+    const people = all.filter(a => a.enabled || a.builtin);
+    const emptySeats = all.filter(a => !(a.enabled || a.builtin));
     const windowsOf = person => {
       if (person.id === 'aion') return [...(conversations || [])].sort(byRecent);
       if (person.id === 'connor') return homeRooms.filter(r => r.type === 'connor_1v1').sort(byRecent);
       return homeRooms.filter(r => r.type === 'seat_1v1' && r.actor === person.id).sort(byRecent);
     };
-    $('people').replaceChildren(...people.map(p => personCard(p, windowsOf(p))));
+    $('people').replaceChildren(...people.map(p => personCard(p, windowsOf(p))),
+      ...emptySeats.map(seat => {
+        // 还没入住的座位：灰色空位，点不了
+        const card = el('li', { className: 'person placeholder' });
+        card.setAttribute('aria-disabled', 'true');
+        card.append(el('div', { className: 'person-head' }, [
+          el('span', { className: 'empty-avatar', textContent: '＋' }),
+          el('span', { className: 'person-info' }, [
+            el('span', { className: 'person-name', textContent: seat.name || '空位' }),
+            el('span', { className: 'person-sub', textContent: '还空着' }),
+          ]),
+        ]));
+        return card;
+      }));
     const groups = homeRooms.filter(r => r.type === 'group').sort(byRecent);
     $('groups').replaceChildren(...(groups.length
       ? groups.map(win => windowItem(null, win))

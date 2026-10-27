@@ -256,5 +256,31 @@ class PhoneCameraSyncTriggerTests(unittest.TestCase):
         self.assertEqual(3, len(logged))
 
 
+    def test_two_simultaneous_failures_wake_once(self):
+        """§85 L1：两次取图失败同时进来（都还在查库那一步），也只叫一次人。"""
+        monitor = camera.CameraMonitor()
+        result = camera.MonitorImageResult(
+            status="timeout", source="phone", request_id="cam_timeout",
+            no_image_context=camera.PHONE_CAMERA_NO_IMAGE_CONTEXT, error="capture_timeout",
+        )
+
+        async def slow_last_user(*a):
+            await asyncio.sleep(0.05)
+            return 1.0
+
+        async def exercise():
+            with (
+                patch("camera.async_get_last_aion_timeline_user_msg_time", side_effect=slow_last_user),
+                patch("camera.read_logs_since", return_value=[]),
+                patch("camera.append_monitor_log"),
+                patch.object(camera.manager, "broadcast", new_callable=AsyncMock),
+                patch.object(monitor, "_wake_core_targets", new_callable=AsyncMock) as wake,
+            ):
+                await asyncio.gather(monitor._handle_monitor_no_image(result), monitor._handle_monitor_no_image(result))
+                return wake.await_count
+
+        self.assertEqual(1, asyncio.run(exercise()))
+
+
 if __name__ == "__main__":
     unittest.main()

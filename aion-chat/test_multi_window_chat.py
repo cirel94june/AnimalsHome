@@ -152,3 +152,33 @@ def test_xiaoke_private_followups_read_across_windows(db):
     assert [r["content"] for r in rows] == ["在窗口B说不吃香菜", "窗口A问晚饭吃什么"]
     text = (Path(__file__).parent / "routes" / "chat.py").read_text(encoding="utf-8")
     assert "WHERE conv_id=? AND role IN ('user','assistant') ORDER BY created_at DESC LIMIT 6" not in text
+
+
+def test_home_group_entry_creates_at_most_one_group(db):
+    """§85 M2：主页「群聊」入口建「家」时，服务端在同一事务里再看一次：已经有群就返回那个；同时来两次也只建一个。"""
+    import routes.chatroom as chatroom_routes
+    from unittest.mock import AsyncMock, patch
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM chatroom_rooms WHERE type='group'")
+        conn.commit()
+    body = chatroom_routes.RoomCreate(title="家", type="group", ensure_group=True)
+
+    async def twice():
+        with patch.object(chatroom_routes.manager, "broadcast", new=AsyncMock()):
+            return await asyncio.gather(chatroom_routes.create_room(body), chatroom_routes.create_room(body))
+    a, b = asyncio.run(twice())
+    assert a["id"] == b["id"]
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM chatroom_rooms WHERE type='group'").fetchone()[0] == 1
+
+
+def test_frontend_single_flight_guards_in_source():
+    """§85 M2 / M3：群聊入口先确实读到房间列表、同一时间只开一次；没开对话就发送时先占住「正在发送」、开窗口只开一次。"""
+    here = Path(__file__).parent
+    room_js = (here / "static" / "chatroom.js").read_text(encoding="utf-8")
+    once = room_js[room_js.index("async function crOpenLatestGroupOnce"):]
+    assert "_crOpeningGroup" in room_js and once.index("await loadRooms()") < once.index("ensure_group: true")
+    chat_js = (here / "static" / "chat.js").read_text(encoding="utf-8")
+    send_part = chat_js[chat_js.index("async function send()"):]
+    assert send_part.index("sending = true;") < send_part.index("await newConversation()")
+    assert "_creatingConversation" in chat_js and "function newConversation()" in chat_js

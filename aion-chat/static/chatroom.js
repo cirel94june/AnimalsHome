@@ -180,14 +180,26 @@ function crOpenContacts() {
 }
 
 // 主页「群聊」：一定打开群聊（最近的那个群），不会落到上次待过的私聊
-async function crOpenLatestGroup() {
-  let group = rooms.filter(r => r.type === 'group' && !String(r.id).startsWith('billiards_'))
-    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+let _crOpeningGroup = null;  // 打开群聊进行中：初始化和「从主页再次打开」共用这一次，不会各建一个
+function crOpenLatestGroup() {
+  if (!_crOpeningGroup) {
+    _crOpeningGroup = crOpenLatestGroupOnce().finally(() => { _crOpeningGroup = null; });
+  }
+  return _crOpeningGroup;
+}
+
+async function crOpenLatestGroupOnce() {
   switchTab('group');
+  try {
+    await loadRooms();  // 先确实读到房间列表；读不到就不当成「没有群」，更不会去建
+  } catch (e) { toast('房间列表没读到，稍后再试'); return; }
+  const latestGroup = () => rooms.filter(r => r.type === 'group' && !String(r.id).startsWith('billiards_'))
+    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+  let group = latestGroup();
   if (!group) {
-    // 还没有群：直接建一个「家」，不要停在「选择或创建一个聊天室」（创建按钮藏在侧栏里，找不到）
+    // 确实还没有群：建一个「家」（服务端在同一个事务里再看一次，已经有群就直接返回那个，不会重复建）
     try {
-      group = await api('/rooms', { method: 'POST', body: JSON.stringify({ title: '家', type: 'group' }) });
+      group = await api('/rooms', { method: 'POST', body: JSON.stringify({ title: '家', type: 'group', ensure_group: true }) });
       await loadRooms();
     } catch (e) { toast('没能建群聊，稍后再试'); return; }
   }

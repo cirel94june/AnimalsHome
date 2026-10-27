@@ -2542,6 +2542,7 @@ class RoomCreate(BaseModel):
     type: str = "group"  # "group" | "connor_1v1" | "seat_1v1"
     actor: str = ""  # seat_1v1：ai3～ai6
     new_window: bool = False  # 私聊开新窗口；不开就返回 TA 最近用的那个（还没有才新建）
+    ensure_group: bool = False  # 群聊：已经有群就返回最近的那个，真没有才建（主页「群聊」入口用）
 
 
 class RoomUpdate(BaseModel):
@@ -3081,6 +3082,16 @@ async def create_room(body: RoomCreate):
 
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
+        if body.type == "group" and body.ensure_group:
+            # 检查和新建在同一个写事务里：两个页面同时进来也只会建一个
+            await db.execute("BEGIN IMMEDIATE")
+            cur = await db.execute(
+                "SELECT id FROM chatroom_rooms WHERE type='group' AND id NOT GLOB 'billiards_*' "
+                "ORDER BY updated_at DESC LIMIT 1")
+            existing = await cur.fetchone()
+            if existing:
+                await db.rollback()
+                return await get_room(existing["id"])
         if actor and not body.new_window:
             # 「去和 TA 私聊」：回到 TA 最近用的那个窗口；要开新的窗口时带 new_window
             cur = await db.execute(

@@ -1112,3 +1112,30 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **没有群时点主页「群聊」**：页面停在「选择或创建一个聊天室开始吧」，建群的按钮藏在侧栏里。`crOpenLatestGroup()` 在没有群（不含 billiards_*）时自动建一个「家」（`POST /rooms {type:'group'}`），刷新列表后打开；建失败就提示。本机实测：进入后标题「群聊 · 家」，徽章「群聊」，「让他们聊」按钮出现。
 - **空群提示写死「三人群聊」**：现在家里有小猫、小克、Lucien、狗蛋。新增 `crGroupSize()`：3 加上已入住的座位数，用中文数字显示。
 - JS 语法检查通过。
+
+## 85. e0b15d5 审查修复（M1–M3、L1）+ 视觉
+
+- **M1 小克的后台仍能用别人的专属线路**：
+  - `memory_hub_jobs.own_model` 遇到 `others_private_route`（以及原来的 Codex）就当作没设。
+  - `background_model` 的 base 和 chosen 都检查 `others_private_route(actor, …)`：base 是别人的 → 返回空（调用方提示，不顶替）；chosen 是别人的 → 回到本人的 base。`pin_background_model` 随之安全。
+  - `actors.api_update_actor` 保存 model / background_model 时，别人的专属线路返回 400。
+  - 这套规则对所有位置通用（座位也不能用别的座位的专属线路），Lucien 的 Codex 规则不变。
+- **M2 主页「群聊」可能重复建「家」**：
+  - `crOpenLatestGroup()` 改为同一时间只跑一次（`_crOpeningGroup`），初始化和「从主页再次打开」共用。
+  - 先 `await loadRooms()` 真正读到列表，读不到就提示并停下，不当成「没有群」。
+  - 服务端：`RoomCreate.ensure_group`。创建群时在 `BEGIN IMMEDIATE` 事务里再查一次（不含 billiards_*），已有就返回最近的那个，真没有才 INSERT；两个页面同时进来只会建一个。没有给群名加唯一约束。
+- **M3 没开对话就发送时可重入**：
+  - `send()` 在等待开窗之前就把 `sending` 设为 true，开窗结束后释放。
+  - `newConversation()` 改为共享进行中的创建（`_creatingConversation`），初始化自动开窗、发送开窗、连点共用这一次。
+  - 开窗异常在 try 里接住，统一提示「没能打开对话」，并可靠释放。
+- **L1 无图限频不是原子认领**：在第一个 await 之前就认领（`_last_no_image_wake = now`）。叫人失败也不放回，避免连环叫。
+- **视觉**：
+  - 群聊顶部在手机宽度下按钮换到第二行（`.chat-header` 换行、`.header-actions` 换行靠右，标题最少保留 96px）。本机实测手动轮流时三位「X 说」、「让他们聊」、⚙ 都在 375px 内，群名可见。
+  - 联系人页补上座位 4～6 的灰色空位（不可点）。
+- **验收清单 A2 口径**：应用启动先显示主页是设计如此。A2 改为「进入小克私聊时自动打开最近的对话」。
+- **测试**：
+  - `test_codex_only_lucien.py` +1：名片模型 / 后台线路是别人的专属线路时，own / background / pin 都不用它，保存时 400。
+  - `test_phone_camera_trigger_wiring.py` +1：两次失败同时进来只叫一次。
+  - `test_multi_window_chat.py` +2：真实 SQLite 并发两次 `ensure_group` 只建一个；前端单飞和发送占位的源码检查。
+  - 相关 74 项通过。
+- **本机实测**：连点发送只新建 1 个窗口；联系人显示 3 位 + 3 个灰色空位；群聊空态显示「四人群聊」。

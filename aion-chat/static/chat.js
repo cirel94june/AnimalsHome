@@ -2695,7 +2695,15 @@ function playMusicOnline(songId) {
 }
 
 // ── 对话 ──
-async function newConversation() {
+let _creatingConversation = null;  // 正在开新窗口：同时来的几次（自动开窗、发送时开窗、连点）共用这一次
+function newConversation() {
+  if (!_creatingConversation) {
+    _creatingConversation = createConversation().finally(() => { _creatingConversation = null; });
+  }
+  return _creatingConversation;
+}
+
+async function createConversation() {
   await privateModelReady;
   const model = $("modelSelect").value;
   const today = new Date();
@@ -2924,9 +2932,17 @@ async function send() {
   if (pendingAttachments.some(a => a.uploading)) { alert('图片或附件还在上传，请稍等'); return; }
   if ((!text && !pendingAttachments.length) || sending) return;
   if (!currentConvId) {
-    // 还没有打开任何对话就发了：先开一个新窗口再发，不要让字停在输入框里没反应
-    await privateModelReady;
-    if (!currentConvId) await newConversation();
+    // 还没有打开任何对话就发了：先开一个新窗口再发，不要让字停在输入框里没反应。
+    // 开窗口期间先占住「正在发送」，连点也只开一个窗口、只发一次
+    sending = true;
+    try {
+      await privateModelReady;
+      if (!currentConvId) await newConversation();
+    } catch (e) {
+      console.warn('open conversation failed', e);
+    } finally {
+      sending = false;
+    }
     if (!currentConvId) { alert('没能打开对话，请稍后再试'); return; }
   }
 

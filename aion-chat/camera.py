@@ -1363,6 +1363,8 @@ class CameraMonitor:
         （2026-10-27：手机没连上时一天巡逻 96 次、每次都叫醒一位 AI 说同一句话，白白耗额度）。"""
         now = time.time()
         should_wake = now - getattr(self, "_last_no_image_wake", 0.0) >= NO_IMAGE_WAKE_GAP
+        if should_wake:
+            self._last_no_image_wake = now  # 在任何等待之前就认领：两次同时失败也只叫一次（叫失败也不放回，免得连环叫）
         last_user_ts = await async_get_last_aion_timeline_user_msg_time(None)
         recent_logs = read_logs_since(time.time() - 3600 * 6)
         error = image_result.error or image_result.status or "unknown"
@@ -1403,7 +1405,6 @@ class CameraMonitor:
         await manager.broadcast({"type": "monitor_log", "data": log_entry})
         if not should_wake:
             return
-        self._last_no_image_wake = now
         await self._wake_core_targets(
             wake_targets,
             monitoring_log,

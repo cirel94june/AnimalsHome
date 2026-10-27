@@ -159,3 +159,27 @@ def test_seat_with_codex_card_stops_instead_of_switching(cards, monkeypatch):
     with pytest.raises(seat_chat.SeatNotReady) as err:
         seat_chat.check_ready("ai3")
     assert "Codex" in str(err.value) and "Lucien" in str(err.value)
+
+
+def test_background_paths_refuse_someone_elses_private_route(cards, monkeypatch):
+    """§85 M1：名片模型、后台线路里存着别人的专属线路（seat_ai3）时，小克的后台活儿也不用它；保存名片时直接拒绝。"""
+    config.MODELS["Own"] = {"provider": "custom_openai", "model": "opus", "route_id": "seat_aion"}
+    config.MODELS["Other"] = {"provider": "custom_openai", "model": "opus", "route_id": "seat_ai3"}
+    cards["seats"]["aion"]["model"] = "Other"
+    assert memory_hub_jobs.own_model("aion") == ""
+    cards["seats"]["aion"]["model"] = "Own"
+    cards["seats"]["aion"]["background_model"] = "Other"
+    assert memory_hub_jobs.own_model("aion") == "Own"
+    assert memory_hub_jobs.background_model("aion", "Own") == "Own"   # 后台线路是别人的：不用，回到本人的
+    assert memory_hub_jobs.background_model("aion", "Other") == ""    # 平时的就是别人的：没有合法线路
+    assert memory_hub_jobs.pin_background_model("aion")[0] == "Own"
+
+    class Req:
+        def __init__(self, body):
+            self.body = body
+
+        async def json(self):
+            return self.body
+    for field in ("model", "background_model"):
+        with pytest.raises(HTTPException):
+            asyncio.run(actors.api_update_actor("aion", Req({field: "Other"})))
