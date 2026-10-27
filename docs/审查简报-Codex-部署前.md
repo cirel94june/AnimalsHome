@@ -1066,3 +1066,21 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - Hub 主人钥匙已写进服务器 `/etc/aionshome.env` 的 `MEMORY_HUB_OWNER_SECRET`。文件权限 600 root，用 stdin 写入，没进命令行；原文件备份为 `.bak-20261025`（600）。重启后，Hub 记忆页列表用主人钥匙正常（小克 516、狗蛋 206），日志里没有钥匙。
   - AI 和 bot 的记忆桥接继续用 `MEMORY_HUB_TOKEN`，§77 的代码只在 `_hub()` 里换钥匙。
   - Codex 登录目录本来就是 700，auth.json 600。`/var/lib/aionshome/AppData`、`Local`、`AionsHome` 三层去掉组可写（775 → 755）。
+
+## 81. 小猫反馈：小克没用自己的模型、摄像头一片黑、时间不对、群聊入口落到私聊
+
+- **小克没用自己的模型**（她给小克的名片选了 `[kiro量高缓]claude-opus-4-6-thinking`，私聊却走了另一条中转站线路的第一个模型）：私聊会话里存的模型是空的（§70 启动清理会把 Codex 换成默认值，而当时默认为空），`aion_model_key` 回退到全局默认 `default_model_key()`，也就是第一个能用的共用线路。
+  - 新增 `config.aion_own_model()`：先看小克名片的 model，再看聊天室的 aion_model。要求还在、没停用、不是 Codex、能用。
+  - `aion_model_key`：选了、还在、不是 Codex 的就用；否则先用 `aion_own_model()`，再退到 `default_model_key()`。
+  - `/api/models` 增加 `aion_own` 标记；私聊下拉框把小克自己的模型排第一，新窗口就用它。
+  - 「默认模型不能选 Codex」是 §70 的既定规则（Codex 只给 Lucien），没有改。
+- **时间不对**：VPS 是 Etc/UTC，AionsHome 大多数地方用不带时区的 `datetime.now()`。在 `/etc/aionshome.env` 加了 `TZ=Asia/Shanghai`（只影响 AionsHome，Hub 不受影响），改之前确认没有待触发的日程；原文件备份为 `.bak-20261027`。运维改动，不在 git 差异里。
+- **摄像头一片黑**：监控源是 `phone`，手机 App 没连上或没给相机权限，所以每次取图都失败，代码本身没问题。但发现每次失败都会叫醒一位 AI：10-26 一天巡逻 96 次、失败 96 次、叫醒 96 次，白白耗模型额度。
+  - `camera._handle_monitor_no_image`：照常记日志；最多每 `NO_IMAGE_WAKE_GAP`（6 小时）叫一次人。其余几次日志里 `call_core=False`、`final_wake_targets=[]`，不叫人。
+- **群聊入口有时进的是私聊**：主页「群聊」原来打开 `/chatroom`，会回到上次待过的房间（可能是私聊）。
+  - 改成 `/chatroom?view=group`，初始化时 `crOpenLatestGroup()` 打开最近的群（不含 billiards_*）。
+  - 聊天室是常驻子页面：新增 `window.onAionSubPageVisibilityChanged`，从主页「群聊」再次打开时如果停在私聊上就切回群聊（只在 URL 是 view=group 时）。
+- **测试**：
+  - `test_model_defaults.py` +1：没选模型时用小克自己的；选了别的照她选的；Codex 换成他自己的；名片是 Codex 时不算，退到默认。
+  - `test_phone_camera_trigger_wiring.py` +1：连续失败时第一次叫人，10 分钟后只记日志，6 小时后再叫一次。
+  - 相关 282 项测试中，失败的都是既有失败。

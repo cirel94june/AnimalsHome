@@ -1357,7 +1357,12 @@ class CameraMonitor:
         print(f"[Monitor] 监控线程退出 (monitoring={self.monitoring})")
 
     async def _handle_monitor_no_image(self, image_result):
-        """Keep the patrol notification flow alive without inventing a picture."""
+        """Keep the patrol notification flow alive without inventing a picture.
+
+        取不到画面时只记日志；最多每 NO_IMAGE_WAKE_GAP 秒叫一次人来说「没拿到画面」
+        （2026-10-27：手机没连上时一天巡逻 96 次、每次都叫醒一位 AI 说同一句话，白白耗额度）。"""
+        now = time.time()
+        should_wake = now - getattr(self, "_last_no_image_wake", 0.0) >= NO_IMAGE_WAKE_GAP
         last_user_ts = await async_get_last_aion_timeline_user_msg_time(None)
         recent_logs = read_logs_since(time.time() - 3600 * 6)
         error = image_result.error or image_result.status or "unknown"
@@ -1373,15 +1378,15 @@ class CameraMonitor:
             roster_ids=[item["id"] for item in roster],
             suggested=suggest_wake_target(roster),
         )
-        now = time.time()
         log_entry = {
             "timestamp": now,
             "time": time.strftime("%H:%M:%S", time.localtime(now)),
             "date": time.strftime("%Y-%m-%d", time.localtime(now)),
             "monitoringlog": monitoring_log,
             "summary": "本次外出监控没有成功取得手机摄像头画面。",
-            "call_core": True,
-            "core_reason": "监控事件已触发，但手机画面获取失败，需要明确告知用户。",
+            "call_core": should_wake,
+            "core_reason": ("监控事件已触发，但手机画面获取失败，需要明确告知用户。" if should_wake
+                            else "手机画面获取失败；近几个小时已经提醒过，这次只记日志、不叫人。"),
             "camera_observation": "无图像附件，无法观察。",
             "device_activity": "",
             "inference": "不得根据缺失画面推断用户状态。",
@@ -1392,8 +1397,13 @@ class CameraMonitor:
             "wake_reason": "取图失败：固定模式按设置叫人，智能模式用随机建议人选。",
             "wake_confidence": "low",
         }
+        if not should_wake:
+            log_entry["final_wake_targets"] = []
         append_monitor_log(log_entry)
         await manager.broadcast({"type": "monitor_log", "data": log_entry})
+        if not should_wake:
+            return
+        self._last_no_image_wake = now
         await self._wake_core_targets(
             wake_targets,
             monitoring_log,
@@ -2370,6 +2380,8 @@ def build_monitor_alert_data(content: str, **extra) -> dict:
 
 # ── Core 主动查看监控 [CAM_CHECK] ─────────────────
 CAM_CHECK_CMD = "[CAM_CHECK]"
+
+NO_IMAGE_WAKE_GAP = 6 * 3600  # 取不到画面时，最多每 6 小时叫一次人
 
 PHONE_CAMERA_NO_IMAGE_CONTEXT = (
     "[手机摄像头采集状态]\n"

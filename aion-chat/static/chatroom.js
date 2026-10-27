@@ -179,6 +179,21 @@ function crOpenContacts() {
   else location.href = '/contacts';
 }
 
+// 主页「群聊」：一定打开群聊（最近的那个群），不会落到上次待过的私聊
+async function crOpenLatestGroup() {
+  const group = rooms.filter(r => r.type === 'group' && !String(r.id).startsWith('billiards_'))
+    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))[0];
+  switchTab('group');
+  if (group && currentRoom?.id !== group.id && currentRoom?.type !== 'group') await selectRoom(group.id);
+}
+
+// 聊天室页面常驻在后台：从主页「群聊」再次打开时，如果停在私聊上就切回群聊
+window.onAionSubPageVisibilityChanged = visible => {
+  if (visible && new URLSearchParams(location.search).get('view') === 'group' && currentRoom?.type !== 'group') {
+    crOpenLatestGroup().catch(() => {});
+  }
+};
+
 // 当前房间里回复的那位 AI
 function crRoomAi(room = currentRoom) {
   if (room?.type === 'seat_1v1') return room.actor;
@@ -7217,6 +7232,8 @@ function crToyCloseEditor() { document.getElementById('crToyEditorOverlay').clas
   } else if (targetRoomId && rooms.some(r => r.id === targetRoomId)) {
     await selectRoom(targetRoomId);
     if (targetMsgId) setTimeout(() => jumpToChatSearchResult(targetMsgId), 100);
+  } else if (initParams.get('view') === 'group') {
+    await crOpenLatestGroup();
   } else if (!currentRoom && rooms.length > 0) {
     await selectRoom(rooms[0].id);
   }

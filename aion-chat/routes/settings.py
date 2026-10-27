@@ -42,10 +42,13 @@ async def list_models():
         print(f"[AGY models] {error}")
     import codex_models
     codex_models.sync_models()
+    from config import aion_own_model
+    aion_own = aion_own_model()
     rows = [
         {
             "key": k,
             "is_default": k == default_model_key(),
+            "aion_own": k == aion_own,  # 小克自己的模型：私聊新窗口默认用它
             "shared": is_shared_model(k),
             "provider": v["provider"],
             "custom": v.get("provider") == "custom_openai",

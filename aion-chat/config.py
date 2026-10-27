@@ -689,13 +689,35 @@ async def scrub_codex_choices() -> list[str]:
     return changed
 
 
+def aion_own_model() -> str:
+    """小克自己的模型：相遇卡（名片）里给他选的，其次是群聊设置里给他选的；不能用、是 Codex 或已停用的不算。"""
+    candidates = []
+    try:
+        import actors
+        candidates.append((actors.get_actor("aion") or {}).get("model"))
+    except Exception:
+        pass
+    try:
+        from chatroom import load_chatroom_config
+        candidates.append(load_chatroom_config().get("aion_model"))
+    except Exception:
+        pass
+    for candidate in candidates:
+        key = _clean_text(candidate)
+        if (key in MODELS and not is_model_deprecated(key) and not codex_forbidden("aion", key)
+                and model_usable(MODELS[key])):
+            return key
+    return ""
+
+
 def aion_model_key(model_key: str | None) -> str:
-    """小克用的模型（私聊、群聊、自主活动）：Codex 是 GPT、只给 Lucien，这里不用——
-    选了或以前存过的 Codex 换成默认模型；没有能用的线路时返回空，调用时提示去接线路。"""
-    key = resolve_model_key(model_key)
-    if (MODELS.get(key) or {}).get("provider") == "codex_cli":
-        return default_model_key()
-    return key
+    """小克用的模型（私聊、群聊、自主活动）。选了、还在、不是 Codex 的就用它；
+    没选 / 已不存在 / 是 Codex（只给 Lucien）时，先用小克自己的模型（名片里选的），再退到默认模型；
+    都没有时返回空，调用时提示去接线路。"""
+    key = _clean_text(model_key)
+    if key in MODELS and not is_model_deprecated(key) and not codex_forbidden("aion", key):
+        return key
+    return aion_own_model() or default_model_key()
 
 
 def resolve_model_key(model_key: str | None) -> str:

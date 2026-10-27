@@ -218,3 +218,19 @@ def test_refresh_deadline_covers_process_start(monkeypatch):
         return elapsed
     assert asyncio.run(run()) < 0.15
     assert len(stopped) == 1
+
+
+def test_xiaoke_falls_back_to_his_own_model_not_the_global_default(models, monkeypatch):
+    """2026-10-27 小猫：选了中转站的几个模型后，小克私聊突然走了其中第一个，不是给他自己接的那个。
+    没选模型的会话要先用小克自己的模型（名片里选的），再退到全局默认。"""
+    table, cache = models
+    table["自己的·claude"] = {"provider": "custom_openai", "model": "claude-own", "route_id": "custom_route_2"}
+    import actors
+    monkeypatch.setattr(actors, "get_actor", lambda actor_id: {"model": "自己的·claude"} if actor_id == "aion" else {})
+    assert config.default_model_key() == "红豆沙·claude"      # 全局默认：第一个能用的共用线路
+    assert config.aion_own_model() == "自己的·claude"
+    assert config.aion_model_key("") == "自己的·claude"       # 没选：用他自己的
+    assert config.aion_model_key("红豆沙·claude") == "红豆沙·claude"  # 选了别的：照她选的
+    assert config.aion_model_key("Codex-6.1-Sol") == "自己的·claude"  # Codex 只给 Lucien：换成他自己的
+    monkeypatch.setattr(actors, "get_actor", lambda actor_id: {"model": "Codex-6.1-Sol"})  # 名片里是 Codex：不算
+    assert config.aion_own_model() == "" and config.aion_model_key("") == "红豆沙·claude"

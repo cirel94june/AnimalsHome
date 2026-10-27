@@ -1753,7 +1753,7 @@ function formatPrivateSystemNoticeContent(content) {
 function renderModelSelect() {
   // 这是小克的私聊：Codex 是 GPT、只给 Lucien，不列出来；默认模型排第一个，新对话就用它
   const visibleModels = models.filter(m => !DEPRECATED_MODEL_PROVIDERS.has(m.provider) && m.provider !== 'codex_cli')
-    .sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0));
+    .sort((a, b) => (b.aion_own ? 2 : b.is_default ? 1 : 0) - (a.aion_own ? 2 : a.is_default ? 1 : 0));  // 小克自己的模型排第一
   const select = $("modelSelect");
   select.replaceChildren(...visibleModels.map(m => new Option(m.key, m.key)));
   if (!visibleModels.length) select.append(new Option('还没有线路（去设置 → 🧭 模型线路 接中转站）', ''));
