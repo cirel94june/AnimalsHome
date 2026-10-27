@@ -1084,3 +1084,12 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_model_defaults.py` +1：没选模型时用小克自己的；选了别的照她选的；Codex 换成他自己的；名片是 Codex 时不算，退到默认。
   - `test_phone_camera_trigger_wiring.py` +1：连续失败时第一次叫人，10 分钟后只记日志，6 小时后再叫一次。
   - 相关 282 项测试中，失败的都是既有失败。
+
+## 82. 免费语音试听没声音：edge-tts 升级到 7.3.1；巡检记录
+
+- 小猫说设置页里的「免费语音试听」试听不了。在服务器上直接请求 `/api/tts`（voice `edge:zh-CN-YunxiNeural`）返回 500：微软的 `speech.platform.bing.com` 握手返回 403，是旧版 edge-tts 不带新的验证参数。
+- 在服务器的临时 venv 里对比：7.3.1 正常生成音频（14KB mp3），7.2.8 仍然 403。`requirements.txt` 改为 `edge-tts==7.3.1`（全仓只有这一处版本固定）。部署时 update.sh 发现 requirements 变了会同步依赖。
+- 运维（2026-10-27，已做，不在 git 差异里）：
+  - 哨兵线路改为 `codex_luna`。这是小猫之前定的，模型 `gpt-5.6-luna` 早就选好了，只是巡逻线路一直停在 original。
+  - 监控巡逻暂停（`/api/cam/monitor/stop`，`monitor_enabled=False`）。手机相机从没接上（`armed=false`），每次巡逻都失败并叫醒 AI，群聊里堆满了「失败回执」。等手机 App 连上后由小猫重新打开；§81 的限频上线后，就算忘了关也最多 6 小时提醒一次。
+- 巡检：通过服务器内部端口（ssh 转发，不经过 Cloudflare）按手机尺寸逐页打开主页列出的 35 个页面。没有横向溢出、坏图或脚本报错。主页「群聊」仍落到 Lucien 私聊，等 §81 部署后修复。设置页是一长页 15 个分区，打开先看到语音，「模型线路」在第 6 个、「哨兵」在第 11 个，交互问题见《施工方案-设置和聊天设置重排》（待写）。
