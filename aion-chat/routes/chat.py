@@ -1524,6 +1524,11 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             if safety_notice:
                 full_text = f"{full_text}\n\n[{safety_notice}]".strip()
 
+            # 小克自己开 / 停巡逻：放在翻记忆之前，翻记忆那一步会提前返回（§88 复审 R4）
+            full_text, patrol_notices = patrol_control.process(full_text, "aion")
+            for patrol_notice in patrol_notices:
+                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
+
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
@@ -1704,9 +1709,6 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 source_ref=conv_id,
             )
 
-            full_text, patrol_notices = patrol_control.process(full_text, "aion")  # 小克自己开 / 停巡逻
-            for patrol_notice in patrol_notices:
-                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
             full_text = await process_widget_control_commands(full_text, "aion")
             full_text = _visible_ai_text(full_text)
 
@@ -2200,6 +2202,11 @@ async def send_message(conv_id: str, body: MsgCreate):
             if safety_notice:
                 full_text = f"{full_text}\n\n[{safety_notice}]".strip()
 
+            # 小克自己开 / 停巡逻：放在翻记忆之前，翻记忆那一步会提前返回（§88 复审 R4）
+            full_text, patrol_notices = patrol_control.process(full_text, "aion")
+            for patrol_notice in patrol_notices:
+                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
+
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
@@ -2452,9 +2459,6 @@ async def send_message(conv_id: str, body: MsgCreate):
                             print(f"[剧场] 道具赠送: {item_name}")
 
             # 清洗 AI 回复中模仿产生的 <meta> 标签
-            full_text, patrol_notices = patrol_control.process(full_text, "aion")  # 小克自己开 / 停巡逻
-            for patrol_notice in patrol_notices:
-                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
             full_text = await process_widget_control_commands(full_text, "aion")
             full_text = _visible_ai_text(full_text)
 
@@ -3652,6 +3656,11 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             if safety_notice:
                 full_text = f"{full_text}\n\n[{safety_notice}]".strip()
 
+            # 小克自己开 / 停巡逻：放在翻记忆之前，翻记忆那一步会提前返回（§88 复审 R4）
+            full_text, patrol_notices = patrol_control.process(full_text, "aion")
+            for patrol_notice in patrol_notices:
+                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
+
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=lounge_request_text, queue=_q, ai_msg_id=ai_msg_id,
@@ -3857,9 +3866,6 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                     pass
 
             # 清洗 AI 回复中模仿产生的 <meta> 标签
-            full_text, patrol_notices = patrol_control.process(full_text, "aion")  # 小克自己开 / 停巡逻
-            for patrol_notice in patrol_notices:
-                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
             full_text = await process_widget_control_commands(full_text, "aion")
             full_text = _visible_ai_text(full_text)
 

@@ -105,16 +105,12 @@ async def cam_close():
 async def cam_monitor_start():
     # start_monitoring 可能调用 open_camera（阻塞），需要在线程中执行
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, cam.start_monitoring)
-    cam.cfg["patrol_changed_by"] = ""  # 小猫自己点的
-    save_cam_config(cam.cfg)
+    await loop.run_in_executor(None, lambda: cam.start_monitoring(changed_by=""))  # 小猫自己点的
     return {"ok": True, "monitoring": True}
 
 @router.post("/api/cam/monitor/stop")
 async def cam_monitor_stop():
-    cam.stop_monitoring()  # 小猫自己关：不自动恢复
-    cam.cfg["patrol_changed_by"] = ""
-    save_cam_config(cam.cfg)
+    cam.stop_monitoring(changed_by="")  # 小猫自己关：不自动恢复；巡逻锁里版本加一，排着队的到点恢复会作废
     return {"ok": True, "monitoring": False}
 
 @router.post("/api/cam/screenshot")

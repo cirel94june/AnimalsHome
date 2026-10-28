@@ -38,7 +38,7 @@ class CameraPhoneScreenFreshnessTests(unittest.TestCase):
 
     def test_patrol_and_scheduled_monitor_use_condition_waiting(self):
         camera_source = Path(camera.__file__).read_text(encoding="utf-8")
-        patrol_start = camera_source.index("    def _monitor_loop(self):")
+        patrol_start = camera_source.index("    def _monitor_loop(self")
         patrol_end = camera_source.index("    async def _analyze_and_log", patrol_start)
         patrol = camera_source[patrol_start:patrol_end]
         self.assertIn("wait_for_phone_screen_after_sync", patrol)

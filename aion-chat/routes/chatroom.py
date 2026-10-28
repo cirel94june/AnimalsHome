@@ -830,6 +830,8 @@ async def _process_chatroom_commands(
     full_text, patrol_notices = patrol_control.process(full_text, who_identity)
     for patrol_notice in patrol_notices:
         await _chatroom_sys_msg(room_id, patrol_notice, _q, after_msg_id=msg_id)
+    if patrol_notices:
+        triggered["patrol"] = True  # 只写了巡逻指令时不存一条空消息
 
     memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
     if memory_requests:
@@ -4051,6 +4053,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     full_text, patrol_notices = patrol_control.process(full_text, actor_id)
     for patrol_notice in patrol_notices:
         await _chatroom_sys_msg(room_id, patrol_notice, _q, after_msg_id=msg_id)
+    if patrol_notices:
+        triggered["patrol"] = True  # 只写了巡逻指令时不算「空回复失败」（§88 复审 R3）
 
     # ── 翻聊天记录：和小克 / Lucien 一样，有这条指令就先去搜（搜自己所有私聊窗口 + 群聊），搜完再接着说 ──
     memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
@@ -4608,7 +4612,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
-    if triggered.get("memory_search") and not clean_text:
+    if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
         _fire_chatroom_followups(
             triggered, room_id, "connor", connor_model_key, connor_msg_id
@@ -4834,7 +4838,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, model_key)
 
-    if triggered.get("memory_search") and not clean_text:
+    if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
         await _q.put({"type": "aion_done", "message": None})
         _fire_chatroom_followups(triggered, room_id, "aion", model_key, aion_msg_id)
         return digest_out
@@ -4972,7 +4976,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
-    if triggered.get("memory_search") and not clean_text:
+    if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
         _fire_chatroom_followups(
             triggered, room_id, "connor", connor_model_key, connor_msg_id

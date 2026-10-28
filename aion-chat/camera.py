@@ -494,7 +494,11 @@ class CameraMonitor:
         self.monitoring = False
         self._thread = None
         self._monitor_thread = None
-        self._monitor_gen = 0  # 每次开巡逻加一；旧线程看到代数变了就退出，停了马上再开也不会两个一起跑
+        self._monitor_gen = 0  # 每次开巡逻加一；旧线程 / 旧截图看到代数变了就收手，停了马上再开也不会两代一起跑
+        # 巡逻开关（小猫手动、AI 指令、到点恢复）都在这把锁里改；每改一次 _patrol_version 加一，
+        # 到点恢复动手前在锁里核对版本，期间有人动过就作废（§88 复审 R1）
+        self._patrol_lock = threading.RLock()
+        self._patrol_version = 0
         self._latest_frame = None
         self._lock = threading.Lock()
         self._cam_op_lock = threading.Lock()   # 防止 open/close 并发
@@ -1239,30 +1243,63 @@ class CameraMonitor:
         hi = max(lo, self.cfg.get("auto_interval_max", 20))
         return random.randint(lo, hi) * 60
 
-    def start_monitoring(self):
-        if self.monitoring:
-            return
-        self.monitoring = True
-        self.cfg["monitor_enabled"] = True
-        self.cfg["patrol_resume_at"] = 0  # 打开了就不用再等「到点恢复」
-        save_cam_config(self.cfg)
-        self._next_capture_at = time.time() + self._random_interval_seconds()
-        self._monitor_gen += 1
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(self._monitor_gen,), daemon=True)
-        self._monitor_thread.start()
+    def start_monitoring(self, changed_by: str | None = None):
+        """changed_by：谁开的（aion / connor / ai3…，小猫自己点的是 ""）；None = 不改记录（启动恢复、换画面源）。"""
+        with self._patrol_lock:
+            self._patrol_version += 1
+            if changed_by is not None:
+                self.cfg["patrol_changed_by"] = changed_by
+            if self.monitoring:
+                if changed_by is not None:
+                    self.cfg["patrol_resume_at"] = 0
+                    save_cam_config(self.cfg)
+                return
+            self.monitoring = True
+            self.cfg["monitor_enabled"] = True
+            self.cfg["patrol_resume_at"] = 0  # 打开了就不用再等「到点恢复」
+            save_cam_config(self.cfg)
+            self._next_capture_at = time.time() + self._random_interval_seconds()
+            self._monitor_gen += 1
+            self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(self._monitor_gen,), daemon=True)
+            self._monitor_thread.start()
+
+    def patrol_snapshot(self) -> tuple[int, float]:
+        """(版本, 定好的恢复时间)：到点恢复先拿这个，动手时再核对。"""
+        with self._patrol_lock:
+            return self._patrol_version, float(self.cfg.get("patrol_resume_at") or 0)
+
+    def resume_if_due(self, version: int, resume_at: float, now: float | None = None) -> bool:
+        """到点恢复：在锁里核对「版本没变、还停着、恢复时间还是那个、确实到点了」，全对才打开。"""
+        now = time.time() if now is None else now
+        with self._patrol_lock:
+            if self._patrol_version != version or self.monitoring:
+                return False
+            current = float(self.cfg.get("patrol_resume_at") or 0)
+            if not current or current != resume_at or now < current:
+                return False
+            self.start_monitoring()
+            return True
+
+    def patrol_active(self, gen: int | None) -> bool:
+        """这一代巡逻还算数吗：开着，且没有被「停了又开」换成新的一代。"""
+        return self.monitoring and (gen is None or gen == self._monitor_gen)
 
     def reset_patrol_timer(self):
         """用户发送新消息时重置巡逻计时器，避免聊天中触发哨兵"""
         if self.monitoring:
             self._next_capture_at = time.time() + self._random_interval_seconds()
 
-    def stop_monitoring(self, resume_at: float = 0):
+    def stop_monitoring(self, resume_at: float = 0, changed_by: str | None = None):
         """resume_at：AI 说「停 3 小时」时到点自动恢复的时间；0 = 一直停到有人打开。"""
-        self.monitoring = False
-        self._next_capture_at = 0
-        self.cfg["monitor_enabled"] = False
-        self.cfg["patrol_resume_at"] = float(resume_at or 0)
-        save_cam_config(self.cfg)
+        with self._patrol_lock:
+            self._patrol_version += 1
+            self.monitoring = False
+            self._next_capture_at = 0
+            self.cfg["monitor_enabled"] = False
+            self.cfg["patrol_resume_at"] = float(resume_at or 0)
+            if changed_by is not None:
+                self.cfg["patrol_changed_by"] = changed_by
+            save_cam_config(self.cfg)
 
     def _is_quiet_hours(self) -> bool:
         """检查当前是否处于静默时段"""
@@ -1286,7 +1323,7 @@ class CameraMonitor:
 
     def _monitor_loop(self, gen: int | None = None):
         print("[Monitor] 监控线程已启动")
-        while self.monitoring and (gen is None or gen == self._monitor_gen):
+        while self.patrol_active(gen):
             now = time.time()
             if now < self._next_capture_at:
                 time.sleep(0.5)
@@ -1315,7 +1352,7 @@ class CameraMonitor:
             if self.cfg.get("active_source", "local") == "phone":
                 image_result = acquire_monitor_image_sync(
                     "sentinel_patrol",
-                    should_continue=lambda: self.monitoring,
+                    should_continue=lambda: self.patrol_active(gen),
                 )
                 camera_jpeg = image_result.camera_jpeg
                 if image_result.jpeg:
@@ -1328,9 +1365,9 @@ class CameraMonitor:
                     from phone_screen import wait_for_phone_screen_after_sync
                     wait_for_phone_screen_after_sync(
                         phone_screen_requested_at,
-                        should_continue=lambda: self.monitoring,
+                        should_continue=lambda: self.patrol_active(gen),
                     )
-                if not self.monitoring:
+                if not self.patrol_active(gen):
                     break
                 composite_jpeg, camera_jpeg = self.get_capture_jpegs(
                     phone_screen_after=phone_screen_requested_at,
@@ -1343,10 +1380,12 @@ class CameraMonitor:
                     filename = self.save_screenshot(
                         phone_screen_after=phone_screen_requested_at,
                     )
+            if not self.patrol_active(gen):  # 等截图期间被停了 / 换了新一代：这张不交去分析（§88 复审 R2）
+                break
             if filename and self._loop:
                 print(f"[Monitor] 截图已保存: {filename}, 开始 Sentinel 分析")
                 asyncio.run_coroutine_threadsafe(
-                    self._analyze_and_log(filename, camera_jpeg), self._loop
+                    self._analyze_and_log(filename, camera_jpeg, patrol_gen=gen), self._loop
                 )
             elif not filename:
                 print("[Monitor] 截图失败: 无可用画面")
@@ -1397,7 +1436,12 @@ class CameraMonitor:
         self,
         screenshot_filename: str,
         camera_jpeg: bytes | None = None,
+        patrol_gen: int | None = None,
     ):
+        """patrol_gen：哪一代巡逻交来的；排队期间巡逻被停了 / 换了新一代，就不再调哨兵、不叫人（§88 复审 R2）。"""
+        if not self.patrol_active(patrol_gen) and patrol_gen is not None:
+            print("[Monitor] 巡逻已停或已换新一代，这张截图不再分析")
+            return
         filepath = SCREENSHOTS_DIR / screenshot_filename
         if not filepath.exists():
             print(f"[Monitor] 截图文件不存在: {filepath}")
@@ -1565,6 +1609,9 @@ class CameraMonitor:
         dispatch = parse_sentinel_dispatch({}, self.cfg.get("wake_mode", "aion"),
                                            roster_ids=roster_ids, suggested=suggested)
 
+        if patrol_gen is not None and not self.patrol_active(patrol_gen):
+            print("[Monitor] 巡逻已停或已换新一代，不再调哨兵")
+            return
         try:
             from memory import _call_sentinel_vision
             raw_text = await _call_sentinel_vision(scfg, prompt, img_b64, timeout=60)
@@ -1607,6 +1654,9 @@ class CameraMonitor:
             inference = ""
             confidence = ""
 
+        if call_core and patrol_gen is not None and not self.patrol_active(patrol_gen):
+            print("[Monitor] 哨兵看完时巡逻已停或已换新一代，这次不叫人")
+            call_core = False
         print(f"[Monitor] 分析完成, call_core={call_core}, log长度={len(monitoring_log)}")
         now = time.time()
         log_entry = {

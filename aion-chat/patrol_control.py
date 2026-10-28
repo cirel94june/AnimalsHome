@@ -63,22 +63,18 @@ def _pause_text(seconds: float) -> str:
 
 def apply(action: str, actor: str, duration_text: str = "", *, now: float | None = None) -> str:
     """真的去开 / 停巡逻，返回给大家看的提示；没变化（本来就开着 / 停着且没改时间）也照样说一句。"""
-    from camera import cam, save_cam_config
+    from camera import cam
     now = time.time() if now is None else now
     name = _name(actor)
     if action == "stop":
         seconds = parse_duration(duration_text)
         resume_at = now + seconds if seconds else 0
-        cam.stop_monitoring(resume_at=resume_at)
-        cam.cfg["patrol_changed_by"] = actor
-        save_cam_config(cam.cfg)
+        cam.stop_monitoring(resume_at=resume_at, changed_by=actor)  # 在巡逻锁里一起改，版本加一
         if resume_at:
             return f"🛡 {name}把巡逻停了 {_pause_text(seconds)}，{_clock(resume_at)} 自动恢复"
         return f"🛡 {name}把巡逻停了，等有人再打开"
     was_on = cam.monitoring
-    cam.start_monitoring()
-    cam.cfg["patrol_changed_by"] = actor
-    save_cam_config(cam.cfg)
+    cam.start_monitoring(changed_by=actor)
     return f"🛡 {name}打开了巡逻" if not was_on else f"🛡 {name}说继续巡逻（本来就开着）"
 
 
@@ -100,7 +96,7 @@ def process(text: str, actor: str) -> tuple[str, list[str]]:
     """回复里的巡逻指令：一条回复里写了好几条，只按最后一条做。返回 (干净文字, 要发的提示)。"""
     cleaned, commands = extract(text)
     if not commands:
-        return text, []
+        return cleaned, []  # 看不懂的写法也从文字里去掉（§88 复审 L1）
     action, duration = commands[-1]
     try:
         return cleaned, [apply(action, actor, duration)]
@@ -138,12 +134,13 @@ async def resume_when_due(now: float | None = None) -> str:
     """到点了就恢复巡逻，返回提示（没到点 / 已经开着返回空）。"""
     from camera import cam
     now = time.time() if now is None else now
-    resume_at = float(cam.cfg.get("patrol_resume_at") or 0)
+    version, resume_at = cam.patrol_snapshot()
     if cam.monitoring or not resume_at or now < resume_at:
         return ""
     by = cam.cfg.get("patrol_changed_by") or ""
-    await asyncio.get_running_loop().run_in_executor(None, cam.start_monitoring)
-    return f"🛡 巡逻按{_name(by) if by else '之前'}的安排恢复了"
+    # 真正打开前在巡逻锁里再核对一次版本：排队期间小猫手动关了 / AI 改了时间，这次就作废（§88 复审 R1）
+    resumed = await asyncio.get_running_loop().run_in_executor(None, cam.resume_if_due, version, resume_at, now)
+    return f"🛡 巡逻按{_name(by) if by else '之前'}的安排恢复了" if resumed else ""
 
 
 async def resume_loop():

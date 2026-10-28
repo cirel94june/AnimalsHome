@@ -1202,3 +1202,34 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **测试**：
   - 新增 `test_patrol_control.py` 9 项，覆盖：各种写法和时长；停 3 小时后到点自动恢复；不写时长就一直停；最后一条为准；开关失败不丢回复；她手动开关会清掉 AI 定的恢复时间；停了马上再开只有一个线程（真实线程）；能力说明带当前状态；每条回复路径都挂上了。
   - `test_phone_camera_trigger_wiring.py` 改为上面那 1 项。
+
+## 89. 4a0915b 复审 R1–R4、L1
+
+- **R1 排着队的到点恢复会盖掉小猫后来的手动关闭**：
+  - `CameraMonitor` 新增 `_patrol_lock`（RLock）和 `_patrol_version`。`start_monitoring(changed_by=…)` 和 `stop_monitoring(resume_at=…, changed_by=…)` 都在锁里改状态、存配置，并把版本加一。小猫手动开关（`routes/cam.py`，`changed_by=""`）、AI 指令（`patrol_control.apply`，`changed_by=actor`）、启动和换画面源用的是同一对入口。原来在锁外补写 `patrol_changed_by` 的地方都去掉了。
+  - 到点恢复改成两步：`patrol_snapshot()` 先在锁里取 (版本, resume_at)；真正动手的 `resume_if_due(version, resume_at, now)` 在线程池里执行，并在锁里重新核对四件事：版本没变、仍然停着、resume_at 没变、确实已经到点。四项都满足才调用 `start_monitoring`。所以无论任务在线程池里排队多久，只要期间有人开关过或改过时间，这次恢复就作废。
+  - 回归测试：
+    - 你给的反例原样复现：单 worker 线程池先被占住，恢复任务排进去以后调用真实的 `cam_monitor_stop`，再放行。结果是巡逻保持关闭，返回空提示。
+    - AI 到点前延长暂停；手动开了又关。
+    - 两次到期检查同时进来：只开一次，只有一条提示。
+    - 「取消 `resume_loop` 但线程池里的恢复还没跑」靠同一个版本核对兜住。没有单独写测试，因为取消只会让 `await` 拿不到结果，线程池里那一步照样会核对版本。
+- **R2 旧代数等完截图仍会交去分析**：
+  - 新增 `patrol_active(gen)`，判断条件是「开着，并且代数等于当前代数」。用到它的地方：循环头、两处采集的 `should_continue`、本地分支等手机截图以后的 break，以及采集结束、提交分析之前再核对一次（不算数就 break）。
+  - `_analyze_and_log(..., patrol_gen=gen)`：一开头核对；调用哨兵模型之前再核对；分析完、写日志和叫人之前又核对一次，不算数时把 `call_core` 置为 False，这次不叫人。
+  - `patrol_gen=None` 的老调用方式行为不变。
+  - 回归测试：
+    - 用真实线程跑真实的 `_monitor_loop`。旧一代卡在假的手机取图里，这时先停再开；放行以后，旧线程退出，`_analyze_and_log` 没有被提交（记录 `run_coroutine_threadsafe` 的调用）。
+    - 过期代数的分析直接返回；源码检查确认在调用哨兵之前核对了代数。
+  - 变异检查：去掉 `resume_if_due` 里的核对，或者去掉提交前的核对，对应的测试都会失败。
+- **R3 座位只回巡逻指令时记成空回复失败**：
+  - `_process_seat_commands` 有巡逻提示（成功或失败的回执都算）时设置 `triggered["patrol"] = True`，于是走已有的 `seat_done(message=None)` 分支，不再记 `empty_response`。
+  - `_process_chatroom_commands` 同样设置这个标记，三处「只有指令、没有文字」的判断（Lucien、群里小克、Lucien 群聊）都改为 `memory_search or patrol`，结束时不存空消息。
+- **R4 小克私聊翻记忆提前返回，跳过了巡逻**：三个入口都把巡逻处理挪到 `_start_private_memory_search_if_requested` 前面，原来放在小组件指令前的位置删掉，保证每条输出只处理一次。源码测试检查三处顺序都是「巡逻 → 翻记忆」，而且两者紧挨着。
+- **L1**：没有有效指令时也返回去掉巡逻写法的文字。
+- 测试：`test_patrol_control.py` 共 17 项，加上 `test_phone_camera_trigger_wiring.py` 和 `test_phone_usability.py`，合计 28 项通过。
+- 删除确认窗的真机观察：小猫的手机部署以后会实际点一次「取消」和「确定」，到时补记在这里。
+- 整套测试和 acb919c 基线对照：
+  - 新出现的只有一条真问题：`test_camera_phone_screen_freshness` 按字符串 `def _monitor_loop(self):` 找函数，4a0915b 改了函数签名以后就找不到了。上一轮漏跑了它，这次把定位串改成 `def _monitor_loop(self`，已通过。
+  - 还有几条只在整套一起跑时偶尔失败，单独跑能过（memory_hub_bridge 两条）。
+  - antigravity 那一条在 acb919c 上单独跑也失败，和本轮无关。
+  - english_corner 两条是已知的老失败。
