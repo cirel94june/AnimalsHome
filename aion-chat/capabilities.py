@@ -655,6 +655,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(build_pat_ability_text(user_name))
     if is_capability_enabled("cam_check"):
         texts.append(cam_check_ability_text(user_name))
+        import patrol_control
+        texts.append(patrol_control.ability_text(user_name))
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
         texts.append(activity_check_ability_text(user_name))
     if is_capability_enabled("wechat_message"):
@@ -722,6 +724,8 @@ async def build_capability_prompt_items(
 
     if is_capability_enabled("cam_check"):
         abilities.append(cam_check_ability_text(user_name))
+        import patrol_control  # 每位 AI 都能自己开 / 停巡逻
+        abilities.append(patrol_control.ability_text(user_name))
 
     if is_capability_enabled("schedule"):
         abilities.extend([

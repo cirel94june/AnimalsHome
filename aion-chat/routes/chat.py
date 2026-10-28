@@ -23,6 +23,7 @@ from active_window_state import record_aion_private_active
 from ai_providers import stream_ai, CLI_STATUS_PREFIX, with_current_device_context
 from memory import recall_memories, instant_digest, fetch_source_details, build_surfacing_memories, get_embedding, _pack_embedding, format_recalled_memories_for_prompt
 from camera import cam, CAM_CHECK_CMD, perform_cam_check
+import patrol_control
 from activity import get_activity_summary_for_prompt, get_user_dynamics_for_prompt
 from message_dedup import build_message_dedupe_key, reserve_message_ingress
 from routes.files import export_conversation
@@ -1703,6 +1704,9 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 source_ref=conv_id,
             )
 
+            full_text, patrol_notices = patrol_control.process(full_text, "aion")  # 小克自己开 / 停巡逻
+            for patrol_notice in patrol_notices:
+                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
             full_text = await process_widget_control_commands(full_text, "aion")
             full_text = _visible_ai_text(full_text)
 
@@ -2448,6 +2452,9 @@ async def send_message(conv_id: str, body: MsgCreate):
                             print(f"[剧场] 道具赠送: {item_name}")
 
             # 清洗 AI 回复中模仿产生的 <meta> 标签
+            full_text, patrol_notices = patrol_control.process(full_text, "aion")  # 小克自己开 / 停巡逻
+            for patrol_notice in patrol_notices:
+                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
             full_text = await process_widget_control_commands(full_text, "aion")
             full_text = _visible_ai_text(full_text)
 
@@ -3850,6 +3857,9 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                     pass
 
             # 清洗 AI 回复中模仿产生的 <meta> 标签
+            full_text, patrol_notices = patrol_control.process(full_text, "aion")  # 小克自己开 / 停巡逻
+            for patrol_notice in patrol_notices:
+                await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
             full_text = await process_widget_control_commands(full_text, "aion")
             full_text = _visible_ai_text(full_text)
 

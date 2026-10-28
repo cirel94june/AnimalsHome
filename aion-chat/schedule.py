@@ -1593,6 +1593,10 @@ async def _process_background_reply_commands(
     cleaned = await process_widget_control_commands(
         cleaned, "connor" if sender == "connor" else "aion"
     )
+    import patrol_control  # 被巡逻叫醒时最想说的就是「先别巡逻了」
+    cleaned, patrol_notices = patrol_control.process(cleaned, sender or "aion")
+    for patrol_notice in patrol_notices:
+        await save_hug_system_message(patrol_notice)
     return cleaned
 
 

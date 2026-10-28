@@ -745,6 +745,8 @@ DEFAULT_CAM_CFG = {
     "max_screenshots": 200,
     "include_pc_screen": False,
     "monitor_enabled": False,
+    "patrol_resume_at": 0,     # AI 说「巡逻停 3 小时」时到点自动恢复的时间（0 = 不自动恢复）
+    "patrol_changed_by": "",   # 最近一次是谁开 / 停的巡逻（aion、connor、ai3…；小猫自己点的是空）
     "quiet_hours_enabled": False,
     "quiet_hours_start": "00:00",
     "quiet_hours_end": "09:00",

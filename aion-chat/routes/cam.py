@@ -57,6 +57,8 @@ async def cam_status():
     return {
         "camera_open": cam.running,
         "monitoring": cam.monitoring,
+        "patrol_resume_at": cam.cfg.get("patrol_resume_at", 0),
+        "patrol_changed_by": cam.cfg.get("patrol_changed_by", ""),
         "camera_index": cam.cfg["camera_index"],
         "active_source": cam.cfg.get("active_source", "local"),
         "esp32_cam_url": cam.cfg.get("esp32_cam_url", ""),
@@ -104,11 +106,15 @@ async def cam_monitor_start():
     # start_monitoring 可能调用 open_camera（阻塞），需要在线程中执行
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, cam.start_monitoring)
+    cam.cfg["patrol_changed_by"] = ""  # 小猫自己点的
+    save_cam_config(cam.cfg)
     return {"ok": True, "monitoring": True}
 
 @router.post("/api/cam/monitor/stop")
 async def cam_monitor_stop():
-    cam.stop_monitoring()
+    cam.stop_monitoring()  # 小猫自己关：不自动恢复
+    cam.cfg["patrol_changed_by"] = ""
+    save_cam_config(cam.cfg)
     return {"ok": True, "monitoring": False}
 
 @router.post("/api/cam/screenshot")

@@ -191,43 +191,9 @@ class PhoneCameraSyncTriggerTests(unittest.TestCase):
             combine.call_args.kwargs["phone_screen_after"]
         )
 
-    def test_failed_sentinel_capture_still_notifies_core_without_attachment(self):
-        monitor = camera.CameraMonitor()
-        result = camera.MonitorImageResult(
-            status="timeout",
-            source="phone",
-            request_id="cam_timeout",
-            no_image_context=camera.PHONE_CAMERA_NO_IMAGE_CONTEXT,
-            error="capture_timeout",
-        )
-
-        async def exercise():
-            with (
-                patch("camera.async_get_last_aion_timeline_user_msg_time",
-                      new_callable=AsyncMock, return_value=123.0),
-                patch("camera.read_logs_since", return_value=[]),
-                patch("camera.append_monitor_log"),
-                patch.object(camera.manager, "broadcast", new_callable=AsyncMock),
-                patch.object(
-                    monitor,
-                    "_wake_core_targets",
-                    new_callable=AsyncMock,
-                ) as wake_targets,
-                patch.object(monitor, "_call_core", new_callable=AsyncMock),
-            ):
-                await monitor._handle_monitor_no_image(result)
-                return wake_targets
-
-        wake_targets = asyncio.run(exercise())
-        self.assertEqual(1, wake_targets.await_count)
-        args = wake_targets.await_args.args
-        self.assertEqual(["aion"], args[0])
-        self.assertIn("没有图像附件", args[1])
-        self.assertEqual("", args[6])
-
-
-    def test_repeated_capture_failures_wake_at_most_once_per_gap(self):
-        """2026-10-27：手机没连上时一天巡逻 96 次、每次都叫醒一位 AI。现在最多每 6 小时叫一次，其余只记日志。"""
+    def test_failed_capture_only_logs_and_never_wakes_anyone(self):
+        """2026-10-27：手机没连上时一天巡逻 96 次、每次都叫醒一位 AI。2026-10-28 小猫定：拿不到画面一律不叫人，只记日志；
+        AI 想看时自己用 [CAM_CHECK]，嫌巡逻烦可以自己停（patrol_control）。"""
         monitor = camera.CameraMonitor()
         result = camera.MonitorImageResult(
             status="timeout", source="phone", request_id="cam_timeout",
@@ -235,51 +201,20 @@ class PhoneCameraSyncTriggerTests(unittest.TestCase):
         )
         logged = []
 
-        async def exercise(now):
+        async def exercise():
             with (
-                patch("camera.time.time", return_value=now),
-                patch("camera.async_get_last_aion_timeline_user_msg_time", new_callable=AsyncMock, return_value=1.0),
-                patch("camera.read_logs_since", return_value=[]),
                 patch("camera.append_monitor_log", side_effect=logged.append),
                 patch.object(camera.manager, "broadcast", new_callable=AsyncMock),
                 patch.object(monitor, "_wake_core_targets", new_callable=AsyncMock) as wake,
+                patch.object(monitor, "_call_core", new_callable=AsyncMock) as core,
             ):
-                await monitor._handle_monitor_no_image(result)
-                return wake.await_count
+                await asyncio.gather(*(monitor._handle_monitor_no_image(result) for _ in range(3)))
+                return wake.await_count + core.await_count
 
-        start = 10_000_000.0
-        self.assertEqual(1, asyncio.run(exercise(start)))
-        self.assertEqual(0, asyncio.run(exercise(start + 600)))          # 10 分钟后又失败：只记日志
-        self.assertFalse(logged[-1]["call_core"])
-        self.assertEqual([], logged[-1]["final_wake_targets"])
-        self.assertEqual(1, asyncio.run(exercise(start + camera.NO_IMAGE_WAKE_GAP + 1)))  # 过了 6 小时：再提醒一次
+        self.assertEqual(0, asyncio.run(exercise()))
         self.assertEqual(3, len(logged))
-
-
-    def test_two_simultaneous_failures_wake_once(self):
-        """§85 L1：两次取图失败同时进来（都还在查库那一步），也只叫一次人。"""
-        monitor = camera.CameraMonitor()
-        result = camera.MonitorImageResult(
-            status="timeout", source="phone", request_id="cam_timeout",
-            no_image_context=camera.PHONE_CAMERA_NO_IMAGE_CONTEXT, error="capture_timeout",
-        )
-
-        async def slow_last_user(*a):
-            await asyncio.sleep(0.05)
-            return 1.0
-
-        async def exercise():
-            with (
-                patch("camera.async_get_last_aion_timeline_user_msg_time", side_effect=slow_last_user),
-                patch("camera.read_logs_since", return_value=[]),
-                patch("camera.append_monitor_log"),
-                patch.object(camera.manager, "broadcast", new_callable=AsyncMock),
-                patch.object(monitor, "_wake_core_targets", new_callable=AsyncMock) as wake,
-            ):
-                await asyncio.gather(monitor._handle_monitor_no_image(result), monitor._handle_monitor_no_image(result))
-                return wake.await_count
-
-        self.assertEqual(1, asyncio.run(exercise()))
+        self.assertTrue(all(not entry["call_core"] and entry["final_wake_targets"] == [] for entry in logged))
+        self.assertIn("capture_timeout", logged[0]["monitoringlog"])
 
 
 if __name__ == "__main__":

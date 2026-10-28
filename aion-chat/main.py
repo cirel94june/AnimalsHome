@@ -229,6 +229,8 @@ async def lifespan(app: FastAPI):
     memory_hub_jobs_task = asyncio.create_task(memory_hub_jobs.jobs_worker())
     import seat_diary
     seat_diary_task = asyncio.create_task(seat_diary.seat_diary_loop())  # 狗蛋等座位写日记
+    import patrol_control
+    patrol_resume_task = asyncio.create_task(patrol_control.resume_loop())  # AI 说「巡逻停 3 小时」到点自动恢复
     idle_autonomy_mgr.start()
     board_patrol_mgr.start()
     ha_event_listener.start()
@@ -248,8 +250,9 @@ async def lifespan(app: FastAPI):
         memory_hub_jobs_task.cancel()
         seat_diary_task.cancel()
         seat_persona_evolution_task.cancel()
+        patrol_resume_task.cancel()
         await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, seat_diary_task,
-                             seat_persona_evolution_task, return_exceptions=True)
+                             seat_persona_evolution_task, patrol_resume_task, return_exceptions=True)
         await post_sentinel.stop()
         try:
             from billiards.service import get_service as billiards_service

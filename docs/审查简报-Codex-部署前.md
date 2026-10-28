@@ -1170,3 +1170,35 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 狗蛋私聊：点一下就开。
   - 全页巡检 36 页里，`stuckBelow` 报了 `/moments` 20px、`/app-supervision` 228px。逐个看过，都是收起的面板或藏着的评论菜单，不是滑不到。
 - **测试**：新增 `test_phone_usability.py` 4 项（两页能滚、先问再删、💭 不在隐藏按钮组且紧跟名字、弹窗能往下弹）；相关 75 项通过。
+
+## 88. AI 自己开 / 停哨兵巡逻；拿不到画面一律不叫人
+
+小猫 2026-10-28：「有没有办法 ai 让哨兵停下来就能停，想看就让哨兵去看？」她的决定：**AI 能自己关、也能自己开**（开关都会提示她）；**停多久由 AI 自己决定**：写了时长就到点恢复，不写就一直停到有人打开。所有 AI 权限一样。
+
+背景：10-27 那晚手机相机没接上，巡逻每 10～20 分钟取图失败就叫醒小克，他停不下来（§84 已经限成 6 小时一次，监控也关了）。「想看就看」原本就有：小克、Lucien、座位都有 `[CAM_CHECK]`，这次没改。
+
+- **新模块 `patrol_control.py`**：
+  - 指令写法：`[巡逻:停]`、`[巡逻:停|3小时]`、`[巡逻:开]`，也认【】、全角冒号、竖线和几个同义词。看不懂的写法会从文字里去掉，但不执行。一条回复里写了好几条，只按最后一条做。
+  - 时长：支持「3小时」「90分钟」「半小时」「1天」「1.5h」，最短 10 分钟，最长 72 小时；读不懂时按「一直停」处理。
+  - 停：`cam.stop_monitoring(resume_at=…)`；开：`cam.start_monitoring()`。同时记录 `patrol_changed_by`。
+  - 每次开 / 停都在当前对话或房间里留一条系统提示，例如「🛡 小克把巡逻停了 3 小时，21:30 自动恢复」「🛡 狗蛋把巡逻停了，等有人再打开」。提示用的是带 `system_model_context` 的系统消息，之后的模型也看得到。
+  - 开关失败时只发一句「想停巡逻，但没成功」，这条回复本身照常保存。
+- **挂在哪里**（`patrol_control.process(...)`）：
+  - 小克私聊：发送、编辑重发、重新生成（`routes/chat.py` 3 处，在小组件指令前面）。
+  - 聊天室：`_process_chatroom_commands`，覆盖小克在群里和 Lucien。
+  - 座位：`_process_seat_commands`。
+  - 聊天室和座位这两处都放在函数最前面，因为后面「翻记录」那一步会提前返回。
+  - 后台回复：`schedule._process_background_reply_commands`，覆盖巡逻叫醒、闹铃、定位、自主活动。被叫醒时最可能说「先别巡逻了」，所以这一处最重要。
+- **能力说明**：小克 / Lucien 的说明（`build_capability_prompt_items`）和座位的说明（`seat_ability_texts`）里，在 `[CAM_CHECK]` 后面加一段 `patrol_control.ability_text`，带当前状态（开着 / 停着 / 谁停的 / 几点恢复）。和 `cam_check` 用同一个开关。
+- **到点恢复**：`main.py` lifespan 里启动 `patrol_control.resume_loop()`，每 30 秒检查一次 `patrol_resume_at`。到点后在线程池里调 `start_monitoring`，写一条巡逻日志并广播。关停时 cancel 并 gather。
+- **小猫自己在设置里开 / 关**：`/api/cam/monitor/start|stop` 会清掉 `patrol_resume_at` 和 `patrol_changed_by`。她关掉的巡逻不会被 AI 之前定的「到点恢复」重新打开；之后 AI 仍可以用 `[巡逻:开]` 打开，这是她选的。`/api/cam/status` 多返回这两个字段。
+- **停了马上再开会有两个巡逻线程**（这次顺手修的旧隐患）：
+  - 原因：`start_monitoring` 原来只看 `self.monitoring`。旧线程可能还在 0.5 秒的小睡里，醒来看到 `monitoring` 又是 True，就会和新线程一起跑。
+  - 修法：加 `_monitor_gen` 代数，每次开巡逻加一；`_monitor_loop(gen)` 发现代数变了就退出。不传 gen 时行为不变。
+- **拿不到画面一律不叫人**（她选的方案第 2 条）：
+  - `_handle_monitor_no_image` 只记日志并广播（`call_core: False`、`final_wake_targets: []`），不再调 `_wake_core_targets`。
+  - 删掉了 `NO_IMAGE_WAKE_GAP` 和「算叫谁」。
+  - 原来的 3 个测试（失败叫一次 / 6 小时一次 / 并发只叫一次）合并成 1 个：3 次同时失败，叫人 0 次、日志 3 条。
+- **测试**：
+  - 新增 `test_patrol_control.py` 9 项，覆盖：各种写法和时长；停 3 小时后到点自动恢复；不写时长就一直停；最后一条为准；开关失败不丢回复；她手动开关会清掉 AI 定的恢复时间；停了马上再开只有一个线程（真实线程）；能力说明带当前状态；每条回复路径都挂上了。
+  - `test_phone_camera_trigger_wiring.py` 改为上面那 1 项。

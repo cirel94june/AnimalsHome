@@ -494,6 +494,7 @@ class CameraMonitor:
         self.monitoring = False
         self._thread = None
         self._monitor_thread = None
+        self._monitor_gen = 0  # 每次开巡逻加一；旧线程看到代数变了就退出，停了马上再开也不会两个一起跑
         self._latest_frame = None
         self._lock = threading.Lock()
         self._cam_op_lock = threading.Lock()   # 防止 open/close 并发
@@ -1243,9 +1244,11 @@ class CameraMonitor:
             return
         self.monitoring = True
         self.cfg["monitor_enabled"] = True
+        self.cfg["patrol_resume_at"] = 0  # 打开了就不用再等「到点恢复」
         save_cam_config(self.cfg)
         self._next_capture_at = time.time() + self._random_interval_seconds()
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_gen += 1
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(self._monitor_gen,), daemon=True)
         self._monitor_thread.start()
 
     def reset_patrol_timer(self):
@@ -1253,10 +1256,12 @@ class CameraMonitor:
         if self.monitoring:
             self._next_capture_at = time.time() + self._random_interval_seconds()
 
-    def stop_monitoring(self):
+    def stop_monitoring(self, resume_at: float = 0):
+        """resume_at：AI 说「停 3 小时」时到点自动恢复的时间；0 = 一直停到有人打开。"""
         self.monitoring = False
         self._next_capture_at = 0
         self.cfg["monitor_enabled"] = False
+        self.cfg["patrol_resume_at"] = float(resume_at or 0)
         save_cam_config(self.cfg)
 
     def _is_quiet_hours(self) -> bool:
@@ -1279,9 +1284,9 @@ class CameraMonitor:
         else:  # 跨午夜，例如 23:00 ~ 07:00
             return cur >= start or cur < end
 
-    def _monitor_loop(self):
+    def _monitor_loop(self, gen: int | None = None):
         print("[Monitor] 监控线程已启动")
-        while self.monitoring:
+        while self.monitoring and (gen is None or gen == self._monitor_gen):
             now = time.time()
             if now < self._next_capture_at:
                 time.sleep(0.5)
@@ -1359,26 +1364,13 @@ class CameraMonitor:
     async def _handle_monitor_no_image(self, image_result):
         """Keep the patrol notification flow alive without inventing a picture.
 
-        取不到画面时只记日志；最多每 NO_IMAGE_WAKE_GAP 秒叫一次人来说「没拿到画面」
-        （2026-10-27：手机没连上时一天巡逻 96 次、每次都叫醒一位 AI 说同一句话，白白耗额度）。"""
+        取不到画面时只记日志、不叫人（2026-10-27：手机没连上时一天巡逻 96 次、每次都叫醒一位 AI；
+        2026-10-28 小猫定：拿不到画面一律不叫，AI 想看时自己用 [CAM_CHECK]，嫌烦可以自己停巡逻）。"""
         now = time.time()
-        should_wake = now - getattr(self, "_last_no_image_wake", 0.0) >= NO_IMAGE_WAKE_GAP
-        if should_wake:
-            self._last_no_image_wake = now  # 在任何等待之前就认领：两次同时失败也只叫一次（叫失败也不放回，免得连环叫）
-        last_user_ts = await async_get_last_aion_timeline_user_msg_time(None)
-        recent_logs = read_logs_since(time.time() - 3600 * 6)
         error = image_result.error or image_result.status or "unknown"
         monitoring_log = (
             f"{image_result.no_image_context or PHONE_CAMERA_NO_IMAGE_CONTEXT}\n"
             f"本次哨兵巡逻取图结果：{error}。"
-        )
-        roster = wake_roster()
-        wake_targets = resolve_sentinel_wake_targets(
-            True,
-            self.cfg.get("wake_mode", "aion"),
-            "",
-            roster_ids=[item["id"] for item in roster],
-            suggested=suggest_wake_target(roster),
         )
         log_entry = {
             "timestamp": now,
@@ -1386,34 +1378,20 @@ class CameraMonitor:
             "date": time.strftime("%Y-%m-%d", time.localtime(now)),
             "monitoringlog": monitoring_log,
             "summary": "本次外出监控没有成功取得手机摄像头画面。",
-            "call_core": should_wake,
-            "core_reason": ("监控事件已触发，但手机画面获取失败，需要明确告知用户。" if should_wake
-                            else "手机画面获取失败；近几个小时已经提醒过，这次只记日志、不叫人。"),
+            "call_core": False,
+            "core_reason": "手机画面获取失败；只记日志、不叫人。",
             "camera_observation": "无图像附件，无法观察。",
             "device_activity": "",
             "inference": "不得根据缺失画面推断用户状态。",
             "confidence": "low",
             "screenshot": "",
             "sentinel_wake_target": "main_ai",
-            "final_wake_targets": wake_targets,
-            "wake_reason": "取图失败：固定模式按设置叫人，智能模式用随机建议人选。",
+            "final_wake_targets": [],
+            "wake_reason": "取图失败：不叫人。",
             "wake_confidence": "low",
         }
-        if not should_wake:
-            log_entry["final_wake_targets"] = []
         append_monitor_log(log_entry)
         await manager.broadcast({"type": "monitor_log", "data": log_entry})
-        if not should_wake:
-            return
-        await self._wake_core_targets(
-            wake_targets,
-            monitoring_log,
-            last_user_ts,
-            log_entry["summary"],
-            log_entry["core_reason"],
-            recent_logs,
-            "",
-        )
 
     async def _analyze_and_log(
         self,
@@ -2382,7 +2360,6 @@ def build_monitor_alert_data(content: str, **extra) -> dict:
 # ── Core 主动查看监控 [CAM_CHECK] ─────────────────
 CAM_CHECK_CMD = "[CAM_CHECK]"
 
-NO_IMAGE_WAKE_GAP = 6 * 3600  # 取不到画面时，最多每 6 小时叫一次人
 
 PHONE_CAMERA_NO_IMAGE_CONTEXT = (
     "[手机摄像头采集状态]\n"

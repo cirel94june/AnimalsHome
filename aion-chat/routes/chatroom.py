@@ -59,6 +59,7 @@ from schedule import (
 )
 from music import search_songs, get_audio_url
 from camera import cam, CAM_CHECK_CMD
+import patrol_control
 from luckin import handle_luckin_commands, luckin_payment_attachments
 from link_preview import build_link_preview_attachments, strip_urls_for_message
 from song_gen import clean_song_visible_reply
@@ -824,6 +825,11 @@ async def _process_chatroom_commands(
     triggered = {}  # 收集需要后续处理的动作
     who_identity = "connor" if who.lower() == "connor" else "aion"
     who_label = _name_for_identity(who_identity)
+
+    # 自己开 / 停巡逻：放最前面，下面翻记录那一步会提前返回
+    full_text, patrol_notices = patrol_control.process(full_text, who_identity)
+    for patrol_notice in patrol_notices:
+        await _chatroom_sys_msg(room_id, patrol_notice, _q, after_msg_id=msg_id)
 
     memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
     if memory_requests:
@@ -4040,6 +4046,11 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     from ws import manager as ws_manager
     triggered: dict = {}
     label = _name_for_identity(actor_id)
+
+    # 自己开 / 停巡逻（和小克、Lucien 一样）：放最前面，下面翻记录那一步会提前返回
+    full_text, patrol_notices = patrol_control.process(full_text, actor_id)
+    for patrol_notice in patrol_notices:
+        await _chatroom_sys_msg(room_id, patrol_notice, _q, after_msg_id=msg_id)
 
     # ── 翻聊天记录：和小克 / Lucien 一样，有这条指令就先去搜（搜自己所有私聊窗口 + 群聊），搜完再接着说 ──
     memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
