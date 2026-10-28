@@ -2820,8 +2820,13 @@ function crMsgFeedbackHtml(msg) {
   return `<span class="msg-feedback-actions">
     <button class="msg-feedback-btn ${likeActive}" onclick="openCrMsgFeedback(event,'${msg.id}','like')" title="喜欢这条回复">👍</button>
     <button class="msg-feedback-btn ${dislikeActive}" onclick="openCrMsgFeedback(event,'${msg.id}','dislike')" title="不喜欢这条回复">👎</button>
-    ${msg.reasoning_content ? `<button class="msg-feedback-btn msg-reasoning-btn" onclick="openCrMsgReasoning(event,'${msg.id}')" title="查看思考过程">💭</button>` : ''}
   </span>`;
+}
+
+// 2026-10-28 小猫：手机上看不到思考过程 → 💭 一直显示，不用先点消息
+function crReasoningChipHtml(msg) {
+  if (!msg?.reasoning_content || !crCanRateAiMsg(msg)) return '';
+  return `<button class="msg-feedback-btn msg-reasoning-btn msg-reasoning-chip" onclick="openCrMsgReasoning(event,'${msg.id}')" title="查看思考过程" aria-label="查看思考过程">💭 思考</button>`;
 }
 
 function crMsgSenderLineHtml(sender, name, msgId, msg = null, opts = {}) {
@@ -2838,7 +2843,7 @@ function crMsgSenderLineHtml(sender, name, msgId, msg = null, opts = {}) {
     ? `<button class="memory-record-hint" onclick="event.stopPropagation();crShowMemoryRecordCard('${msgId}')" title="已记录到记忆库">💡</button>`
     : '';
   if (sender !== 'user') {
-    return `<div class="sender-line"><span class="sender-label ${sender}">${esc(name)}</span>${timeHtml}${menuHtml}${feedbackHtml}${ttsHtml}${memoryHtml}</div>`;
+    return `<div class="sender-line"><span class="sender-label ${sender}">${esc(name)}</span>${msg ? crReasoningChipHtml(msg) : ''}${timeHtml}${menuHtml}${feedbackHtml}${ttsHtml}${memoryHtml}</div>`;
   }
   return timeHtml || menuHtml ? `<div class="sender-line user-line">${timeHtml}${menuHtml}</div>` : '';
 }
@@ -3193,14 +3198,18 @@ function openCrMsgReasoning(ev, msgId) {
   const rect = trigger?.getBoundingClientRect?.();
   const messageRect = trigger?.closest?.('.message-row')?.getBoundingClientRect?.() || rect;
   if (rect && messageRect) {
+    // 2026-10-28：消息在屏幕顶上时，上方只剩一条缝 → 上面放不下就弹在按钮下面；思考常有上千字，给到六成屏高
     const pad = 8;
     const width = pop.offsetWidth;
-    const availableHeight = Math.max(0, messageRect.top - pad - 6);
-    const heightCap = Math.min(window.innerHeight * 0.28, 260, availableHeight);
-    pop.style.maxHeight = `${heightCap}px`;
+    const cap = Math.min(window.innerHeight * 0.6, 480);
+    const above = Math.max(0, messageRect.top - pad - 6);
+    const below = Math.max(0, window.innerHeight - rect.bottom - pad - 6);
+    const natural = pop.scrollHeight;
+    const goBelow = above < Math.min(natural, cap) && below > above;
+    pop.style.maxHeight = `${Math.min(cap, goBelow ? below : above)}px`;
     const height = pop.offsetHeight;
     pop.style.left = `${Math.min(Math.max(pad, rect.left), window.innerWidth - width - pad)}px`;
-    pop.style.top = `${Math.max(pad, messageRect.top - height - 6)}px`;
+    pop.style.top = goBelow ? `${rect.bottom + 6}px` : `${Math.max(pad, messageRect.top - height - 6)}px`;
   }
 }
 

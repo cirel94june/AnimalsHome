@@ -1895,8 +1895,9 @@ function renderPrivateMessageHTML(m) {
   const feedbackHtml = isAssistant ? `<span class="msg-feedback-actions">
     <button class="msg-feedback-btn ${m.ai_feedback_rating === 'like' ? 'active' : ''}" onclick="openMsgFeedback(event,'${m.id}','like')" title="喜欢这条回复">👍</button>
     <button class="msg-feedback-btn ${m.ai_feedback_rating === 'dislike' ? 'active' : ''}" onclick="openMsgFeedback(event,'${m.id}','dislike')" title="不喜欢这条回复">👎</button>
-    ${m.reasoning_content ? `<button class="msg-feedback-btn msg-reasoning-btn" onclick="openMsgReasoning(event,'${m.id}')" title="查看思考过程">💭</button>` : ''}
   </span>` : '';
+  // 2026-10-28 小猫：手机上看不到思考过程 → 💭 不再藏在「点一下消息才出现」的按钮组里
+  const reasoningHtml = isAssistant && m.reasoning_content ? `<button class="msg-feedback-btn msg-reasoning-btn msg-reasoning-chip" onclick="openMsgReasoning(event,'${m.id}')" title="查看思考过程" aria-label="查看思考过程">💭 思考</button>` : '';
   const messageAttachments = withWishFallbackAttachments(m);
   const bandVibrationHtml = renderBandVibrationNote(messageAttachments);
   const rawContent = isUser ? (m.content || '') : (m.content || '').replace(/<meta>[\s\S]*?<\/meta>/g, '').trim();
@@ -1927,7 +1928,7 @@ function renderPrivateMessageHTML(m) {
   if (inlineToy?.noticeHtml) contentHtml += `<div class="system-notice">${inlineToy.noticeHtml}</div>`;
   const avatarSrc = isUser ? '/public/UserIcon.png' : '/public/AIIcon.png';
   const ttsBtn = !isUser ? `<button class="tts-replay-btn" onclick="replayTTS('${m.id}')" title="重听语音">🔊</button>` : '';
-  const roleRow = `<div class="msg-role-row">${dotsLeft}<span class="msg-role-name">${escHtml(roleLabel)}</span><span class="msg-time">${time}</span>${dotsRight}${feedbackHtml}${ttsBtn}${starBadge}<div class="msg-menu" id="menu_${m.id}">${actionsHtml}</div></div>`;
+  const roleRow = `<div class="msg-role-row">${dotsLeft}<span class="msg-role-name">${escHtml(roleLabel)}</span>${reasoningHtml}<span class="msg-time">${time}</span>${dotsRight}${feedbackHtml}${ttsBtn}${starBadge}<div class="msg-menu" id="menu_${m.id}">${actionsHtml}</div></div>`;
   const avatar = `<div class="msg-avatar-col"><img class="msg-avatar" src="${avatarSrc}" alt="" data-pat-target="${isUser ? 'user' : 'aion'}" role="button" tabindex="0" title="双击拍拍" aria-label="双击拍拍" draggable="false"></div>`;
   const header = isUser ? `${roleRow}${avatar}` : `${avatar}${roleRow}`;
   return `
@@ -2395,14 +2396,18 @@ function openMsgReasoning(ev, msgId) {
   const rect = trigger?.getBoundingClientRect?.();
   const messageRect = trigger?.closest?.('.msg-row')?.getBoundingClientRect?.() || rect;
   if (rect && messageRect) {
+    // 2026-10-28：消息在屏幕顶上时，上方只剩一条缝 → 上面放不下就弹在按钮下面；思考常有上千字，给到六成屏高
     const pad = 8;
     const width = pop.offsetWidth;
-    const availableHeight = Math.max(0, messageRect.top - pad - 6);
-    const heightCap = Math.min(window.innerHeight * 0.28, 260, availableHeight);
-    pop.style.maxHeight = `${heightCap}px`;
+    const cap = Math.min(window.innerHeight * 0.6, 480);
+    const above = Math.max(0, messageRect.top - pad - 6);
+    const below = Math.max(0, window.innerHeight - rect.bottom - pad - 6);
+    const natural = pop.scrollHeight;
+    const goBelow = above < Math.min(natural, cap) && below > above;
+    pop.style.maxHeight = `${Math.min(cap, goBelow ? below : above)}px`;
     const height = pop.offsetHeight;
     pop.style.left = `${Math.min(Math.max(pad, rect.left), window.innerWidth - width - pad)}px`;
-    pop.style.top = `${Math.max(pad, messageRect.top - height - 6)}px`;
+    pop.style.top = goBelow ? `${rect.bottom + 6}px` : `${Math.max(pad, messageRect.top - height - 6)}px`;
   }
 }
 

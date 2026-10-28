@@ -2320,3 +2320,7 @@ body[data-theme="light"] .lounge-report-card { background: var(--surface); }
   .private-message-header { margin-bottom: 2px; }
   .private-message-flow { gap: 6px; }
 }
+
+/* 💭 思考：一直看得见，手指点得到；弹出来的思考过程给大一点的地方 */
+.msg-feedback-btn.msg-reasoning-chip { width:auto; height:auto; min-height:28px; padding:2px 8px; margin-left:4px; border:1px solid var(--border); border-radius:999px; font-size:11px; line-height:22px; color:var(--text2); opacity:.85; white-space:nowrap; }
+.msg-reasoning-popover { max-height:min(60vh,480px); }

@@ -1,8 +1,10 @@
 /* Hub 记忆：选一位 AI，看 / 改 / 归档 TA 在 Memory Hub 里的记忆 */
-body.hub-memory-page { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+/* common.css 把 body 设成不滚动；这一页内容会比屏幕长，要能上下滑 */
+body.hub-memory-page { margin: 0; background: var(--bg); color: var(--text); height: auto; min-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .hm-header {
   position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px;
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: var(--surface); border-bottom: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3); backdrop-filter: blur(22px) saturate(1.3);
 }
 .hm-header h1 { margin: 0; font-size: 18px; white-space: nowrap; }
 .hm-hint { margin-left: auto; min-width: 0; font-size: 12px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

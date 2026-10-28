@@ -99,6 +99,23 @@
     }
   }
 
+  // 2026-10-28 小猫：窗口删不掉。删了找不回来，所以先问一次，写清楚里面有几条
+  async function remove(person, win) {
+    const name = win.title || '未命名窗口';
+    const count = win.message_count ? `里面的 ${win.message_count} 条聊天` : '里面的聊天';
+    if (!confirm(`删掉「${name}」？
+${count}会一起删掉，删了找不回来。
+（已经记进记忆 / Hub 的不受影响）`)) return;
+    try {
+      if (person && person.id === 'aion') await api('DELETE', `/api/conversations/${encodeURIComponent(win.id)}`);
+      else await api('DELETE', `/api/chatroom/rooms/${encodeURIComponent(win.id)}`);
+      toast(`已删掉「${name}」`);
+      await load();
+    } catch (e) {
+      toast('没删成，稍后再试');
+    }
+  }
+
   // ── 画页面 ──
   function windowItem(person, win) {
     const meta = [when(win.updated_at), win.message_count ? `${win.message_count} 条` : ''].filter(Boolean).join(' · ');
@@ -111,7 +128,12 @@
       onclick: () => rename(person, win),
     });
     renameBtn.setAttribute('aria-label', `给「${win.title || '未命名窗口'}」改名`);
-    return el('li', { className: 'window' }, [openBtn, renameBtn]);
+    const removeBtn = el('button', {
+      type: 'button', className: 'window-rename window-remove', textContent: '🗑', title: '删除',
+      onclick: () => remove(person, win),
+    });
+    removeBtn.setAttribute('aria-label', `删除「${win.title || '未命名窗口'}」`);
+    return el('li', { className: 'window' }, [openBtn, renameBtn, removeBtn]);
   }
 
   function personCard(person, windows) {
