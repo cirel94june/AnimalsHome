@@ -1348,3 +1348,21 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   1. 快照里多了座位人设，加密前的 sections 和以前一样是明文 gzip，靠 Cloudflare Access 加设备注册保护，和小克、Lucien 的人设是同一个级别。
   2. `_ensure_seat_rooms` 在快照接口里写库，可能和聊天室同时建房间。
   3. 群聊里座位的回复传回服务器时，sender 是 `ai3` 这样的座位 id，main 和 second 仍然映射为 aion 和 connor。
+
+## 94. 1acbac4 复审：M1、M2、L1、L2
+
+- **M1 一次性返回绕过「不认思考开关」的回退**
+  - 一次性请求挪进 `call_custom_openai` 原来的重试循环（总次数仍是 5 次），不再单独走一个函数。
+  - 收到 400 或 422，并且明确提到 extra_body、thinking_config 或 include_thoughts 时，记进 `_NO_GEMINI_THOUGHTS`，`continue`。下一轮不再带开关，于是回到流式，照常聊天。
+  - 其他错误和成功的响应都不重发。「正在思考…」状态在一轮请求里只发一次。
+  - 测试 `test_whole_reply_that_rejects_the_switch_falls_back_like_streaming`：先发现流式丢思考，接着一次性请求被拒，再去掉开关走流式，依次是 `[(stream, 带开关), (一次性, 带开关), (stream, 不带)]`。再聊一次只发 `(stream, 不带)`。变异检查：去掉这一分支，测试失败。
+- **L2 一次性返回的解析和结构错误**：`_custom_openai_whole_reply` 先校验顶层是对象、`choices[0].message` 是对象、usage 是对象、思考和正文是字符串。200 但不是 JSON，或者结构不对，都会记 `provider_error` 并结束，不重发。取消请求的异常照旧往外传，因为这里不捕获它。参数化测试覆盖了 4 种坏响应：HTML、顶层是数组、choices 是字符串、message 是字符串，每种都只发 1 次请求。
+- **M2 座位第一个私聊窗口可能被重复创建**
+  - `create_room` 在 `actor` 存在且 `new_window=false` 的分支里，先 `BEGIN IMMEDIATE`，再查询；已经有窗口就 rollback 并返回那个，没有就在同一个事务里 INSERT。这和 `ensure_group` 的写法一样。
+  - `new_window=true` 时照旧可以开好几个窗口，没有加唯一索引。`_get_or_create_seat_room` 外面那次查询只是快速路径，最终以事务里的结果为准。
+  - 测试：真实临时 SQLite，每轮 20 个 `_get_or_create_seat_room` 加 4 个 `_ensure_seat_rooms` 同时进来，连跑 5 轮，每轮都只有 1 个窗口，并且大家拿到的是同一个 id。已经有窗口时返回最近那个；两个 `new_window` 同时来，会建出 2 个新的。变异检查：去掉 `BEGIN IMMEDIATE`，连跑 3 次都失败。
+- **L1 用焦点判断导致开关长期不同步**
+  - 删掉 `activeElement` 判断，改成 `_monitorTogglePending`（请求进行中）加 `_monitorToggleGen`（轮询出发时的代数）。开或关的请求在路上时不覆盖；请求发出前就已经出发的旧轮询，回来后作废。
+  - 请求结束时在 finally 里释放，并重新拉一次状态（成功失败都拉）。`syncCamModalState` 和每秒轮询都改走 `syncMonitorToggle`。
+  - 测试用 Node 真跑页面里这几个函数：一开始开关是 true、服务器说停着，开关变成 false；旧轮询在点击之后才回来，不覆盖；请求进行中的轮询也不覆盖；请求结束后按真实状态；之后 AI 停了，开关跟着变。变异检查：去掉这个判断，测试失败。
+- 相关测试 189 项通过，1 项跳过（Gemini、巡逻、多窗口、归巢全套、Codex、中转站、手机可用性）。

@@ -124,3 +124,38 @@ def test_whole_reply_errors_are_reported(monkeypatch):
     meta = {}
     assert "busy" in _call("gemini-3.8-flash", meta)
     assert meta["provider_error"].startswith("HTTP 503")
+
+
+def test_whole_reply_that_rejects_the_switch_falls_back_like_streaming(monkeypatch):
+    """复审 M1：先发现流式丢思考，改一次性；一次性又不认开关 → 记住、去掉开关，照常聊天。"""
+    def handle(body):
+        if "extra_body" in body and not body["stream"]:
+            return httpx.Response(400, json={"error": "unknown field extra_body"})
+        return httpx.Response(200, stream=_Stream(_sse(
+            {"choices": [{"delta": {"content": "391"}}]}, {"choices": [], "usage": USAGE})))
+    sent = _relay(monkeypatch, handle)
+    assert _call("gemini-3.8-flash") == "391"  # 流式，丢了思考 → 记下
+    meta = {}
+    assert _call("gemini-3.8-flash", meta) == "391"  # 一次性被拒 → 去开关重发
+    assert "provider_error" not in meta
+    assert [(b["stream"], "extra_body" in b) for b in sent] == [(True, True), (False, True), (True, False)]
+    assert "https://relay.example/v1/chat/completions" in ai_providers._NO_GEMINI_THOUGHTS
+    sent.clear()
+    assert _call("gemini-3.8-flash") == "391"
+    assert [(b["stream"], "extra_body" in b) for b in sent] == [(True, False)]
+
+
+@pytest.mark.parametrize("response", [
+    httpx.Response(200, text="<html>502 Bad Gateway</html>"),
+    httpx.Response(200, json=[{"choices": []}]),
+    httpx.Response(200, json={"choices": "oops"}),
+    httpx.Response(200, json={"choices": [{"message": "oops"}], "usage": []}),
+])
+def test_broken_whole_replies_are_recorded_and_not_resent(monkeypatch, response):
+    """复审 L2：200 但不是想要的 JSON，也要记 provider_error，不重发生成请求。"""
+    ai_providers._STREAM_DROPS_THOUGHTS.add(("https://relay.example/v1/chat/completions", "gemini-3.8-flash"))
+    sent = _relay(monkeypatch, lambda body: response)
+    meta = {}
+    _call("gemini-3.8-flash", meta)
+    assert meta.get("provider_error")
+    assert len(sent) == 1

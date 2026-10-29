@@ -182,3 +182,48 @@ def test_frontend_single_flight_guards_in_source():
     send_part = chat_js[chat_js.index("async function send()"):]
     assert send_part.index("sending = true;") < send_part.index("await newConversation()")
     assert "_creatingConversation" in chat_js and "function newConversation()" in chat_js
+
+
+def _seat_rooms(db, actor):
+    with sqlite3.connect(db) as conn:
+        return [r[0] for r in conn.execute(
+            "SELECT id FROM chatroom_rooms WHERE type='seat_1v1' AND actor=?", (actor,))]
+
+
+@pytest.fixture
+def seat_ready(monkeypatch):
+    import routes.chatroom as chatroom_routes
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(chatroom_routes.actors_registry, "get_actor",
+                        lambda actor: {"id": actor, "name": "狗蛋", "enabled": True})
+    monkeypatch.setattr(chatroom_routes.manager, "broadcast", AsyncMock())
+    monkeypatch.setattr(seat_chat, "check_ready",
+                        lambda actor: (None, "m") if actor == "ai5" else (_ for _ in ()).throw(seat_chat.SeatNotReady("x")))
+    return chatroom_routes
+
+
+def test_first_seat_window_is_created_once_even_when_everyone_comes_at_once(db, seat_ready):
+    """归巢复审 M2：归巢打包和聊天室同时给座位建第一个私聊窗口，只建一个。"""
+    from routes.homecoming import _ensure_seat_rooms
+
+    async def crowd():
+        jobs = [seat_ready._get_or_create_seat_room("ai5") for _ in range(20)]
+        jobs += [_ensure_seat_rooms() for _ in range(4)]
+        return await asyncio.gather(*jobs)
+    for _ in range(5):  # 并发撞不撞看运气，多来几轮
+        with sqlite3.connect(db) as conn:
+            conn.execute("DELETE FROM chatroom_rooms WHERE actor='ai5'")
+        ids = asyncio.run(crowd())
+        assert len(_seat_rooms(db, "ai5")) == 1
+        assert set(ids[:20]) == set(_seat_rooms(db, "ai5"))
+
+
+def test_existing_window_is_reused_and_new_window_still_opens_more(db, seat_ready):
+    assert asyncio.run(seat_ready._get_or_create_seat_room("ai3")) == "s2"  # 已有：回最近那个
+    assert sorted(_seat_rooms(db, "ai3")) == ["s1", "s2"]
+    body = seat_ready.RoomCreate(title="", type="seat_1v1", actor="ai3", new_window=True)
+
+    async def two_new():
+        return await asyncio.gather(seat_ready.create_room(body), seat_ready.create_room(body))
+    a, b = asyncio.run(two_new())
+    assert a["id"] != b["id"] and len(_seat_rooms(db, "ai3")) == 4  # 手动开新窗口照旧可以好几个

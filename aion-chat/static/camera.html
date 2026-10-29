@@ -291,11 +291,12 @@ window.onAionSubPageVisibilityChanged = function(visible) {
 
 async function syncCamModalState() {
   try {
+    const gen = _monitorToggleGen;
     const status = await api("GET", "/api/cam/status");
     _activeSource = status.active_source || "local";
     updateSourceTabs(_activeSource);
     $("esp32UrlInput").value = status.esp32_cam_url || "";
-    $("camMonitorToggle2").checked = status.monitoring;
+    syncMonitorToggle(status, gen);
     $("camIntervalMin2").value = status.auto_interval_min;
     $("camIntervalMax2").value = status.auto_interval_max;
     $("camMaxKeep2").value = status.max_screenshots;
@@ -312,7 +313,7 @@ async function syncCamModalState() {
     const bridgeEl = $("esp32BridgeStatus");
     if (bridgeEl) bridgeEl.style.display = (status.esp32_bridge_active && _activeSource === "esp32") ? "" : "none";
     updatePhoneArmState(status.phone_camera || {});
-    updateCamStatusText(status);
+    updateCamStatusText(status, gen);
     await hideUnavailableSources(status);
     if (_activeSource === "local") await camRefreshList2();
     if (_activeSource === "phone") {
@@ -326,10 +327,9 @@ async function syncCamModalState() {
   }
 }
 
-function updateCamStatusText(status) {
+function updateCamStatusText(status, genAtFetch) {
   // AI 也会开 / 停巡逻：开关和下面那行跟着服务器走
-  const toggle = $("camMonitorToggle2");
-  if (toggle && document.activeElement !== toggle) toggle.checked = !!status.monitoring;
+  syncMonitorToggle(status, genAtFetch);
   const note = $("camPatrolNote");
   if (note) note.textContent = status.patrol_note || "";
   if (status.monitoring) {
@@ -346,7 +346,7 @@ function updateCamStatusText(status) {
 
 function startCountdown() { stopCountdown(); updateCountdown(); countdownTimer = setInterval(updateCountdown, 1000); }
 function stopCountdown() { if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; } }
-async function updateCountdown() { try { const s = await api("GET","/api/cam/status"); updateCamStatusText(s); } catch(e){} }
+async function updateCountdown() { try { const gen = _monitorToggleGen; const s = await api("GET","/api/cam/status"); updateCamStatusText(s, gen); } catch(e){} }
 
 function startCamPreview() { stopCamPreview(); refreshFrame(); camPreviewTimer = setInterval(refreshFrame, 150); }
 function stopCamPreview() { if (camPreviewTimer) { clearInterval(camPreviewTimer); camPreviewTimer = null; } }
@@ -420,11 +420,27 @@ async function camManualScreenshot() {
   setTimeout(() => syncCamModalState(), 1500);
 }
 
+// 开 / 关巡逻的请求还没回来时，轮询拿到的旧状态不能把开关拨回去；
+// 请求发出前已经在路上的那次轮询也作废（复审 L1：不能拿「开关有焦点」来判断）
+let _monitorTogglePending = 0;
+let _monitorToggleGen = 0;
 async function camToggleMonitor2() {
   const on = $("camMonitorToggle2").checked;
-  if (on) { await camApplyConfig(); await api("POST", "/api/cam/monitor/start"); }
-  else { await api("POST", "/api/cam/monitor/stop"); stopCountdown(); }
-  syncCamModalState();
+  _monitorTogglePending++;
+  _monitorToggleGen++;
+  try {
+    if (on) { await camApplyConfig(); await api("POST", "/api/cam/monitor/start"); }
+    else { await api("POST", "/api/cam/monitor/stop"); stopCountdown(); }
+  } finally {
+    _monitorTogglePending--;
+    _monitorToggleGen++;
+    syncCamModalState();  // 成功失败都重新拉一次真实状态
+  }
+}
+
+function syncMonitorToggle(status, genAtFetch) {
+  if (_monitorTogglePending || genAtFetch !== _monitorToggleGen) return;
+  $("camMonitorToggle2").checked = !!status.monitoring;
 }
 
 async function camApplyConfig() {

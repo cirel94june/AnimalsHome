@@ -857,7 +857,18 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
             else:
                 payload.pop("extra_body", None)
             if "extra_body" in payload and (url, model) in _STREAM_DROPS_THOUGHTS:
-                async for piece in _custom_openai_whole(url, payload, headers, meta, request_timeout):
+                if not reasoning_status_sent:
+                    yield f"{CLI_STATUS_PREFIX}正在思考..."  # 要等整条写完，先告诉大家在想
+                    reasoning_status_sent = True
+                body = {k: v for k, v in payload.items() if k != "stream_options"}
+                body["stream"] = False
+                async with httpx.AsyncClient(timeout=request_timeout) as client:
+                    resp = await client.post(url, json=body, headers=headers)
+                if resp.status_code in (400, 422) and _mentions_thinking_config(resp.content):
+                    # 一次性接口也不认思考开关：和流式一样记住、去掉再发（复审 M1）
+                    _NO_GEMINI_THOUGHTS.add(url)
+                    continue
+                for piece in _custom_openai_whole_reply(resp, meta):
                     yield piece
                 return
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
@@ -948,37 +959,42 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
         raise
 
 
-async def _custom_openai_whole(url: str, payload: dict, headers: dict, meta: dict | None, request_timeout: float):
-    """一次性返回（不边写边传）：有的中转站只有这样才把 Gemini 的思考带回来。"""
-    body = {k: v for k, v in payload.items() if k != "stream_options"}
-    body["stream"] = False
-    yield f"{CLI_STATUS_PREFIX}正在思考..."  # 要等整条写完，先告诉大家在想
-    async with httpx.AsyncClient(timeout=request_timeout) as client:
-        resp = await client.post(url, json=body, headers=headers)
+def _custom_openai_whole_reply(resp: httpx.Response, meta: dict | None) -> list[str]:
+    """解析一次性返回（有的中转站只有这样才把 Gemini 的思考带回来）。出错一律记 provider_error、不重发（复审 L2）。"""
+    def fail(note: str, shown: str) -> list[str]:
+        if meta is not None:
+            meta["provider_error"] = note
+        return [shown]
+
     if resp.status_code != 200:
         text = _decode_relay_body(resp.content)
-        if meta is not None:
-            meta["provider_error"] = f"HTTP {resp.status_code}: {text}"
-        yield text
-        return
-    data = resp.json()
-    if isinstance(data, dict) and data.get("error"):
-        if meta is not None:
-            meta["provider_error"] = json.dumps(data["error"], ensure_ascii=False)
-        yield json.dumps(data, ensure_ascii=False)
-        return
-    usage = data.get("usage") or {}
-    if meta is not None and usage:
+        return fail(f"HTTP {resp.status_code}: {text}", text)
+    try:
+        data = resp.json()
+    except ValueError:
+        text = _decode_relay_body(resp.content)
+        return fail(f"一次性返回不是 JSON: {text[:300]}", text)
+    if not isinstance(data, dict):
+        return fail("一次性返回格式不对：顶层不是对象", "[自定义中转站错误] 返回格式不对")
+    if data.get("error"):
+        error = json.dumps(data["error"], ensure_ascii=False)
+        return fail(error, json.dumps(data, ensure_ascii=False))
+    choices = data.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices else None
+    message = first.get("message") if isinstance(first, dict) else None
+    if not isinstance(message, dict):
+        return fail("一次性返回格式不对：没有 choices[0].message", "[自定义中转站错误] 返回格式不对")
+    usage = data.get("usage")
+    if meta is not None and isinstance(usage, dict) and usage:
         meta["prompt_tokens"] = usage.get("prompt_tokens", 0)
         meta["completion_tokens"] = usage.get("completion_tokens", 0)
         meta["total_tokens"] = usage.get("total_tokens", 0)
         meta["raw"] = usage
-    message = ((data.get("choices") or [{}])[0] or {}).get("message") or {}
     reasoning = message.get("reasoning_content") or message.get("reasoning")
-    if reasoning and meta is not None:
-        meta["reasoning_content"] = str(reasoning)
-    if message.get("content"):
-        yield message["content"]
+    if isinstance(reasoning, str) and reasoning and meta is not None:
+        meta["reasoning_content"] = reasoning
+    content = message.get("content")
+    return [content] if isinstance(content, str) and content else []
 
 # ── Gemini CLI ────────────────────────────────────
 def _find_gemini_script() -> str | None:

@@ -483,4 +483,64 @@ def test_camera_page_says_who_stopped_it_and_until_when(cam):
     assert patrol_control.page_note() == "巡逻停着"
     page = (Path(__file__).parent / "static" / "camera.html").read_text(encoding="utf-8")
     assert 'id="camPatrolNote"' in page and "status.patrol_note" in page
-    assert "toggle.checked = !!status.monitoring" in page  # AI 开 / 停后开关跟着变
+    assert "syncMonitorToggle(status" in page  # AI 开 / 停后开关跟着变
+
+
+def _js_function(source: str, start: str) -> str:
+    begin = source.index(start)
+    depth, i = 0, source.index("{", begin)
+    while True:
+        depth += {"{": 1, "}": -1}.get(source[i], 0)
+        i += 1
+        if depth == 0:
+            return source[begin:i]
+
+
+def test_camera_toggle_follows_server_unless_a_click_is_in_flight(tmp_path):
+    """复审 L1：开关点过后一直有焦点，也要跟着服务器变；只有开 / 关请求在路上时才不让旧状态覆盖。"""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node")
+    page = (Path(__file__).parent / "static" / "camera.html").read_text(encoding="utf-8")
+    parts = [page[page.index("let _monitorTogglePending"):page.index("async function camToggleMonitor2")],
+             _js_function(page, "async function camToggleMonitor2"),
+             _js_function(page, "function syncMonitorToggle"),
+             _js_function(page, "function updateCamStatusText"),
+             page[page.index("async function updateCountdown"):].split("\n", 1)[0]]
+    script = tmp_path / "toggle.js"
+    script.write_text("""
+const els = {camMonitorToggle2: {checked: true}, camPatrolNote: {textContent: ""}, camStatus2: {textContent: ""}};
+const $ = id => els[id];
+let server = {monitoring: false, patrol_note: "巡逻停着"};
+let release = null;
+const api = (method, url) => url === "/api/cam/status"
+  ? Promise.resolve({...server})
+  : new Promise(resolve => { release = () => { server = {monitoring: true, patrol_note: "巡逻开着"}; resolve({}); }; });
+const camApplyConfig = async () => {};
+const stopCountdown = () => {};
+const syncCamModalState = () => updateCountdown();
+""" + "\n".join(parts) + """
+(async () => {
+  const out = [];
+  await updateCountdown();                       // 开关有没有焦点都无所谓：服务器说停着就是停着
+  out.push(els.camMonitorToggle2.checked);
+  const stale = updateCountdown();               // 这次轮询先出发……
+  els.camMonitorToggle2.checked = true;          // ……小猫接着点了「开」
+  const click = camToggleMonitor2();
+  await stale;                                   // 旧轮询（停着）回来：不能把开关拨回去
+  out.push(els.camMonitorToggle2.checked);
+  await updateCountdown();                       // 请求还在路上：照样不覆盖
+  out.push(els.camMonitorToggle2.checked);
+  release(); await click; await new Promise(r => setTimeout(r, 0));
+  out.push(els.camMonitorToggle2.checked);       // 请求回来后按真实状态
+  server = {monitoring: false, patrol_note: "巡逻停着（小克停的）"};
+  await updateCountdown();                       // 之后 AI 停了：跟着变
+  out.push(els.camMonitorToggle2.checked);
+  console.log(JSON.stringify(out));
+})();
+""", encoding="utf-8")
+    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "[false,true,true,true,false]"

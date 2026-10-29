@@ -3101,12 +3101,16 @@ async def create_room(body: RoomCreate):
                 await db.rollback()
                 return await get_room(existing["id"])
         if actor and not body.new_window:
-            # 「去和 TA 私聊」：回到 TA 最近用的那个窗口；要开新的窗口时带 new_window
+            # 「去和 TA 私聊」：回到 TA 最近用的那个窗口；要开新的窗口时带 new_window。
+            # 查和建在同一个写事务里：归巢打包和聊天室同时进来也只建一个（复审 M2）；
+            # 手动开新窗口（new_window）照旧可以有好几个，不加唯一索引
+            await db.execute("BEGIN IMMEDIATE")
             cur = await db.execute(
                 "SELECT id FROM chatroom_rooms WHERE type=? AND actor=? ORDER BY updated_at DESC LIMIT 1",
                 (body.type, actor))
             existing = await cur.fetchone()
             if existing:
+                await db.rollback()
                 return await get_room(existing["id"])
         await db.execute(
             "INSERT INTO chatroom_rooms (id, title, type, aion_persona, connor_persona, actor, created_at, updated_at) "
