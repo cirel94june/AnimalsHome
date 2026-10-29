@@ -12,8 +12,9 @@ final class HomecomingGroupTurnCoordinator {
     private final Set<String> stopped = Collections.synchronizedSet(new HashSet<>());
 
     HomecomingGroupTurnCoordinator(List<String> owners, ReplyPort replies) {
-        if (owners == null || owners.size() != 2) {
-            throw new IllegalArgumentException("two group owners are required");
+        // 原来固定两位；座位加进群聊后人数不定（2026-10-29 归巢全员）
+        if (owners == null || owners.isEmpty()) {
+            throw new IllegalArgumentException("group owners are required");
         }
         this.owners = Collections.unmodifiableList(new ArrayList<>(owners));
         this.replies = replies;

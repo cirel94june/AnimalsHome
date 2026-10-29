@@ -148,9 +148,7 @@ public final class HomecomingChatRepository {
     }
 
     private static void validateTimeline(String timelineId) {
-        if (!"main_private".equals(timelineId)
-                && !"companion_private".equals(timelineId)
-                && !"group".equals(timelineId)) {
+        if (!HomecomingOwners.isTimeline(timelineId)) {
             throw new IllegalArgumentException("unsupported timeline");
         }
     }

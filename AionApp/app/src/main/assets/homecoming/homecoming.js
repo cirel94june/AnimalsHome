@@ -62,9 +62,12 @@
       { id: "main", label: state.bootstrap.identity.mainName },
       { id: "second", label: state.bootstrap.identity.secondName }
     ];
+    // 记忆、日程只有原来两位有；每位 AI（含座位）都能私聊、进群、选自己的线路
     fillSelect(byId("memoryOwner"), responders, "label", "id");
     fillSelect(byId("scheduleOwner"), responders, "label", "id");
-    fillSelect(byId("settingsOwner"), responders, "label", "id");
+    fillSelect(byId("settingsOwner"), roster().map(member =>
+      ({ id: member.ownerId, label: member.name })), "label", "id");
+    renderConversationMenu();
     fillSelect(byId("routeSelect"), routes, "label", "routeId");
     renderTtsState();
     switchTimeline(state.timeline);
@@ -93,13 +96,50 @@
     renderTtsState();
   }
 
+  function roster() {
+    const identity = state.bootstrap?.identity || {};
+    if (Array.isArray(identity.roster) && identity.roster.length) return identity.roster;
+    return [
+      { ownerId: "main", timelineId: "main_private", name: identity.mainName || "主伴侣" },
+      { ownerId: "second", timelineId: "companion_private", name: identity.secondName || "第二伴侣" }
+    ];
+  }
+
+  function memberOf(owner) {
+    return roster().find(member => member.ownerId === owner) || null;
+  }
+
+  function nameOf(owner) {
+    return memberOf(owner)?.name || "AI";
+  }
+
+  function renderConversationMenu() {
+    const menu = byId("conversationMenu");
+    menu.textContent = "";
+    const items = roster().map(member => ({ timeline: member.timelineId, label: member.name }));
+    items.push({ timeline: "group", label: "群聊" });
+    items.forEach(item => {
+      const button = document.createElement("button");
+      button.dataset.timeline = item.timeline;
+      button.textContent = item.label;
+      menu.appendChild(button);
+    });
+  }
+
+  // 还没在归巢里选过线路时：先找带着 TA 平时那个模型的线路，没有再用第一条
+  function defaultRouteFor(owner) {
+    const routes = state.bootstrap?.routes || [];
+    const usual = memberOf(owner)?.modelKey || "";
+    return routes.find(item => usual && (item.modelKeys || []).includes(usual)) || routes[0] || null;
+  }
+
   function applyRoutePreference() {
     const owner = byId("settingsOwner").value || "main";
     const preference = state.bootstrap?.routePreferences?.[owner] || {};
     const routes = state.bootstrap?.routes || [];
     const chosen = routes.some(item => item.routeId === preference.routeId)
       ? preference.routeId
-      : routes[0]?.routeId || "";
+      : defaultRouteFor(owner)?.routeId || "";
     byId("routeSelect").value = chosen;
   }
 
@@ -109,7 +149,8 @@
     const models = (route?.modelKeys || []).map(key => ({ key, label: key }));
     fillSelect(byId("modelSelect"), models, "label", "key");
     const owner = byId("settingsOwner").value || "main";
-    const preferred = state.bootstrap?.routePreferences?.[owner]?.modelId || "";
+    const preferred = state.bootstrap?.routePreferences?.[owner]?.modelId
+      || memberOf(owner)?.modelKey || "";
     if (models.some(item => item.key === preferred)) {
       byId("modelSelect").value = preferred;
     }
@@ -126,14 +167,16 @@
   }
 
   function switchTimeline(timeline) {
+    const member = roster().find(item => item.timelineId === timeline);
+    if (!member && timeline !== "group") timeline = "group";  // 上次聊的座位这次没带来
     state.timeline = timeline;
-    const identity = state.bootstrap?.identity || {};
-    const labels = {
-      main_private: identity.mainName || "主伴侣私聊",
-      companion_private: identity.secondName || "第二伴侣私聊",
-      group: "三人聊天"
-    };
-    byId("chatTitle").textContent = labels[timeline] || "当前会话";
+    byId("chatTitle").textContent = member ? member.name : "群聊";
+    if (member) {
+      // 切到谁的私聊，设置里就显示谁的线路和模型，发送时用的也是 TA 的
+      byId("settingsOwner").value = member.ownerId;
+      applyRoutePreference();
+      updateModels();
+    }
     document.querySelectorAll("[data-timeline]").forEach(item =>
       item.classList.toggle("active", item.dataset.timeline === timeline));
     byId("conversationMenu").classList.add("hidden");
@@ -184,9 +227,8 @@
     const text = byId("composer").value.trim();
     if (!text && !byId("mediaState").textContent) return;
     state.requestId = uuid();
-    const owner = state.timeline === "main_private" ? "main"
-      : state.timeline === "companion_private" ? "second"
-      : (byId("settingsOwner").value || "main");
+    const member = roster().find(item => item.timelineId === state.timeline);
+    const owner = member ? member.ownerId : (byId("settingsOwner").value || "main");
     appendMessage({ text, sender: state.bootstrap.identity.userName, assistant: false });
     byId("composer").value = "";
     byId("mediaState").textContent = "";
@@ -240,10 +282,7 @@
       : exactness === "inexact"
         ? "系统将尽量准时触发；可在系统设置中允许精确闹铃"
         : "触发精度将在创建日程时确认";
-    const names = {
-      main: state.bootstrap?.identity?.mainName || "伴侣一",
-      second: state.bootstrap?.identity?.secondName || "伴侣二"
-    };
+    const names = Object.fromEntries(roster().map(member => [member.ownerId, member.name]));
     const labels = { alarm: "闹铃", reminder: "提醒", monitor: "定时监控" };
     const root = byId("scheduleList");
     root.textContent = "";
@@ -421,11 +460,7 @@
     } else if (event.type === "group_reply_complete") {
       loadMessages();
     } else if (event.type === "group_reply_failure") {
-      const identity = state.bootstrap.identity || {};
-      const name = event.ownerId === "second"
-        ? (identity.secondName || "AI")
-        : (identity.mainName || "AI");
-      byId("mediaState").textContent = `${name} 回复失败`;
+      byId("mediaState").textContent = `${nameOf(event.ownerId)} 回复失败`;
     } else if (event.type === "group_complete") {
       state.requestId = "";
       byId("mediaState").textContent = "";
@@ -500,8 +535,9 @@
       api.returnWithoutSync();
     }
   });
-  document.querySelectorAll("[data-timeline]").forEach(button => {
-    button.addEventListener("click", () => switchTimeline(button.dataset.timeline));
+  byId("conversationMenu").addEventListener("click", event => {
+    const button = event.target.closest("[data-timeline]");
+    if (button) switchTimeline(button.dataset.timeline);
   });
   byId("abandonHomecoming").addEventListener("click", () => {
     if (window.confirm("确认永久删除全部本机归巢消息、修改和待回传包，并以服务器数据为准返回正常模式？")) {

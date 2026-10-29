@@ -3,8 +3,10 @@ package com.aion.chat.homecoming;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -20,15 +22,12 @@ public final class HomecomingIdentityRepository {
     }
 
     public Identity identityForTimeline(String timelineId, String responderOwner) {
-        String owner;
-        if ("main_private".equals(timelineId)) {
-            owner = "main";
-        } else if ("companion_private".equals(timelineId)) {
-            owner = "second";
-        } else if ("group".equals(timelineId)) {
+        String owner = HomecomingOwners.ownerOfPrivateTimeline(timelineId);
+        if (owner == null) {
+            if (!HomecomingOwners.GROUP.equals(timelineId)) {
+                throw new IllegalArgumentException("unsupported timeline");
+            }
             owner = validateOwner(responderOwner);
-        } else {
-            throw new IllegalArgumentException("unsupported timeline");
         }
         try {
             JSONObject root = new JSONObject(source.load());
@@ -47,21 +46,78 @@ public final class HomecomingIdentityRepository {
     }
 
     public List<String> groupReplyOrder(String turnId) {
+        JSONObject root;
         try {
-            JSONObject root = new JSONObject(source.load());
-            String configured = root.optString("reply_order", "random")
-                    .trim().toLowerCase();
-            if ("connor".equals(configured) || "second".equals(configured)) {
-                return Arrays.asList("second", "main");
-            }
-            if ("aion".equals(configured) || "main".equals(configured)) {
-                return Arrays.asList("main", "second");
-            }
-            return turnId.hashCode() % 2 == 0
-                    ? Arrays.asList("main", "second")
-                    : Arrays.asList("second", "main");
+            root = new JSONObject(source.load());
         } catch (Exception exception) {
             return Arrays.asList("main", "second");
+        }
+        String configured = root.optString("reply_order", "random")
+                .trim().toLowerCase();
+        List<String> order;
+        if ("connor".equals(configured) || "second".equals(configured)) {
+            order = new ArrayList<>(Arrays.asList("second", "main"));
+        } else if ("aion".equals(configured) || "main".equals(configured)) {
+            order = new ArrayList<>(Arrays.asList("main", "second"));
+        } else {
+            order = turnId.hashCode() % 2 == 0
+                    ? new ArrayList<>(Arrays.asList("main", "second"))
+                    : new ArrayList<>(Arrays.asList("second", "main"));
+        }
+        // 群里的座位排在两位后面，按服务器给的顺序；旧快照没有 group_members，照旧两位
+        JSONArray members = root.optJSONArray("group_members");
+        JSONObject companions = root.optJSONObject("companions");
+        if (members != null && companions != null) {
+            for (int index = 0; index < members.length(); index++) {
+                String owner = members.optString(index, "");
+                if (HomecomingOwners.isSeat(owner) && companions.has(owner)
+                        && !order.contains(owner)) {
+                    order.add(owner);
+                }
+            }
+        }
+        return order;
+    }
+
+    /** 归巢里能聊的每位 AI：主伴侣、第二伴侣，以及快照里带来的座位。 */
+    public List<Member> roster() {
+        ArrayList<Member> result = new ArrayList<>();
+        try {
+            JSONObject root = new JSONObject(source.load());
+            JSONObject companions = root.getJSONObject("companions");
+            for (String owner : new String[]{"main", "second"}) {
+                JSONObject companion = companions.optJSONObject(owner);
+                result.add(new Member(owner, HomecomingOwners.privateTimeline(owner),
+                        companion == null ? owner : companion.optString("name", owner), ""));
+            }
+            JSONArray listed = root.optJSONArray("roster");
+            for (int index = 0; listed != null && index < listed.length(); index++) {
+                JSONObject item = listed.optJSONObject(index);
+                String owner = item == null ? "" : item.optString("owner", "");
+                JSONObject companion = companions.optJSONObject(owner);
+                if (!HomecomingOwners.isSeat(owner) || companion == null) continue;
+                String name = companion.optString("name", "").trim();
+                if (name.isEmpty()) continue;
+                result.add(new Member(owner, HomecomingOwners.privateTimeline(owner),
+                        name, item.optString("model_key", "")));
+            }
+        } catch (Exception exception) {
+            throw new IllegalStateException("verified identity snapshot is invalid", exception);
+        }
+        return result;
+    }
+
+    public static final class Member {
+        public final String ownerId;
+        public final String timelineId;
+        public final String name;
+        public final String modelKey;
+
+        Member(String ownerId, String timelineId, String name, String modelKey) {
+            this.ownerId = ownerId;
+            this.timelineId = timelineId;
+            this.name = name;
+            this.modelKey = modelKey == null ? "" : modelKey;
         }
     }
 
@@ -105,7 +161,7 @@ public final class HomecomingIdentityRepository {
     }
 
     private static String validateOwner(String owner) {
-        if (!"main".equals(owner) && !"second".equals(owner)) {
+        if (!HomecomingOwners.isOwner(owner)) {
             throw new IllegalArgumentException("unsupported memory owner");
         }
         return owner;

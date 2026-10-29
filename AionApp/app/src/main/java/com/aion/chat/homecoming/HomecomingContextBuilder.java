@@ -43,8 +43,11 @@ public final class HomecomingContextBuilder {
             long now, String locationState) {
         HomecomingIdentityRepository.Identity identity =
                 identities.identityForTimeline(timelineId, responderOwner);
+        // 座位的记忆在 Hub 上，手机本地没有
         List<HomecomingMemoryRepository.Memory> recalled =
-                memories.recall(identity.ownerId, trigger, 12);
+                HomecomingOwners.hasLocalMemory(identity.ownerId)
+                        ? memories.recall(identity.ownerId, trigger, 12)
+                        : Collections.emptyList();
         StringBuilder system = new StringBuilder();
         append(system, identity.systemPrompt);
         append(system, "当前对话角色：" + identity.companionName);

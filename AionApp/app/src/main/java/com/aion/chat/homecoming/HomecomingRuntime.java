@@ -121,12 +121,22 @@ final class HomecomingRuntime {
         for (HomecomingKeyStore.RouteDescriptor descriptor : vault.listDescriptors()) {
             routes.put(descriptor.toJson());
         }
+        JSONArray roster = new JSONArray();
+        for (HomecomingIdentityRepository.Member member : identities.roster()) {
+            roster.put(new JSONObject()
+                    .put("ownerId", member.ownerId)
+                    .put("timelineId", member.timelineId)
+                    .put("name", member.name)
+                    .put("modelKey", member.modelKey));
+        }
         JSONObject identity = new JSONObject()
                 .put("userName", main.userName)
                 .put("mainName", main.companionName)
-                .put("secondName", second.companionName);
+                .put("secondName", second.companionName)
+                .put("roster", roster);
         JSONObject routePreferences = new JSONObject();
-        for (String ownerId : new String[]{"main", "second"}) {
+        for (HomecomingIdentityRepository.Member member : identities.roster()) {
+            String ownerId = member.ownerId;
             routePreferences.put(ownerId, new JSONObject()
                     .put("routeId", preferences.getString(
                             "background_route_" + ownerId, ""))
@@ -145,7 +155,7 @@ final class HomecomingRuntime {
 
     void setRoutePreference(
             String ownerId, String routeId, String modelId) {
-        if (!"main".equals(ownerId) && !"second".equals(ownerId)) {
+        if (!HomecomingOwners.isOwner(ownerId)) {
             throw new IllegalArgumentException("unsupported route owner");
         }
         vault.resolve(routeId).model(modelId);
@@ -251,17 +261,19 @@ final class HomecomingRuntime {
         return output.toString();
     }
 
-    void send(String requestId, String timelineId, String responderOwner,
+    void send(String requestId, String timelineId, String requestedOwner,
             String text, String routeId, String modelId, String imageDataUrl,
             EventSink sink) {
         validateTimeline(timelineId);
         vault.resolve(routeId).model(modelId);
         if ("group".equals(timelineId)) {
             sendGroup(
-                    requestId, responderOwner, text,
+                    requestId, requestedOwner, text,
                     routeId, modelId, imageDataUrl, sink);
             return;
         }
+        // 私聊回复的永远是这条时间线的主人，线路偏好也记在 TA 名下
+        String responderOwner = HomecomingOwners.ownerOfPrivateTimeline(timelineId);
         preferences.edit()
                 .putString("background_route_" + responderOwner, routeId)
                 .putString("background_model_" + responderOwner, modelId)
@@ -292,6 +304,9 @@ final class HomecomingRuntime {
             String modelId,
             String imageDataUrl,
             EventSink sink) {
+        if (!HomecomingOwners.isOwner(selectedOwner)) {
+            throw new IllegalArgumentException("unsupported route owner");
+        }
         preferences.edit()
                 .putString("background_route_" + selectedOwner, routeId)
                 .putString("background_model_" + selectedOwner, modelId)
@@ -300,9 +315,10 @@ final class HomecomingRuntime {
                 .putString("group_pending_text_" + requestId, text)
                 .putString("group_pending_image_" + requestId, imageDataUrl)
                 .apply();
+        List<String> groupOrder = identities.groupReplyOrder(requestId);
         HomecomingGroupTurnCoordinator coordinator =
                 new HomecomingGroupTurnCoordinator(
-                        identities.groupReplyOrder(requestId),
+                        groupOrder,
                         new HomecomingGroupTurnCoordinator.ReplyPort() {
                             @Override public void start(
                                     String parentRequestId,
@@ -339,8 +355,9 @@ final class HomecomingRuntime {
 
                             @Override public void cancel(String parentRequestId) {
                                 engine.stop(parentRequestId);
-                                engine.stop(parentRequestId + ":main");
-                                engine.stop(parentRequestId + ":second");
+                                for (String ownerId : groupOrder) {
+                                    engine.stop(parentRequestId + ":" + ownerId);
+                                }
                             }
                         });
         groupTurns.put(requestId, coordinator);
@@ -398,6 +415,7 @@ final class HomecomingRuntime {
             String timelineId, String ownerId,
             String messageId, String text) {
         if (!isTtsEnabled()) return;
+        if (HomecomingOwners.isSeat(ownerId)) return;  // 座位还没有自己的声音，不借别人的
         try {
             HomecomingRouteVault.Service service = vault.resolveService("tts");
             String voice = "second".equals(ownerId)
@@ -680,6 +698,10 @@ final class HomecomingRuntime {
 
     void freeze() {
         gateway.cancelAll();
+        cancelAllTts();
+    }
+
+    private void cancelAllTts() {
         for (String timeline : new String[]{
                 "main_private", "companion_private", "group"}) {
             tts.cancelConversation(timeline);
@@ -691,10 +713,7 @@ final class HomecomingRuntime {
                 .putBoolean(HomecomingModeStore.KEY_TTS_ENABLED, enabled)
                 .apply();
         if (!enabled) {
-            for (String timeline : new String[]{
-                    "main_private", "companion_private", "group"}) {
-                tts.cancelConversation(timeline);
-            }
+            cancelAllTts();
         }
     }
 
@@ -874,9 +893,7 @@ final class HomecomingRuntime {
     }
 
     private static void validateTimeline(String value) {
-        if (!"main_private".equals(value)
-                && !"companion_private".equals(value)
-                && !"group".equals(value)) {
+        if (!HomecomingOwners.isTimeline(value)) {
             throw new IllegalArgumentException("unsupported timeline");
         }
     }
