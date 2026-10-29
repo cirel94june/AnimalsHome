@@ -17,6 +17,7 @@ from database import get_db
 from homecoming.contracts import (
     HOMECOMING_SCHEMA_VERSION,
     canonical_json_bytes,
+    is_known_timeline,
     sha256_hex,
 )
 from homecoming.crypto import (
@@ -215,6 +216,7 @@ async def build_homecoming_snapshot(
     if_none_match: str | None = Header(default=None),
 ):
     now = time.time()
+    await _ensure_seat_rooms()
     try:
         async with get_db() as db:
             device = await get_device(db, body.device_id)
@@ -337,12 +339,27 @@ async def apply_homecoming_return_package(package_id: str):
     return receipt.to_dict()
 
 
+async def _ensure_seat_rooms() -> None:
+    """准备好的座位都先有一个私聊房间：归巢里第一次跟 TA 说话，回来也有地方合并。"""
+    try:
+        import seat_chat
+        from routes.chatroom import _get_or_create_seat_room
+        for actor in seat_chat.SEAT_ACTORS:
+            try:
+                seat_chat.check_ready(actor)
+            except seat_chat.SeatNotReady:
+                continue
+            await _get_or_create_seat_room(actor)
+    except Exception as error:  # 建不了房间也不能挡住整份快照
+        print(f"[Homecoming] 座位私聊房间准备失败: {error}")
+
+
 def _timeline_mapping(sections: dict) -> dict:
     timelines = sections.get("timelines")
     if not isinstance(timelines, dict):
         return {}
     result = {}
-    for name in ("main_private", "companion_private", "group"):
+    for name in sorted(name for name in timelines if is_known_timeline(name)):
         timeline = timelines.get(name)
         containers = timeline.get("containers") if isinstance(timeline, dict) else None
         if not isinstance(containers, list):

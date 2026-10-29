@@ -6,7 +6,12 @@ import base64
 import json
 from typing import Any
 
-from .contracts import MAX_MESSAGES_PER_TIMELINE, TEXT_WINDOW_SECONDS
+from .contracts import (
+    MAX_MESSAGES_PER_TIMELINE,
+    SEAT_OWNERS,
+    TEXT_WINDOW_SECONDS,
+    seat_timeline,
+)
 
 
 _PORTABLE_SETTING_KEYS = {
@@ -120,8 +125,21 @@ async def _timeline_messages(
     *,
     source: str,
     cutoff: float,
+    actor: str = "",
 ) -> list[dict]:
-    if source == "main_private":
+    if actor:
+        # 座位私聊：这位座位所有 seat_1v1 房间里的消息
+        query = """
+            SELECT m.id, m.room_id AS container_id, m.sender,
+                   m.content, m.attachments, m.created_at
+            FROM chatroom_messages m
+            JOIN chatroom_rooms r ON r.id=m.room_id
+            WHERE r.type='seat_1v1' AND r.actor=? AND m.created_at >= ?
+            ORDER BY m.created_at DESC
+            LIMIT ?
+        """
+        parameters = (actor, cutoff, MAX_MESSAGES_PER_TIMELINE)
+    elif source == "main_private":
         query = """
             SELECT m.id, m.conv_id AS container_id, m.role AS sender,
                    m.content, m.attachments, m.created_at
@@ -191,6 +209,37 @@ async def _metadata(db) -> tuple[list[dict], list[dict]]:
         "ORDER BY updated_at ASC",
     )
     return conversations, rooms
+
+
+async def _seat_rooms(db, actor: str) -> list[dict]:
+    return await _rows(
+        db,
+        "SELECT id,title,type,context_minutes,ai_chat_rounds,created_at,updated_at "
+        "FROM chatroom_rooms WHERE type='seat_1v1' AND actor=? "
+        "ORDER BY updated_at ASC",
+        (actor,),
+    )
+
+
+def _load_seats() -> tuple[list[dict], list[str]]:
+    """准备好的座位（启用、有人设、有模型）和群里要发言的座位，跟聊天室平时的判断一致。"""
+    import actors
+    import seat_chat
+    from persona_evolution import _compile_ai_persona_sections
+
+    seats = []
+    for actor in seat_chat.SEAT_ACTORS:
+        try:
+            seat_chat.check_ready(actor)
+        except seat_chat.SeatNotReady:
+            continue
+        seats.append({
+            "id": actor,
+            "name": actors.display_name(actor),
+            "persona": _compile_ai_persona_sections(actors.persona_sections(actor)),
+            "model_key": seat_chat.seat_model(actor),
+        })
+    return seats, [seat["id"] for seat in seats]
 
 
 def _public_route_descriptors(settings: dict) -> list[dict]:
@@ -265,8 +314,19 @@ async def build_snapshot_sections(
     location_status: dict | None = None,
     camera_config: dict | None = None,
     digest_anchor: dict | None = None,
+    seats: list[dict] | None = None,
+    group_seats: list[str] | None = None,
 ) -> dict:
     defaults: dict = {}
+    if seats is None or group_seats is None:
+        loaded_seats, loaded_group = _load_seats()
+        seats = loaded_seats if seats is None else seats
+        group_seats = loaded_group if group_seats is None else group_seats
+    if "actor" not in await _table_columns(db, "chatroom_rooms"):
+        seats = []  # 很旧的库还没有座位房间
+    seats = [seat for seat in seats if seat.get("id") in SEAT_OWNERS and str(seat.get("name") or "").strip()]
+    seat_ids = {seat["id"] for seat in seats}
+    group_seats = [actor for actor in group_seats if actor in seat_ids]
     if any(value is None for value in (
         supervision_snapshot,
         worldbook,
@@ -327,6 +387,22 @@ async def build_snapshot_sections(
     timelines["group"]["containers"] = [
         room for room in rooms if room["type"] == "group"
     ]
+    for seat in seats:
+        timelines[seat_timeline(seat["id"])] = {
+            "messages": await _timeline_messages(db, source="seat_private", cutoff=cutoff, actor=seat["id"]),
+            "containers": await _seat_rooms(db, seat["id"]),
+        }
+    # 手机按这份名单画会话列表；旧手机不认它，照旧只用 main / second
+    roster = [
+        {"owner": "main", "actor": "aion", "timeline": "main_private",
+         "name": worldbook.get("ai_name") or "AI"},
+        {"owner": "second", "actor": "connor", "timeline": "companion_private",
+         "name": chatroom_config.get("connor_name") or "第二AI"},
+    ] + [
+        {"owner": seat["id"], "actor": seat["id"], "timeline": seat_timeline(seat["id"]),
+         "name": seat["name"], "model_key": seat.get("model_key") or ""}
+        for seat in seats
+    ]
 
     schedules = await _rows(
         db,
@@ -353,7 +429,13 @@ async def build_snapshot_sections(
                     "name": chatroom_config.get("connor_name") or "第二AI",
                     "persona": chatroom_config.get("connor_persona") or "",
                 },
+                **{
+                    seat["id"]: {"name": seat["name"], "persona": seat.get("persona") or ""}
+                    for seat in seats
+                },
             },
+            "roster": roster,
+            "group_members": ["main", "second", *group_seats],
             "system_prompt": worldbook.get("system_prompt") or "",
             "reply_order": chatroom_config.get("reply_order") or "random",
             "tts": {

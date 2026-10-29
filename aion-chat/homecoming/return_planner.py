@@ -6,7 +6,7 @@ import json
 import unicodedata
 from dataclasses import dataclass
 
-from .contracts import canonical_json_bytes, sha256_hex
+from .contracts import canonical_json_bytes, is_known_timeline, seat_of_timeline, sha256_hex
 
 
 @dataclass(frozen=True)
@@ -132,6 +132,10 @@ async def _message_plan(db, operation, mapping, observations) -> PlanRow:
     container = mapping.get(timeline)
     if not container:
         return _row(operation, "quarantine", "timeline_mapping_unavailable")
+    seat = seat_of_timeline(timeline)
+    if seat and str(payload.get("sender_id") or payload.get("role") or "") not in {"user", seat}:
+        # 座位私聊里只该有小猫和这位座位本人
+        return _row(operation, "quarantine", "seat_sender_mismatch")
     table = "messages" if timeline == "main_private" else "chatroom_messages"
     container_column = "conv_id" if table == "messages" else "room_id"
     sender_column = "role" if table == "messages" else "sender"
@@ -370,11 +374,10 @@ async def _timeline_mapping(db, device_id: str, snapshot_id: str) -> dict:
         value = json.loads(row[0] or "{}")
     except (TypeError, ValueError):
         return {}
-    allowed = {"main_private", "companion_private", "group"}
     return {
         key: str(item)
         for key, item in value.items()
-        if key in allowed and isinstance(item, str) and item
+        if is_known_timeline(key) and isinstance(item, str) and item
     }
 
 
