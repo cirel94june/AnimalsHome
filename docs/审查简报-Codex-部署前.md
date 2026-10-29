@@ -1366,3 +1366,17 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 请求结束时在 finally 里释放，并重新拉一次状态（成功失败都拉）。`syncCamModalState` 和每秒轮询都改走 `syncMonitorToggle`。
   - 测试用 Node 真跑页面里这几个函数：一开始开关是 true、服务器说停着，开关变成 false；旧轮询在点击之后才回来，不覆盖；请求进行中的轮询也不覆盖；请求结束后按真实状态；之后 AI 停了，开关跟着变。变异检查：去掉这个判断，测试失败。
 - 相关测试 189 项通过，1 项跳过（Gemini、巡逻、多窗口、归巢全套、Codex、中转站、手机可用性）。
+
+## 95. 338e314 复审：N1、L2 余项
+
+- **N1 状态变量晚于 init 声明，监控页首次打开就失败**
+  - `_monitorTogglePending` 和 `_monitorToggleGen` 挪到页面顶部其他状态变量旁边，放在 init IIFE 之前，并加注释说明为什么必须在前面。计数和代数的保护逻辑不变。
+  - 新测试 `test_camera_page_first_load_reads_status_in_real_order`：截取页面整段内联脚本原样执行，init 立刻运行；common.js 的全局函数和 DOM 用万能替身，没定义的全局函数自动补替身；api 是内存假接口。
+    - 断言：首次打开发出了 `GET /api/cam/status`，状态文字是「✅ 监控中…」，开关是 true。
+    - 用 338e314 的 camera.html 跑，测试失败：只请求了 crop，状态文字是「获取状态失败」。
+  - 上一条开关测试改为只截两行声明，不再依赖声明在页面里的位置。
+  - 本机真浏览器打开 /camera：状态文字「未连接」（本机没接摄像头），巡逻提示「巡逻停着」，间隔已经填成 10，控制台没有报错。说明 init 正常走完了。
+- **L2 余项 字段存在但类型不对**
+  - `usage` 必须是对象，`message.content` 和 `message.reasoning_content`（或 `reasoning`）必须是字符串。缺字段或者是 null 都算正常；字段存在但类型不对，就记 `provider_error`，返回「返回格式不对」，不重发。
+  - 坏响应的参数化用例从 4 种加到 7 种，补上你给的 3 个反例；另加「可选字段是 null 也正常」1 项。把 ai_providers.py 换回 338e314 的版本，这 3 个新用例都失败。
+- 测试：`test_gemini_thoughts.py` 15 项；`test_patrol_control.py` 和摄像头新鲜度合计 37 项；相关文件合计约 200 项通过。

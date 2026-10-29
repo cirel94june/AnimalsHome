@@ -150,6 +150,9 @@ def test_whole_reply_that_rejects_the_switch_falls_back_like_streaming(monkeypat
     httpx.Response(200, json=[{"choices": []}]),
     httpx.Response(200, json={"choices": "oops"}),
     httpx.Response(200, json={"choices": [{"message": "oops"}], "usage": []}),
+    httpx.Response(200, json={"choices": [{"message": {"content": {"unexpected": "object"}}}]}),
+    httpx.Response(200, json={"choices": [{"message": {"content": "OK", "reasoning_content": ["bad"]}}]}),
+    httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}], "usage": ["bad"]}),
 ])
 def test_broken_whole_replies_are_recorded_and_not_resent(monkeypatch, response):
     """复审 L2：200 但不是想要的 JSON，也要记 provider_error，不重发生成请求。"""
@@ -159,3 +162,12 @@ def test_broken_whole_replies_are_recorded_and_not_resent(monkeypatch, response)
     _call("gemini-3.8-flash", meta)
     assert meta.get("provider_error")
     assert len(sent) == 1
+
+
+def test_whole_reply_without_optional_fields_is_fine(monkeypatch):
+    ai_providers._STREAM_DROPS_THOUGHTS.add(("https://relay.example/v1/chat/completions", "gemini-3.8-flash"))
+    _relay(monkeypatch, lambda body: httpx.Response(200, json={
+        "choices": [{"message": {"content": "OK", "reasoning_content": None}}], "usage": None}))
+    meta = {}
+    assert _call("gemini-3.8-flash", meta) == "OK"
+    assert "provider_error" not in meta

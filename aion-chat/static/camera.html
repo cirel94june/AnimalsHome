@@ -240,6 +240,11 @@ let _phoneAppForeground = false;
 let _phoneEventCaptureActive = false;
 let _phoneSubPageVisible = false;
 let _lastServerPreviewAt = 0;
+// 开 / 关巡逻的请求还没回来时，轮询拿到的旧状态不能把开关拨回去；
+// 请求发出前已经在路上的那次轮询也作废（复审 L1：不能拿「开关有焦点」来判断）。
+// 必须在下面的 init 之前声明，否则首次打开读到暂时性死区（复审 N1）
+let _monitorTogglePending = 0;
+let _monitorToggleGen = 0;
 const PHONE_CAMERA_CONFIG_KEY = "phone_camera_preview_config_v1";
 
 (async function init() {
@@ -420,10 +425,6 @@ async function camManualScreenshot() {
   setTimeout(() => syncCamModalState(), 1500);
 }
 
-// 开 / 关巡逻的请求还没回来时，轮询拿到的旧状态不能把开关拨回去；
-// 请求发出前已经在路上的那次轮询也作废（复审 L1：不能拿「开关有焦点」来判断）
-let _monitorTogglePending = 0;
-let _monitorToggleGen = 0;
 async function camToggleMonitor2() {
   const on = $("camMonitorToggle2").checked;
   _monitorTogglePending++;

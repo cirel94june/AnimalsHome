@@ -504,7 +504,8 @@ def test_camera_toggle_follows_server_unless_a_click_is_in_flight(tmp_path):
     if not node:
         pytest.skip("没有 node")
     page = (Path(__file__).parent / "static" / "camera.html").read_text(encoding="utf-8")
-    parts = [page[page.index("let _monitorTogglePending"):page.index("async function camToggleMonitor2")],
+    declare = page.index("let _monitorTogglePending")
+    parts = [page[declare:page.index(chr(10), page.index("let _monitorToggleGen", declare))],
              _js_function(page, "async function camToggleMonitor2"),
              _js_function(page, "function syncMonitorToggle"),
              _js_function(page, "function updateCamStatusText"),
@@ -544,3 +545,26 @@ const syncCamModalState = () => updateCountdown();
     result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "[false,true,true,true,false]"
+
+
+_PAGE_RUNNER = 'const fs = require("fs"), vm = require("vm");\nconst calls = [];\nconst el = () => new Proxy(function(){}, {\n  get(t, k) {\n    if (k === Symbol.toPrimitive) return () => "";\n    if (k === "then") return undefined;\n    if (k in t) return t[k];\n    return t[k] = (k === "style" || k === "classList" || k === "dataset") ? el() : el();\n  },\n  set(t, k, v) { t[k] = v; return true; },\n  apply() { return el(); }\n});\nconst nodes = {};\nconst ctx = {\n  console, setTimeout: () => 0, clearTimeout(){}, setInterval: () => 0, clearInterval(){},\n  requestAnimationFrame: () => 0, localStorage: {getItem: () => null, setItem(){}},\n  document: el(), window: el(), navigator: el(), location: el(), Image: function(){ return el(); },\n  $: id => nodes[id] || (nodes[id] = el()),\n  api: async (method, url) => { calls.push(method + " " + url);\n    if (url === "/api/cam/status") return {monitoring: true, next_capture_in: 60, patrol_note: "巡逻开着", phone_camera: {}, active_source: "local"};\n    return {}; },\n};\nctx.window = ctx; ctx.globalThis = ctx; ctx.addEventListener = () => {}; ctx.removeEventListener = () => {};\n// common.js 里的其他全局函数一律用万能替身\nfor (const name of ["connectCommonWS","escHtml","showToast","toast","onCommonWS","initTheme"]) ctx[name] = () => el();\nvm.createContext(ctx);\nlet code = fs.readFileSync(process.argv[2], "utf8");\nfor (let i = 0; i < 30; i++) {\n  try { vm.runInContext(code, vm.createContext(Object.assign(ctx, {}))); break; }\n  catch (e) {\n    const m = /^(\\w+) is not defined/.exec(e.message);\n    if (!m) { console.log("THROW", e.message); break; }\n    ctx[m[1]] = () => el(); calls.length = 0;\n  }\n}\nsetImmediate(() => setImmediate(() => console.log(JSON.stringify({calls: calls.slice(0, 3), status: String(nodes.camStatus2 && nodes.camStatus2.textContent), toggle: nodes.camMonitorToggle2 && nodes.camMonitorToggle2.checked}))));\n'
+
+
+def test_camera_page_first_load_reads_status_in_real_order(tmp_path):
+    """复审 N1：按页面真实顺序把整段脚本跑一遍（init 立刻执行），首次打开要拉到状态，不能显示「获取状态失败」。"""
+    import json
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node")
+    page = (Path(__file__).parent / "static" / "camera.html").read_text(encoding="utf-8")
+    start = page.index("<script>", page.index("phone-camera-preview-policy.js")) + len("<script>")
+    (tmp_path / "page.js").write_text(page[start:page.index("</script>", start)], encoding="utf-8")
+    (tmp_path / "run.js").write_text(_PAGE_RUNNER, encoding="utf-8")
+    result = subprocess.run([node, str(tmp_path / "run.js"), str(tmp_path / "page.js")],
+                            capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout.strip().splitlines()[-1])
+    assert "GET /api/cam/status" in out["calls"]
+    assert out["status"].startswith("✅ 监控中") and out["toggle"] is True

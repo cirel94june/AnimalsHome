@@ -984,17 +984,24 @@ def _custom_openai_whole_reply(resp: httpx.Response, meta: dict | None) -> list[
     message = first.get("message") if isinstance(first, dict) else None
     if not isinstance(message, dict):
         return fail("一次性返回格式不对：没有 choices[0].message", "[自定义中转站错误] 返回格式不对")
+    # 缺字段或 null 是正常的；字段在、类型却不对，按协议错误记下来（复审 L2 余项）
     usage = data.get("usage")
-    if meta is not None and isinstance(usage, dict) and usage:
+    content = message.get("content")
+    reasoning = message.get("reasoning_content")
+    if reasoning is None:
+        reasoning = message.get("reasoning")
+    for name, value, kind in (("usage", usage, dict), ("message.content", content, str),
+                              ("message.reasoning", reasoning, str)):
+        if value is not None and not isinstance(value, kind):
+            return fail(f"一次性返回格式不对：{name} 类型是 {type(value).__name__}", "[自定义中转站错误] 返回格式不对")
+    if meta is not None and usage:
         meta["prompt_tokens"] = usage.get("prompt_tokens", 0)
         meta["completion_tokens"] = usage.get("completion_tokens", 0)
         meta["total_tokens"] = usage.get("total_tokens", 0)
         meta["raw"] = usage
-    reasoning = message.get("reasoning_content") or message.get("reasoning")
-    if isinstance(reasoning, str) and reasoning and meta is not None:
+    if reasoning and meta is not None:
         meta["reasoning_content"] = reasoning
-    content = message.get("content")
-    return [content] if isinstance(content, str) and content else []
+    return [content] if content else []
 
 # ── Gemini CLI ────────────────────────────────────
 def _find_gemini_script() -> str | None:
