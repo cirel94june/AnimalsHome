@@ -1233,3 +1233,25 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 还有几条只在整套一起跑时偶尔失败，单独跑能过（memory_hub_bridge 两条）。
   - antigravity 那一条在 acb919c 上单独跑也失败，和本轮无关。
   - english_corner 两条是已知的老失败。
+
+## 90. 5a7f850 复审余项：换画面源也走版本协议；写日志广播之后、叫人之前再核对
+
+- **R1 余项 换源会覆盖较新的手动关闭**：
+  - `switch_source` 一进来就在巡逻锁里做三件事：读 `was_monitoring`、版本加一并记为 `switch_version`、`monitoring=False`（旧一代收手；配置里的开关不动，因为换完源要恢复）。
+  - `_stop_current_source` 和开新设备这类慢操作放在锁外。
+  - 最后在锁里核对 `ok and was_monitoring and 版本 == switch_version`，满足才 `start_monitoring()`。所以换源期间只要有人手动关、AI 停、AI 延长暂停、或者手动开了又关，版本都会变，这次换源就不再重开，也不改 `patrol_changed_by` 和 `resume_at`。
+  - 末尾的 `start_monitoring` 只有在版本仍等于自己认领的那个时才会执行，过期的换源拿不到新版本。
+  - **其他直接改状态的地方（已审计）**：`close_esp32` 改为在锁里执行，并且只在原来确实开着时才把版本加一、置为 False；这样换源流程里自己调用它时不会让自己的认领失效。`self.monitoring` 剩下的直接赋值只有 `__init__`，以及 `start_monitoring` / `stop_monitoring` 内部（都在锁里）。
+  - 回归测试：
+    - 换源卡在关旧设备时分别做三种操作：真实的 `cam_monitor_stop`；AI `[巡逻:停|3小时]`（暂停和恢复时间都保留）；手动开了又关。三种情况最后都保持关闭。
+    - 换源期间没人打扰：照常恢复巡逻。
+    - `close_esp32` 计为一次开关。
+  - 变异检查：去掉末尾的版本核对，三条竞态测试都失败。
+- **R2 余项 写日志广播 await 之后还会叫人**：
+  - `_analyze_and_log` 在 `await manager.broadcast(monitor_log)` 之后、`_wake_core_targets` 之前再核对一次代数，不算数就直接返回。
+  - `_wake_core_targets(..., proceed=…)`：巡逻叫人时传入 `lambda: self.patrol_active(gen)`，`wake_one` 每叫一个人之前都问一次。同一个群里按顺序叫的人，排在后面的不会再被叫。已经开始回复的那一位会把这一轮说完，和已经开始的哨兵调用一样处理。定位等其他入口不传 `proceed`，行为不变。
+  - 回归测试：
+    - 真跑 `_analyze_and_log`：用假哨兵返回 `call_core=True`，写日志广播被卡住时停掉再开，进入新一代；放行后旧一代没有叫人。测试里断言了确实走到了 `call_core=True` 的广播（第一版测试因为哨兵配置没就绪，在更早的地方就返回了，是空跑；变异检查发现后补上了「哨兵就绪」和这条断言）。
+    - 群里依次叫三个人，第一位开口时巡逻被停，后两位不叫；不传 `proceed` 时照旧叫。
+  - 变异检查：去掉广播后的核对，这条测试失败。
+- 测试：`test_patrol_control.py` 共 24 项，加上相关文件合计 38 项通过。所有引用 camera / 换源 / 叫人的 16 个测试文件共 197 项通过，唯一失败的 friend_visit 在 acb919c 基线上就失败。

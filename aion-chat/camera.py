@@ -660,7 +660,10 @@ class CameraMonitor:
         """停止 ESP32-CAM 抓帧线程"""
         self._esp32_running = False
         self.running = False
-        self.monitoring = False
+        with self._patrol_lock:  # 关设备顺带停巡逻：也算一次开关，排着队的恢复 / 换源会作废
+            if self.monitoring:
+                self._patrol_version += 1
+                self.monitoring = False
         # 通知 App 停止桥接
         if self._esp32_bridge_active and self._loop:
             asyncio.run_coroutine_threadsafe(
@@ -785,10 +788,17 @@ class CameraMonitor:
             self._latest_frame = None
 
     def switch_source(self, source: str, esp32_url: str = None) -> bool:
-        """切换画面源: 'local' 或 'esp32'"""
-        was_monitoring = self.monitoring
+        """切换画面源: 'local' 或 'esp32'
+
+        巡逻开关协议（§89 复审 R1 余项）：进来时在巡逻锁里认领一个版本、记下要不要恢复、停掉旧一代；
+        关设备 / 开设备这些慢操作在锁外做；最后在锁里核对版本没被别人动过，才把巡逻重新打开。
+        换源期间小猫手动关、AI 停 / 延长暂停，版本都会变，这次换源就不再重开、也不改谁动的 / 几点恢复。"""
+        with self._patrol_lock:
+            was_monitoring = self.monitoring
+            self._patrol_version += 1
+            switch_version = self._patrol_version
+            self.monitoring = False  # 旧一代看到不在巡逻就收手；配置里的开关不动（换完源要恢复）
         self._stop_current_source()
-        self.monitoring = False
 
         if esp32_url is not None:
             self.cfg["esp32_cam_url"] = esp32_url
@@ -804,8 +814,9 @@ class CameraMonitor:
         else:
             ok = self.open_camera(self.cfg["camera_index"])
 
-        if ok and was_monitoring:
-            self.start_monitoring()
+        with self._patrol_lock:
+            if ok and was_monitoring and self._patrol_version == switch_version:
+                self.start_monitoring()
         return ok
 
     def _capture_loop(self):
@@ -1685,6 +1696,9 @@ class CameraMonitor:
                     f"{core_reason}\n派单依据：{dispatch_reason}"
                     if core_reason else f"派单依据：{dispatch_reason}"
                 )
+            if patrol_gen is not None and not self.patrol_active(patrol_gen):
+                print("[Monitor] 写日志期间巡逻已停或已换新一代，这次不叫人")  # §89 复审 R2 余项
+                return
             await self._wake_core_targets(
                 dispatch["final_wake_targets"],
                 monitoring_log,
@@ -1694,6 +1708,7 @@ class CameraMonitor:
                 recent_logs,
                 screenshot_filename,
                 camera_jpeg,
+                proceed=(lambda: self.patrol_active(patrol_gen)) if patrol_gen is not None else None,
             )
 
     async def _resolve_actor_target(self, actor: str) -> dict | None:
@@ -1828,7 +1843,9 @@ class CameraMonitor:
             extra_attachments=[f"/screenshots/{screenshot_filename}"] if screenshot_filename else None,
         )
 
-    async def _wake_core_targets(self, actors: list[str], *args, **kwargs) -> dict:
+    async def _wake_core_targets(self, actors: list[str], *args, proceed=None, **kwargs) -> dict:
+        """proceed：巡逻叫人时传进来，每叫一个人之前问一次「这一代巡逻还算数吗」；中途被停了就不再叫后面的人。
+        已经开始回复的那一位会把这一轮说完（和已经开始的哨兵调用一样）。"""
         ordered_actors = [a for a in ("aion", "connor", *SEAT_WAKE_IDS) if a in actors]
         targets = {
             actor: await self._resolve_actor_target(actor)
@@ -1837,6 +1854,9 @@ class CameraMonitor:
         results: dict[str, dict] = {}
 
         async def wake_one(actor: str):
+            if proceed is not None and not proceed():
+                results[actor] = {"ok": False, "error": "巡逻已停，不再叫人"}
+                return
             target = targets.get(actor)
             if not target:
                 results[actor] = {"ok": False, "error": "没有可用的回复窗口"}

@@ -262,3 +262,133 @@ def test_l1_unknown_patrol_words_are_removed_from_the_reply(cam):
     assert patrol_control.process("晚安[巡逻:跳舞]", "aion") == ("晚安", [])
     assert patrol_control.process("[巡逻:跳舞]好[巡逻：飞]", "aion") == ("好", [])
     assert not cam.monitoring
+
+
+# ── §89 复审余项 ──
+
+def _switch_with_gate(monkeypatch, cam_obj, interfere):
+    """换源卡在关旧设备那一步时做 interfere()，再放行。"""
+    import threading
+    gate, entered = threading.Event(), threading.Event()
+
+    def slow_stop():
+        entered.set()
+        gate.wait(3)
+    monkeypatch.setattr(cam_obj, "_stop_current_source", slow_stop)
+    worker = threading.Thread(target=lambda: cam_obj.switch_source("phone"))
+    worker.start()
+    assert entered.wait(3)
+    interfere()
+    gate.set()
+    worker.join(3)
+    assert not worker.is_alive()
+
+
+def test_r1_switching_source_cannot_undo_a_later_manual_stop(cam, monkeypatch):
+    import routes.cam as cam_routes
+    monkeypatch.setattr(cam_routes, "cam", cam)
+    cam.start_monitoring(changed_by="aion")
+    _switch_with_gate(monkeypatch, cam, lambda: asyncio.run(cam_routes.cam_monitor_stop()))
+    assert not cam.monitoring and cam.cfg["patrol_changed_by"] == "" and cam.cfg["patrol_resume_at"] == 0
+
+
+def test_r1_switching_source_keeps_an_ai_pause_and_its_time(cam, monkeypatch):
+    cam.start_monitoring()
+    _switch_with_gate(monkeypatch, cam, lambda: patrol_control.process("[巡逻:停|3小时]", "ai3"))
+    assert not cam.monitoring and cam.cfg["patrol_changed_by"] == "ai3"
+    assert cam.cfg["patrol_resume_at"] == pytest.approx(time.time() + 3 * 3600, abs=5)
+
+
+def test_r1_switching_source_after_manual_start_then_stop_stays_off(cam, monkeypatch):
+    cam.stop_monitoring(changed_by="")
+    cam.start_monitoring(changed_by="")
+
+    def on_then_off():
+        cam.start_monitoring(changed_by="")
+        cam.stop_monitoring(changed_by="")
+    _switch_with_gate(monkeypatch, cam, on_then_off)
+    assert not cam.monitoring
+
+
+def test_r1_undisturbed_switch_still_resumes_patrol(cam, monkeypatch):
+    cam.start_monitoring(changed_by="aion")
+    _switch_with_gate(monkeypatch, cam, lambda: None)
+    assert cam.monitoring and cam.cfg["patrol_changed_by"] == "aion"
+    cam.stop_monitoring()
+
+
+def test_r1_closing_esp32_counts_as_a_patrol_change(cam):
+    cam.start_monitoring()
+    version, _ = cam.patrol_snapshot()
+    cam.close_esp32()
+    assert not cam.monitoring and cam.patrol_snapshot()[0] > version
+
+
+def test_r2_wake_stops_calling_people_once_patrol_is_stale(cam, monkeypatch):
+    """叫人内部：同一个群里按顺序叫，叫完第一位时巡逻被停了，后面的不再叫。"""
+    called = []
+    alive = {"on": True}
+
+    async def resolve(actor):
+        return {"type": "chatroom", "room_type": "group", "room_id": "g1"}
+
+    async def call(actor, target, *a, **k):
+        called.append(actor)
+        alive["on"] = False  # 第一位开口时小猫把巡逻关了
+    monkeypatch.setattr(cam, "_resolve_actor_target", resolve)
+    monkeypatch.setattr(cam, "_call_core_for_actor", call)
+    results = asyncio.run(cam._wake_core_targets(["aion", "connor", "ai3"], "log", proceed=lambda: alive["on"]))
+    assert called == ["aion"] and results["connor"]["ok"] is False and results["ai3"]["ok"] is False
+    called.clear()
+    asyncio.run(cam._wake_core_targets(["aion"], "log"))  # 位置 / 其他入口不传 proceed：照旧
+    assert called == ["aion"]
+
+
+def test_r2_analysis_rechecks_after_the_log_broadcast(cam, monkeypatch, tmp_path):
+    """真跑 _analyze_and_log：哨兵说要叫人，写日志广播卡住时巡逻被停再开（新一代）；放行后旧一代不能叫人。"""
+    import json
+    monkeypatch.setattr(camera, "SCREENSHOTS_DIR", tmp_path)
+    (tmp_path / "s.jpg").write_bytes(b"\xff\xd8fake")
+    for name in ("cleanup_old_logs", "append_monitor_log"):
+        monkeypatch.setattr(camera, name, lambda *a, **k: None)
+    monkeypatch.setattr(camera, "read_logs_since", lambda *a, **k: [])
+    monkeypatch.setattr(camera, "load_worldbook", lambda: {"user_name": "小猫", "ai_name": "小克"})
+
+    async def last_user(*a, **k):
+        return 1.0
+    monkeypatch.setattr(camera, "async_get_last_aion_timeline_user_msg_time", last_user)
+    import memory
+
+    async def sentinel(*a, **k):
+        return json.dumps({"call_core": True, "monitoringlog": "她在桌前", "summary": "在", "core_reason": "想聊",
+                           "wake_targets": ["aion"]}, ensure_ascii=False)
+    monkeypatch.setattr(memory, "_call_sentinel_vision", sentinel)
+    monkeypatch.setattr(camera, "get_sentinel_config", lambda: {"ready": True, "model": "假哨兵"})
+    gate = asyncio.Event()
+    woke = []
+
+    reached = {"broadcast": False}
+
+    async def slow_broadcast(message):
+        if message.get("type") == "monitor_log" and message["data"].get("call_core"):
+            reached["broadcast"] = True
+            cam.stop_monitoring()
+            cam.start_monitoring()   # 新一代
+            await gate.wait()
+
+    async def wake(*a, **k):
+        woke.append(a)
+    monkeypatch.setattr(camera.manager, "broadcast", slow_broadcast)
+    monkeypatch.setattr(cam, "_wake_core_targets", wake)
+    cam.start_monitoring()
+    old_gen = cam._monitor_gen
+
+    async def scenario():
+        task = asyncio.create_task(cam._analyze_and_log("s.jpg", None, patrol_gen=old_gen))
+        await asyncio.sleep(0.2)
+        gate.set()
+        await task
+    asyncio.run(scenario())
+    assert reached["broadcast"], "要真的走到写日志广播那一步，这条测试才有意义"
+    assert woke == []
+    cam.stop_monitoring()
