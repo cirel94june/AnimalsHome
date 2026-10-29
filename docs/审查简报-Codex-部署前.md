@@ -1303,3 +1303,48 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
     - 一次性返回出错能报出来
   - `test_patrol_control.py` 新增页面状态 1 项，共 32 项。
   - 变异检查：去掉 gemini 开关时 3 项失败；去掉流式丢思考的记忆时 1 项失败；去掉拒绝记忆时 1 项失败。
+
+## 93. 归巢让每位 AI 都能进（227238f 服务器、a19fe24 手机）
+
+小猫 10-29：归巢想让每位 AI 都能进，包括以后在座位上接的 DeepSeek、Grok、Kimi。施工方案在 `docs/施工方案-归巢全员.md`。
+
+- **约定**：保留原来的 main 和 second，新增座位 owner `ai3` 到 `ai6`，私聊时间线叫 `seat_private:<座位>`。服务器 `homecoming/contracts.py` 和手机 `HomecomingOwners.java` 各有一份，规则相同。快照的 schema 不变（仍然是 2），只新增字段：旧手机不认识就忽略，新手机拿到旧快照时也只显示原来两位。
+- **服务器**
+  - `snapshot.build_snapshot_sections` 新增 `seats` 和 `group_seats` 参数，默认用 `_load_seats()`，判断标准和聊天室一样用 `seat_chat.check_ready`。
+    - 只有准备好的座位才会带上，内容包括名字、人设（`_compile_ai_persona_sections`）和平时用的模型 key。
+    - `identity.companions` 加上座位，另外新增 `identity.roster`（每位的 owner、时间线、名字）和 `identity.group_members`。
+    - 每个座位一条时间线 `seat_private:aiN`，包含这位座位所有 seat_1v1 房间的消息（90 天、500 条），containers 是这些房间。
+    - 很旧的库里 `chatroom_rooms` 没有 actor 列时，不带座位。
+  - `routes/homecoming`
+    - 打包前用 `_ensure_seat_rooms()` 给准备好的座位建好私聊房间（复用 `_get_or_create_seat_room`），这样第一次在归巢里跟 TA 说话，回来也有地方合并。失败只打日志，不影响快照。
+    - `_timeline_mapping` 按 `is_known_timeline` 收录座位时间线。
+  - 回传
+    - `return_planner._timeline_mapping` 只认已知时间线；`seat_private:ai9` 这类伪造的时间线会被拒绝，消息进隔离。
+    - 座位私聊里的消息，发送者只能是 user 或这位座位本人，否则隔离（`seat_sender_mismatch`）。
+    - importer 原样写入 `sender=ai3`，这部分不用改。
+    - 座位的记忆和日程走原来的规则：`_memory_target` 和 `_schedule_plan` 只认 main 和 second，座位的会被跳过或隔离，第一版不合并。
+- **手机**（CI 跑单测加打包，run 40829002187 通过）
+  - `HomecomingOwners`：统一判断 owner 和时间线。`ChatRepository` 和 `Runtime.validateTimeline` 都改用它。
+  - `IdentityRepository`
+    - `identityForTimeline` 认座位时间线，群聊回复者也可以是座位。
+    - `roster()` 返回原来两位，加上名单里带人设、名字不为空的座位。
+    - `groupReplyOrder` 按 reply_order 排好原来两位，座位排在后面，顺序按 `group_members`。
+  - `GroupTurnCoordinator`：人数从「正好 2 位」放宽为「至少 1 位」。`Runtime` 取消群聊时，按本轮名单逐个停止。
+  - `Runtime`
+    - `send` 私聊时，回复者固定为时间线的主人，不用页面传来的 owner。
+    - `sendGroup` 和 `setRoutePreference` 只接受已知 owner。
+    - bootstrap 返回 roster，以及每位的线路偏好。
+    - 座位不朗读，避免借用小克的声音。
+  - `ContextBuilder`：座位不查本地记忆（手机上只有两位有本地记忆）。
+  - 界面
+    - 会话列表按 roster 生成，最后是「群聊」；点击用事件委托，所以动态生成的按钮也能点。
+    - 切到某位的私聊时，设置里自动换成这位的线路和模型。没选过时，优先选包含 TA 平时模型的线路。
+    - 记忆和日程的下拉框仍然只有两位。
+- **测试**
+  - `test_homecoming_seats.py` 8 项。变异检查：去掉发送者核对 1 项失败；planner 不过滤时间线 1 项失败。归巢全套 61 项通过。
+  - 安卓 `HomecomingSeatOwnersTest` 8 项，原有测试全部通过。
+  - 本机用假的手机桥打开归巢页：会话列表是「小克 / Lucien / 狗蛋 / 群聊」；切到狗蛋时线路自动变成 4RouterGemini + gemini-3.8-flash，发送的 owner 是 ai3；切回小克，线路变回空悲切。
+- **请重点看**
+  1. 快照里多了座位人设，加密前的 sections 和以前一样是明文 gzip，靠 Cloudflare Access 加设备注册保护，和小克、Lucien 的人设是同一个级别。
+  2. `_ensure_seat_rooms` 在快照接口里写库，可能和聊天室同时建房间。
+  3. 群聊里座位的回复传回服务器时，sender 是 `ai3` 这样的座位 id，main 和 second 仍然映射为 aion 和 connor。
