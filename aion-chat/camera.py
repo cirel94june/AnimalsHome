@@ -499,6 +499,10 @@ class CameraMonitor:
         # 到点恢复动手前在锁里核对版本，期间有人动过就作废（§88 复审 R1）
         self._patrol_lock = threading.RLock()
         self._patrol_version = 0
+        # 换画面源一次只换一个（§90 复审 N1）：两个页面同时换时，后来的那个会把前一个的「临时停」当成「本来就关着」。
+        # 这把锁只管换源之间排队；手动停 / AI 停只用 _patrol_lock，换源慢的时候也能马上生效
+        self._switch_lock = threading.Lock()
+        self._resume_after_switch = False  # 换源失败时巡逻原本开着：下一次换源成功后接着恢复（期间有人开 / 关就作废）
         self._latest_frame = None
         self._lock = threading.Lock()
         self._cam_op_lock = threading.Lock()   # 防止 open/close 并发
@@ -792,9 +796,15 @@ class CameraMonitor:
 
         巡逻开关协议（§89 复审 R1 余项）：进来时在巡逻锁里认领一个版本、记下要不要恢复、停掉旧一代；
         关设备 / 开设备这些慢操作在锁外做；最后在锁里核对版本没被别人动过，才把巡逻重新打开。
-        换源期间小猫手动关、AI 停 / 延长暂停，版本都会变，这次换源就不再重开、也不改谁动的 / 几点恢复。"""
+        换源期间小猫手动关、AI 停 / 延长暂停，版本都会变，这次换源就不再重开、也不改谁动的 / 几点恢复。
+        几次换源同时来时排队（_switch_lock），后一个看到的是前一个换完以后的真实状态。"""
+        with self._switch_lock:
+            return self._switch_source_locked(source, esp32_url)
+
+    def _switch_source_locked(self, source: str, esp32_url: str = None) -> bool:
         with self._patrol_lock:
-            was_monitoring = self.monitoring
+            was_monitoring = self.monitoring or self._resume_after_switch
+            self._resume_after_switch = False
             self._patrol_version += 1
             switch_version = self._patrol_version
             self.monitoring = False  # 旧一代看到不在巡逻就收手；配置里的开关不动（换完源要恢复）
@@ -815,8 +825,11 @@ class CameraMonitor:
             ok = self.open_camera(self.cfg["camera_index"])
 
         with self._patrol_lock:
-            if ok and was_monitoring and self._patrol_version == switch_version:
-                self.start_monitoring()
+            if was_monitoring and self._patrol_version == switch_version:
+                if ok:
+                    self.start_monitoring()
+                else:
+                    self._resume_after_switch = True  # 这次没换成：记住「本来要巡逻」，下一次换源成功再开
         return ok
 
     def _capture_loop(self):
@@ -1258,6 +1271,7 @@ class CameraMonitor:
         """changed_by：谁开的（aion / connor / ai3…，小猫自己点的是 ""）；None = 不改记录（启动恢复、换画面源）。"""
         with self._patrol_lock:
             self._patrol_version += 1
+            self._resume_after_switch = False
             if changed_by is not None:
                 self.cfg["patrol_changed_by"] = changed_by
             if self.monitoring:
@@ -1304,6 +1318,7 @@ class CameraMonitor:
         """resume_at：AI 说「停 3 小时」时到点自动恢复的时间；0 = 一直停到有人打开。"""
         with self._patrol_lock:
             self._patrol_version += 1
+            self._resume_after_switch = False
             self.monitoring = False
             self._next_capture_at = 0
             self.cfg["monitor_enabled"] = False

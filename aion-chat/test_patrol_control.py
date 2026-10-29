@@ -392,3 +392,78 @@ def test_r2_analysis_rechecks_after_the_log_broadcast(cam, monkeypatch, tmp_path
     assert reached["broadcast"], "要真的走到写日志广播那一步，这条测试才有意义"
     assert woke == []
     cam.stop_monitoring()
+
+
+# ── §90 复审 N1：几个换源同时来 ──
+
+def _overlapping_switches(monkeypatch, cam_obj, sources, during=None):
+    """第一个换源卡在关旧设备时，后面几个也发出来；可选在卡住期间做 during()。返回各自结果。"""
+    import threading
+    gate, entered = threading.Event(), threading.Event()
+    calls = {"n": 0}
+
+    def stop_current():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entered.set()
+            gate.wait(3)
+    monkeypatch.setattr(cam_obj, "_stop_current_source", stop_current)
+    results = [None] * len(sources)
+
+    def run(i, src):
+        results[i] = cam_obj.switch_source(src)
+    workers = [threading.Thread(target=run, args=(0, sources[0]))]
+    workers[0].start()
+    assert entered.wait(3)
+    for i, src in enumerate(sources[1:], start=1):
+        workers.append(threading.Thread(target=run, args=(i, src)))
+        workers[-1].start()
+    time.sleep(0.1)  # 让后面的请求都排到换源锁上
+    if during:
+        during()
+    gate.set()
+    for worker in workers:
+        worker.join(3)
+        assert not worker.is_alive()
+    return results
+
+
+@pytest.mark.parametrize("sources", [["phone", "phone"], ["phone", "esp32"], ["esp32", "phone", "phone"]])
+def test_n1_overlapping_switches_keep_patrol_on(cam, monkeypatch, sources):
+    monkeypatch.setattr(cam, "open_esp32", lambda: True)
+    cam.start_monitoring(changed_by="aion")
+    results = _overlapping_switches(monkeypatch, cam, sources)
+    assert all(results) and cam.monitoring and cam.cfg["monitor_enabled"] is True
+    cam.stop_monitoring()
+
+
+@pytest.mark.parametrize("interfere", ["manual_stop", "ai_pause"])
+def test_n1_overlapping_switches_respect_a_stop_in_between(cam, monkeypatch, interfere):
+    import routes.cam as cam_routes
+    monkeypatch.setattr(cam_routes, "cam", cam)
+    cam.start_monitoring(changed_by="aion")
+    during = (lambda: asyncio.run(cam_routes.cam_monitor_stop())) if interfere == "manual_stop" \
+        else (lambda: patrol_control.process("[巡逻:停|3小时]", "ai3"))
+    _overlapping_switches(monkeypatch, cam, ["phone", "phone", "phone"], during)
+    assert not cam.monitoring and cam.cfg["monitor_enabled"] is False
+    if interfere == "ai_pause":
+        assert cam.cfg["patrol_changed_by"] == "ai3" and cam.cfg["patrol_resume_at"] > time.time()
+
+
+def test_failed_switch_remembers_patrol_was_on_until_a_switch_succeeds(cam, monkeypatch):
+    monkeypatch.setattr(cam, "_stop_current_source", lambda: None)
+    monkeypatch.setattr(cam, "open_esp32", lambda: False)
+    cam.start_monitoring(changed_by="aion")
+    assert cam.switch_source("esp32") is False and not cam.monitoring
+    assert cam.switch_source("esp32") is False and not cam.monitoring  # 又失败：仍然记着
+    assert cam.switch_source("phone") is True and cam.monitoring       # 换成了：接着巡逻
+    cam.stop_monitoring()
+
+
+def test_failed_switch_intent_is_dropped_if_someone_stops_meanwhile(cam, monkeypatch):
+    monkeypatch.setattr(cam, "_stop_current_source", lambda: None)
+    monkeypatch.setattr(cam, "open_esp32", lambda: False)
+    cam.start_monitoring(changed_by="aion")
+    cam.switch_source("esp32")
+    cam.stop_monitoring(changed_by="")   # 小猫在两次换源之间关了
+    assert cam.switch_source("phone") is True and not cam.monitoring
