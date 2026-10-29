@@ -646,6 +646,11 @@ _NO_STREAM_USAGE: set[str] = set()
 _NO_CACHE_MARKER: set[str] = set()
 # 不认「缓存保留 1 小时」（ttl）的中转站：退回默认的 5 分钟
 _NO_LONG_CACHE: set[str] = set()
+# 不认 Gemini「把思考也传回来」开关（extra_body.google.thinking_config）的中转站
+_NO_GEMINI_THOUGHTS: set[str] = set()
+# 边写边传时把 Gemini 思考丢掉、一次性返回才给的 (地址, 模型)：改成一次性返回（2026-10-29 4Router 实测）
+_STREAM_DROPS_THOUGHTS: set[tuple[str, str]] = set()
+_GEMINI_THOUGHTS = {"google": {"thinking_config": {"include_thoughts": True}}}
 
 # 每次都会变的内容从这里开始（当前时间 → 记忆 → 聊天记录）；它之前的人设、规则、能力说明不变
 _DYNAMIC_START_MARKERS = ("系统当前的准确时间是", "[当前时间]")
@@ -796,6 +801,19 @@ def _rejects_list_content(body: bytes, indices: list[int]) -> bool:
                for index in indices if index >= 0)
 
 
+def _mentions_thinking_config(body: bytes) -> bool:
+    text = (body or b"")[:4000].decode("utf-8", "replace").lower()
+    return any(word in text for word in ("extra_body", "thinking_config", "include_thoughts"))
+
+
+def _reasoning_tokens(usage: dict | None) -> int:
+    details = (usage or {}).get("completion_tokens_details") or {}
+    try:
+        return int(details.get("reasoning_tokens") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _mentions_stream_options(body: bytes) -> bool:
     text = (body or b"")[:4000].decode("utf-8", "replace").lower()
     return "stream_options" in text or "include_usage" in text
@@ -824,12 +842,24 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
         payload["max_tokens"] = max_tokens
     if cfg.get("use_default_reasoning_effort") is False:
         payload["reasoning_effort"] = cfg.get("reasoning_effort", "high")
+    # Gemini 走 OpenAI 兼容接口时默认不传思考，要显式打开（狗蛋 10-29：💭 一直是空的）
+    want_thoughts = "gemini" in model.lower()
+    saw_reasoning = False
+    stream_usage: dict = {}
     reasoning_status_sent = False
     content_started = False
     want_cache_marker = cfg.get("cache_marker", True) is not False
     plain_messages = payload["messages"]
     try:
-        for _attempt in range(4):
+        for _attempt in range(5):
+            if want_thoughts and url not in _NO_GEMINI_THOUGHTS:
+                payload["extra_body"] = _GEMINI_THOUGHTS
+            else:
+                payload.pop("extra_body", None)
+            if "extra_body" in payload and (url, model) in _STREAM_DROPS_THOUGHTS:
+                async for piece in _custom_openai_whole(url, payload, headers, meta, request_timeout):
+                    yield piece
+                return
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
             ask_usage = url not in _NO_STREAM_USAGE
             if ask_usage:
@@ -857,6 +887,10 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                             # 这家中转站不认识缓存标记（或只收字符串内容）：记住，去掉再发一次
                             _NO_CACHE_MARKER.add(url)
                             continue
+                        if "extra_body" in payload and resp.status_code in (400, 422) and _mentions_thinking_config(body):
+                            # 这家中转站不认 Gemini 思考开关：记住，去掉再发一次
+                            _NO_GEMINI_THOUGHTS.add(url)
+                            continue
                         if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
                             # 这家中转站不认识 stream_options：记住，去掉再发一次
                             _NO_STREAM_USAGE.add(url)
@@ -872,7 +906,7 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                         if data is None:
                             continue
                         if data == "[DONE]":
-                            return
+                            break
                         try:
                             chunk = json.loads(data)
                             if isinstance(chunk, dict) and chunk.get("error"):
@@ -880,6 +914,8 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                                     meta["provider_error"] = data
                                 yield data
                                 return
+                            if chunk.get("usage"):
+                                stream_usage = chunk["usage"]
                             if meta is not None and chunk.get("usage"):
                                 u = chunk["usage"]
                                 meta["prompt_tokens"] = u.get("prompt_tokens", 0)
@@ -889,6 +925,7 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                             delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
                             reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                             if reasoning:
+                                saw_reasoning = True
                                 if meta is not None:
                                     meta["reasoning_content"] = meta.get("reasoning_content", "") + str(reasoning)
                                 if not reasoning_status_sent and not content_started:
@@ -901,11 +938,47 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
                                 yield delta["content"]
                         except Exception:
                             pass
+            if "extra_body" in payload and content_started and not saw_reasoning and _reasoning_tokens(stream_usage):
+                # 模型想过了（用量里有思考字数），但边写边传时中转站没把思考给我们：之后这个模型改成一次性返回
+                _STREAM_DROPS_THOUGHTS.add((url, model))
             return
     except httpx.TimeoutException:
         if meta is not None:
             meta["provider_timeout"] = request_timeout
         raise
+
+
+async def _custom_openai_whole(url: str, payload: dict, headers: dict, meta: dict | None, request_timeout: float):
+    """一次性返回（不边写边传）：有的中转站只有这样才把 Gemini 的思考带回来。"""
+    body = {k: v for k, v in payload.items() if k != "stream_options"}
+    body["stream"] = False
+    yield f"{CLI_STATUS_PREFIX}正在思考..."  # 要等整条写完，先告诉大家在想
+    async with httpx.AsyncClient(timeout=request_timeout) as client:
+        resp = await client.post(url, json=body, headers=headers)
+    if resp.status_code != 200:
+        text = _decode_relay_body(resp.content)
+        if meta is not None:
+            meta["provider_error"] = f"HTTP {resp.status_code}: {text}"
+        yield text
+        return
+    data = resp.json()
+    if isinstance(data, dict) and data.get("error"):
+        if meta is not None:
+            meta["provider_error"] = json.dumps(data["error"], ensure_ascii=False)
+        yield json.dumps(data, ensure_ascii=False)
+        return
+    usage = data.get("usage") or {}
+    if meta is not None and usage:
+        meta["prompt_tokens"] = usage.get("prompt_tokens", 0)
+        meta["completion_tokens"] = usage.get("completion_tokens", 0)
+        meta["total_tokens"] = usage.get("total_tokens", 0)
+        meta["raw"] = usage
+    message = ((data.get("choices") or [{}])[0] or {}).get("message") or {}
+    reasoning = message.get("reasoning_content") or message.get("reasoning")
+    if reasoning and meta is not None:
+        meta["reasoning_content"] = str(reasoning)
+    if message.get("content"):
+        yield message["content"]
 
 # ── Gemini CLI ────────────────────────────────────
 def _find_gemini_script() -> str | None:
@@ -1546,10 +1619,11 @@ _CODEX_SEMAPHORE: asyncio.Semaphore | None = None
 
 
 def _codex_reasoning_summary(settings: dict | None = None) -> str:
+    # 默认「详细」：auto 只给一句 30 来字的标题、常常干脆不给（Lucien 的 💭，2026-10-29）
     value = str((settings if settings is not None else SETTINGS).get(
-        "codex_reasoning_summary", "auto"
-    ) or "auto").strip().lower()
-    return value if value in _CODEX_REASONING_SUMMARIES else "auto"
+        "codex_reasoning_summary", "detailed"
+    ) or "detailed").strip().lower()
+    return value if value in _CODEX_REASONING_SUMMARIES else "detailed"
 
 
 def _codex_max_concurrency(settings: dict | None = None) -> int:

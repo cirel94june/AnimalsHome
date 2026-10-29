@@ -467,3 +467,20 @@ def test_failed_switch_intent_is_dropped_if_someone_stops_meanwhile(cam, monkeyp
     cam.switch_source("esp32")
     cam.stop_monitoring(changed_by="")   # 小猫在两次换源之间关了
     assert cam.switch_source("phone") is True and not cam.monitoring
+
+
+def test_camera_page_says_who_stopped_it_and_until_when(cam):
+    """小猫 10-29：小克停了巡逻，页面上看不到停多久。"""
+    cam.start_monitoring()
+    assert patrol_control.page_note() == "巡逻开着"
+    patrol_control.process("[巡逻:停]", "aion")
+    assert patrol_control.page_note() == "巡逻停着（小克停的，没定时间，等有人再打开）"
+    patrol_control.process("[巡逻:停|2小时]", "ai3")
+    note = patrol_control.page_note()
+    assert note.startswith("巡逻停着（狗蛋停的，") and note.endswith("自动恢复）")
+    cam.start_monitoring()
+    cam.stop_monitoring(changed_by="")  # 小猫自己在页面上关的
+    assert patrol_control.page_note() == "巡逻停着"
+    page = (Path(__file__).parent / "static" / "camera.html").read_text(encoding="utf-8")
+    assert 'id="camPatrolNote"' in page and "status.patrol_note" in page
+    assert "toggle.checked = !!status.monitoring" in page  # AI 开 / 停后开关跟着变

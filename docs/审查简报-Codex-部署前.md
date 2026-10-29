@@ -1273,3 +1273,33 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 换源失败后小猫关掉巡逻，下一次换源成功：保持关闭。
 - 变异检查：去掉换源锁，3 个重叠测试失败；去掉「失败后记住」，失败后恢复的那条测试失败。
 - 测试：`test_patrol_control.py` 共 31 项。所有引用 camera 的测试文件加上 `test_phone_usability.py`，共 208 项通过；唯一失败的 friend_visit 是基线就有的。
+
+## 92. 36b44cf 之后：巡逻状态看得见、狗蛋和 Lucien 的 💭 思考
+
+小猫 10-29 真用反馈：小克停了巡逻，但看不出停多久；Lucien 的 💭 很短或者没有，狗蛋的一直是空的。
+
+- **监控页显示巡逻状态**：
+  - `patrol_control.page_note()` 生成一句话，`/api/cam/status` 用 `patrol_note` 字段返回。可能是「巡逻开着」「巡逻停着（小克停的，15:30 自动恢复）」「巡逻停着（小克停的，没定时间，等有人再打开）」，小猫手动关时只显示「巡逻停着」。
+  - camera.html 在哨兵巡逻标题下显示这一行，每秒刷新状态时一起刷新；开关也跟着服务器走（AI 开或停之后不再显示旧状态）。正在点的那一下不会被覆盖（`document.activeElement` 判断）。
+- **狗蛋（Gemini 走 OpenAI 兼容中转站）的思考**：
+  - 服务器上对 4Router 做了实测，只发极短的算术题，不进聊天：
+    - 不带开关或只带 `reasoning_effort` 时，不返回思考，但用量里有 `reasoning_tokens`。
+    - 带 `extra_body.google.thinking_config.include_thoughts=true`、一次性返回时，有 `reasoning_content`。
+    - 同样带开关、边写边传时，思考被丢掉了，增量里只有 content 和 role。
+  - `call_custom_openai`：模型名里有 gemini 才加这个开关，其他模型（DeepSeek、Kimi、Grok、Claude 中转）请求体不变。
+    - 中转站对开关报 400 或 422 时，记住这个地址（`_NO_GEMINI_THOUGHTS`），去掉开关重发。重试上限从 4 次改为 5 次。
+    - 流式结束时，如果有正文、没有思考、但用量里 `reasoning_tokens>0`，就记住这个（地址, 模型）组合（`_STREAM_DROPS_THOUGHTS`）。之后对这个组合改用一次性返回 `_custom_openai_whole`：先发「正在思考...」状态，再一次性给出正文，把 `reasoning_content` 和用量写进 meta。出错时和流式一样报 `provider_error`。
+    - 两个记忆都只存在进程里，重启后会再丢一条思考，然后重新记住。
+  - `[DONE]` 由 return 改为 break，这样才能走到结束时的检测。行为不变。
+- **Lucien 的思考摘要**：Codex 的 `reasoning_summary` 默认值从 auto 改为 detailed（auto 常常只给 30 来字的标题，甚至不给）。哨兵那条调用仍然是 none。设置里显式写了的值照旧生效。
+- 空座位 ai4 到 ai6 和小克、Lucien 走同一套 `usage_meta["reasoning_content"]` 保存和 💭 显示。以后接 DeepSeek、Kimi、Grok，只要中转站返回 `reasoning_content`、`reasoning` 或 `<think>`，就能看到思考，不需要另外改。
+- 测试：
+  - 新增 `test_gemini_thoughts.py` 6 项：
+    - 带开关，流式思考能存下来
+    - 其他模型不带开关
+    - 流式丢思考后改为一次性返回
+    - `reasoning_tokens=0` 时不误判
+    - 中转站拒绝开关后去掉
+    - 一次性返回出错能报出来
+  - `test_patrol_control.py` 新增页面状态 1 项，共 32 项。
+  - 变异检查：去掉 gemini 开关时 3 项失败；去掉流式丢思考的记忆时 1 项失败；去掉拒绝记忆时 1 项失败。

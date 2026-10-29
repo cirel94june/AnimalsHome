@@ -17,6 +17,7 @@ from config import (
 )
 from camera import cam, detect_cameras, read_monitor_logs, wake_roster
 from phone_camera import phone_camera
+import patrol_control
 
 router = APIRouter()
 
@@ -59,6 +60,7 @@ async def cam_status():
         "monitoring": cam.monitoring,
         "patrol_resume_at": cam.cfg.get("patrol_resume_at", 0),
         "patrol_changed_by": cam.cfg.get("patrol_changed_by", ""),
+        "patrol_note": patrol_control.page_note(),  # 「小克停的，15:30 自动恢复」：谁动的巡逻、几点恢复
         "camera_index": cam.cfg["camera_index"],
         "active_source": cam.cfg.get("active_source", "local"),
         "esp32_cam_url": cam.cfg.get("esp32_cam_url", ""),

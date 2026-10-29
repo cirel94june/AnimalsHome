@@ -121,6 +121,22 @@ def status_text() -> str:
     return f"现在巡逻停着{who}。"
 
 
+def page_note() -> str:
+    """监控页「哨兵巡逻」下面那行：停着时说清是谁停的、几点恢复（小猫 10-29：看不到停多久）。"""
+    try:
+        from camera import cam
+    except Exception:
+        return ""
+    if cam.monitoring:
+        return "巡逻开着"
+    resume_at = float(cam.cfg.get("patrol_resume_at") or 0)
+    by = cam.cfg.get("patrol_changed_by") or ""
+    who = f"{_name(by)}停的，" if by else ""
+    if resume_at > time.time():
+        return f"巡逻停着（{who}{_clock(resume_at)} 自动恢复）"
+    return f"巡逻停着（{who}没定时间，等有人再打开）" if by else "巡逻停着"
+
+
 def ability_text(user_name: str) -> str:
     return (
         "[巡逻:停] / [巡逻:停|3小时] / [巡逻:开] — 哨兵巡逻会每隔一阵看一次摄像头，觉得需要时叫你来找"

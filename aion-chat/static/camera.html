@@ -58,6 +58,8 @@
 .cam-inline-inputs input { width:100%; min-width:0; box-sizing:border-box; }
 .cam-retention-input { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:7px; font-size:12px; color:var(--text2); }
 .cam-retention-input input { width:100%; min-width:0; box-sizing:border-box; }
+.cam-patrol-note { margin:-4px 0 10px; font-size:12px; color:var(--text2); }
+.cam-patrol-note:empty { display:none; }
 .cam-wake-row { display:grid; grid-template-columns:minmax(0,1fr); gap:7px; margin-bottom:10px; }
 .cam-wake-row label { font-size:11px; color:var(--text3); }
 .cam-wake-row select { width:100%; min-width:0; box-sizing:border-box; padding:9px 10px; border:1px solid var(--border); border-radius:10px; background:var(--surface2); color:var(--text); font-size:13px; }
@@ -150,6 +152,7 @@
           <span class="toggle-slider"></span>
         </label>
       </div>
+      <div class="cam-patrol-note" id="camPatrolNote"></div>
       <div class="cam-wake-row">
         <label for="camWakeMode2">需要联系时唤醒谁</label>
         <select id="camWakeMode2" onchange="camWakeModeChanged()">
@@ -324,6 +327,11 @@ async function syncCamModalState() {
 }
 
 function updateCamStatusText(status) {
+  // AI 也会开 / 停巡逻：开关和下面那行跟着服务器走
+  const toggle = $("camMonitorToggle2");
+  if (toggle && document.activeElement !== toggle) toggle.checked = !!status.monitoring;
+  const note = $("camPatrolNote");
+  if (note) note.textContent = status.patrol_note || "";
   if (status.monitoring) {
     const s = status.next_capture_in || 0;
     const min = Math.floor(s / 60), sec = s % 60;

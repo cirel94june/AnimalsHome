@@ -351,8 +351,8 @@ class CodexCliMinimalModeAsyncTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CodexRuntimeConfigTests(unittest.TestCase):
-    def test_reasoning_summary_is_configurable_with_safe_auto_fallback(self):
-        self.assertEqual(ai_providers._codex_reasoning_summary({}), "auto")
+    def test_reasoning_summary_is_configurable_with_detailed_fallback(self):
+        self.assertEqual(ai_providers._codex_reasoning_summary({}), "detailed")
         for value in ("auto", "concise", "detailed", "none"):
             with self.subTest(value=value):
                 self.assertEqual(
@@ -365,7 +365,7 @@ class CodexRuntimeConfigTests(unittest.TestCase):
             ai_providers._codex_reasoning_summary(
                 {"codex_reasoning_summary": "unexpected"}
             ),
-            "auto",
+            "detailed",
         )
 
     def test_concurrency_is_configurable_and_bounded(self):
