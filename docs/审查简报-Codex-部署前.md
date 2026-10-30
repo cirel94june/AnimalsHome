@@ -1398,3 +1398,20 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 修法：手机 `.detail` 改用 `var(--surface)` 加 `backdrop-filter: blur(26px)`；记忆库的 `dialog` 也加同样的模糊。
   - 本机 IB 皮肤、375 宽实测：修之前透字，修之后底下被糊住、字清楚。`test_phone_usability.py` 加 1 项。
 - 安卓 CI：run 40995083746，单测加打包通过。
+
+## 97. 6fa588d 复审：M1、L1，以及 App 改名（86c2ac7）
+
+- **M1 名单刷新占住共享线程**
+  - 新增独立的单线程 `actorNamesExecutor`，名单请求不再放进 `deviceContextExecutor`。
+  - 从 WebSocket client 用 `newBuilder()` 派生一个 HTTP client：`readTimeout` 10 秒、`callTimeout` 15 秒（覆盖读响应体）。WebSocket 原来的无限读不变。
+  - 并发和冷却：
+    - 入队前用 `ActorNames.claimRefresh` 原子认领，保证同时只跑一个刷新；名单还新鲜或者在失败冷却里，就不认领。
+    - 任务执行前用 `stillNeeded` 再判断一次，不需要了就直接释放，不算失败。
+    - finally 里 `finishRefresh` 释放认领。失败或坏名单都冷却 60 秒。线程池拒绝任务时（服务正在关）也会释放。
+  - `onDestroy` 会取消正在进行的 Call，并 `shutdownNow` 这条线程。
+- **L1 坏名单覆盖好名字**：`parse` 整份校验，任何一条出问题都整份不收，旧名单和 loadedAt 保留。
+  - 要求：actors 是数组，每条是对象；id 是字符串、在 aion/connor/ai3–ai6 里、不重复；name 是字符串或 null。
+  - name 是空字符串的空座位跳过，不算坏名单。
+  - 测试覆盖：数字或对象做名字、数字 id、不认识的 id、混入非对象、好坏条目混在一起、重复 id、空数组、actors 是对象、HTML。
+- **改名**：小猫要求，`app_name` 从「Aion Oloth」改为「Animals Home」，桌面图标名和常驻通知标题都会变。
+- `ActorNamesTest` 6 项（含单飞、冷却，以及源码契约：不用 deviceContextExecutor、有 callTimeout、关服务时 shutdownNow）。安卓 CI run 40997711033 通过。
