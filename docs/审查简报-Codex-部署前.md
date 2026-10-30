@@ -1380,3 +1380,21 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `usage` 必须是对象，`message.content` 和 `message.reasoning_content`（或 `reasoning`）必须是字符串。缺字段或者是 null 都算正常；字段存在但类型不对，就记 `provider_error`，返回「返回格式不对」，不重发。
   - 坏响应的参数化用例从 4 种加到 7 种，补上你给的 3 个反例；另加「可选字段是 null 也正常」1 项。把 ai_providers.py 换回 338e314 的版本，这 3 个新用例都失败。
 - 测试：`test_gemini_thoughts.py` 15 项；`test_patrol_control.py` 和摄像头新鲜度合计 37 项；相关文件合计约 200 项通过。
+
+## 96. 10-30 真用反馈：归巢拿不到快照、通知名字、记忆详情透字（3603af3）
+
+- **归巢一直拿不到快照**：手机归巢页的数字全是 0，提示「尚无完整快照或可用云端线路」。
+  - 服务器日志显示，最后一次 `/api/homecoming/v1/snapshot/build` 是 10-22，走的是 Tailscale 地址。10-24 App 换到 Cloudflare Access（cafdd44）之后，再没有一次归巢请求进到服务器。
+  - 原因：后台推送、无障碍、悬浮聊天都用 `WebViewCookieJar` 带着网页的 Access 登录状态，而 `HomecomingBackupClient` 和 `HomecomingReturnClient` 的 OkHttp 没带，会被 Access 拦到登录页。
+  - 修法：这两个连自家服务器的 client 加上 `.cookieJar(new com.aion.chat.WebViewCookieJar())`。`HomecomingModelGateway`（直连模型商）和 `HomecomingTtsNetworkSynthesizer`（直连语音）不加，避免把 Access 凭证发给第三方。
+  - `HomecomingAccessCookieTest` 用源码契约锁住：这两个带，那两个不带。
+  - 顺带量了线上真实快照大小（只读）：gzip 后 52KB，离手机 2MB 的上限很远，不是大小的问题。
+- **通知标题是 Aion / Connor / Ai3**
+  - `AionPushService` 原来把 sender 代号首字母大写当标题。新增 `ActorNames`：WebSocket 连上时、名单超过 10 分钟时，在 `deviceContextExecutor` 后台请求 `/api/actors`（同一个带 Access cookie 的 client），拿 id→名字。
+  - 拿不到或解析失败时，退回原来的写法；坏的响应（比如登录页 HTML）不会覆盖已有的好名单。
+  - 主聊天的 `msg_created` 没有 sender 时，当作 aion。
+  - `ActorNamesTest` 3 项。
+- **记忆详情透出底下的列表**：IB 皮肤下 `--bg` 只有 0.35 透明度。手机上记忆库的 `.detail` 底部浮层用 `var(--bg)`，又没有毛玻璃，底下列表的字会透上来叠在一起（小猫截图）。
+  - 修法：手机 `.detail` 改用 `var(--surface)` 加 `backdrop-filter: blur(26px)`；记忆库的 `dialog` 也加同样的模糊。
+  - 本机 IB 皮肤、375 宽实测：修之前透字，修之后底下被糊住、字清楚。`test_phone_usability.py` 加 1 项。
+- 安卓 CI：run 40995083746，单测加打包通过。
