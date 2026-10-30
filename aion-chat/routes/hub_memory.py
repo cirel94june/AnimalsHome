@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/hub-memory", tags=["hub-memory"])
 
 _MEMORY_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _FIELDS = ("id", "content", "category", "room", "layer", "owner_ai", "source_ai", "subject_name",
-           "speaker_name", "importance", "created_at", "updated_at", "event_date", "status", "kind")
+           "speaker_name", "importance", "created_at", "updated_at", "event_date", "status", "kind", "fact_ref")
 
 
 def _hub() -> tuple[str, dict[str, str]]:

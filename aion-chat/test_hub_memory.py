@@ -176,3 +176,35 @@ def test_archive_new_hub_replies(monkeypatch, fake_hub, reply, ok):
         with pytest.raises(HTTPException) as err:
             asyncio.run(hub.archive_memory("abc-1"))
         assert err.value.status_code == 400 and "anchored" not in str(err.value.detail)
+
+
+def test_list_passes_fact_ref_through(fake_hub, monkeypatch):
+    """2026-10-30 Hub 把同一件事的补充挂在原来那条名下（fact_ref），页面要拿到它才能叠在一起。"""
+    assert "fact_ref" in hub._FIELDS
+
+
+def test_page_stacks_same_fact_under_the_original(tmp_path):
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("没有 node")
+    page = (Path(__file__).parent / "static" / "hub-memory.js").read_text(encoding="utf-8")
+    start = page.index("  function stacked(items)")
+    fn = page[start:page.index("\n  }\n", start) + 4]
+    items = [
+        {"id": "a", "fact_ref": None}, {"id": "b", "fact_ref": "a"}, {"id": "c", "fact_ref": "b"},  # 两层都收到 a 下
+        {"id": "d", "fact_ref": "gone"},                       # 指向的不在本页：单独显示，标「补充」
+        {"id": "e", "fact_ref": "d"},                          # 收到 d 下
+        {"id": "x", "fact_ref": "y"}, {"id": "y", "fact_ref": "x"},  # 互相指：各自单独
+        {"id": "z"},
+    ]
+    script = tmp_path / "stack.js"
+    script.write_text(fn + "\nconsole.log(JSON.stringify(stacked(" + json.dumps(items) + ").map("
+                      "g => [g.m.id, g.extras.map(x => x.id), g.orphan])));", encoding="utf-8")
+    result = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [
+        ["a", ["b", "c"], False], ["d", ["e"], True], ["x", [], True], ["y", [], True], ["z", [], False]]

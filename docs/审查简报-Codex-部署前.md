@@ -1415,3 +1415,17 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 测试覆盖：数字或对象做名字、数字 id、不认识的 id、混入非对象、好坏条目混在一起、重复 id、空数组、actors 是对象、HTML。
 - **改名**：小猫要求，`app_name` 从「Aion Oloth」改为「Animals Home」，桌面图标名和常驻通知标题都会变。
 - `ActorNamesTest` 6 项（含单飞、冷却，以及源码契约：不用 deviceContextExecutor、有 callTimeout、关服务时 shutdownNow）。安卓 CI run 40997711033 通过。
+
+## §98 Hub 记忆页：同一件事叠在一起（2026-10-30）
+
+来源：Memory Hub 窗口的《给AionsHome的接口说明》优先级 1-2。Hub 会把「同一件事的补充说法」挂在原来那条名下（补充那条的 `fact_ref` = 原来那条的 id，链最多 4 层）。
+
+- `routes/hub_memory.py`：`_FIELDS` 加上 `fact_ref`，其他字段仍然只挑白名单。
+- `static/hub-memory.js` 新增 `stacked(items)`：
+  - 顺着 `fact_ref` 往上找，最多 4 步，只在本页里找；找到的最上面那条做组头，补充收在它下面，显示「同一件事还记着：…」。
+  - 指向的那条不在本页或已归档：单独显示，前面加「补充」小标签。
+  - 互相指（环）：各自单独显示，不会丢条目也不会死循环。
+  - 收在下面的每条仍然有自己的「改 / 归档」（已归档页是「找回 / 彻底删除」），按单条操作。
+- `hub-memory.css`：收在下面的条目不画成独立卡片，左边一条竖线。
+- 测试：`test_hub_memory.py` 加 2 项，共 29 项通过。其中 Node 跑真实的 `stacked`，覆盖两层链、指向页外、环、普通条目。
+- 本机浏览器：用假数据打开 /hub-memory?ai=ai3 看过，结构是 3 个组头、2 条收在下面、1 个「补充」标签，截图正常。

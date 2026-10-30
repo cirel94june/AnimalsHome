@@ -94,11 +94,32 @@
     $('pageLabel').textContent = `${state.page} / ${pages}`;
     $('prev').disabled = state.page <= 1;
     $('next').disabled = state.page >= pages;
-    $('list').replaceChildren(...state.items.map(item));
+    $('list').replaceChildren(...stacked(state.items).map(({ m, extras, orphan }) => item(m, extras, orphan)));
   }
 
-  function item(m) {
-    const li = el('li', { className: 'hm-item' });
+  // Hub 把同一件事的补充说法挂在原来那条名下（fact_ref = 原来那条的 id，最多 4 层）。
+  // 顺着往上找到本页里最上面那条，收在它下面；指向的那条不在本页 / 已归档，就单独显示并标「补充」。
+  function stacked(items) {
+    const byId = new Map(items.map(m => [m.id, m]));
+    const rootOf = m => {
+      let cur = m;
+      for (let i = 0; i < 4 && cur.fact_ref && byId.has(cur.fact_ref) && cur.fact_ref !== m.id; i++) cur = byId.get(cur.fact_ref);
+      return cur;
+    };
+    const tops = new Map();
+    for (const m of items) if (rootOf(m) === m) tops.set(m.id, { m, extras: [], orphan: !!m.fact_ref });
+    const out = [];
+    for (const m of items) {
+      const top = tops.get(m.id) || tops.get(rootOf(m).id);
+      if (top && top.m === m) out.push(top);
+      else if (top) top.extras.push(m);
+      else out.push({ m, extras: [], orphan: true });  // 互相指（环）：各自单独显示
+    }
+    return out;
+  }
+
+  function item(m, extras = [], orphan = false, nested = false) {
+    const li = el(nested ? 'div' : 'li', { className: nested ? 'hm-item hm-extra' : 'hm-item' });
     if (state.editing === m.id) {
       const text = el('textarea', { value: m.content || '' });
       text.setAttribute('aria-label', '记忆内容');
@@ -125,7 +146,9 @@
         el('div', { className: 'hm-actions' }, [save, cancel]));
       return li;
     }
-    li.append(el('p', { className: 'hm-content', textContent: m.content || '（空）' }), el('div', { className: 'hm-meta', textContent: meta(m) }));
+    const content = el('p', { className: 'hm-content', textContent: m.content || '（空）' });
+    if (orphan && !nested) content.prepend(el('span', { className: 'hm-tag', textContent: '补充' }));
+    li.append(content, el('div', { className: 'hm-meta', textContent: meta(m) }));
     const actions = [];
     if (state.status === 'active') {
       actions.push(el('button', { type: 'button', textContent: '改', onclick: () => { state.editing = m.id; render(); } }));
@@ -146,6 +169,12 @@
       } }));
     }
     li.append(el('div', { className: 'hm-actions' }, actions));
+    if (extras.length) {
+      li.append(el('div', { className: 'hm-same' }, [
+        el('div', { className: 'hm-same-label', textContent: '同一件事还记着：' }),
+        ...extras.map(x => item(x, [], false, true)),
+      ]));
+    }
     return li;
   }
 
