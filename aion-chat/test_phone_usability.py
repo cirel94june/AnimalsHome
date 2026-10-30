@@ -41,3 +41,12 @@ def test_thinking_popover_opens_below_when_no_room_above():
     for name in ("chat.js", "chatroom.js"):
         js = _read(name)
         assert "goBelow" in js and "window.innerHeight * 0.6" in js, name
+
+
+def test_memory_detail_sheet_hides_the_list_under_glass_skins():
+    """10-30 小猫截图：IB 皮肤底色只有 35% 不透明，手机上「原子记忆详情」面板透出底下的列表，字叠在一起。"""
+    css = _read("memory-library.css")
+    sheet = re.search(r"\.detail\{display:none;position:fixed[^}]*\}", css).group(0)
+    assert "backdrop-filter:blur(" in sheet and "background:var(--surface)" in sheet
+    dialog = re.search(r"\ndialog\{[^}]*\}", css).group(0)
+    assert "backdrop-filter:blur(" in dialog

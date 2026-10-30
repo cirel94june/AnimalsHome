@@ -231,6 +231,7 @@ public class AionPushService extends Service {
     private BroadcastReceiver screenReceiver;
     private PhoneContextCollector phoneContextCollector;
     private final ExecutorService deviceContextExecutor = Executors.newSingleThreadExecutor();
+    private final ActorNames actorNames = new ActorNames();
     private SuperXNotificationMonitor superXNotificationMonitor;
 
     // ── 无障碍服务自动恢复（需 WRITE_SECURE_SETTINGS 权限，通过 ADB 授予）──
@@ -2181,6 +2182,7 @@ public class AionPushService extends Service {
                         registration.put("type", "register_client");
                         registration.put("client_id", getPhoneCameraClientId());
                         ws.send(registration.toString());
+                        refreshActorNames();
                         mainHandler.post(AionPushService.this::sendBackgroundTtsState);
                         if (phoneCameraState.isArmed()) {
                             postPhoneCameraArmState(true);
@@ -2648,9 +2650,8 @@ public class AionPushService extends Service {
                         if ("assistant".equals(role)) {
                             String c = data.optString("content", "");
                             if (c.length() > 100) c = c.substring(0, 100) + "...";
-                            String sender = data.optString("sender", "AI");
-                            if (sender.isEmpty()) sender = "AI";
-                            else sender = sender.substring(0, 1).toUpperCase() + sender.substring(1);
+                            String raw = data.optString("sender", "");
+                            String sender = actorLabel(raw.isEmpty() ? "aion" : raw);  // 主聊天就是小克
                             showNotif(CH_MESSAGE, "💬 " + sender, c, true);
                         }
                     }
@@ -2663,7 +2664,7 @@ public class AionPushService extends Service {
                         if (!"user".equals(sender) && !"system".equals(sender) && !sender.isEmpty()) {
                             String c = data.optString("content", "");
                             if (c.length() > 100) c = c.substring(0, 100) + "...";
-                            sender = sender.substring(0, 1).toUpperCase() + sender.substring(1);
+                            sender = actorLabel(sender);
                             showNotif(CH_MESSAGE, "💬 " + sender, c, true);
                         }
                     }
@@ -3645,6 +3646,27 @@ public class AionPushService extends Service {
         } finally {
             phoneCameraState.complete(requestId);
         }
+    }
+
+    /** 通知标题用的名字；名单过期就在后台再拿一次，这一条先用手上的。 */
+    private String actorLabel(String sender) {
+        if (actorNames.isStale(System.currentTimeMillis(), 10 * 60 * 1000L)) refreshActorNames();
+        return actorNames.label(sender);
+    }
+
+    private void refreshActorNames() {
+        String httpBase = getHttpBase();
+        if (httpBase == null || client == null) return;
+        deviceContextExecutor.execute(() -> {
+            Request req = new Request.Builder().url(httpBase + "/api/actors").get().build();
+            try (Response resp = client.newCall(req).execute()) {
+                if (resp.isSuccessful() && resp.body() != null) {
+                    actorNames.update(resp.body().string(), System.currentTimeMillis());
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "actor names refresh failed: " + e.getMessage());
+            }
+        });
     }
 
     private String getHttpBase() {

@@ -227,6 +227,10 @@ public final class HomecomingBackupClient {
         private static final MediaType JSON =
                 MediaType.get("application/json; charset=utf-8");
         private final OkHttpClient client = new OkHttpClient.Builder()
+                // 服务器在 Cloudflare Access 后面：和后台推送一样带上网页的登录状态，
+                // 不然 10-24 换地址后归巢下载 / 回传一直被拦在登录页（2026-10-30）。
+                // 只给连自家服务器的这两条用；直连模型商、语音的不带
+                .cookieJar(new com.aion.chat.WebViewCookieJar())
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(120, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
