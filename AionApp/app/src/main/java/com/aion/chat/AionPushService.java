@@ -232,6 +232,9 @@ public class AionPushService extends Service {
     private PhoneContextCollector phoneContextCollector;
     private final ExecutorService deviceContextExecutor = Executors.newSingleThreadExecutor();
     private final ActorNames actorNames = new ActorNames();
+    // 名单请求单独一条线程、单独有限时的 client：不占设备上下文线程，也不沿用 WebSocket 的无限读（复审 M1）
+    private final ExecutorService actorNamesExecutor = Executors.newSingleThreadExecutor();
+    private volatile okhttp3.Call actorNamesCall;
     private SuperXNotificationMonitor superXNotificationMonitor;
 
     // ── 无障碍服务自动恢复（需 WRITE_SECURE_SETTINGS 权限，通过 ADB 授予）──
@@ -579,6 +582,9 @@ public class AionPushService extends Service {
     public void onDestroy() {
         Log.i(TAG, "=== onDestroy ===");
         backgroundTtsClosing = true;
+        okhttp3.Call namesCall = actorNamesCall;
+        if (namesCall != null) namesCall.cancel();
+        actorNamesExecutor.shutdownNow();
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .unregisterOnSharedPreferenceChangeListener(backgroundTtsSettingsListener);
         if (backgroundTtsPlayer != null) backgroundTtsPlayer.stop();
@@ -3648,25 +3654,50 @@ public class AionPushService extends Service {
         }
     }
 
+    private static final long ACTOR_NAMES_MAX_AGE = 10 * 60 * 1000L;
+    private static final long ACTOR_NAMES_RETRY = 60 * 1000L;
+
     /** 通知标题用的名字；名单过期就在后台再拿一次，这一条先用手上的。 */
     private String actorLabel(String sender) {
-        if (actorNames.isStale(System.currentTimeMillis(), 10 * 60 * 1000L)) refreshActorNames();
+        refreshActorNames();
         return actorNames.label(sender);
     }
 
     private void refreshActorNames() {
         String httpBase = getHttpBase();
-        if (httpBase == null || client == null) return;
-        deviceContextExecutor.execute(() -> {
-            Request req = new Request.Builder().url(httpBase + "/api/actors").get().build();
-            try (Response resp = client.newCall(req).execute()) {
-                if (resp.isSuccessful() && resp.body() != null) {
-                    actorNames.update(resp.body().string(), System.currentTimeMillis());
+        OkHttpClient base = client;
+        if (httpBase == null || base == null) return;
+        if (!actorNames.claimRefresh(System.currentTimeMillis(), ACTOR_NAMES_MAX_AGE)) return;
+        try {
+            actorNamesExecutor.execute(() -> {
+                String body = null;
+                boolean skipped = false;
+                try {
+                    if (actorNames.stillNeeded(System.currentTimeMillis(), ACTOR_NAMES_MAX_AGE)) {
+                        OkHttpClient http = base.newBuilder()
+                                .readTimeout(10, TimeUnit.SECONDS)
+                                .callTimeout(15, TimeUnit.SECONDS)  // 连同读完整个响应体
+                                .build();
+                        Request req = new Request.Builder().url(httpBase + "/api/actors").get().build();
+                        okhttp3.Call call = http.newCall(req);
+                        actorNamesCall = call;
+                        try (Response resp = call.execute()) {
+                            if (resp.isSuccessful() && resp.body() != null) body = resp.body().string();
+                        }
+                    } else {
+                        skipped = true;  // 别人刚更新过：不算失败，也不冷却
+                    }
+                } catch (Exception e) {
+                    Log.d(TAG, "actor names refresh failed: " + e.getMessage());
+                } finally {
+                    actorNamesCall = null;
+                    if (skipped) actorNames.finishRefresh(null, 0, 0);
+                    else actorNames.finishRefresh(body, System.currentTimeMillis(), ACTOR_NAMES_RETRY);
                 }
-            } catch (Exception e) {
-                Log.d(TAG, "actor names refresh failed: " + e.getMessage());
-            }
-        });
+            });
+        } catch (RuntimeException rejected) {  // 服务正在关
+            actorNames.finishRefresh(null, System.currentTimeMillis(), ACTOR_NAMES_RETRY);
+        }
     }
 
     private String getHttpBase() {
