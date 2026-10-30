@@ -297,12 +297,14 @@ async def build_homecoming_snapshot(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     compressed = gzip.compress(canonical_json_bytes(payload), compresslevel=6)
+    # 当成一个 gzip 文件发，不标 Content-Encoding：10-24 起服务器在 Cloudflare 后面，
+    # 手机要的是原样字节（Accept-Encoding: identity），带着 gzip 标记会被 Cloudflare 半路解压，
+    # 手机再解压就失败，快照一直装不上（2026-10-30）。
     return Response(
         content=compressed,
-        media_type="application/json",
+        media_type="application/gzip",
         headers={
-            "Content-Encoding": "gzip",
-            "Cache-Control": "no-store",
+            "Cache-Control": "no-store, no-transform",
             "ETag": etag,
             "X-Homecoming-Snapshot-Id": snapshot_id,
         },

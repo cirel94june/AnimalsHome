@@ -43,6 +43,8 @@ public final class HomecomingBackupJobService extends JobService {
                                 preferences.edit()
                                         .putString("last_error_code", code)
                                         .putLong("last_error_at", System.currentTimeMillis())
+                                        .putString("last_error_message",
+                                                HomecomingBackupScheduler.sanitize(diagnostic))
                                         .apply();
                                 jobFinished(parameters, false);
                             }

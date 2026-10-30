@@ -89,6 +89,37 @@ public class HomecomingBackupImportTest {
     }
 
     @Test
+    public void snapshotUnzippedOnTheWayIsStillImported() throws Exception {
+        // 2026-10-30：Cloudflare 把标了 gzip 的快照半路解压，手机收到的是 JSON 正文
+        HomecomingSnapshotStore store = storeWithOldActive();
+        byte[] plain = gunzip(snapshotBody("snap-plain", 2, false));
+        RecordingCallback callback = refresh(store, new FakeTransport(plain, null));
+
+        assertNotNull(callback.success);
+        assertEquals("snap-plain", store.activeManifest().snapshotId);
+    }
+
+    @Test
+    public void snapshotThatIsNeitherGzipNorJsonIsRejected() throws Exception {
+        HomecomingSnapshotStore store = storeWithOldActive();
+        RecordingCallback callback = refresh(store, new FakeTransport(
+                "<html>login</html>".getBytes(StandardCharsets.UTF_8), null));
+
+        assertEquals("snap-old", store.activeManifest().snapshotId);
+        assertEquals("DOWNLOAD_INTERRUPTED", callback.failureCode);
+    }
+
+    private static byte[] gunzip(byte[] compressed) throws IOException {
+        java.util.zip.GZIPInputStream input = new java.util.zip.GZIPInputStream(
+                new java.io.ByteArrayInputStream(compressed));
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer)) > 0) out.write(buffer, 0, read);
+        return out.toByteArray();
+    }
+
+    @Test
     public void backupFailureDoesNotActivateHomecoming() throws Exception {
         HomecomingModeStore.Backend backend = new MemoryModeBackend();
         HomecomingModeStore modeStore = new HomecomingModeStore(backend);

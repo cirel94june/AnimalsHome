@@ -224,7 +224,7 @@ public final class HomecomingBackupScheduler {
         return value == null ? "" : value.trim();
     }
 
-    private static String sanitize(String diagnostic) {
+    static String sanitize(String diagnostic) {
         if (diagnostic == null) {
             return "";
         }

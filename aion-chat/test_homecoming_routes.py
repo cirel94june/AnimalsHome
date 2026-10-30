@@ -1,4 +1,5 @@
 import base64
+import gzip
 import json
 import sqlite3
 import sys
@@ -153,10 +154,14 @@ class HomecomingRouteTests(unittest.TestCase):
     def test_build_returns_hashes_and_never_plaintext_secrets(self):
         self.assertEqual(200, self.register().status_code)
         response = self.build()
-        payload = response.json()
+        payload = json.loads(gzip.decompress(response.content))
 
         self.assertEqual(200, response.status_code)
-        self.assertEqual("gzip", response.headers["Content-Encoding"])
+        # 原样的 gzip 文件，不标 Content-Encoding，免得 Cloudflare 半路解压（2026-10-30）
+        self.assertNotIn("Content-Encoding", response.headers)
+        self.assertEqual("application/gzip", response.headers["Content-Type"])
+        self.assertEqual(b"\x1f\x8b", response.content[:2])
+        self.assertIn("no-transform", response.headers["Cache-Control"])
         self.assertEqual(
             payload["snapshot_id"],
             response.headers["X-Homecoming-Snapshot-Id"],
@@ -166,7 +171,7 @@ class HomecomingRouteTests(unittest.TestCase):
             set(self.sections),
             set(payload["section_hashes"]),
         )
-        self.assertNotIn("fixture-secret-key", response.text)
+        self.assertNotIn("fixture-secret-key", gzip.decompress(response.content).decode("utf-8"))
         self.assertEqual(
             "RSA-OAEP-256-MGF1-SHA1+A256GCM",
             payload["encrypted_routes"]["algorithm"],

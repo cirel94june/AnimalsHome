@@ -146,7 +146,7 @@ public final class HomecomingActivity extends AppCompatActivity {
                             ? HomecomingContract.SCHEMA_VERSION
                             : (int) storedSchema,
                     permissionStates,
-                    snapshotId.isEmpty() ? "尚无可用灾备快照" : "");
+                    notReadyReason(snapshotId, routeCount, homecomingPreferences()));
             return readiness.toJson().toString();
         } catch (Exception exception) {
             return new HomecomingReadiness(
@@ -691,6 +691,24 @@ public final class HomecomingActivity extends AppCompatActivity {
     private void notifyPageState() {
         webView.evaluateJavascript(
                 "window.HomecomingPage&&window.HomecomingPage.render()", null);
+    }
+
+    /**
+     * 2026-10-30：小猫进不了归巢，服务器那边快照明明下发成功，手机却只写「尚无可用灾备快照」。
+     * 失败原因其实存着（last_error_code / last_error_message），这里把它显示出来。
+     */
+    static String notReadyReason(String snapshotId, int routeCount, SharedPreferences preferences) {
+        String code = preferences.getString("last_error_code", "");
+        String detail = preferences.getString("last_error_message", "");
+        String failure = code == null || code.isEmpty() ? ""
+                : "上次准备失败：" + code + (detail == null || detail.isEmpty() ? "" : "（" + detail + "）");
+        if (snapshotId.isEmpty()) {
+            return failure.isEmpty() ? "尚无可用灾备快照" : "尚无可用灾备快照。" + failure;
+        }
+        if (routeCount < 1) {
+            return failure.isEmpty() ? "快照里没有能用的云端线路" : "快照里没有能用的云端线路。" + failure;
+        }
+        return failure;
     }
 
     private SharedPreferences homecomingPreferences() {

@@ -1429,3 +1429,33 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `hub-memory.css`：收在下面的条目不画成独立卡片，左边一条竖线。
 - 测试：`test_hub_memory.py` 加 2 项，共 29 项通过。其中 Node 跑真实的 `stacked`，覆盖两层链、指向页外、环、普通条目。
 - 本机浏览器：用假数据打开 /hub-memory?ai=ai3 看过，结构是 3 个组头、2 条收在下面、1 个「补充」标签，截图正常。
+
+## §99 归巢快照被 Cloudflare 半路解压，手机一直装不上（2026-10-30）
+
+**现象**：小猫用新 App（已带登录状态），归巢页一直写「尚无可用灾备快照」。服务器日志里 `devices/register` 和 `snapshot/build` 都是 200，而且连着两次都是 200。如果第一次装上了，第二次应该带着旧 id 拿到 304，所以说明手机把第一份扔了。
+
+**根因（推断，线上没法从手机取日志）**：
+- 服务器回快照时，正文是 gzip，同时标了 `Content-Encoding: gzip`。
+- 手机请求时写的是 `Accept-Encoding: identity`，要的是原样字节，再自己解压、按原始字节核对各段哈希。
+- 10-24 起服务器在 Cloudflare 后面。Cloudflare 看到「客户端只要 identity」而响应标着 gzip，就会半路解压，手机收到的是 JSON 正文。
+- 手机的 `GZIPInputStream` 解压失败，抛 IOException（DOWNLOAD_INTERRUPTED / parse）。
+- 10-24 前走 Tailscale 直连，没有中间这一层，所以不出事。
+
+**服务器（`routes/homecoming.py`）**：
+- 快照当成一个 gzip 文件发：`media_type="application/gzip"`，不再标 `Content-Encoding`。
+- `Cache-Control` 加 `no-transform`。
+- 手机本来就只读原始字节、不看类型，所以**现有 App 不用重装**就能好。
+- `test_homecoming_routes.py` 改为断言：没有 Content-Encoding、类型是 application/gzip、开头是 1f8b、no-transform、解压后没有明文密钥。归巢 61 项通过。
+
+**手机（兜底）**：
+- `HomecomingBackupClient.asGzip`：收到的已经是 JSON 正文（以 `{` 开头）时，在本地重新压成 gzip 再走原流程。各段哈希按原始字节算，解压不改字节，所以照样对得上。既不是 gzip 也不是 JSON 时拒收。
+- 读取上限改为解压后的 8MB；压回 gzip 后仍按 2MB 检查。
+
+**手机（看得见原因）**：
+- 归巢页原来只写「尚无可用灾备快照」。失败代码和原因其实存在 `last_error_code` / `last_error_message` 里，但从没显示过。
+- 现在由 `HomecomingActivity.notReadyReason` 显示「上次准备失败：代码（原因）」。快照在、但没有线路时，写「快照里没有能用的云端线路」。
+- 定时任务那条失败路径以前只存代码，现在也存原因。
+
+**版本号**：versionCode 23→24、versionName 1.22→1.23。以前每次打包都没涨，手机上分不出新旧。
+
+**测试**：`HomecomingBackupImportTest` 加 2 项：正文快照照样装上并激活；HTML 登录页被拒收，旧快照保留。

@@ -79,23 +79,27 @@ public final class HomecomingBackupClient {
                 callback.onFailure("SERVER_ERROR", "snapshot HTTP " + download.statusCode);
                 return;
             }
-            if (download.body == null || download.body.length == 0
-                    || download.body.length > MAX_COMPRESSED_BYTES) {
+            if (download.body == null || download.body.length == 0) {
                 callback.onFailure("DOWNLOAD_INVALID", "snapshot size is invalid");
                 return;
             }
             stage = "parse";
-            JSONObject payload = parseCompressedSnapshot(download.body);
+            byte[] body = asGzip(download.body);
+            if (body.length > MAX_COMPRESSED_BYTES) {
+                callback.onFailure("DOWNLOAD_INVALID", "snapshot size is invalid");
+                return;
+            }
+            JSONObject payload = parseCompressedSnapshot(body);
             int schema = payload.getInt("schema");
             if (schema != HomecomingContract.SCHEMA_VERSION) {
                 callback.onFailure("SCHEMA_UNSUPPORTED", "snapshot schema " + schema);
                 return;
             }
             String snapshotId = payload.getString("snapshot_id");
-            JSONObject manifest = localManifest(payload, download.body);
+            JSONObject manifest = localManifest(payload, body);
             stage = "stage";
             snapshotStore.beginStaging(snapshotId);
-            snapshotStore.writeStagingFile("snapshot.json.gz", download.body);
+            snapshotStore.writeStagingFile("snapshot.json.gz", body);
             snapshotStore.writeStagingFile(
                     "manifest.json",
                     HomecomingSnapshotStore.canonicalJson(manifest)
@@ -138,6 +142,26 @@ public final class HomecomingBackupClient {
         } catch (RuntimeException ignored) {
             // android.util.Log is unavailable in local JVM unit tests.
         }
+    }
+
+    /**
+     * 10-24 起服务器在 Cloudflare 后面。旧服务器给快照标了 Content-Encoding: gzip，
+     * Cloudflare 看手机要原样（identity）就半路解压了，手机收到的是 JSON 正文，解压失败，
+     * 快照一直装不上（2026-10-30）。收到的已经是 JSON 正文时，就在本地重新压成 gzip 再走原流程。
+     */
+    static byte[] asGzip(byte[] body) throws IOException {
+        if (body.length >= 2 && body[0] == (byte) 0x1f && body[1] == (byte) 0x8b) {
+            return body;
+        }
+        int first = 0;
+        while (first < body.length && Character.isWhitespace(body[first])) first++;
+        if (first == body.length || body[first] != '{') {
+            throw new IOException("snapshot is neither gzip nor JSON");
+        }
+        if (body.length > MAX_DECOMPRESSED_BYTES) {
+            throw new IOException("snapshot exceeds size limit");
+        }
+        return HomecomingSnapshotStore.gzip(body);
     }
 
     static JSONObject parseCompressedSnapshot(byte[] compressed) throws Exception {
@@ -286,7 +310,8 @@ public final class HomecomingBackupClient {
                 if (!response.isSuccessful() || responseBody == null) {
                     return new Download(response.code(), null, response.header("ETag", ""));
                 }
-                byte[] body = readCapped(responseBody.byteStream(), MAX_COMPRESSED_BYTES);
+                // 可能被 Cloudflare 解压成正文（见 asGzip），所以按解压后的上限读
+                byte[] body = readCapped(responseBody.byteStream(), MAX_DECOMPRESSED_BYTES);
                 return new Download(response.code(), body, response.header("ETag", ""));
             }
         }
