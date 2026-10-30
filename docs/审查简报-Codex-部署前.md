@@ -1459,3 +1459,30 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 **版本号**：versionCode 23→24、versionName 1.22→1.23。以前每次打包都没涨，手机上分不出新旧。
 
 **测试**：`HomecomingBackupImportTest` 加 2 项：正文快照照样装上并激活；HTML 登录页被拒收，旧快照保留。
+
+## §100 狗蛋在记录里被写成「ai3」（2026-10-30）
+
+**现象**：小猫说很多记录里狗蛋还是 AI3。
+
+**根因**：服务器有不少地方把聊天记录拼成文字（多数是给模型看的），名字表只有 `{"user", "aion", "connor"}`，最后用 `.get(sender, sender)` 兜底。座位发的话就原样写成 `ai3`，AI 读到后又照抄进日记和记忆。库里没有存成大写「AI3」的文字（case-sensitive 扫过全部表），所以不需要回填。Hub 里有没有，交给 Hub 窗口查。
+
+**改法**：
+- `actors.seat_names()`：返回座位 3～6 的名字（不含前两位），缓存 5 秒，因为拼记录时常在循环里逐条调用。出错时返回 `{}`，不抛异常。
+- 补到以下名字表里：
+  - `chatroom.py`：`display_name_for_sender`、证据块 `name_map`、记忆整理、愿望上下文，共 3 处拼记录。
+  - `memory.py`：召回证据的 `chat_name_map`，以及 3 处拼记录。
+  - `routes/memories.py`：`_chatroom_sender_name`。
+  - `routes/seeky.py`：拼记录。
+  - `routes/search.py`：`name_map` 和返回给页面的 `names`。
+  - `activity.py`：`_user_dynamic_names`（活动日志）。
+  - `context_builder.py`：旅行卡片的名字。
+- 已经认座位的地方没动：`active_memory_search`、`autonomy_state`、`routes/moments`、`routes/chatroom` 的 `_name_for_identity` / `_seat_name_map`。
+- 不涉及座位的没动：斗地主、拍一拍只有两位；`wechat_bridge`。
+- 各文件顶部 `from actors import seat_names`。actors 顶层只依赖 config 和 request_limits，没有循环导入，`import main` 正常。
+
+**测试**：新增 `test_seat_names_everywhere.py`，共 12 项：
+- `seat_names` 跳过前两位、有缓存、出错不抛；
+- `display_name_for_sender`、记忆页、活动日志都写「狗蛋」；
+- 源码扫描：上述 7 个文件里不再有只认 connor 的名字表。
+
+全量测试：除 friend_visit 外 2157 通过、40 个失败。这 40 个失败在不带本次改动时同样失败，是原有失败，没有新增。

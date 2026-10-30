@@ -12,6 +12,7 @@ from config import get_key, get_sentinel_config, get_embedding_config, load_worl
 from database import get_db
 from model_json import extract_json_object
 from ws import manager
+from actors import seat_names
 
 # ── 向量工具 ──────────────────────────────────────
 EMBEDDING_MODEL = "gemini-embedding-001"
@@ -127,7 +128,7 @@ async def _fetch_source_rows_by_ids(source_ids: list[str], user_name: str, ai_na
         chat_user_name, chat_ai_name, companion_name = get_chatroom_names()
     except Exception:
         chat_user_name, chat_ai_name, companion_name = user_name, ai_name, "第二AI"
-    chat_name_map = {"user": chat_user_name, "aion": chat_ai_name, "connor": companion_name}
+    chat_name_map = {"user": chat_user_name, "aion": chat_ai_name, "connor": companion_name, **seat_names()}
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         for source_id in source_ids:
@@ -404,7 +405,7 @@ async def fetch_source_details(memories: list[dict], keywords: list[str]) -> str
                     sender = row["_sender"] if isinstance(row, dict) and "_sender" in row else ""
                     if sender:
                         connor_name = _connor_display_name()
-                        name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(sender, sender)
+                        name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(sender, sender)
                     else:
                         name = user_name if row["role"] == "user" else ai_name
                     matched_rows.append({
@@ -1285,7 +1286,7 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
             src = m.get("_source", "private")
             sender = m.get("sender", "")
             if src == "group":
-                name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(sender, sender)
+                name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(sender, sender)
             else:
                 name = user_name if m["role"] == "user" else ai_name
             tag = f"[{'群聊' if src == 'group' else '私聊'}]" if has_mixed else ""
@@ -1433,7 +1434,7 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
                 ts = datetime.fromtimestamp(m["created_at"]).strftime("%m-%d %H:%M")
                 src = m.get("_source", "private")
                 if src == "group":
-                    name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(m.get("sender"), m.get("sender", ""))
+                    name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m.get("sender"), m.get("sender", ""))
                 else:
                     name = user_name if m.get("role") == "user" else ai_name
                 source_label = "群聊" if src == "group" else "私聊"

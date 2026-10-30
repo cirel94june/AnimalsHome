@@ -12,6 +12,7 @@ from config import DATA_DIR, DB_PATH, load_worldbook
 from device_context import DeviceContextStore
 from app_names import KNOWN_APPS, resolve_app_name
 from ws import manager
+from actors import seat_names
 
 log = logging.getLogger("activity")
 
@@ -1155,6 +1156,7 @@ def _user_dynamic_names() -> dict:
         "assistant": ai_name,
         "aion": ai_name,
         "connor": connor_name,
+        **seat_names(),
         "system": "系统",
     }
 

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query
 from chatroom import get_chatroom_names
 from config import load_worldbook
 from database import get_db
+from actors import seat_names
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -45,6 +46,7 @@ async def search_messages(q: str = Query(..., min_length=1, max_length=80), limi
         "assistant": aion_name,
         "aion": aion_name,
         "connor": connor_name,
+        **seat_names(),
         "system": "系统",
     }
 
@@ -115,5 +117,5 @@ async def search_messages(q: str = Query(..., min_length=1, max_length=80), limi
     return {
         "items": items[:limit],
         "query": keyword,
-        "names": {"user": user_name, "aion": aion_name, "connor": connor_name},
+        "names": {"user": user_name, "aion": aion_name, "connor": connor_name, **seat_names()},
     }

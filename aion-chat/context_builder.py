@@ -56,6 +56,8 @@ BAND_NOTE_CMD_PATTERN = re.compile(
 TRANSFER_CMD_PATTERN = re.compile(r'\[转账[：:]\s*(-?\d+(?:\.\d+)?)\s*元\]')
 PRIVATE_WHISPER_CMD_PATTERN = re.compile(r'\[悄悄话[：:]\s*([^\]]+)\]')
 from group_post import GROUP_POST_CMD_PATTERN
+from actors import seat_names
+
 VIDEO_CALL_CMD = '[视频电话]'
 META_TAG_PATTERN = re.compile(r'\s*<meta\b[^>]*>.*?</meta\s*>', re.DOTALL | re.IGNORECASE)
 MEMORY_SEARCH_CMD_PATTERN = re.compile(
@@ -1004,7 +1006,7 @@ def render_merged_timeline(
         card = trip_card(message_attachments) if sender == "system" else None
         if card is not None:
             content = render_trip_context(
-                card, msg.get("taobao_products"), {"aion": ai_name, "connor": connor_name},
+                card, msg.get("taobao_products"), {"aion": ai_name, "connor": connor_name, **seat_names()},
             )
 
         # ── 场景切换标记：不再插入 fake 应答对，仅记录下来在下一条消息前内联输出 ──

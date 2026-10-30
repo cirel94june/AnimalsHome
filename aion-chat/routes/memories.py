@@ -28,6 +28,7 @@ from memory_compression import (
 )
 from ws import manager
 from sync_events import append_sync_event, attach_sync_seq
+from actors import seat_names
 
 router = APIRouter()
 
@@ -145,7 +146,7 @@ def _chatroom_sender_name(sender: str, user_name: str, ai_name: str) -> str:
         _, _, companion_name = get_chatroom_names()
     except Exception:
         companion_name = "第二AI"
-    return {"user": user_name, "aion": ai_name, "connor": companion_name}.get(sender, sender)
+    return {"user": user_name, "aion": ai_name, "connor": companion_name, **seat_names()}.get(sender, sender)
 
 
 async def _fetch_source_rows_by_ids(source_ids: list[str], user_name: str, ai_name: str) -> list[dict]:

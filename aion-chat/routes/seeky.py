@@ -18,6 +18,7 @@ from config import DEFAULT_MODEL, MODELS, load_worldbook
 from database import get_db
 from memory import get_embedding, _pack_embedding
 from ws import manager
+from actors import seat_names
 
 
 router = APIRouter(prefix="/api/seeky", tags=["seeky"])
@@ -570,7 +571,7 @@ async def _fetch_source_messages(start_ts: float, end_ts: float) -> list[dict]:
             if not content.strip():
                 continue
             sender = item.get("sender") or ""
-            speaker = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(sender, sender)
+            speaker = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(sender, sender)
             rows.append({
                 "id": f"chatroom:{item['id']}",
                 "raw_id": item["id"],

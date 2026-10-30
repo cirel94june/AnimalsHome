@@ -26,6 +26,7 @@ from ai_providers import (
 from group_post import group_privacy_rule
 from context_builder import build_ability_block, build_memory_blocks, fetch_merged_timeline, render_merged_timeline
 from ws import manager
+from actors import seat_names
 
 # ── Connor-Codex 服务配置 ──
 CHATROOM_CONFIG_PATH = DATA_DIR / "chatroom_config.json"
@@ -113,7 +114,7 @@ def _source_ids_for_chatroom_memory(mem: dict) -> list[str]:
 
 def display_name_for_sender(sender: str) -> str:
     user_name, ai_name, connor_name = get_chatroom_names()
-    return {"user": user_name, "assistant": ai_name, "aion": ai_name, "connor": connor_name}.get(sender, sender)
+    return {"user": user_name, "assistant": ai_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(sender, sender)
 
 
 # ══════════════════════════════════════════════════
@@ -568,7 +569,7 @@ async def fetch_chatroom_source_details(memories: list[dict], keywords: list[str
     evidence_blocks = []
     fallback_memories = []
     user_name, ai_name, connor_name = get_chatroom_names()
-    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name}
+    name_map = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}
     for mem in memories:
         source_ids = _source_ids_for_chatroom_memory(mem)
         if source_ids:
@@ -809,7 +810,7 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
         formatted = []
         for m in group:
             ts = time.strftime("%m-%d %H:%M", time.localtime(m["created_at"]))
-            name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(m["sender"], m["sender"])
+            name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m["sender"], m["sender"])
             tag = f"[{'群聊' if m.get('_source') == 'group' else '私聊'}]" if has_mixed else ""
             formatted.append(f"[{ts}][id={m.get('_source_id', '')}]{tag} {name}: {m['content'][:300]}")
         messages_text = date_header + "\n".join(formatted)
@@ -924,7 +925,7 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                     continue
                 source_label = "群聊" if m.get("_source") == "group" else "私聊"
                 ts = time.strftime("%m-%d %H:%M", time.localtime(m["created_at"]))
-                name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(m["sender"], m["sender"])
+                name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m["sender"], m["sender"])
                 context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
             context_text = "\n".join(context_lines)
             time_str = time.strftime("%Y年%m月%d日 %A %H:%M:%S", time.localtime())
@@ -995,7 +996,7 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                     continue
                 source_label = "群聊" if m.get("_source") == "group" else "私聊"
                 ts = time.strftime("%m-%d %H:%M", time.localtime(m["created_at"]))
-                name = {"user": user_name, "aion": ai_name, "connor": connor_name}.get(m["sender"], m["sender"])
+                name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m["sender"], m["sender"])
                 wish_context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
             context_text = "\n".join(wish_context_lines)
 

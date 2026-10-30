@@ -106,6 +106,27 @@ def list_actors(include_disabled: bool = True) -> list[dict[str, Any]]:
     return result
 
 
+_SEAT_NAMES_CACHE: tuple[float, dict[str, str]] = (0.0, {})
+
+
+def seat_names() -> dict[str, str]:
+    """座位 3～6（狗蛋等）的名字，给只认小克 / Lucien 的名字表补上。
+
+    2026-10-30：很多拼聊天记录的地方只认 user / aion / connor，狗蛋的话被写成「ai3」，
+    AI 读到后又照抄进日记和记忆。拼记录时常在循环里调用，所以缓存几秒。
+    """
+    global _SEAT_NAMES_CACHE
+    now = time.monotonic()
+    if now - _SEAT_NAMES_CACHE[0] < 5:
+        return dict(_SEAT_NAMES_CACHE[1])
+    try:
+        names = {a["id"]: a["name"] for a in list_actors() if a["id"] not in ("aion", "connor") and a.get("name")}
+    except Exception:
+        names = {}
+    _SEAT_NAMES_CACHE = (now, names)
+    return dict(names)
+
+
 def get_actor(actor_id: str) -> dict[str, Any] | None:
     return next((a for a in list_actors() if a["id"] == actor_id), None)
 
