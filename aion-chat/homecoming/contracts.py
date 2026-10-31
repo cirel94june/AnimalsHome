@@ -12,6 +12,8 @@ MAX_MESSAGES_PER_TIMELINE = 500
 # 座位 3～6（狗蛋和以后接的 AI）各自的私聊时间线：seat_private:ai3（2026-10-29 归巢全员）
 SEAT_TIMELINE_PREFIX = "seat_private:"
 SEAT_OWNERS = ("ai3", "ai4", "ai5", "ai6")
+# 归巢快照里来自 Hub 精简包的记忆 id 前缀（只读，回到线上不写回）
+HUB_MEMORY_ID_PREFIX = "hub:"
 BASE_TIMELINES = ("main_private", "companion_private", "group")
 
 
@@ -50,3 +52,7 @@ def canonical_json_bytes(value: object) -> bytes:
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def is_hub_memory_id(memory_id) -> bool:
+    return str(memory_id or "").startswith(HUB_MEMORY_ID_PREFIX)

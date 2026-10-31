@@ -16,6 +16,7 @@ from config import MODELS, SETTINGS
 from database import get_db
 from homecoming.contracts import (
     HOMECOMING_SCHEMA_VERSION,
+    SEAT_OWNERS,
     canonical_json_bytes,
     is_known_timeline,
     sha256_hex,
@@ -32,6 +33,7 @@ from homecoming.devices import (
     get_device,
     register_device,
 )
+from homecoming.hub_pack import fetch_hub_memories
 from homecoming.snapshot import build_snapshot_sections
 from homecoming.return_contracts import (
     MAX_COMPRESSED_BYTES,
@@ -217,13 +219,17 @@ async def build_homecoming_snapshot(
 ):
     now = time.time()
     await _ensure_seat_rooms()
+    # 先在开库之前把 Hub 记忆包拉好，别让网络请求占着数据库连接
+    hub_memories = await fetch_hub_memories({
+        "main": "aion", "second": "connor", **{seat: seat for seat in SEAT_OWNERS},
+    })
     try:
         async with get_db() as db:
             device = await get_device(db, body.device_id)
             if device is None or device["revoked_at"] is not None:
                 raise HTTPException(status_code=404, detail="device is not registered")
 
-            sections = await build_snapshot_sections(db, now=now)
+            sections = await build_snapshot_sections(db, now=now, hub_memories=hub_memories)
             route_bundle = build_portable_routes(
                 dict(SETTINGS),
                 dict(MODELS),

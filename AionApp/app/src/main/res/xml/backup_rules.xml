@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 归巢快照里有每位 AI 的记忆、最近聊天和线路；只放在这台手机上，不进手机/谷歌的云备份（10-31 小猫同意把私人记忆放进手机时约定）。Android 11 及以下用这份。 -->
+<full-backup-content>
+    <exclude domain="file" path="homecoming/" />
+    <exclude domain="file" path="homecoming-returns/" />
+    <exclude domain="database" path="homecoming.db" />
+    <exclude domain="database" path="homecoming.db-journal" />
+    <exclude domain="database" path="homecoming.db-wal" />
+    <exclude domain="database" path="homecoming.db-shm" />
+</full-backup-content>

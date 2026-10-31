@@ -71,15 +71,28 @@ public final class HomecomingMemoryRepository
 
     public Memory update(String ownerId, String id, String content,
             String baseHash, long updatedAt) {
+        requireWritable(id);
         return save(new Memory(required(id, "id"), validateOwner(ownerId),
                 required(content, "content"), "", baseHash, false, updatedAt),
                 "update", required(baseHash, "baseHash"));
     }
 
     public Memory delete(String ownerId, String id, String baseHash, long updatedAt) {
+        requireWritable(id);
         return save(new Memory(required(id, "id"), validateOwner(ownerId),
                 "", "", baseHash, true, updatedAt),
                 "delete", required(baseHash, "baseHash"));
+    }
+
+    /** 服务器打包的 Hub 记忆（id 以 hub: 开头）只读：离线时不改不删，回到线上也不会写回。 */
+    static boolean isReadOnly(String id) {
+        return id != null && id.startsWith("hub:");
+    }
+
+    private static void requireWritable(String id) {
+        if (isReadOnly(id)) {
+            throw new IllegalArgumentException("hub memory is read-only");
+        }
     }
 
     private Memory save(Memory memory, String action, String baseRevision) {

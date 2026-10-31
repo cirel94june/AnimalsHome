@@ -1504,3 +1504,26 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **密语时刻入口**：小猫暂时用不上。私聊侧栏、群聊侧栏、群聊加号菜单里的入口删掉；功能代码、/toys 页面不动，以后恢复入口就能用。`test_toy_navigation.js` 改成直接检查原来的打开方式（不再从侧栏 HTML 里抠按钮）。
 - 顺带：`test_chatroom_persona_mobile_performance.py` 里写死了 §101 改之前的底色 `var(--bg)`，跟着改成 `var(--ib-base, var(--bg))`。这个文件里剩下 1 项（缓存版本号字符串）是以前就失败的。
 - 测试：`test_phone_usability.py` 8 项通过（新加 2 项），`test_toy_navigation.js` 通过。改到的 HTML/CSS 相关测试文件里其他失败，在不带本次改动时也一样失败。
+
+
+## 103. 归巢带上 Hub 记忆（Hub #123 export-lite）+ 归巢数据不进云备份（10-31）
+
+小猫 10-31 同意：共享记忆 + 每位 AI 自己的私人记忆都放进手机（Hub 方案约定私人记忆上手机前要问她）。
+
+- **服务器拉包**（`homecoming/hub_pack.py`）：`POST /homecoming/snapshot/build` 在**开数据库之前**并发拉每位 AI 的 `GET /api/memory/export-lite?ai_id=…&max_bytes=60000&max_items=400&recent_days=30&include_dreams=false`。
+  - 用**共用钥匙**（`memory_hub_bridge._headers(cfg)`），不用主人钥匙。
+  - Hub 没接、某一位返回非 200、连不上：这一位不带 Hub 记忆，归巢照常打包，只打一行日志（不含内容）。
+  - 对应关系：main→aion→claude、second→connor→lucien、ai3–ai6→各自座位的 `memory_hub`。快照里只给已准备好的座位放。
+- **快照格式**（`snapshot.py`）：`memories.main` / `memories.second` 是「本地记忆 + Hub 条目」，座位是 `memories.<ai3…>`（旧手机本来就按 key 逐个导入）。
+  - Hub 条目 id 是 `hub:<owner>:<hub id>`。手机库 `memory_snapshot.id` 是全局主键，同一条共享记忆进两位 AI 的包，不能撞。
+  - `tags` 拼成 `keywords`（手机按关键词挑记忆），另带 `fact_ref`（同样加前缀）、`source:"hub"`、`read_only:true`。
+- **只读**：
+  - 服务器：`return_planner._manual_memory_plan` 遇到 `hub:` 开头的 entity_id 直接 `skip / hub_memory_is_read_only`，不写本地表，也不回写 Hub。
+  - 手机：`HomecomingMemoryRepository.update/delete` 对 `hub:` 开头的 id 抛 IllegalArgumentException；归巢页记忆列表对这类条目不显示编辑/删除，显示「Hub · 只读」。
+- **不进云备份**：`AndroidManifest` 加 `fullBackupContent`（≤ Android 11）和 `dataExtractionRules`（≥ 12，云备份 + 换机传输都排除）。排除的是 `files/homecoming/`、`files/homecoming-returns/` 和 `homecoming.db`（含 -journal/-wal/-shm）。
+- **APK**：1.24（versionCode 25）。
+- **测试**：
+  - 新增 `test_homecoming_hub_pack.py`：打包/前缀/关键词、共用钥匙不是主人钥匙、单个失败不拖垮、Hub 没接不发请求、快照里只给准备好的座位、回传 update/delete 都 skip。它继承了座位快照和回传规划两组旧测试，所以条数里带着旧测试。
+  - `test_homecoming_*.py` 共 91 项全过；不含新文件时 61 项，和改动前一样。
+  - Java：`HomecomingMemoryRepositoryTest` 加 1 项（能被想起、不能改不能删、不产生操作记录），由 CI 跑。
+- **已知限制（下一步）**：手机挑记忆的规则较粗，主要按关键词/整句包含打分；打分为 0 时按时间新旧排。Hub「钉住」的记忆不一定每轮都带上。以后可在 APK 里按 Hub 给的顺序兜底。

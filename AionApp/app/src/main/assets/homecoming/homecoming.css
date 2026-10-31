@@ -279,6 +279,7 @@ button.danger, .danger-outline {
 .memory-item p, .schedule-item p { white-space: pre-wrap; }
 .memory-actions { display: flex; gap: 7px; }
 .memory-actions button, .schedule-item button { min-height: 34px; font-size: 12px; }
+.memory-readonly { font-size: 12px; color: var(--muted, #7d92b5); }
 
 .segmented {
   align-self: center;

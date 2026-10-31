@@ -64,6 +64,21 @@ public class HomecomingMemoryRepositoryTest {
     }
 
     @Test
+    public void hubMemoriesAreRecalledButReadOnly() {
+        MemoryBackend backend = new MemoryBackend();
+        backend.snapshots.add(memory("hub:main:m1", "main", "小猫喜欢下雨天", "下雨,天气"));
+        HomecomingMemoryRepository repository = repository(backend);
+
+        assertEquals("hub:main:m1", repository.recall("main", "今天下雨了", 5).get(0).id);
+        assertThrows(IllegalArgumentException.class,
+                () -> repository.update("main", "hub:main:m1", "改掉", "base-hash", 20L));
+        assertThrows(IllegalArgumentException.class,
+                () -> repository.delete("main", "hub:main:m1", "base-hash", 20L));
+        assertTrue(backend.operations.isEmpty());
+        assertEquals(1, repository.recall("main", "下雨", 5).size());
+    }
+
+    @Test
     public void invalidOwnerIsRejected() {
         assertThrows(IllegalArgumentException.class,
                 () -> repository(new MemoryBackend()).recall("group", "x", 5));

@@ -6,7 +6,7 @@ import json
 import unicodedata
 from dataclasses import dataclass
 
-from .contracts import canonical_json_bytes, is_known_timeline, seat_of_timeline, sha256_hex
+from .contracts import canonical_json_bytes, is_hub_memory_id, is_known_timeline, seat_of_timeline, sha256_hex
 
 
 @dataclass(frozen=True)
@@ -177,6 +177,9 @@ async def _message_plan(db, operation, mapping, observations) -> PlanRow:
 
 
 async def _manual_memory_plan(db, operation, mapping, observations) -> PlanRow:
+    if is_hub_memory_id(operation.get("entity_id")):
+        # Hub 精简包是只读的：离线时改了/删了也不写回本地表，更不回写 Hub（Hub #123 约定）
+        return _row(operation, "skip", "hub_memory_is_read_only")
     payload = operation["payload"]
     owner = str(payload.get("owner_id") or "")
     target = _memory_target(owner, mapping)

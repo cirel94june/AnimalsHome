@@ -249,6 +249,16 @@
       text.textContent = row.content;
       const actions = document.createElement("div");
       actions.className = "memory-actions";
+      if (String(row.id || "").startsWith("hub:")) {
+        // Hub 记忆包是只读的：离线时改了也不会带回去（10-31，Hub #123）
+        const tag = document.createElement("span");
+        tag.className = "memory-readonly";
+        tag.textContent = "Hub · 只读";
+        actions.append(tag);
+        item.append(text, actions);
+        root.appendChild(item);
+        return;
+      }
       const edit = document.createElement("button");
       edit.textContent = "编辑";
       edit.addEventListener("click", () => {

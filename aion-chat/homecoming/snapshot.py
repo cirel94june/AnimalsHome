@@ -316,6 +316,7 @@ async def build_snapshot_sections(
     digest_anchor: dict | None = None,
     seats: list[dict] | None = None,
     group_seats: list[str] | None = None,
+    hub_memories: dict[str, list[dict]] | None = None,
 ) -> dict:
     defaults: dict = {}
     if seats is None or group_seats is None:
@@ -372,6 +373,7 @@ async def build_snapshot_sections(
         else defaults["supervision_snapshot"]
     )
 
+    hub_memories = hub_memories or {}
     cutoff = float(now) - TEXT_WINDOW_SECONDS
     conversations, rooms = await _metadata(db)
     timelines = {
@@ -444,9 +446,15 @@ async def build_snapshot_sections(
                 "second_voice": chatroom_config.get("tts_connor_voice") or "",
             },
         },
+        # 本地记忆在前，后面接 Hub 的只读精简包（hub_pack.py；由路由在开库前拉好传进来）
         "memories": {
-            "main": await _memory_rows(db, "memories"),
-            "second": await _memory_rows(db, "chatroom_memories"),
+            "main": await _memory_rows(db, "memories") + list(hub_memories.get("main", [])),
+            "second": await _memory_rows(db, "chatroom_memories") + list(hub_memories.get("second", [])),
+            **{
+                seat["id"]: list(hub_memories[seat["id"]])
+                for seat in seats
+                if hub_memories.get(seat["id"])
+            },
         },
         "timelines": timelines,
         "schedules": [_portable_row(row) for row in schedules],
