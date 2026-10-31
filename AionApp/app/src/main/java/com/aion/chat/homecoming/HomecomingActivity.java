@@ -106,6 +106,26 @@ public final class HomecomingActivity extends AppCompatActivity {
         }
     }
 
+    /** 进门页上每位的头像、名字、记得几件事；读不出来就空着，不影响能不能进。 */
+    private org.json.JSONArray readinessMembers(SQLiteDatabase readable) {
+        org.json.JSONArray members = new org.json.JSONArray();
+        try {
+            for (HomecomingIdentityRepository.Member member
+                    : new HomecomingIdentityRepository(database).roster()) {
+                if (!HomecomingOwners.isOwner(member.ownerId)) continue;
+                members.put(new org.json.JSONObject()
+                        .put("ownerId", member.ownerId)
+                        .put("name", member.name)
+                        .put("avatar", member.avatar)
+                        .put("memoryCount", count(readable, "memory_snapshot",
+                                "owner_id='" + member.ownerId + "'")));
+            }
+        } catch (Exception ignored) {
+            return new org.json.JSONArray();
+        }
+        return members;
+    }
+
     String readinessJson() {
         try {
             int routeCount = homecomingPreferences().getInt(
@@ -147,7 +167,7 @@ public final class HomecomingActivity extends AppCompatActivity {
                             : (int) storedSchema,
                     permissionStates,
                     notReadyReason(snapshotId, routeCount, homecomingPreferences()));
-            return readiness.toJson().toString();
+            return readiness.toJson().put("members", readinessMembers(readable)).toString();
         } catch (Exception exception) {
             return new HomecomingReadiness(
                     false, 0L, 0L, 0, 0, 0, 0, 0, 0, 0,

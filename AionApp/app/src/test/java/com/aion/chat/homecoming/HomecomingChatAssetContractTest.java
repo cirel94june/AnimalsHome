@@ -16,9 +16,10 @@ public class HomecomingChatAssetContractTest {
     public void bundledShellContainsThreeChatsMediaTtsAndMemoryControls() throws Exception {
         String html = read("src/main/assets/homecoming/index.html");
         String js = read("src/main/assets/homecoming/homecoming.js");
-        assertTrue(html.contains("data-timeline=\"main_private\""));
-        assertTrue(html.contains("data-timeline=\"companion_private\""));
-        assertTrue(html.contains("data-timeline=\"group\""));
+        // 11-01 改版：顶上的人按快照名单画出来，群聊固定在最后
+        assertTrue(html.contains("id=\"peopleTabs\""));
+        assertTrue(js.contains("button.dataset.timeline = member.timelineId"));
+        assertTrue(js.contains("group.dataset.timeline = \"group\""));
         assertTrue(html.contains("id=\"composer\""));
         assertTrue(html.contains("id=\"pickImage\""));
         assertTrue(html.contains("id=\"captureImage\""));
@@ -78,12 +79,13 @@ public class HomecomingChatAssetContractTest {
     }
 
     @Test
-    public void activeShellUsesCompactConversationPickerAndFourPageNavigation()
+    public void activeShellShowsPeopleAcrossTheTopAndFourPageNavigation()
             throws Exception {
         String html = read("src/main/assets/homecoming/index.html");
         String js = read("src/main/assets/homecoming/homecoming.js");
 
-        assertTrue(html.contains("id=\"conversationPicker\""));
+        assertTrue(html.contains("id=\"peopleTabs\""));
+        assertFalse(html.contains("id=\"conversationPicker\""));  // 不再藏在下拉里
         assertTrue(html.contains("data-page=\"chat\""));
         assertTrue(html.contains("data-page=\"memory\""));
         assertTrue(html.contains("data-page=\"schedule\""));
@@ -105,8 +107,8 @@ public class HomecomingChatAssetContractTest {
                 "src/main/java/com/aion/chat/homecoming/HomecomingRuntime.java");
 
         assertTrue(html.contains("id=\"ttsQuickToggle\""));
-        assertTrue(js.contains("replay.className = \"tts-replay\""));
-        assertTrue(js.contains("TTS 已关闭"));
+        assertTrue(js.contains("el(\"button\", \"tts-replay\""));
+        assertTrue(js.contains("朗读：关"));
         assertTrue(js.contains("renderTtsState"));
         assertFalse(runtime.contains("\"homecoming_tts_enabled\", true"));
         assertTrue(runtime.contains("speakIfEnabled("));

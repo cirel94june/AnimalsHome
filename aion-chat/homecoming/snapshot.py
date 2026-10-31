@@ -242,6 +242,51 @@ def _load_seats() -> tuple[list[dict], list[str]]:
     return seats, [seat["id"] for seat in seats]
 
 
+_AVATAR_MAX_BYTES = 300_000
+_AVATAR_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                 ".webp": "image/webp", ".gif": "image/gif"}
+
+
+def _avatar_file(url: str):
+    """头像地址 → 服务器上的文件。只认自己家的两处：换过的头像（/skin-assets/）和原版/替换图（/public/）。"""
+    import re
+    from config import DATA_DIR, PUBLIC_DIR
+    from public_overrides import override_for
+
+    url = str(url or "").split("?", 1)[0]
+    match = re.fullmatch(r"/skin-assets/([\w\-]+\.\w+)", url)
+    if match:
+        return DATA_DIR / "skin" / match.group(1)
+    match = re.fullmatch(r"/public/([^/\\]+\.\w+)", url)
+    if match and ".." not in match.group(1):
+        return override_for(match.group(1)) or PUBLIC_DIR / match.group(1)
+    return None
+
+
+def avatar_data_uri(url: str) -> str:
+    """把头像变成 data: 地址带进手机，断网也能显示；找不到、太大、不是图片就不带（手机上退回名字首字）。"""
+    try:
+        path = _avatar_file(url)
+        mime = _AVATAR_TYPES.get(path.suffix.lower()) if path else None
+        if not mime or not path.is_file() or path.stat().st_size > _AVATAR_MAX_BYTES:
+            return ""
+        return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+    except Exception:  # noqa: BLE001 — 头像带不上不影响归巢
+        return ""
+
+
+def _load_avatars(seat_ids) -> dict[str, str]:
+    """owner → 头像 data 地址；user 是小猫自己。和家里聊天页用的是同一份头像设置。"""
+    try:
+        import actors
+        avatars = {"user": avatar_data_uri("/public/UserIcon.png")}
+        for owner, actor in (("main", "aion"), ("second", "connor"), *((seat, seat) for seat in seat_ids)):
+            avatars[owner] = avatar_data_uri((actors.get_actor(actor) or {}).get("avatar") or "")
+        return {owner: value for owner, value in avatars.items() if value}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _public_route_descriptors(settings: dict) -> list[dict]:
     descriptors: list[dict] = []
     for raw in settings.get("custom_model_routes") or []:
@@ -317,6 +362,7 @@ async def build_snapshot_sections(
     seats: list[dict] | None = None,
     group_seats: list[str] | None = None,
     hub_memories: dict[str, list[dict]] | None = None,
+    avatars: dict[str, str] | None = None,
 ) -> dict:
     defaults: dict = {}
     if seats is None or group_seats is None:
@@ -374,6 +420,8 @@ async def build_snapshot_sections(
     )
 
     hub_memories = hub_memories or {}
+    if avatars is None:
+        avatars = _load_avatars([seat["id"] for seat in seats])
     cutoff = float(now) - TEXT_WINDOW_SECONDS
     conversations, rooms = await _metadata(db)
     timelines = {
@@ -421,18 +469,22 @@ async def build_snapshot_sections(
             "user": {
                 "name": worldbook.get("user_name") or "用户",
                 "persona": worldbook.get("user_persona") or "",
+                "avatar": avatars.get("user", ""),
             },
             "companions": {
                 "main": {
                     "name": worldbook.get("ai_name") or "AI",
                     "persona": worldbook.get("ai_persona") or "",
+                    "avatar": avatars.get("main", ""),
                 },
                 "second": {
                     "name": chatroom_config.get("connor_name") or "第二AI",
                     "persona": chatroom_config.get("connor_persona") or "",
+                    "avatar": avatars.get("second", ""),
                 },
                 **{
-                    seat["id"]: {"name": seat["name"], "persona": seat.get("persona") or ""}
+                    seat["id"]: {"name": seat["name"], "persona": seat.get("persona") or "",
+                                 "avatar": avatars.get(seat["id"], "")}
                     for seat in seats
                 },
             },

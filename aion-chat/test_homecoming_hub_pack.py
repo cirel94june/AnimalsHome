@@ -211,3 +211,44 @@ class HubReturnPlannerTests(HomecomingReturnPlannerTests):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AvatarTests(unittest.TestCase):
+    """11-01 归巢改版：头像打包进快照，断网也能显示；只认自己家的图片。"""
+
+    def test_only_home_images_become_data_uris(self):
+        from homecoming.snapshot import avatar_data_uri
+
+        self.assertTrue(avatar_data_uri("/public/codexicon.png").startswith("data:image/png;base64,"))
+        for bad in ("/skin-assets/../config.py", "/public/../aion-chat/main.py", "/public/a/b.png",
+                    "https://example.com/a.png", "/static/x.js", "", None):
+            self.assertEqual("", avatar_data_uri(bad), bad)
+
+    def test_too_big_images_are_left_out(self):
+        from homecoming import snapshot
+
+        original = snapshot._AVATAR_MAX_BYTES
+        snapshot._AVATAR_MAX_BYTES = 10
+        self.addCleanup(setattr, snapshot, "_AVATAR_MAX_BYTES", original)
+        self.assertEqual("", snapshot.avatar_data_uri("/public/codexicon.png"))
+
+
+class AvatarSnapshotTests(SeatSnapshotTests):
+    async def test_avatars_ride_along_in_identity(self):
+        from homecoming.snapshot import build_snapshot_sections
+        import aiosqlite
+
+        async with aiosqlite.connect(self.db_path) as db:
+            sections = await build_snapshot_sections(
+                db, now=1_800_000_000.0, supervision_snapshot={}, settings={},
+                worldbook={"ai_name": "小克", "user_name": "小猫"}, chatroom_config={"connor_name": "Lucien"},
+                location_config={}, location_status={}, camera_config={}, digest_anchor={},
+                seats=[{"id": "ai3", "name": "狗蛋"}], group_seats=["ai3"], hub_memories={},
+                avatars={"user": "data:image/png;base64,AAAA", "main": "data:image/jpeg;base64,BBBB",
+                         "ai3": "data:image/png;base64,CCCC"},
+            )
+        identity = sections["identity"]
+        self.assertEqual("data:image/png;base64,AAAA", identity["user"]["avatar"])
+        self.assertEqual("data:image/jpeg;base64,BBBB", identity["companions"]["main"]["avatar"])
+        self.assertEqual("", identity["companions"]["second"]["avatar"])  # 没有就空着，手机上显示名字首字
+        self.assertEqual("data:image/png;base64,CCCC", identity["companions"]["ai3"]["avatar"])

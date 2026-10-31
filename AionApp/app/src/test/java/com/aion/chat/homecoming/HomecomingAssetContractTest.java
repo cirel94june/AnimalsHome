@@ -92,10 +92,10 @@ public class HomecomingAssetContractTest {
         assertTrue(script.contains("returnWithoutSync()"));
         assertTrue(script.contains("abandonHomecoming()"));
         assertTrue(script.contains("getReturnStateJson()"));
-        assertTrue(script.contains("saved: \"归巢数据已保存，正在返回正常模式\""));
+        assertTrue(script.contains("saved: \"收拾好了，正在回正常模式…\""));
         assertTrue(script.contains("data.mode === \"active\""));
-        assertTrue(script.contains("保存数据并返回正常模式"));
-        assertTrue(script.contains("开始回传"));
+        assertTrue(script.contains("带回家，退出归巢"));
+        assertTrue(script.contains("接着带回家"));
         assertFalse(script.contains("innerHTML"));
         assertFalse(script.contains("setInterval("));
     }

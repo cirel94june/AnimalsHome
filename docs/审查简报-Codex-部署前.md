@@ -1549,3 +1549,31 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_homecoming_hub_pack.py` 新加：慢速滴流触发总时限且只丢那一位；items=1 / 顶层是列表 / 回应过大只丢那一位；payload.id 偷带前缀、大小写加空白、id 不一致、memory_auto 带前缀；importer 出口拒绝。
   - 归巢 Python 全套 95 项通过。
   - Java：`HomecomingMemoryRepositoryTest` 加空白/制表符/大写前缀拒绝，以及座位能召回自己的包、不能写、空座位为空、未知 owner 报错；`HomecomingSeatOwnersTest` 改成座位只召回自己的包、不串到小克。Java 由 CI 跑。
+
+
+## 105. 归巢页改版（照草图 ④–⑦）+ 头像带进手机（11-01 小猫：原来的太丑、不顺手）
+
+草图：https://claude.ai/artifact/4RciFYF4MvMtqbrk88wNwD 下排四张，小猫看过说「好」。
+
+- **样式**：`assets/homecoming/` 三个文件重写，改成和家里一样的 IB 蓝色毛玻璃；文案全换成大白话。
+- **功能和桥接调用一个没少**：
+  - 发消息、停止、图片、拍照、朗读、记忆的增删改和整理、提醒、监督状态、线路/模型偏好、进入、回家五个动作，用的都是原来的 `HomecomingNative.*`。
+  - 资产合同测试里写死的旧文字和旧元素换成新的；安全检查一条没删：仍然没有 innerHTML / fetch / http(s)，全部用 textContent。
+- **交互变化**：
+  - 换人：不再藏在标题下拉里，顶上直接一排头像 + 群聊（按快照名单画，只在聊天页显示）。
+  - 输入框：图片 / 拍照收进「＋」；「停下」只在等回复时出现在「正在想…」旁边；朗读关着时不显示「再读一遍」。
+  - 记忆页：按人切换（座位也能看，但只有两位能新记），带搜索；分「这次在手机上记的」和「从家里带来的（只能看）」两块。
+  - 提醒页：「在哪里提醒」原来有两个一样的「私聊里」，现在只剩一个，跟着「谁来提醒」走。
+  - 回家：五步改四步（收拾好 → 送到家门口 → 核对 → 放进家里）；三个选择加底部红字「全部丢掉」，丢掉要再确认。
+  - 顺手修了个老 bug：`classList.toggle("hidden", mode !== "active" || data.inFlight)` 在 inFlight 是 undefined 时会变成来回切换，「再待一会儿」会被误藏。
+- **头像**：
+  - 服务器：`snapshot.avatar_data_uri` 只认 `/skin-assets/<名>.<后缀>`（data/skin）和 `/public/<名>.<后缀>`（先找替换图再找原图）。拒绝 `..`、子目录和外部链接；只收 png / jpg / webp / gif；单张不超过 300KB。转成 data URI 放进 `identity.user.avatar` 和 `identity.companions.<owner>.avatar`，带不上就空串。
+  - 线上真实头像大约 45KB / 张，你的头像（替换图）176KB。
+  - 手机：`HomecomingIdentityRepository.safeAvatar` 只收 `data:image/(png|jpeg|webp|gif);base64,…`（整串正则），且不超过 60 万字符；外部链接、svg、夹带引号的都丢掉。roster 每位带 avatar，另有 `userAvatar()`。
+  - `readinessJson` 增加 `members`（名字、头像、记得几件事），读不出来就给空数组，不影响能不能进。
+  - JS 里又过一遍同样的正则，才拿去当 `background-image`。
+- **验证**：
+  - 本机用假桥在 375 宽下打开新页：进门 / 群聊 / 记忆 / 更多 / 回家都看过截图，并用脚本点过换人、换记忆主人、搜索、发送后「正在想」、提醒下拉、回家面板的「再待一会儿」。控制台无错误。
+  - 归巢 Python 全套 102 项通过（新加：头像只认自己家的图、过大不带、快照里带上）。
+  - Java 新加 `avatarsComeOnlyFromSnapshotImageData`，旧的资产合同测试已按新页面更新；由 CI 跑。
+- **APK**：1.25（versionCode 26）。

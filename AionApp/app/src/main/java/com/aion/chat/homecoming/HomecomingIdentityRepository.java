@@ -88,7 +88,8 @@ public final class HomecomingIdentityRepository {
             for (String owner : new String[]{"main", "second"}) {
                 JSONObject companion = companions.optJSONObject(owner);
                 result.add(new Member(owner, HomecomingOwners.privateTimeline(owner),
-                        companion == null ? owner : companion.optString("name", owner), ""));
+                        companion == null ? owner : companion.optString("name", owner), "",
+                        companion == null ? "" : companion.optString("avatar", "")));
             }
             JSONArray listed = root.optJSONArray("roster");
             for (int index = 0; listed != null && index < listed.length(); index++) {
@@ -99,7 +100,7 @@ public final class HomecomingIdentityRepository {
                 String name = companion.optString("name", "").trim();
                 if (name.isEmpty()) continue;
                 result.add(new Member(owner, HomecomingOwners.privateTimeline(owner),
-                        name, item.optString("model_key", "")));
+                        name, item.optString("model_key", ""), companion.optString("avatar", "")));
             }
         } catch (Exception exception) {
             throw new IllegalStateException("verified identity snapshot is invalid", exception);
@@ -112,12 +113,39 @@ public final class HomecomingIdentityRepository {
         public final String timelineId;
         public final String name;
         public final String modelKey;
+        /** 服务器打包进来的头像（data:image/…），没有就是空串，页面上退回名字首字。 */
+        public final String avatar;
 
         Member(String ownerId, String timelineId, String name, String modelKey) {
+            this(ownerId, timelineId, name, modelKey, "");
+        }
+
+        Member(String ownerId, String timelineId, String name, String modelKey, String avatar) {
             this.ownerId = ownerId;
             this.timelineId = timelineId;
             this.name = name;
             this.modelKey = modelKey == null ? "" : modelKey;
+            this.avatar = safeAvatar(avatar);
+        }
+    }
+
+    private static final java.util.regex.Pattern AVATAR = java.util.regex.Pattern.compile(
+            "data:image/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*");
+    static final int MAX_AVATAR_CHARS = 600_000;
+
+    /** 只认快照里自带的图片数据；外部链接一律不用（断网也用不了，还会往外发请求）。 */
+    static String safeAvatar(String value) {
+        if (value == null || value.length() > MAX_AVATAR_CHARS) return "";
+        return AVATAR.matcher(value).matches() ? value : "";
+    }
+
+    /** 小猫自己的头像。 */
+    public String userAvatar() {
+        try {
+            JSONObject user = new JSONObject(source.load()).optJSONObject("user");
+            return user == null ? "" : safeAvatar(user.optString("avatar", ""));
+        } catch (Exception exception) {
+            return "";
         }
     }
 

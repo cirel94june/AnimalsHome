@@ -3,168 +3,156 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>归巢模式</title>
+  <title>归巢</title>
   <link rel="stylesheet" href="homecoming.css">
 </head>
 <body>
   <main class="shell">
-    <section id="readinessCard" class="readiness-card">
-      <p class="eyebrow">手机本地灾备</p>
-      <h1 id="title">归巢模式</h1>
-      <p id="status" class="status">正在读取本地快照…</p>
-      <div id="summary" class="summary"></div>
+    <!-- 进门 -->
+    <section id="readinessCard" class="welcome">
+      <div class="hero">
+        <p class="eyebrow">HOMECOMING</p>
+        <h1 id="title">归巢</h1>
+        <p class="lead">网断了，大家也还在。<br>这里的一切都存在这台手机上。</p>
+      </div>
+      <div id="members" class="members"></div>
+      <div id="summary" class="checklist glass"></div>
       <p id="warning" class="warning"></p>
-      <div id="inactiveActions" class="actions">
-        <button id="enter" class="primary">进入归巢</button>
-        <button id="cancel">取消</button>
+      <div id="inactiveActions" class="welcome-actions">
+        <button id="enter" class="primary big">进入归巢</button>
+        <button id="cancel" class="text-button">先不用</button>
       </div>
     </section>
 
+    <!-- 归巢里 -->
     <section id="chatShell" class="app-shell hidden">
       <header class="app-header">
-        <div>
-          <p class="eyebrow">归巢中 · 数据保存在本机</p>
-          <button id="conversationPicker" class="conversation-picker"
-                  aria-expanded="false" aria-controls="conversationMenu">
-            <span id="chatTitle">当前会话</span><span aria-hidden="true">⌄</span>
-          </button>
+        <div class="header-row">
+          <span class="local-pill"><span class="local-dot"></span>归巢中 · 存在手机里</span>
+          <button id="ttsQuickToggle" class="tts-quick" type="button" aria-pressed="false">🔊 朗读：关</button>
         </div>
-        <div class="header-status">
-          <button id="ttsQuickToggle" class="tts-quick" type="button"
-                  aria-pressed="false">TTS 已关闭</button>
-          <span class="local-dot" title="手机本地运行"></span>
-        </div>
+        <nav id="peopleTabs" class="people-tabs" aria-label="和谁聊"></nav>
       </header>
-
-      <div id="conversationMenu" class="conversation-menu hidden">
-        <button data-timeline="main_private">主伴侣私聊</button>
-        <button data-timeline="companion_private">第二伴侣私聊</button>
-        <button data-timeline="group">群聊</button>
-      </div>
 
       <div class="page-host">
         <section id="chatPage" class="app-page active" data-page-panel="chat">
           <section id="messages" class="messages" aria-live="polite"></section>
+          <div id="typing" class="typing hidden">
+            <span id="typingAvatar" class="avatar small"></span>
+            <span class="typing-bubble"><span id="typingText">正在想…</span><button id="stopReply" class="link-button">停下</button></span>
+          </div>
           <p id="mediaState" class="media-state"></p>
-          <div class="composer-tools">
-            <button id="pickImage" aria-label="从相册选择图片">图片</button>
-            <button id="captureImage" aria-label="使用手机摄像头拍照">拍照</button>
-            <button id="stopReply">停止</button>
+          <div id="attachMenu" class="attach-menu hidden">
+            <button id="pickImage">🖼️ 从相册选图片</button>
+            <button id="captureImage">📷 拍一张</button>
           </div>
           <div class="composer-row">
-            <textarea id="composer" rows="2" placeholder="输入消息"></textarea>
-            <button id="send" class="primary">发送</button>
+            <button id="attachToggle" class="round-button" aria-label="发图片或拍照" aria-expanded="false">＋</button>
+            <textarea id="composer" rows="1" placeholder="说点什么…"></textarea>
+            <button id="send" class="primary send-button">发送</button>
           </div>
         </section>
 
         <section id="memoryPanel" class="app-page" data-page-panel="memory">
-          <div class="section-header">
-            <div>
-              <p class="eyebrow">两套记忆独立保存</p>
-              <h2>记忆</h2>
-            </div>
-            <button id="summarizeMemories" class="compact-action">总结新增聊天</button>
-          </div>
-          <select id="memoryOwner" aria-label="记忆所属伴侣"></select>
-          <div class="composer-row memory-compose">
-            <input id="memoryText" placeholder="手动新增记忆">
-            <button id="addMemory">新增</button>
-          </div>
+          <h2>他们记得的事</h2>
+          <nav id="memoryTabs" class="chip-row" aria-label="看谁的记忆"></nav>
+          <input id="memorySearch" class="search" type="search" placeholder="🔍 找一件事…">
           <section id="memoryList" class="content-list"></section>
+          <div id="memoryCompose" class="memory-compose hidden">
+            <input id="memoryText" placeholder="想让 TA 记住什么？">
+            <button id="addMemory" class="primary">记下</button>
+          </div>
+          <div id="memoryActions" class="memory-bar">
+            <button id="showMemoryCompose" class="soft-button">＋ 记一件事</button>
+            <button id="summarizeMemories" class="soft-button">把今天聊的整理成记忆</button>
+          </div>
+          <p class="hint">「从家里带来的」只能看；在这里新记的，回家时会一起带回去。</p>
         </section>
 
         <section id="schedulePage" class="app-page" data-page-panel="schedule">
+          <h2>提醒</h2>
           <div class="segmented">
-            <button id="scheduleTab" class="active">日程</button>
-            <button id="supervisionTab">监督</button>
+            <button id="scheduleTab" class="active">提醒和闹钟</button>
+            <button id="supervisionTab">手机监督</button>
           </div>
           <div id="schedulePanel" class="subpage active">
-            <p id="scheduleExactness" class="media-state"></p>
-            <div class="schedule-form">
-              <select id="scheduleType" aria-label="日程类型">
-                <option value="alarm">闹铃</option>
+            <div class="schedule-form glass">
+              <select id="scheduleType" aria-label="类型">
                 <option value="reminder">提醒</option>
-                <option value="monitor">定时监控</option>
+                <option value="alarm">闹钟</option>
+                <option value="monitor">到点看一眼摄像头</option>
               </select>
-              <input id="scheduleTime" type="datetime-local" aria-label="触发时间">
-              <input id="scheduleContent" maxlength="2000" placeholder="内容">
-              <select id="scheduleOwner" aria-label="执行伴侣"></select>
-              <select id="scheduleTimeline" aria-label="投递会话">
-                <option value="main_private">主伴侣私聊</option>
-                <option value="companion_private">第二伴侣私聊</option>
-                <option value="group">三人聊天</option>
+              <input id="scheduleTime" type="datetime-local" aria-label="什么时候">
+              <input id="scheduleContent" maxlength="2000" placeholder="提醒什么？">
+              <select id="scheduleOwner" aria-label="谁来提醒"></select>
+              <select id="scheduleTimeline" aria-label="在哪里提醒">
+                <option id="schedulePrivateOption" value="main_private">私聊里</option>
+                <option value="group">群聊里</option>
               </select>
-              <button id="addSchedule" class="primary">新增日程</button>
+              <button id="addSchedule" class="primary">加上</button>
             </div>
+            <p id="scheduleExactness" class="hint"></p>
             <section id="scheduleList" class="content-list"></section>
           </div>
           <div id="supervisionPanel" class="subpage">
-            <p id="supervisionReadiness" class="media-state"></p>
-            <p class="checkpoint">这里只显示手机当前状态，不提供配置或控制入口。</p>
+            <p id="supervisionReadiness" class="hint"></p>
+            <p class="hint">这里只能看手机监督现在的情况，改设置要回家里改。</p>
             <section id="supervisionList" class="content-list"></section>
           </div>
         </section>
 
         <section id="settingsPage" class="app-page" data-page-panel="settings">
-          <div class="section-header">
-            <div>
-              <p class="eyebrow">归巢独立配置</p>
-              <h2>设置</h2>
-            </div>
+          <h2>更多</h2>
+          <div class="glass settings-card">
+            <label class="field">
+              <span>给谁设置</span>
+              <select id="settingsOwner"></select>
+            </label>
+            <label class="field">
+              <span>用哪条网络线路</span>
+              <select id="routeSelect"></select>
+            </label>
+            <label class="field">
+              <span>用哪个模型</span>
+              <select id="modelSelect"></select>
+            </label>
           </div>
-          <label class="field">
-            <span>配置对象</span>
-            <select id="settingsOwner"></select>
-          </label>
-          <label class="field">
-            <span>云线路</span>
-            <select id="routeSelect"></select>
-          </label>
-          <label class="field">
-            <span>模型</span>
-            <select id="modelSelect"></select>
-          </label>
-          <label class="toggle-row">
-            <span>TTS 语音</span>
+          <label class="glass toggle-row">
+            <span>自动朗读回复</span>
             <input id="ttsEnabled" type="checkbox">
           </label>
-          <button id="return" class="danger-outline">返回正常模式</button>
+          <button id="return" class="primary big">回家</button>
+          <p class="hint">网通了再回家：会把这次在手机上聊的、记的带回去。</p>
         </section>
       </div>
 
       <nav class="bottom-nav" aria-label="归巢页面">
-        <button data-page="chat" class="active"><span>聊</span><small>聊天</small></button>
-        <button data-page="memory"><span>忆</span><small>记忆</small></button>
-        <button data-page="schedule"><span>程</span><small>日程</small></button>
-        <button data-page="settings"><span>设</span><small>设置</small></button>
+        <button data-page="chat" class="active"><span>💬</span><small>聊天</small></button>
+        <button data-page="memory"><span>🧠</span><small>记忆</small></button>
+        <button data-page="schedule"><span>⏰</span><small>提醒</small></button>
+        <button data-page="settings"><span>⋯</span><small>更多</small></button>
       </nav>
     </section>
 
+    <!-- 回家 -->
     <aside id="returnPanel" class="return-panel hidden">
-      <div class="section-header">
-        <div>
-          <p class="eyebrow">手动返回</p>
-          <h2>回传归巢数据</h2>
-        </div>
-        <button id="closeReturnPanel">继续使用归巢</button>
-      </div>
+      <h2>回家</h2>
+      <p id="returnStatus" class="lead"></p>
       <ol id="returnPhases" class="return-phases">
-        <li data-return-phase="freezing">冻结本地新增内容</li>
-        <li data-return-phase="building">生成不可变回归包</li>
-        <li data-return-phase="uploading">上传到服务器隔离区</li>
-        <li data-return-phase="planning">预演并检查冲突</li>
-        <li data-return-phase="applying">小批量写入并核验回执</li>
+        <li data-return-phase="freezing">收拾好</li>
+        <li data-return-phase="uploading">送到家门口</li>
+        <li data-return-phase="planning">核对有没有和家里冲突</li>
+        <li data-return-phase="applying">放进家里</li>
       </ol>
-      <p id="returnStatus" class="status"></p>
-      <section id="returnCounts" class="summary"></section>
+      <section id="returnCounts" class="checklist glass hidden"></section>
       <p id="returnFailure" class="warning"></p>
-      <div class="actions">
-        <button id="startReturnSync" class="primary">开始回传并返回</button>
-        <button id="abandonHomecoming" class="danger">放弃全部归巢数据并返回</button>
-        <button id="retryReturnSync" class="primary hidden">手动重试</button>
-        <button id="returnWithoutSync" class="danger hidden">保留数据，直接返回正常模式</button>
+      <div class="welcome-actions">
+        <button id="startReturnSync" class="primary big">带回家，退出归巢</button>
+        <button id="retryReturnSync" class="primary big hidden">再试一次</button>
+        <button id="returnWithoutSync" class="soft-button hidden">先不带，留在手机上，回正常模式</button>
+        <button id="closeReturnPanel" class="text-button">再待一会儿</button>
       </div>
-      <p class="checkpoint">放弃后将删除全部本机归巢数据，并以服务器数据为准；此操作不可撤销。</p>
+      <button id="abandonHomecoming" class="danger-link">全部丢掉，以家里为准</button>
     </aside>
   </main>
   <script src="homecoming.js"></script>

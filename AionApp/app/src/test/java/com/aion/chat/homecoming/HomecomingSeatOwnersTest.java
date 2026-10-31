@@ -144,13 +144,32 @@ public class HomecomingSeatOwnersTest {
     }
 
     @Test
+    public void avatarsComeOnlyFromSnapshotImageData() {
+        String json = "{\"user\":{\"name\":\"U\",\"avatar\":\"data:image/png;base64,QUJD\"},"
+                + "\"companions\":{\"main\":{\"name\":\"M\",\"avatar\":\"data:image/jpeg;base64,QUJD\"},"
+                + "\"second\":{\"name\":\"S\",\"avatar\":\"https://example.invalid/a.png\"},"
+                + "\"ai3\":{\"name\":\"狗蛋\",\"avatar\":\"data:image/svg+xml;base64,QUJD\"},"
+                + "\"ai5\":{\"name\":\"Kimi\",\"avatar\":\"data:image/png;base64,QUJD\\\");x\"}},"
+                + "\"roster\":[{\"owner\":\"ai3\"},{\"owner\":\"ai5\"}]}";
+        HomecomingIdentityRepository identities = new HomecomingIdentityRepository(() -> json);
+        List<HomecomingIdentityRepository.Member> roster = identities.roster();
+
+        assertEquals("data:image/jpeg;base64,QUJD", roster.get(0).avatar);
+        assertEquals("", roster.get(1).avatar);  // 外部链接不用
+        assertEquals("", roster.get(2).avatar);  // svg 不收
+        assertEquals("", roster.get(3).avatar);  // 夹带引号的不收
+        assertEquals("data:image/png;base64,QUJD", identities.userAvatar());
+        assertEquals("", new HomecomingIdentityRepository(() -> WITH_SEATS).userAvatar());
+    }
+
+    @Test
     public void conversationListIsBuiltFromTheRoster() throws Exception {
         String script = asset("homecoming.js");
-        assertTrue(script.contains("function renderConversationMenu()"));
+        assertTrue(script.contains("function renderPeopleTabs()"));
         assertTrue(script.contains("identity.roster"));
         assertTrue(script.contains("closest(\"[data-timeline]\")"));  // 动态按钮也能点
         assertFalse(script.contains("identity.secondName || \"AI\""));
-        assertTrue(asset("index.html").contains("data-timeline=\"group\">群聊"));
+        assertTrue(script.contains("el(\"button\", \"person-tab group\", \"群聊\")"));
     }
 
     private static String asset(String name) throws Exception {

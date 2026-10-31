@@ -127,10 +127,12 @@ final class HomecomingRuntime {
                     .put("ownerId", member.ownerId)
                     .put("timelineId", member.timelineId)
                     .put("name", member.name)
-                    .put("modelKey", member.modelKey));
+                    .put("modelKey", member.modelKey)
+                    .put("avatar", member.avatar));
         }
         JSONObject identity = new JSONObject()
                 .put("userName", main.userName)
+                .put("userAvatar", identities.userAvatar())
                 .put("mainName", main.companionName)
                 .put("secondName", second.companionName)
                 .put("roster", roster);
