@@ -243,6 +243,8 @@ def _load_seats() -> tuple[list[dict], list[str]]:
 
 
 _AVATAR_MAX_BYTES = 5_000_000      # 原图最大多大还肯读
+_AVATAR_MAX_PIXELS = 8_000_000    # 原图最多 8 百万像素（约 2800×2800），超了不解码
+_AVATAR_MAX_SIDE = 8_000
 _AVATAR_EDGE = 192                 # 缩成最长边 192 像素的 webp，一张通常十几 KB
 _AVATAR_OUT_MAX = 80_000           # 缩完单张最多这么大（data 地址字符数）
 _AVATAR_TOTAL_CHARS = 400_000      # 所有头像加起来的预算（Codex §105 M2：每张合规、合起来会撑爆手机上限）
@@ -286,6 +288,11 @@ def _shrink_avatar(raw: bytes) -> str:
     from PIL import Image
 
     with Image.open(io.BytesIO(raw)) as image:
+        # 先看尺寸再解码：文件小、像素巨大的图（Codex §106 M3：13000×13000 只有 657KB）解开要几百 MB，会把服务撑爆
+        width, height = image.size
+        if width * height > _AVATAR_MAX_PIXELS or max(width, height) > _AVATAR_MAX_SIDE:
+            return ""
+        image.draft("RGB", (_AVATAR_EDGE, _AVATAR_EDGE))  # JPEG 直接按小尺寸解码，省内存
         image.thumbnail((_AVATAR_EDGE, _AVATAR_EDGE))
         image = image.convert("RGBA")
         out = io.BytesIO()

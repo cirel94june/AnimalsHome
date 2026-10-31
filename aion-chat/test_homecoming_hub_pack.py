@@ -303,3 +303,57 @@ class AvatarBudgetTests(unittest.TestCase):
         with mock.patch.object(Path, "resolve", lambda self, *a, **k: outside if self.name == "link.png"
                                else Path(os.path.abspath(self))):
             self.assertIsNone(snapshot._avatar_file("/skin-assets/link.png"))
+
+
+class AvatarPixelLimitTests(unittest.TestCase):
+    """Codex §106 M3：文件小但像素巨大的图，在解码前就拒绝，不能让缩图把内存吃光。"""
+
+    @staticmethod
+    def _huge_png(path, side=13000):
+        import struct
+        import zlib
+
+        def chunk(kind, data):
+            body = kind + data
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+        row = bytes(1 + (side + 7) // 8)  # 1 位灰度，每行全黑（行首是过滤类型 0）
+        idat = zlib.compress(row * side, 9)
+        signature = bytes([0x89]) + b"PNG" + bytes([13, 10, 26, 10])
+        path.write_bytes(signature + chunk(b"IHDR", struct.pack(">IIBBBBB", side, side, 1, 0, 0, 0, 0))
+                         + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
+
+    def test_huge_pixel_count_is_refused_before_decoding(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from PIL import Image
+        from homecoming import snapshot
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "huge.png"
+            self._huge_png(path)
+            self.assertLess(path.stat().st_size, snapshot._AVATAR_MAX_BYTES)  # 文件大小这一关拦不住
+            with Image.open(path) as probe:
+                self.assertEqual((13000, 13000), probe.size)
+            with mock.patch.object(snapshot, "_avatar_file", return_value=path), \
+                    mock.patch.object(Image.Image, "thumbnail") as thumbnail, \
+                    mock.patch.object(Image.Image, "load") as load:
+                self.assertEqual("", snapshot.avatar_data_uri("/skin-assets/huge.png"))
+            self.assertFalse(thumbnail.called)  # 在解码之前就拦下了
+            self.assertFalse(load.called)
+
+    def test_normal_sized_avatar_still_shrinks(self):
+        import io
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        from PIL import Image
+        from homecoming import snapshot
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "ok.png"
+            buffer = io.BytesIO()
+            Image.new("RGBA", (1200, 1200), (90, 130, 200, 255)).save(buffer, "PNG")
+            path.write_bytes(buffer.getvalue())
+            with mock.patch.object(snapshot, "_avatar_file", return_value=path):
+                self.assertTrue(snapshot.avatar_data_uri("/skin-assets/ok.png").startswith("data:image/webp;base64,"))
