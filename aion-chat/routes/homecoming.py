@@ -34,7 +34,7 @@ from homecoming.devices import (
     register_device,
 )
 from homecoming.hub_pack import fetch_hub_memories
-from homecoming.snapshot import build_snapshot_sections
+from homecoming.snapshot import build_snapshot_sections, fit_phone_budget
 from homecoming.return_contracts import (
     MAX_COMPRESSED_BYTES,
     InvalidReturnPackage,
@@ -229,7 +229,8 @@ async def build_homecoming_snapshot(
             if device is None or device["revoked_at"] is not None:
                 raise HTTPException(status_code=404, detail="device is not registered")
 
-            sections = await build_snapshot_sections(db, now=now, hub_memories=hub_memories)
+            sections = fit_phone_budget(
+                await build_snapshot_sections(db, now=now, hub_memories=hub_memories))
             route_bundle = build_portable_routes(
                 dict(SETTINGS),
                 dict(MODELS),

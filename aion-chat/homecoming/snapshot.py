@@ -242,49 +242,111 @@ def _load_seats() -> tuple[list[dict], list[str]]:
     return seats, [seat["id"] for seat in seats]
 
 
-_AVATAR_MAX_BYTES = 300_000
+_AVATAR_MAX_BYTES = 5_000_000      # 原图最大多大还肯读
+_AVATAR_EDGE = 192                 # 缩成最长边 192 像素的 webp，一张通常十几 KB
+_AVATAR_OUT_MAX = 80_000           # 缩完单张最多这么大（data 地址字符数）
+_AVATAR_TOTAL_CHARS = 400_000      # 所有头像加起来的预算（Codex §105 M2：每张合规、合起来会撑爆手机上限）
 _AVATAR_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                  ".webp": "image/webp", ".gif": "image/gif"}
+# 手机收快照的上限是 2MB（HomecomingBackupClient.MAX_COMPRESSED_BYTES），留出线路密文和外壳
+PHONE_SNAPSHOT_BUDGET = 1_900_000
 
 
 def _avatar_file(url: str):
-    """头像地址 → 服务器上的文件。只认自己家的两处：换过的头像（/skin-assets/）和原版/替换图（/public/）。"""
+    """头像地址 → 服务器上的文件。只认自己家的两处：换过的头像（/skin-assets/）和原版/替换图（/public/）。
+
+    解析掉符号链接后还得在原来那个目录里，链出去的不认。
+    """
     import re
     from config import DATA_DIR, PUBLIC_DIR
-    from public_overrides import override_for
+    from public_overrides import OVERRIDE_DIR, override_for
 
     url = str(url or "").split("?", 1)[0]
+    path = root = None
     match = re.fullmatch(r"/skin-assets/([\w\-]+\.\w+)", url)
     if match:
-        return DATA_DIR / "skin" / match.group(1)
+        root = DATA_DIR / "skin"
+        path = root / match.group(1)
     match = re.fullmatch(r"/public/([^/\\]+\.\w+)", url)
     if match and ".." not in match.group(1):
-        return override_for(match.group(1)) or PUBLIC_DIR / match.group(1)
-    return None
+        override = override_for(match.group(1))
+        root = OVERRIDE_DIR if override else PUBLIC_DIR
+        path = override or PUBLIC_DIR / match.group(1)
+    if path is None:
+        return None
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root.resolve()):
+        return None
+    return resolved
+
+
+def _shrink_avatar(raw: bytes) -> str:
+    """缩成小 webp；缩不了返回空串。"""
+    import io
+    from PIL import Image
+
+    with Image.open(io.BytesIO(raw)) as image:
+        image.thumbnail((_AVATAR_EDGE, _AVATAR_EDGE))
+        image = image.convert("RGBA")
+        out = io.BytesIO()
+        image.save(out, "WEBP", quality=82)
+    return "data:image/webp;base64," + base64.b64encode(out.getvalue()).decode("ascii")
 
 
 def avatar_data_uri(url: str) -> str:
-    """把头像变成 data: 地址带进手机，断网也能显示；找不到、太大、不是图片就不带（手机上退回名字首字）。"""
+    """把头像缩小后变成 data: 地址带进手机，断网也能显示；找不到、太大、不是图片就不带（手机上退回名字首字）。"""
     try:
         path = _avatar_file(url)
-        mime = _AVATAR_TYPES.get(path.suffix.lower()) if path else None
-        if not mime or not path.is_file() or path.stat().st_size > _AVATAR_MAX_BYTES:
+        if not path or path.suffix.lower() not in _AVATAR_TYPES or not path.is_file():
             return ""
-        return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode("ascii")
+        if path.stat().st_size > _AVATAR_MAX_BYTES:
+            return ""
+        value = _shrink_avatar(path.read_bytes())
+        return value if len(value) <= _AVATAR_OUT_MAX else ""
     except Exception:  # noqa: BLE001 — 头像带不上不影响归巢
         return ""
 
 
 def _load_avatars(seat_ids) -> dict[str, str]:
-    """owner → 头像 data 地址；user 是小猫自己。和家里聊天页用的是同一份头像设置。"""
+    """owner → 头像 data 地址；user 是小猫自己。和家里聊天页用的是同一份头像设置。
+
+    按 小克、Lucien、座位、小猫自己 的顺序装，总量超预算的就不带。
+    """
     try:
         import actors
-        avatars = {"user": avatar_data_uri("/public/UserIcon.png")}
-        for owner, actor in (("main", "aion"), ("second", "connor"), *((seat, seat) for seat in seat_ids)):
-            avatars[owner] = avatar_data_uri((actors.get_actor(actor) or {}).get("avatar") or "")
-        return {owner: value for owner, value in avatars.items() if value}
+        wanted = [(owner, (actors.get_actor(actor) or {}).get("avatar") or "")
+                  for owner, actor in (("main", "aion"), ("second", "connor"), *((seat, seat) for seat in seat_ids))]
+        wanted.append(("user", "/public/UserIcon.png"))
+        avatars, used = {}, 0
+        for owner, url in wanted:
+            value = avatar_data_uri(url)
+            if value and used + len(value) <= _AVATAR_TOTAL_CHARS:
+                avatars[owner] = value
+                used += len(value)
+        return avatars
     except Exception:  # noqa: BLE001
         return {}
+
+
+def without_avatars(sections: dict) -> dict:
+    """同一份快照，只是头像都拿掉。"""
+    identity = dict(sections.get("identity") or {})
+    identity["user"] = {**(identity.get("user") or {}), "avatar": ""}
+    identity["companions"] = {
+        owner: {**value, "avatar": ""} for owner, value in (identity.get("companions") or {}).items()
+    }
+    return {**sections, "identity": identity}
+
+
+def fit_phone_budget(sections: dict) -> dict:
+    """快照压缩后要装得进手机；装不下时先把头像（可有可无）拿掉，保证记忆和聊天能带上。"""
+    import gzip
+    from .contracts import canonical_json_bytes
+
+    if len(gzip.compress(canonical_json_bytes(sections), compresslevel=6)) <= PHONE_SNAPSHOT_BUDGET:
+        return sections
+    print("[homecoming] 快照太大，这次不带头像")
+    return without_avatars(sections)
 
 
 def _public_route_descriptors(settings: dict) -> list[dict]:

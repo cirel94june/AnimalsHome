@@ -306,7 +306,9 @@
   function loadMemories() {
     document.querySelectorAll("[data-memory-owner]").forEach(item =>
       item.classList.toggle("active", item.dataset.memoryOwner === state.memoryOwner));
-    try { state.memories = JSON.parse(api.getMemoriesJson(state.memoryOwner, "")); }
+    // 搜索词交给手机那边去找（它一次最多给 100 条；只在这 100 条里筛会漏掉后面的，Codex §105 M1）
+    const query = byId("memorySearch").value.trim();
+    try { state.memories = JSON.parse(api.getMemoriesJson(state.memoryOwner, query)); }
     catch (_) { state.memories = []; }
     // 只有原来两位能在手机上新记；座位只能看从家里带来的
     const writable = state.memoryOwner === "main" || state.memoryOwner === "second";
@@ -644,7 +646,11 @@
     state.memoryOwner = button.dataset.memoryOwner;
     loadMemories();
   });
-  byId("memorySearch").addEventListener("input", renderMemories);
+  let memorySearchTimer = 0;
+  byId("memorySearch").addEventListener("input", () => {
+    clearTimeout(memorySearchTimer);
+    memorySearchTimer = setTimeout(loadMemories, 250);
+  });
   document.querySelectorAll("[data-page]").forEach(button => {
     button.addEventListener("click", () => switchPage(button.dataset.page));
   });

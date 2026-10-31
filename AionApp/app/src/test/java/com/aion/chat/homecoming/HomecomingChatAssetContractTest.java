@@ -39,6 +39,8 @@ public class HomecomingChatAssetContractTest {
         assertTrue(js.contains("HomecomingNative.updateMemory"));
         assertTrue(js.contains("HomecomingNative.deleteMemory"));
         assertTrue(js.contains("HomecomingNative.summarizeAllMemories"));
+        // 搜索词交给手机去找，不只在已拿到的 100 条里筛（Codex §105 M1）
+        assertTrue(js.contains("api.getMemoriesJson(state.memoryOwner, query)"));
         assertTrue(js.contains("HomecomingNative.listSchedules"));
         assertTrue(js.contains("HomecomingNative.createSchedule"));
         assertTrue(js.contains("HomecomingNative.deleteSchedule"));

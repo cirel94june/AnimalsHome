@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import time
 import unittest
@@ -219,7 +220,9 @@ class AvatarTests(unittest.TestCase):
     def test_only_home_images_become_data_uris(self):
         from homecoming.snapshot import avatar_data_uri
 
-        self.assertTrue(avatar_data_uri("/public/codexicon.png").startswith("data:image/png;base64,"))
+        small = avatar_data_uri("/public/codexicon.png")
+        self.assertTrue(small.startswith("data:image/webp;base64,"))  # 缩成小 webp
+        self.assertLess(len(small), 80_000)
         for bad in ("/skin-assets/../config.py", "/public/../aion-chat/main.py", "/public/a/b.png",
                     "https://example.com/a.png", "/static/x.js", "", None):
             self.assertEqual("", avatar_data_uri(bad), bad)
@@ -252,3 +255,51 @@ class AvatarSnapshotTests(SeatSnapshotTests):
         self.assertEqual("data:image/jpeg;base64,BBBB", identity["companions"]["main"]["avatar"])
         self.assertEqual("", identity["companions"]["second"]["avatar"])  # 没有就空着，手机上显示名字首字
         self.assertEqual("data:image/png;base64,CCCC", identity["companions"]["ai3"]["avatar"])
+
+
+class AvatarBudgetTests(unittest.TestCase):
+    """Codex §105 M2：每张都合规，合起来也不能把快照撑出手机的 2MB 上限。"""
+
+    def test_total_budget_keeps_companions_first(self):
+        from homecoming import snapshot
+
+        original = (snapshot.avatar_data_uri, snapshot._AVATAR_TOTAL_CHARS)
+        self.addCleanup(lambda: (setattr(snapshot, "avatar_data_uri", original[0]),
+                                 setattr(snapshot, "_AVATAR_TOTAL_CHARS", original[1])))
+        snapshot.avatar_data_uri = lambda url: "data:image/webp;base64," + "A" * 100
+        snapshot._AVATAR_TOTAL_CHARS = 3 * 124
+        avatars = snapshot._load_avatars(["ai3", "ai4", "ai5", "ai6"])
+        self.assertEqual(["main", "second", "ai3"], list(avatars))  # 小猫自己的排最后，装不下就不带
+
+    def test_oversized_snapshot_drops_avatars_but_keeps_memories(self):
+        import base64 as b64
+        import gzip
+        import os
+        from homecoming import snapshot
+        from homecoming.contracts import canonical_json_bytes
+
+        noise = "data:image/webp;base64," + b64.b64encode(os.urandom(300_000)).decode()
+        sections = {
+            "identity": {"user": {"name": "小猫", "avatar": noise},
+                         "companions": {owner: {"name": owner, "avatar": noise}
+                                        for owner in ("main", "second", "ai3", "ai4", "ai5", "ai6")}},
+            "memories": {"main": [{"id": "hub:main:1", "content": "要带上的记忆"}]},
+        }
+        fitted = snapshot.fit_phone_budget(sections)
+        self.assertLessEqual(len(gzip.compress(canonical_json_bytes(fitted))), snapshot.PHONE_SNAPSHOT_BUDGET)
+        self.assertEqual("", fitted["identity"]["user"]["avatar"])
+        self.assertEqual("", fitted["identity"]["companions"]["ai6"]["avatar"])
+        self.assertEqual(sections["memories"], fitted["memories"])
+        self.assertEqual(noise, sections["identity"]["user"]["avatar"])  # 原来那份没被改
+        small = {"identity": {"user": {"avatar": "data:image/webp;base64,AAAA"}, "companions": {}}}
+        self.assertIs(small, snapshot.fit_phone_budget(small))
+
+    def test_symlinked_avatar_outside_its_folder_is_refused(self):
+        from homecoming import snapshot
+        from unittest import mock
+        from pathlib import Path
+
+        outside = Path(__file__).resolve()
+        with mock.patch.object(Path, "resolve", lambda self, *a, **k: outside if self.name == "link.png"
+                               else Path(os.path.abspath(self))):
+            self.assertIsNone(snapshot._avatar_file("/skin-assets/link.png"))
