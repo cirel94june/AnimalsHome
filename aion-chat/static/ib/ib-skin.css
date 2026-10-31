@@ -158,6 +158,21 @@ html[data-skin="ib"] .mem-card {
   backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
   -webkit-backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
 }
+
+/* 盖在聊天上面的弹窗/抽屉用实底色：手机上毛玻璃不一定生效（减少动效、WebView），
+   半透明底会让底下的字透上来（10-31 小猫：系统日志、人设页）。卡片类仍保持玻璃感。 */
+html[data-skin="ib"] .modal,
+html[data-skin="ib"] .sidebar,
+html[data-skin="ib"] .settings-panel,
+html[data-skin="ib"] .memory-panel,
+html[data-skin="ib"] .plus-menu,
+html[data-skin="ib"] .config-popup,
+html[data-skin="ib"] .wallet-panel,
+html[data-skin="ib"] .persona-history-dialog,
+html[data-skin="ib"] .toy-edit-sheet {
+  background: #f0f5fc;
+  background: color-mix(in srgb, var(--ib-base) 55%, #ffffff);
+}
 html[data-skin="ib"] .chat-area,
 html[data-skin="ib"] body[data-theme] .chat-area {
   background: rgba(255, 255, 255, calc(var(--ib-glass-a) * 0.35));

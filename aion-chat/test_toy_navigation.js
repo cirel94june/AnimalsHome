@@ -55,8 +55,8 @@ async function main() {
   }
   {
     for (const page of ['chat', 'chatroom']) {
-      const html = fs.readFileSync(`${__dirname}/static/${page}.html`, 'utf8');
-      const handler = html.match(/<button\b[^>]*onclick="([^"]+)"[^>]*>💗 密语时刻<\/button>/)[1];
+      // 10-31 侧栏入口已按小猫要求先隐藏；这里仍检查原来的打开方式，以后恢复入口时行为不变
+      const handler = page === 'chat' ? "openSubPage('/toys')" : 'crOpenToyControls()';
       const source = fs.readFileSync(`${__dirname}/static/${page}.js`, 'utf8');
       const helper = source.match(/function crOpenToyControls\(\) \{[\s\S]*?\n\}/)?.[0] || '';
       for (const embedded of [true, false]) {

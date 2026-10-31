@@ -1494,3 +1494,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 改法：只在这条手机规则里把底色换成 `var(--ib-base, var(--bg))`：IB 皮肤下是实色 `#dfe9f6`，不开皮肤时退回原来的 `--bg`（本来就是实色）。毛玻璃仍然关着，不影响打字性能。
 - 世界书里的人设页（小克 / Lucien / Jasper / 空位）是独立整页，底下没有内容，不受影响。
 - 本机实测：375 宽、模拟触屏、IB 皮肤，计算出的底色是 rgb(223,233,246)，截图看不到底下的字。`test_phone_usability.py` 加 1 项，6 项都通过。
+
+
+## 102. IB 皮肤下弹窗/抽屉改实底色 + 先隐藏密语时刻入口（10-31 小猫）
+
+- **透字**：私聊侧栏「系统日志」弹窗在手机上透出底下的聊天。IB 皮肤给 `.modal/.sidebar/...` 的底色是 `rgba(255,255,255,var(--ib-card-a))`（约 0.5），全靠毛玻璃糊住；手机开「减少动效」时 `data-ib-reduce` 会把所有 backdrop-filter 关掉，WebView 上毛玻璃也不一定生效。
+  - 改法：`ib/ib-skin.css` 在原玻璃规则后面加一条，只针对盖在聊天上面的层（`.modal .sidebar .settings-panel .memory-panel .plus-menu .config-popup .wallet-panel .persona-history-dialog .toy-edit-sheet`）设实底色 `color-mix(in srgb, var(--ib-base) 55%, #fff)`，前面先写一个 `#f0f5fc` 兜底。卡片类（列表项、日记卡等）不变，仍是玻璃感。
+  - 本机实测：375 宽、模拟触屏、IB 皮肤、打开「减少动效」，系统日志弹窗是实底，看不到底下的字；侧栏、加号菜单、聊天设置浮层、钱包的计算底色都是同一个实色。
+- **密语时刻入口**：小猫暂时用不上。私聊侧栏、群聊侧栏、群聊加号菜单里的入口删掉；功能代码、/toys 页面不动，以后恢复入口就能用。`test_toy_navigation.js` 改成直接检查原来的打开方式（不再从侧栏 HTML 里抠按钮）。
+- 顺带：`test_chatroom_persona_mobile_performance.py` 里写死了 §101 改之前的底色 `var(--bg)`，跟着改成 `var(--ib-base, var(--bg))`。这个文件里剩下 1 项（缓存版本号字符串）是以前就失败的。
+- 测试：`test_phone_usability.py` 8 项通过（新加 2 项），`test_toy_navigation.js` 通过。改到的 HTML/CSS 相关测试文件里其他失败，在不带本次改动时也一样失败。

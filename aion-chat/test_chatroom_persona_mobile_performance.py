@@ -53,7 +53,7 @@ class ChatroomPersonaMobilePerformanceTests(unittest.TestCase):
         )
         self.assertRegex(
             rules,
-            r"\.persona-page-panel\s*\{[^}]*background:\s*var\(--bg\);[^}]*backdrop-filter:\s*none;[^}]*-webkit-backdrop-filter:\s*none;",
+            r"\.persona-page-panel\s*\{[^}]*background:\s*var\(--ib-base,\s*var\(--bg\)\);[^}]*backdrop-filter:\s*none;[^}]*-webkit-backdrop-filter:\s*none;",
         )
 
     def test_chatroom_assets_are_cache_busted_for_the_persona_performance_fix(self):

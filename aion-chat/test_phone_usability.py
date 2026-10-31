@@ -58,3 +58,20 @@ def test_persona_page_is_solid_on_phone_under_glass_skins():
     block = re.search(r"@media \(max-width: 760px\) and \(pointer: coarse\) \{\s*\.persona-page-overlay\.active[^}]*\}\s*\.persona-page-panel \{[^}]*\}", css).group(0)
     assert "background: var(--ib-base, var(--bg));" in block
     assert "--ib-base: #" in _read("ib/ib-skin.css")
+
+
+def test_ib_popups_are_solid_so_chat_text_does_not_show_through():
+    """10-31 小猫：私聊侧栏「系统日志」在手机上透出底下的聊天。毛玻璃在手机上不一定生效，弹窗改实底色。"""
+    css = _read("ib/ib-skin.css")
+    block = re.search(r"弹窗/抽屉用实底色[^{]*\{[^}]*\}", css).group(0)
+    for cls in (".modal", ".sidebar", ".config-popup", ".wallet-panel", ".plus-menu"):
+        assert f'html[data-skin="ib"] {cls}' in block, cls
+    assert "background: color-mix(in srgb, var(--ib-base) 55%, #ffffff);" in block
+
+
+def test_whisper_entry_hidden_from_chat_sidebars():
+    """10-31 小猫：密语时刻暂时用不上，私聊/群聊侧栏和群聊加号菜单先去掉入口（功能代码保留）。"""
+    assert "密语时刻</button>" not in _read("chat.html")
+    room = _read("chatroom.html")
+    assert "密语时刻</button>" not in room
+    assert "crOpenWhisper()\"><span class=\"pm-icon\">💗</span>密语时刻" not in room
