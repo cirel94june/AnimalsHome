@@ -50,3 +50,11 @@ def test_memory_detail_sheet_hides_the_list_under_glass_skins():
     assert "backdrop-filter:blur(" in sheet and "background:var(--surface)" in sheet
     dialog = re.search(r"\ndialog\{[^}]*\}", css).group(0)
     assert "backdrop-filter:blur(" in dialog
+
+
+def test_persona_page_is_solid_on_phone_under_glass_skins():
+    """10-31 小猫截图：手机上群聊里的「Lucien 人设」页去掉了毛玻璃，IB 底色又半透明，底下聊天的字透上来。"""
+    css = _read("chatroom.css")
+    block = re.search(r"@media \(max-width: 760px\) and \(pointer: coarse\) \{\s*\.persona-page-overlay\.active[^}]*\}\s*\.persona-page-panel \{[^}]*\}", css).group(0)
+    assert "background: var(--ib-base, var(--bg));" in block
+    assert "--ib-base: #" in _read("ib/ib-skin.css")

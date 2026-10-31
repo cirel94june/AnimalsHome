@@ -3753,7 +3753,8 @@ body[data-theme="light"] .toast {
     -webkit-backdrop-filter: none;
   }
   .persona-page-panel {
-    background: var(--bg);
+    /* 手机上没有毛玻璃，IB 皮肤的 --bg 只有约 35% 不透明，会透出底下的聊天（10-31 小猫截图）；改用实底色 */
+    background: var(--ib-base, var(--bg));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
