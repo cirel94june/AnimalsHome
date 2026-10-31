@@ -1,7 +1,9 @@
 """归巢带 Hub 记忆（Hub #123 export-lite）：打包、共用钥匙、失败不拖垮归巢、回到线上只读。"""
 
+import asyncio
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -95,6 +97,48 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({}, await hub_pack.fetch_hub_memories({"main": "aion"}))
 
 
+    async def test_slow_drip_hits_total_deadline_and_only_that_ai_is_dropped(self):
+        """Codex M1：Hub 每隔一会儿送一点数据，httpx 的 read timeout 不会触发；总时限要兜住。"""
+        class Drip(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for _ in range(40):
+                    await asyncio.sleep(0.05)
+                    yield b" "
+
+        def handler(request):
+            if request.url.params["ai_id"] == "lucien":
+                return httpx.Response(200, stream=Drip())
+            return httpx.Response(200, json={"items": [_hub_item("x", "正常的")]})
+        self._serve(handler)
+        original = hub_pack.TOTAL_SECONDS
+        hub_pack.TOTAL_SECONDS = 0.3
+        self.addCleanup(setattr, hub_pack, "TOTAL_SECONDS", original)
+
+        started = time.monotonic()
+        result = await hub_pack.fetch_hub_memories({"main": "aion", "second": "connor"})
+        self.assertLess(time.monotonic() - started, 1.5)  # 不会等满 40×0.05=2 秒
+        self.assertEqual({"main"}, set(result))
+
+    async def test_bad_shape_or_oversized_reply_only_drops_that_ai(self):
+        """Codex M2：200 但结构不对（items=1、顶层是列表）或回应过大，只放弃这一位。"""
+        def handler(request):
+            ai = request.url.params["ai_id"]
+            if ai == "lucien":
+                return httpx.Response(200, json={"items": 1})
+            if ai == "jasper":
+                return httpx.Response(200, json=[1, 2])
+            return httpx.Response(200, json={"items": [_hub_item("x", "正常的")]})
+        self._serve(handler)
+        result = await hub_pack.fetch_hub_memories({"main": "aion", "second": "connor", "ai3": "ai3"})
+        self.assertEqual({"main"}, set(result))
+
+        original = hub_pack.MAX_RESPONSE_BYTES
+        hub_pack.MAX_RESPONSE_BYTES = 50
+        self.addCleanup(setattr, hub_pack, "MAX_RESPONSE_BYTES", original)
+        self._serve(lambda request: httpx.Response(200, json={"items": [_hub_item("x", "很长" * 100)]}))
+        self.assertEqual({}, await hub_pack.fetch_hub_memories({"main": "aion"}))
+
+
 class HubSnapshotTests(SeatSnapshotTests):
     async def test_hub_memories_follow_local_ones_and_reach_ready_seats_only(self):
         from homecoming.snapshot import build_snapshot_sections
@@ -133,6 +177,36 @@ class HubReturnPlannerTests(HomecomingReturnPlannerTests):
             self.assertEqual("skip", plan.rows[0].decision)
             self.assertEqual("hub_memory_is_read_only", plan.rows[0].reason)
             self.assertEqual((), tuple(plan.rows[0].effects or ()))
+
+    async def test_hub_prefix_cannot_sneak_in_through_payload_case_or_auto_memory(self):
+        """Codex M3：只查 entity_id 不够——落库用的是 payload.id；自动记忆也要挡。"""
+        cases = [
+            ("memory", "update", "ordinary-id", "hub:main:m1", "skip", "hub_memory_is_read_only"),
+            ("memory", "create", " HUB:main:m1 ", " HUB:main:m1 ", "skip", "hub_memory_is_read_only"),
+            ("memory", "update", "memory-a", "memory-b", "quarantine", "memory_id_mismatch"),
+            ("memory_auto", "create", "hub:main:auto", "hub:main:auto", "skip", "hub_memory_is_read_only"),
+        ]
+        for entity, action, entity_id, payload_id, decision, reason in cases:
+            plan = await self.plan(operation(
+                f"op-{entity}-{entity_id}", entity, action,
+                {"id": payload_id, "owner_id": "main", "content": "内容", "keywords": "",
+                 "tombstone": False, "updated_at": 2, "source_message_ids": ["m1"]},
+                entity_id=entity_id,
+            ))
+            self.assertEqual((decision, reason), (plan.rows[0].decision, plan.rows[0].reason), entity_id)
+
+    async def test_importer_refuses_hub_ids_even_if_a_plan_slipped_through(self):
+        import aiosqlite
+        from homecoming.return_importer import _delete_memory, _upsert_memory
+
+        async with aiosqlite.connect(self.db_path) as db:
+            events = []
+            await _upsert_memory(db, {"table": "memories", "room_id": "",
+                                      "memory": {"id": "hub:main:m1", "content": "不该落库"}}, 3.0, events)
+            await _delete_memory(db, {"table": "memories", "memory": {"id": "hub:main:m1"}}, events)
+            cursor = await db.execute("SELECT COUNT(*) FROM memories WHERE id LIKE 'hub:%'")
+            self.assertEqual(0, (await cursor.fetchone())[0])
+            self.assertEqual([], events)
 
 
 if __name__ == "__main__":

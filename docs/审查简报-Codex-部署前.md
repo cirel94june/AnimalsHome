@@ -1527,3 +1527,25 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_homecoming_*.py` 共 91 项全过；不含新文件时 61 项，和改动前一样。
   - Java：`HomecomingMemoryRepositoryTest` 加 1 项（能被想起、不能改不能删、不产生操作记录），由 CI 跑。
 - **已知限制（下一步）**：手机挑记忆的规则较粗，主要按关键词/整句包含打分；打分为 0 时按时间新旧排。Hub「钉住」的记忆不一定每轮都带上。以后可在 APK 里按 Hub 给的顺序兜底。
+
+
+## 104. 修 §103 审查的 M1–M4
+
+- **M1 总时限**：`hub_pack._fetch_one` 用 `asyncio.wait_for(…, TOTAL_SECONDS=15)` 包住「发请求 + 流式读完正文 + 解析」。
+  - 超时时任务被取消，该位返回空，快照继续；三位仍并发，所以最坏约 15 秒。
+  - 另加 `MAX_RESPONSE_BYTES=1_000_000`：边读边计，超过就放弃该位。正常一份约 94KB，不拿请求参数 max_bytes 当回应大小。
+  - httpx 的 `timeout=12` 保留，管连接和单块等待。
+- **M2 结构错误**：`portable_items` 先校验顶层是对象、items 是列表，否则抛 ValueError；最多取 400 条。
+  - 转换和校验都在每位自己的 `except Exception` 边界里。CancelledError 是 BaseException，不会被吞。
+- **M3 只读前缀**：
+  - `contracts.is_hub_memory_id` 先 strip 再 lower 再判断。
+  - 回传：新增 `return_planner._reserved_memory_row`，`memory` 和 `memory_auto` 两条分支都先过它。entity_id 或 payload.id 任一带 hub: 前缀 → `skip / hub_memory_is_read_only`；两者不一致 → `quarantine / memory_id_mismatch`。
+  - 落库出口 `return_importer._upsert_memory/_delete_memory` 再挡一次 hub: 前缀，直接返回，不写库、不发事件。
+  - 手机：`HomecomingMemoryRepository.update/delete` 先由 `required` 去掉空白；检查挪到统一的 `save()` 出口（`requireWritable(memory.id)`），`isReadOnly` 也先 trim 再 lower。
+- **M4 座位用不上**：把「能想起」和「能写」的 owner 分开。
+  - `recall` 改用 `validateReadableOwner`（两位 + 座位）；create/update/delete 仍只认 main/second。
+  - `ContextBuilder` 对所有合法 owner 都召回，每位只召回自己的 owner，不串包。`HomecomingOwners.hasLocalMemory` 只改了注释。
+- **测试**：
+  - `test_homecoming_hub_pack.py` 新加：慢速滴流触发总时限且只丢那一位；items=1 / 顶层是列表 / 回应过大只丢那一位；payload.id 偷带前缀、大小写加空白、id 不一致、memory_auto 带前缀；importer 出口拒绝。
+  - 归巢 Python 全套 95 项通过。
+  - Java：`HomecomingMemoryRepositoryTest` 加空白/制表符/大写前缀拒绝，以及座位能召回自己的包、不能写、空座位为空、未知 owner 报错；`HomecomingSeatOwnersTest` 改成座位只召回自己的包、不串到小克。Java 由 CI 跑。

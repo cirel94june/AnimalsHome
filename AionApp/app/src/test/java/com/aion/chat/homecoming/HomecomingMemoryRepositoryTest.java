@@ -74,8 +74,33 @@ public class HomecomingMemoryRepositoryTest {
                 () -> repository.update("main", "hub:main:m1", "改掉", "base-hash", 20L));
         assertThrows(IllegalArgumentException.class,
                 () -> repository.delete("main", "hub:main:m1", "base-hash", 20L));
+        // 前后带空白、大小写不同也挡住（Codex M3：先 trim 再查）
+        for (String sneaky : Arrays.asList(" hub:main:m1 ", "\thub:main:m1\n", "HUB:main:m1")) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> repository.update("main", sneaky, "改掉", "base-hash", 20L));
+            assertThrows(IllegalArgumentException.class,
+                    () -> repository.delete("main", sneaky, "base-hash", 20L));
+        }
         assertTrue(backend.operations.isEmpty());
-        assertEquals(1, repository.recall("main", "下雨", 5).size());
+        assertTrue(backend.locals("main").isEmpty());
+        assertEquals("小猫喜欢下雨天", repository.recall("main", "下雨", 5).get(0).content);
+    }
+
+    @Test
+    public void seatsRecallTheirOwnHubPackButCannotWrite() {
+        MemoryBackend backend = new MemoryBackend();
+        backend.snapshots.add(memory("hub:ai3:m1", "ai3", "狗蛋记得小猫怕打雷", "打雷"));
+        backend.snapshots.add(memory("hub:main:m2", "main", "小克记得的事", "打雷"));
+        HomecomingMemoryRepository repository = repository(backend);
+
+        assertEquals(Collections.singletonList("hub:ai3:m1"),
+                ids(repository.recall("ai3", "打雷了", 5)));
+        assertTrue(repository.recall("ai4", "打雷了", 5).isEmpty());
+        assertThrows(IllegalArgumentException.class,
+                () -> repository.create("ai3", "新记忆", "", 10L));
+        assertThrows(IllegalArgumentException.class,
+                () -> repository.recall("ai9", "打雷了", 5));
+        assertTrue(backend.operations.isEmpty());
     }
 
     @Test

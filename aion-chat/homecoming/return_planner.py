@@ -176,10 +176,22 @@ async def _message_plan(db, operation, mapping, observations) -> PlanRow:
     return _row(operation, "quarantine", "message_id_collision")
 
 
-async def _manual_memory_plan(db, operation, mapping, observations) -> PlanRow:
-    if is_hub_memory_id(operation.get("entity_id")):
+def _reserved_memory_row(operation) -> PlanRow | None:
+    """所有能写记忆的回传都先过这里：entity_id 和真正落库用的 payload.id 必须一致，且都不能是 Hub 只读前缀。"""
+    entity_id = str(operation.get("entity_id") or "")
+    payload_id = str((operation.get("payload") or {}).get("id") or "")
+    if is_hub_memory_id(entity_id) or is_hub_memory_id(payload_id):
         # Hub 精简包是只读的：离线时改了/删了也不写回本地表，更不回写 Hub（Hub #123 约定）
         return _row(operation, "skip", "hub_memory_is_read_only")
+    if payload_id != entity_id:
+        return _row(operation, "quarantine", "memory_id_mismatch")
+    return None
+
+
+async def _manual_memory_plan(db, operation, mapping, observations) -> PlanRow:
+    reserved = _reserved_memory_row(operation)
+    if reserved is not None:
+        return reserved
     payload = operation["payload"]
     owner = str(payload.get("owner_id") or "")
     target = _memory_target(owner, mapping)
@@ -214,6 +226,9 @@ async def _manual_memory_plan(db, operation, mapping, observations) -> PlanRow:
 async def _automatic_memory_plan(
     db, operation, mapping, observations, planned_messages=None
 ) -> PlanRow:
+    reserved = _reserved_memory_row(operation)
+    if reserved is not None:
+        return reserved
     payload = operation["payload"]
     owner = str(payload.get("owner_id") or "")
     target = _memory_target(owner, mapping)

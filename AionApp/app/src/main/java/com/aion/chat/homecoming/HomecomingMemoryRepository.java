@@ -34,7 +34,7 @@ public final class HomecomingMemoryRepository
 
     @Override
     public List<Memory> recall(String ownerId, String query, int limit) {
-        validateOwner(ownerId);
+        validateReadableOwner(ownerId);
         if (limit < 1 || limit > 100) {
             throw new IllegalArgumentException("limit must be 1..100");
         }
@@ -71,14 +71,12 @@ public final class HomecomingMemoryRepository
 
     public Memory update(String ownerId, String id, String content,
             String baseHash, long updatedAt) {
-        requireWritable(id);
         return save(new Memory(required(id, "id"), validateOwner(ownerId),
                 required(content, "content"), "", baseHash, false, updatedAt),
                 "update", required(baseHash, "baseHash"));
     }
 
     public Memory delete(String ownerId, String id, String baseHash, long updatedAt) {
-        requireWritable(id);
         return save(new Memory(required(id, "id"), validateOwner(ownerId),
                 "", "", baseHash, true, updatedAt),
                 "delete", required(baseHash, "baseHash"));
@@ -86,7 +84,7 @@ public final class HomecomingMemoryRepository
 
     /** 服务器打包的 Hub 记忆（id 以 hub: 开头）只读：离线时不改不删，回到线上也不会写回。 */
     static boolean isReadOnly(String id) {
-        return id != null && id.startsWith("hub:");
+        return id != null && id.trim().toLowerCase(Locale.ROOT).startsWith("hub:");
     }
 
     private static void requireWritable(String id) {
@@ -96,6 +94,7 @@ public final class HomecomingMemoryRepository
     }
 
     private Memory save(Memory memory, String action, String baseRevision) {
+        requireWritable(memory.id);  // 所有写入都从这里过：id 已经 trim 过，再挡一次只读前缀
         HomecomingOperationJournal.Operation operation =
                 HomecomingOperationJournal.create(
                         epochId, deviceId, "memory", memory.id, action,
@@ -265,6 +264,15 @@ public final class HomecomingMemoryRepository
         }
     }
 
+    /** 能想起记忆的 owner：两位 + 座位（座位只有服务器打包的 Hub 只读记忆）。 */
+    private static String validateReadableOwner(String owner) {
+        if (!HomecomingOwners.isOwner(owner)) {
+            throw new IllegalArgumentException("unsupported memory owner");
+        }
+        return owner;
+    }
+
+    /** 能在手机上新建/改/删记忆的 owner：只有原来的两位，回到线上才有地方落。 */
     private static String validateOwner(String owner) {
         if (!"main".equals(owner) && !"second".equals(owner)) {
             throw new IllegalArgumentException("unsupported memory owner");

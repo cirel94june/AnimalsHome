@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from .contracts import canonical_json_bytes, sha256_hex
+from .contracts import canonical_json_bytes, is_hub_memory_id, sha256_hex
 from .return_planner import build_import_plan
 from .return_store import ensure_return_tables
 
@@ -426,6 +426,8 @@ async def _upsert_memory(db, effect, now: float, events):
     table = effect["table"]
     memory = effect["memory"]
     memory_id = str(memory["id"])
+    if is_hub_memory_id(memory_id):  # 规划那边已经挡过；落库出口再挡一次，hub: 是归巢只读包的保留前缀
+        return
     content = str(memory.get("content") or "")
     keywords = str(memory.get("keywords") or "")
     importance = float(memory.get("importance") or 0.5)
@@ -494,6 +496,8 @@ async def _upsert_memory(db, effect, now: float, events):
 async def _delete_memory(db, effect, events):
     table = effect["table"]
     memory_id = str(effect["memory"]["id"])
+    if is_hub_memory_id(memory_id):
+        return
     await db.execute(f"DELETE FROM {table} WHERE id=?", (memory_id,))
     event = {
         "type": "memory_deleted"

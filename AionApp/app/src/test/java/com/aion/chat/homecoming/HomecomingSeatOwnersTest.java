@@ -81,7 +81,7 @@ public class HomecomingSeatOwnersTest {
     }
 
     @Test
-    public void seatPrivateChatUsesTheSeatPersonaAndNoLocalMemory() {
+    public void seatChatsRecallOnlyTheirOwnHubPack() {
         RecordingRecall recall = new RecordingRecall();
         HomecomingContextBuilder builder = new HomecomingContextBuilder(
                 new HomecomingIdentityRepository(() -> WITH_SEATS), recall,
@@ -90,12 +90,13 @@ public class HomecomingSeatOwnersTest {
         String system = builder.build("seat_private:ai3", "main", "在吗", 10L, "").get(0).text;
         assertTrue(system.contains("当前对话角色：狗蛋"));
         assertTrue(system.contains("狗蛋的人设"));
-        assertFalse(system.contains("相关记忆"));
+        assertTrue(system.contains("ai3 的 Hub 记忆"));
+        assertFalse(system.contains("main 的"));  // 不串到小克、Lucien 的包
         String group = builder.build("group", "ai5", "大家好", 10L, "").get(0).text;
         assertTrue(group.contains("当前对话角色：Kimi"));
-        assertEquals(Collections.emptyList(), recall.owners);  // 座位不去翻小克、Lucien 的记忆
+        assertFalse(group.contains("ai3 的"));
         builder.build("group", "main", "q", 10L, "");
-        assertEquals(Collections.singletonList("main"), recall.owners);
+        assertEquals(Arrays.asList("ai3", "ai5", "main"), recall.owners);
     }
 
     @Test
@@ -163,7 +164,8 @@ public class HomecomingSeatOwnersTest {
         @Override
         public List<HomecomingMemoryRepository.Memory> recall(String owner, String query, int limit) {
             owners.add(owner);
-            return Collections.emptyList();
+            return Collections.singletonList(new HomecomingMemoryRepository.Memory(
+                    "hub:" + owner + ":m1", owner, owner + " 的 Hub 记忆", "", "", false, 1L));
         }
     }
 }

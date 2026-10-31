@@ -30,7 +30,7 @@ final class HomecomingOwners {
         return MAIN.equals(owner) || SECOND.equals(owner) || isSeat(owner);
     }
 
-    /** 只有原来的两位在手机上有本地记忆；座位的记忆在 Hub 上，归巢时用不到。 */
+    /** 只有原来的两位能在手机上写本地记忆；座位只能想起快照里带来的 Hub 只读记忆。 */
     static boolean hasLocalMemory(String owner) {
         return MAIN.equals(owner) || SECOND.equals(owner);
     }

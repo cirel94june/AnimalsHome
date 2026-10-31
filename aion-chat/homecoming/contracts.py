@@ -55,4 +55,5 @@ def sha256_hex(data: bytes) -> str:
 
 
 def is_hub_memory_id(memory_id) -> bool:
-    return str(memory_id or "").startswith(HUB_MEMORY_ID_PREFIX)
+    """前后空白、大小写都不能绕过只读前缀（Codex M3）。"""
+    return str(memory_id or "").strip().lower().startswith(HUB_MEMORY_ID_PREFIX)
