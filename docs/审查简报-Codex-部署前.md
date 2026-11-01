@@ -1685,3 +1685,20 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 新测试 `test_ai_feed.py` 3 项：临时库里时间线带 actor_id、座位显示名字、页面不用 innerHTML、主页有卡片和入口。
   - 相关旧测试 `test_autonomy_journey` / `test_family_user_events` / `test_seat_names_everywhere` 共 24 项通过；`test_home_folders_ui.js`、`test_family_dynamics_ui.js` 通过。
 - **还没并进来**：哨兵 / 监控日志不在这条时间线里，以后再并。
+
+
+## 112. 修 §109 审查的 M1：主页布局迁移的迟到保存会盖掉新排法
+
+- **手机页面**（`home.html`）：
+  - 「旧排法 → 新默认」那次保存带上 `migration: true`，并记下「现在排着的是迁移保存」。
+  - `syncLayoutFromServer` 一旦读到服务器上已有文件夹排法，先 `cancelPendingMigrationSave()`，把还没发出的迁移保存作废，再按原逻辑应用。
+  - 已经排着普通保存（刚拖过图标）时，不再另排迁移保存。
+  - 拖图标的普通保存不带 migration，照常覆盖。
+- **服务器**（`routes/settings.py`）：`HomeLayoutUpdate` 加 `migration`。迁移写入时，如果服务器上已经有任何 `folder-*`，就不写，回 `skipped: already_migrated` 和现有排法。
+- **验证**：
+  - 本机页面里用真实接口重放三种时序：
+    - A：排好迁移 → 别处存新排法 → 本页同步。迁移作废，新排法保留。
+    - B：排好迁移 → 别处存新排法 → 本页没同步，迁移照发。服务器拒收，新排法保留。
+    - C：真旧排法。照常迁移。
+  - 新测试 `test_home_layout_migration.py` 4 项：迟到的迁移不覆盖、旧排法会被迁移、普通保存照常覆盖、页面里取消迁移在应用新排法之前。
+  - `test_ai_feed.py`、`test_home_folders_ui.js` 通过。

@@ -912,20 +912,37 @@ function saveLayoutLocal() {
   localLayoutFromStorage = true;
 }
 
-async function saveLayoutServer(snapshot) {
+async function saveLayoutServer(snapshot, options = {}) {
   try {
     await fetch(HOME_LAYOUT_SYNC_URL, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ version: 2, positions: snapshot }),
+      // migration：只是「旧排法换成新默认」，服务器上已经有新排法时不覆盖（Codex §109 M1）
+      body: JSON.stringify({ version: 2, positions: snapshot, migration: Boolean(options.migration) }),
     });
   } catch(e) {}
 }
 
-function scheduleLayoutServerSave() {
+let layoutSaveIsMigration = false;
+
+function scheduleLayoutServerSave(options = {}) {
   const snapshot = { ...appLayout };
+  const migration = Boolean(options.migration);
   clearTimeout(layoutSaveTimer);
-  layoutSaveTimer = setTimeout(() => saveLayoutServer(snapshot), 220);
+  layoutSaveIsMigration = migration;
+  layoutSaveTimer = setTimeout(() => {
+    layoutSaveTimer = null;
+    layoutSaveIsMigration = false;
+    saveLayoutServer(snapshot, { migration });
+  }, 220);
+}
+
+// 别处（另一台手机 / 另一个页面）已经存了新排法：还没发出去的「迁移」保存作废，免得把它盖掉
+function cancelPendingMigrationSave() {
+  if (!layoutSaveIsMigration) return;
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = null;
+  layoutSaveIsMigration = false;
 }
 
 function saveLayout() {
@@ -941,9 +958,11 @@ async function syncLayoutFromServer(options = {}) {
     const payload = await res.json();
     const serverPositions = extractLayoutPositions(payload);
     if (!hasLayoutPositions(serverPositions)) {
-      scheduleLayoutServerSave();  // 服务器上还是旧排法：把新的默认排法存上去，换手机也一样
+      // 服务器上还是旧排法：把新的默认排法存上去，换手机也一样
+      if (!layoutSaveTimer) scheduleLayoutServerSave({ migration: true });
       return;
     }
+    cancelPendingMigrationSave();
     if (!options.force && (layoutRevision !== revisionAtStart || dragState.active)) return;
     const nextLayout = normalizeLayout(serverPositions);
     if (!sameLayout(appLayout, nextLayout)) {

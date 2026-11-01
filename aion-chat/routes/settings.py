@@ -230,6 +230,8 @@ class SettingsUpdate(BaseModel):
 class HomeLayoutUpdate(BaseModel):
     version: Optional[int] = 2
     positions: Dict[str, Any] = Field(default_factory=dict)
+    # 主页「旧排法换成新的文件夹默认排法」那一次保存：服务器上已经有文件夹排法时不覆盖
+    migration: bool = False
 
 def _normalize_home_layout(payload: Any) -> Dict[str, Any]:
     positions = payload.get("positions", {}) if isinstance(payload, dict) else {}
@@ -253,6 +255,10 @@ async def get_home_layout():
 @router.put("/api/home/layout")
 async def update_home_layout(body: HomeLayoutUpdate):
     payload = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    current = _normalize_home_layout(SETTINGS.get("home_layout", {}))
+    if payload.get("migration") and any(key.startswith("folder-") for key in current["positions"]):
+        # 迁移保存晚到了：别处已经存了新排法，不能被默认排法盖掉（Codex §109 M1）
+        return {"ok": True, "layout": current, "skipped": "already_migrated"}
     layout = _normalize_home_layout(payload)
     SETTINGS["home_layout"] = layout
     save_settings(SETTINGS)
