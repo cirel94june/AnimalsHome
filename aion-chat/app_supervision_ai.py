@@ -6,6 +6,7 @@ of the latest asynchronously reported snapshot.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 import re
@@ -307,18 +308,38 @@ async def broadcast_app_supervision_command(command: dict | None) -> None:
     # 只发给手机的连接，没送到就把这条从「等手机来取」里撤掉，免得重连后补执行
     try:
         delivered = await manager.send_to_phones({"type": "app_supervision_command", "data": command})
+    except asyncio.CancelledError:
+        # 发送途中被取消（Codex §123 R1）：先把撤单落库再把取消往外传。
+        # 撤单单独跑、外面再取消也不打断它，最多等 WITHDRAW_TIMEOUT_SECONDS 秒
+        cleanup = asyncio.ensure_future(_withdraw_undelivered(command))
+        _withdraw_tasks.add(cleanup)
+        cleanup.add_done_callback(_withdraw_tasks.discard)
+        try:
+            await asyncio.wait_for(asyncio.shield(cleanup), timeout=WITHDRAW_TIMEOUT_SECONDS)
+        except BaseException as error:  # 超时、再次取消：撤单仍在后台做完
+            log.warning("app supervision withdraw after cancel not confirmed: %s", type(error).__name__)
+        raise
     except Exception as error:
         log.warning("app supervision command send failed: %s", type(error).__name__)
         delivered = False
     if delivered:
         return
+    await _withdraw_undelivered(command)
+
+
+WITHDRAW_TIMEOUT_SECONDS = 5.0
+_withdraw_tasks: set[asyncio.Future] = set()
+
+
+async def _withdraw_undelivered(command: dict) -> None:
     from database import get_db
     async with get_db() as db:
         withdrawn = await withdraw_app_supervision_command(db, str(command.get("commandId") or ""))
         await db.commit()
     if withdrawn:
         from routes.app_supervision import _publish_command_result
-        await _publish_command_result(command, success=False, reason="小猫的手机刚断开，这次没送到")
+        # 可能其实已经到了手机、手机也做了，只是没等到确认，所以说「没能确认送到」（Codex §123）
+        await _publish_command_result(command, success=False, reason="小猫的手机刚断开，没能确认送到")
 
 
 async def withdraw_app_supervision_command(db, command_id: str) -> bool:

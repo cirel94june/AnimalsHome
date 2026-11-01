@@ -1921,3 +1921,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
     - 交接卡计入日志。
   - 相关 149 项全过。群聊、座位、哨兵等 261 项里有 8 项失败，都是改动前就有的那批。
   - 用桩跑了真实的 `markCurrentConvRead` / `crMarkRoomRead`：没加载成功、盖着别的页、只有旧快照时都不发已读；加载成功时只记到最后一条消息的时间。
+
+
+## 124. 修 §123 复审的 R1：发送任务被取消时漏撤单
+
+- **问题**：`send_text()` 等待期间发送任务被取消，`CancelledError` 越过 `except Exception`，撤单没执行，手机重连仍能取到这条。
+- **改动**（`app_supervision_ai.broadcast_app_supervision_command`）：
+  - 单独接住 `asyncio.CancelledError`：把撤单（`_withdraw_undelivered`）放进独立任务，用 `asyncio.shield` 加 `wait_for` 最多等 5 秒（`WITHDRAW_TIMEOUT_SECONDS`），然后再把原来的取消往外传。
+  - 外层再次取消、或者 5 秒内没做完时，撤单任务仍在后台做完。任务引用放在 `_withdraw_tasks`，免得被回收。
+  - 仍然只改 status='pending' 的，已确认的命令不动。
+- **文案**：按建议把「这次没送到」改成「小猫的手机刚断开，没能确认送到」（可能其实已经执行了）。
+- **测试**：新加 `test_cancelled_send_still_withdraws_before_cancelling`，走真实的 ConnectionManager 发送链路和临时 SQLite：发送卡住时取消任务，外面收到 CancelledError 之前 pending 已清空，也只留言一次。这一项在 797399b 上失败。应用监管和离线相关 59 项全过。

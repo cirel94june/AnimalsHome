@@ -174,7 +174,38 @@ class DeliveryRaceTests(unittest.IsolatedAsyncioTestCase):
                 await app_supervision_ai.broadcast_app_supervision_command(command)
             self.assertEqual([], await self._pending(fake_db))  # 重连也取不到
             publish.assert_awaited_once()
-            self.assertIn("没送到", publish.await_args.kwargs["reason"])
+            self.assertIn("没能确认送到", publish.await_args.kwargs["reason"])
+
+    async def test_cancelled_send_still_withdraws_before_cancelling(self):
+        """Codex §123 R1：send_text 等待时发送任务被取消，CancelledError 越过 except Exception，撤单没做。"""
+        import asyncio
+        import tempfile
+        from pathlib import Path
+        from routes import app_supervision as routes
+
+        with tempfile.TemporaryDirectory() as folder:
+            fake_db = self._fake_db(str(Path(folder) / "chat.db"))
+            command = await self._queue_one(fake_db)
+            manager = ConnectionManager()
+            phone = MagicMock()
+            sending = asyncio.Event()
+
+            async def stuck_send(text):
+                sending.set()
+                await asyncio.sleep(30)
+
+            phone.send_text = stuck_send
+            manager.active.append(phone)
+            manager.register_client_id(phone, "android-push:abc")
+            publish = AsyncMock()
+            with patch("ws.manager", new=manager), patch("database.get_db", new=fake_db),                     patch.object(routes, "_publish_command_result", new=publish):
+                task = asyncio.create_task(app_supervision_ai.broadcast_app_supervision_command(command))
+                await sending.wait()
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                self.assertEqual([], await self._pending(fake_db))  # 取消往外传之前已经撤下
+                publish.assert_awaited_once()
 
     async def test_delivered_command_stays_for_the_phone_to_ack(self):
         import tempfile
