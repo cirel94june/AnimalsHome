@@ -212,6 +212,7 @@ window.onAionSubPageVisibilityChanged = visible => {
   if (visible && new URLSearchParams(location.search).get('view') === 'group' && currentRoom?.type !== 'group') {
     crOpenLatestGroup().catch(() => {});
   }
+  if (visible) setTimeout(() => crMarkRoomRead(), 0);  // 重新翻到这一层：现在看的窗口记成已读
 };
 
 // 顶栏是浮在消息上面的：按顶栏实际高度给消息区留出上边距（顶栏换成两行、按钮变多、字号变大都跟着变），
@@ -2365,7 +2366,30 @@ async function selectRoom(roomId) {
   await loadMessages();
   crAmbientSyncRunning();
   closeSidebar();
+  crMarkRoomRead();
 }
+
+// ── 未读（11-01）：小猫正看着这个群 / 私聊窗口才算已读 ──
+// 这一页常常是叠在聊天页上的一层，关掉后还藏在后台；藏着的时候不能把新消息记成已读
+function crPageInFront() {
+  if (document.hidden) return false;
+  try {
+    // 聊天页给每层子页面标了「现在显不显示」（和 common.js、桌面弹窗同一个标记）
+    return window.frameElement?.dataset.aionSubPageVisible !== '0';
+  } catch (_) {
+    return true;
+  }
+}
+
+function crMarkRoomRead() {
+  if (!currentRoom || !crPageInFront()) return;
+  fetch('/api/unread/read', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ container: `room:${currentRoom.id}` }),
+  }).catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) crMarkRoomRead(); });
+window.addEventListener('focus', crMarkRoomRead);
 
 // ══════════════════════════════════════════════════
 //  消息
@@ -5607,6 +5631,7 @@ function connectWS() {
       if (data.type === 'chatroom_msg_created' && currentRoom) {
         const msg = data.data;
         if (msg.room_id === currentRoom.id) {
+          crMarkRoomRead();
           if (msg.id && msg.sender) crRememberTTSMsgSender(msg.id, msg.sender);
           // 避免重复：流式回复本身已有 streaming 行；异步跟进消息即使还在发送中也要显示。
           const existing = document.getElementById(`streaming-${msg.id}`);

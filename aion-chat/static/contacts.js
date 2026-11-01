@@ -117,10 +117,17 @@ ${count}会一起删掉，删了找不回来。
   }
 
   // ── 画页面 ──
+  // 有没看的新回复（11-01）：小克的私聊是 conv:，其他（Lucien、座位、群）是 room:
+  let unreadContainers = new Set();
+  function windowKey(person, win) {
+    return (person && person.id === 'aion' ? 'conv:' : 'room:') + win.id;
+  }
+
   function windowItem(person, win) {
     const meta = [when(win.updated_at), win.message_count ? `${win.message_count} 条` : ''].filter(Boolean).join(' · ');
     const openBtn = el('button', { type: 'button', className: 'window-open', onclick: () => openWindow(person, win) }, [
-      el('span', { className: 'window-title', textContent: win.title || '未命名窗口' }),
+      el('span', { className: 'window-title' + (unreadContainers.has(windowKey(person, win)) ? ' unread' : ''),
+        textContent: win.title || '未命名窗口' }),
       el('span', { className: 'window-meta', textContent: meta }),
     ]);
     const renameBtn = el('button', {
@@ -146,7 +153,8 @@ ${count}会一起删掉，删了找不回来。
     const head = el('button', { type: 'button', className: 'person-head' }, [
       el('img', { src: person.avatar || '/public/AIIcon.png', alt: '' }),
       el('span', { className: 'person-info' }, [
-        el('span', { className: 'person-name', textContent: person.name }),
+        el('span', { className: 'person-name' + (windows.some(win => unreadContainers.has(windowKey(person, win))) ? ' unread' : ''),
+          textContent: person.name }),
         el('span', { className: 'person-sub', textContent: sub }),
       ]),
       el('span', { className: 'chevron', textContent: '›' }),
@@ -166,11 +174,13 @@ ${count}会一起删掉，删了找不回来。
   }
 
   async function load() {
-    const [actorData, conversations, rooms] = await Promise.all([
+    const [actorData, conversations, rooms, unread] = await Promise.all([
       api('GET', '/api/actors'),
       api('GET', '/api/conversations').catch(() => []),
       api('GET', '/api/chatroom/rooms').catch(() => []),
+      api('GET', '/api/unread').catch(() => ({ unread: [] })),
     ]);
+    unreadContainers = new Set(((unread && unread.unread) || []).map(item => item.container));
     const byRecent = (a, b) => (b.updated_at || 0) - (a.updated_at || 0);
     const homeRooms = (rooms || []).filter(r => !String(r.id).startsWith('billiards_'));
     const all = actorData.actors || [];
@@ -211,4 +221,5 @@ ${count}会一起删掉，删了找不回来。
   });
   // 从别的页面回来时刷新（新消息、新窗口）
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load().catch(() => {}); });
+  window.onAionSubPageVisibilityChanged = visible => { if (visible) load().catch(() => {}); };  // 重新翻到这页时刷新红点
 })();

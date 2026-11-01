@@ -432,6 +432,8 @@ from routes.travel import router as travel_router
 app.include_router(travel_router)
 from routes.usage import router as usage_router
 app.include_router(usage_router)
+from routes.unread import router as unread_router
+app.include_router(unread_router)
 
 
 @app.get("/api/client-assets")

@@ -1446,9 +1446,94 @@ function connectWS() {
     }
     rememberPrivateSyncSeq(msg);
     handleSync(msg);
+    noticeUnreadEvent(msg);
   };
   ws.onclose = () => setTimeout(connectWS, 2000);
 }
+
+// ── 未读小红点（11-01 小猫：去旅行页再回来，不知道哪里有新回复） ──
+// 「看到哪里」记在服务器上（/api/unread），手机和电脑共用；这里只负责：
+// 正在看的窗口记成已读、👥 按钮上有别的窗口未读时亮红点、停在别的页面时冒一条「有新回复」。
+let unreadState = { unread: [] };
+let unreadRefreshTimer = 0;
+let unreadActorNames = {};
+fetch('/api/actors', { cache: 'no-store' }).then(r => r.json()).then(data => {
+  (data.actors || []).forEach(actor => { unreadActorNames[actor.id] = actor.name; });
+}).catch(() => {});
+
+async function refreshUnread() {
+  try {
+    const response = await fetch('/api/unread', { cache: 'no-store' });
+    if (!response.ok) return;
+    unreadState = await response.json();
+  } catch (_) { return; }
+  renderUnreadDot();
+}
+
+function scheduleUnreadRefresh() {
+  clearTimeout(unreadRefreshTimer);
+  unreadRefreshTimer = setTimeout(refreshUnread, 800);
+}
+
+function renderUnreadDot() {
+  const button = document.querySelector('.chat-header .contacts-btn');
+  if (!button) return;
+  const mine = currentConvId ? `conv:${currentConvId}` : '';
+  const others = (unreadState.unread || []).filter(item => item.container !== mine);
+  button.classList.toggle('has-unread', others.length > 0);
+}
+
+// 小猫正看着这个窗口（页面在前台、上面没盖着别的页）才算已读
+function markCurrentConvRead() {
+  if (!currentConvId || document.hidden || currentSubPage) return;
+  fetch('/api/unread/read', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ container: `conv:${currentConvId}` }),
+  }).then(scheduleUnreadRefresh).catch(() => {});
+}
+
+function noticeUnreadEvent(msg) {
+  const data = msg && msg.data;
+  if (!data) return;
+  let container = '';
+  if (msg.type === 'msg_created' && data.role === 'assistant') container = `conv:${data.conv_id}`;
+  else if (msg.type === 'chatroom_msg_created' && data.sender && !['user', 'system'].includes(data.sender)) {
+    container = `room:${data.room_id}`;
+  }
+  if (!container) return;
+  if (container === `conv:${currentConvId}` && !currentSubPage && !document.hidden) markCurrentConvRead();
+  else scheduleUnreadRefresh();
+  if (currentSubPage) showNewReplyBanner(container, data);
+}
+
+function showNewReplyBanner(container, data) {
+  // 正开着的就是那个群 / 私聊窗口：它自己会显示，不用提醒
+  if (container.startsWith('room:') && String(currentSubPage).includes(encodeURIComponent(container.slice(5)))) return;
+  if (/^\/contacts/.test(subPagePath(currentSubPage))) return;
+  let banner = document.getElementById('newReplyBanner');
+  if (!banner) {
+    banner = document.createElement('button');
+    banner.id = 'newReplyBanner';
+    banner.type = 'button';
+    banner.className = 'new-reply-banner';
+    document.body.appendChild(banner);
+  }
+  const who = container.startsWith('conv:') ? (worldBook.ai_name || '') : (unreadActorNames[data.sender] || '');
+  banner.textContent = `${who || '有人'}回复了 · 点这里去看`;
+  banner.onclick = () => {
+    banner.remove();
+    if (container === `conv:${currentConvId}`) closeSubPage();
+    else openSubPage('/contacts');
+  };
+  clearTimeout(banner._hideTimer);
+  banner._hideTimer = setTimeout(() => banner.remove(), 8000);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { markCurrentConvRead(); refreshUnread(); }
+});
+setInterval(refreshUnread, 60000);
+setTimeout(refreshUnread, 1500);
 
 function handleSync(msg) {
   if (msg.type === 'generation_stopped') { _chatControl.remoteStop(msg.data); return; }
@@ -2724,6 +2809,8 @@ async function selectConv(id) {
   const loadId = ++privateConversationLoadId;
   currentConvId = id;
   localStorage.setItem('aion_last_conv', id);
+  setTimeout(markCurrentConvRead, 0);
+  renderUnreadDot();
   msgDebugData = {};
   _heartWhisperMsgIds.clear();
   Object.keys(_heartWhisperContent).forEach(k => delete _heartWhisperContent[k]);
@@ -5491,6 +5578,7 @@ function notifySubPageLifecycle(frame, visible) {
   frame.dataset.aionSubPageVisible = visible ? '1' : '0';
   try {
     frame.contentWindow.onAionSubPageVisibilityChanged?.(!!visible);
+    if (visible) frame.contentWindow.checkChatUnread?.();  // 翻回首页时马上刷新聊天红点
     frame.contentWindow.onAionAppForegroundChanged?.(_aionAppForeground);
     frame.contentWindow.onAionPhoneCameraCaptureState?.(
       _aionPhoneCameraCaptureActive);
@@ -5717,6 +5805,9 @@ function closeSubPage(skipReload = false) {
   if (!skipReload && currentConvId) {
     refreshCurrentConversationFromServer();
   }
+  document.getElementById('newReplyBanner')?.remove();
+  markCurrentConvRead();
+  refreshUnread();
 }
 // 导航到 Home（从任何功能页返回 Home）
 function navigateToHome() {

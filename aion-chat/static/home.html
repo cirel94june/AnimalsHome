@@ -1038,6 +1038,7 @@ function renderApps() {
     ? Array.from({ length: pageCount }, (_, idx) => `<button class="page-dot ${idx === currentPage ? 'active' : ''}" type="button" data-page="${idx}" aria-label="第 ${idx + 1} 页"></button>`).join('')
     : '';
   dock.innerHTML = dockApps.map(app => appHTML(app, { grid: false })).join('');
+  applyUnreadBadges();
   updatePager(false);
 }
 
@@ -1081,7 +1082,9 @@ function closeFolder() {
 function appHTML(app, options = {}) {
   if (app.folder) return folderHTML(app, options);
   const disabled = !app.url;
-  const badgeId = app.id === 'moments' && !options.inFolder ? 'id="momentsBadge"' : '';
+  const badgeId = app.id === 'moments' && !options.inFolder ? 'id="momentsBadge"'
+    : app.id === 'chat' && !options.grid ? 'id="chatUnreadBadge"'
+      : app.id === 'chatroom' && !options.grid ? 'id="groupUnreadBadge"' : '';
   return `
     <button class="app-icon ${disabled ? 'disabled' : ''}"
        type="button"
@@ -1572,6 +1575,26 @@ async function checkMomentsUnread() {
 }
 checkMomentsUnread();
 setInterval(checkMomentsUnread, 60000);
+
+/* ── 聊天未读红点（11-01）：私聊有没看的新回复亮「聊天」，群聊的亮「群聊」 ── */
+// 用 var：首页一开始画图标时就会调 applyUnreadBadges，那时这里还没执行到，let 会直接报错把后面的脚本全卡住
+var chatUnread = { private: false, group: false };
+function applyUnreadBadges() {
+  const state = chatUnread || {};
+  document.getElementById('chatUnreadBadge')?.classList.toggle('show', Boolean(state.private));
+  document.getElementById('groupUnreadBadge')?.classList.toggle('show', Boolean(state.group));
+}
+async function checkChatUnread() {
+  try {
+    const data = await (await fetch('/api/unread', { cache: 'no-store' })).json();
+    chatUnread = { private: Boolean(data.private), group: Boolean(data.group) };
+    applyUnreadBadges();
+  } catch (e) {}
+}
+checkChatUnread();
+setInterval(checkChatUnread, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkChatUnread(); });
+window.addEventListener('focus', checkChatUnread);
 
 /* ── AI 动态小卡片：只显示最近一条 AI 的动态（名字和标题都走 textContent） ── */
 async function loadHomeFeed() {
