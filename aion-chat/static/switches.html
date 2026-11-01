@@ -36,6 +36,7 @@
 .sw-chip button { min-width: 26px; min-height: 26px; border: 0; border-radius: 50%; background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; }
 .sw-add { min-height: 32px; padding: 3px 12px; border: 1px dashed var(--accent); border-radius: 16px; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
 .sw-picker { display: flex; flex-direction: column; gap: 6px; }
+.sw-picker[hidden] { display: none; }  /* display:flex 会盖掉 hidden（Codex §114 L1） */
 .sw-picker button { min-height: 40px; text-align: left; padding: 0 12px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
 .sw-links a { display: flex; align-items: center; justify-content: space-between; min-height: 42px; color: var(--accent); text-decoration: none; font-size: 14px; }
 .sw-status { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 16px; background: rgba(20, 30, 50, .85); color: #fff; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; }

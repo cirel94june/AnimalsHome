@@ -67,7 +67,8 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { actors: [], emptySeats: 0, roles: [], items: [], seen: new Set(), nextBefore: null, filter: 'all' };
+  // generation：每次换人 / 重新读都加一；晚到的旧回应对不上就丢掉，不能盖掉新选的人（Codex §114 R3）
+  const state = { actors: [], emptySeats: 0, roles: [], items: [], seen: new Set(), cursor: null, filter: 'all', generation: 0 };
   const PAGE = 40;
   // 点开动态去哪看全文
   const TARGET = { diary: '/diary', moment: '/moments', gift: '/gift', idle_event: '/family-dynamics' };
@@ -205,7 +206,7 @@
       }
       root.appendChild(itemCard(item));
     });
-    $('more').hidden = !state.nextBefore;
+    $('more').hidden = !state.cursor;
   }
 
   function render() {
@@ -215,18 +216,28 @@
   }
 
   // 先在服务器上按人筛、再一页一页往前翻（Codex §111 M1：原来先截全家最新 500 条，AI 的会被挤掉）
+  // 返回 false 表示这次回应已经过时（期间换了人或重新读过），调用方不要再画
   async function loadTimeline(more = false) {
-    const who = state.filter === 'all' ? 'ai' : state.filter;
-    const before = more && state.nextBefore ? `&before=${encodeURIComponent(state.nextBefore)}` : '';
-    const data = await getJson(`/api/timeline?hours=720&limit=${PAGE}&who=${encodeURIComponent(who)}${before}`);
+    if (!more) state.generation += 1;
+    const generation = state.generation;
+    const filter = state.filter;
+    const who = filter === 'all' ? 'ai' : filter;
+    const cursor = more ? state.cursor : null;
+    if (more && !cursor) return false;
+    // 游标是上一页最后一条的（时间、类别、编号），同一时刻的不会卡住也不会漏（Codex §114 R1）
+    const after = cursor ? `&before=${encodeURIComponent(cursor.before)}&before_kind=${encodeURIComponent(cursor.kind)}`
+      + `&before_id=${encodeURIComponent(cursor.id)}` : '';
+    const data = await getJson(`/api/timeline?hours=720&limit=${PAGE}&who=${encodeURIComponent(who)}${after}`);
+    if (generation !== state.generation || filter !== state.filter) return false;
     if (!more) { state.items = []; state.seen = new Set(); }
     (Array.isArray(data.items) ? data.items : []).forEach(item => {
-      const key = `${item.kind}:${item.source_id}:${item.timestamp}`;
-      if (state.seen.has(key)) return;  // 翻页时同一秒的那条会再来一次
+      const key = `${item.kind}:${item.source_id}`;
+      if (state.seen.has(key)) return;
       state.seen.add(key);
       state.items.push(item);
     });
-    state.nextBefore = data.next_before || null;
+    state.cursor = data.next_cursor || null;
+    return true;
   }
 
   async function load() {
@@ -247,16 +258,24 @@
     const chip = event.target.closest('[data-filter]');
     if (!chip) return;
     state.filter = chip.dataset.filter;
+    state.items = [];
+    state.cursor = null;
     renderChips();
     renderWake();
-    try { await loadTimeline(); } catch (_) { state.items = []; state.nextBefore = null; }
     renderTimeline();
+    const generation = state.generation + 1;
+    try {
+      if (await loadTimeline()) renderTimeline();
+    } catch (_) {
+      if (generation === state.generation) renderTimeline();  // 只有还是这次的请求才把错误画出来
+    }
   });
   $('more').addEventListener('click', async () => {
+    const generation = state.generation;
     $('more').disabled = true;
     try { await loadTimeline(true); } catch (_) {}
     $('more').disabled = false;
-    renderTimeline();
+    if (generation === state.generation) renderTimeline();
   });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
   load();

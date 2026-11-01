@@ -1746,3 +1746,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **L1 图片地址**：动态页和开关总览的头像 / 附图改用 `safeLocalUrl`。要求以 `/` 开头、不是 `//`；不能带反斜杠、空白、引号、括号、尖括号；不能带 `%2e` `%2f` `%5c`；路径段里不能有 `.` 或 `..`；再要求前缀在白名单里。新测试 `test_ai_feed_urls.js` 覆盖 Codex 的 `/uploads/../../cdn-cgi/access/logout` 和各种编码变体。
 - **L2 记忆整理**：`list_compression_events` 的事件按 author 补上 actor_id（aion / connor），动态页能显示。
 - **测试**：`test_ai_feed.py` 新加两项：挤掉场景、单人 + 游标翻页（含「正好多一篇」的判断），在不带本次修改的 activity.py 上会失败。相关 Python 28 项通过；`test_home_folders_ui.js`、`test_ai_feed_urls.js`、`test_family_dynamics_ui.js` 通过。
+
+
+## 115. 修 §114 审查的 R1–R4、L1（已写好，测试待补）
+
+- R1：时间线改用复合游标（时间、类别、编号），SQL 里按 created_at DESC, CAST(id AS TEXT) DESC 排序并按游标接着取；返回 next_cursor。
+- R2：记忆整理按 who 映射 target（aion→main、connor→chatroom，座位不查），带同样的游标、多取一条，时间线读取时按文本比编号。
+- R3：动态页加请求代数，换人后晚到的旧回应直接丢掉，游标只在代数和人物都对得上时更新。
+- R4：认领醒来之后再看一次静默；是就用 restore_claimed_wake 只在 next_wake_at 仍为空时放回静默结束后，不覆盖期间新起的计时。
+- L1：.sw-picker[hidden] { display: none; }。
+- 还没做：为 R1–R4 补专门的回归测试和本机页面实测，然后才交狐狸复审。

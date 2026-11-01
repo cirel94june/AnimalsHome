@@ -514,7 +514,18 @@ def _compression_record(raw) -> dict:
     }
 
 
-async def _read_completed_batches(*, since: float = 0, target: str | None = None, limit: int = 80, offset: int = 0):
+async def _read_completed_batches(*, since: float = 0, target: str | None = None, limit: int = 80, offset: int = 0,
+                                  cursor: tuple | None = None, text_order: bool = False):
+    """cursor = (completed_at, id)：id 为 None 时这一刻的都要，为 "" 时这一刻的都不要，否则只要同一刻里编号更小的。"""
+    clause, params = "", ()
+    if cursor is not None:
+        ts, last_id = cursor
+        if last_id is None:
+            clause, params = " AND completed_at<=?", (ts,)
+        elif last_id == "":
+            clause, params = " AND completed_at<?", (ts,)
+        else:
+            clause, params = " AND (completed_at<? OR (completed_at=? AND CAST(id AS TEXT)<?))", (ts, ts, last_id)
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         exists = await (await db.execute(
@@ -524,8 +535,11 @@ async def _read_completed_batches(*, since: float = 0, target: str | None = None
             return []
         return await (await db.execute(
             "SELECT * FROM memory_compression_batches WHERE status='completed' AND completed_at>=? "
-            "AND (? IS NULL OR target=?) ORDER BY completed_at DESC,id DESC LIMIT ? OFFSET ?",
-            (since, target, target, limit, offset),
+            "AND (? IS NULL OR target=?)" + clause
+            # 时间线翻页按文本比编号（和游标一致）；记忆整理历史页照旧
+            + (" ORDER BY completed_at DESC,CAST(id AS TEXT) DESC" if text_order else " ORDER BY completed_at DESC,id DESC")
+            + " LIMIT ? OFFSET ?",
+            (since, target, target, *params, limit, offset),
         )).fetchall()
 
 
@@ -536,9 +550,10 @@ async def list_compression_history(target: str, *, limit: int = 20, offset: int 
     return {"items": [_compression_record(row) for row in rows[:limit]], "has_more": len(rows) > limit}
 
 
-async def list_compression_events(*, since: float, limit: int = 80) -> list[dict]:
+async def list_compression_events(*, since: float, limit: int = 80, target: str | None = None,
+                                  cursor: tuple | None = None) -> list[dict]:
     """Completed batches are the durable events; reading them never creates duplicates."""
-    rows = await _read_completed_batches(since=since, limit=limit)
+    rows = await _read_completed_batches(since=since, limit=limit, target=target, cursor=cursor, text_order=True)
     events = []
     for raw in rows:
         row = _compression_record(raw)
