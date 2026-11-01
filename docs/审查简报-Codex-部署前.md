@@ -1661,3 +1661,27 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 原来就是英文写的，用地图查到的名字。
   - 不再按空格去猜哪一段是地点。
 - **测试**：改了原来那一项，期望得到整串「美国 檀香山 威基基海滩」。新加一项，覆盖 Codex 的三个反例：英文输入保留地图名，中文和混合输入保留整串。旅行两组 26 项通过。
+
+
+## 111. 主页改版第 2 步：「AI 动态」页 + 主页小卡片；时间线里狗蛋不再显示成 ai3
+
+草图 ②。小猫说过活动日志、家庭动态、日记藏得深、难翻。
+
+- **时间线接口**（`routes/activity.py` 的 `/api/timeline`）：
+  - 每条多一个 `actor_id`（aion / connor / ai3… / user）。朋友圈、日记、礼物、自主活动取原表的作者字段；小猫自己的事件和位置变化标成 user。
+  - `_timeline_names` 加 `**seat_names()`。原来名字表没有座位，狗蛋在家庭动态、活动日志里显示成「ai3」，§100 漏了这一处。本机实测现在显示座位名。
+  - 其他字段不变，家庭动态、活动日志照旧能用。
+- **新页面 `/ai-feed`**（`static/ai-feed.html`，`main.py` 加路由）：
+  - 顶上一排人：全部 + 每位已启用的 AI（头像只认 /public、/skin-assets、/static、/uploads 开头的本站地址，否则显示名字首字）；没住进来的显示「空位 ×N」，点不了。
+  - 「下次醒来」：读 `/api/idle-autonomy` 的 `remaining_minutes`；没开自己醒来的写「没开自己醒来」。
+  - 时间线：`/api/timeline?hours=72&limit=500`，只放 actor_id 是 AI 的条目，按今天 / 昨天 / 日期分组；点开按类型跳到日记本、朋友圈、爱的印记、家庭动态。「再往前看」把时间范围放大，最多 30 天。
+  - 全部用 textContent；附图只认 `/uploads/` 开头。
+- **主页**：
+  - 图标区上面加一张「AI 动态」小卡片，显示最近一条 AI 动态的时间和标题，点开进 `/ai-feed`；每 2 分钟刷新一次，用 textContent 写。
+  - 「家里的事」文件夹第一个放「AI 动态」入口。IB 皮肤下沿用家庭动态的线条图标。
+  - IB 小组件区在矮屏上本来就能自己滚，卡片只占约 50 像素，不挡内容。
+- **验证**：
+  - 本机临时插了 3 条假动态（测完已删）：主页卡片显示「10:25 Jasper 发布了日记」。动态页分组正确；只看 Jasper 时只剩他的那条，「下次醒来」也只剩他；点开日记跳到 /diary。控制台无错误。
+  - 新测试 `test_ai_feed.py` 3 项：临时库里时间线带 actor_id、座位显示名字、页面不用 innerHTML、主页有卡片和入口。
+  - 相关旧测试 `test_autonomy_journey` / `test_family_user_events` / `test_seat_names_everywhere` 共 24 项通过；`test_home_folders_ui.js`、`test_family_dynamics_ui.js` 通过。
+- **还没并进来**：哨兵 / 监控日志不在这条时间线里，以后再并。

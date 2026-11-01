@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AI 动态</title>
+<link rel="stylesheet" href="/static/common.css">
+<link rel="manifest" href="/manifest.json">
+<style>
+/* 11-01 小猫：活动日志、家庭动态、日记藏得深，翻起来难 → 一条时间线看大家都干了什么（草图 ②） */
+.feed-content { flex: 1; overflow-y: auto; padding: 12px 14px 28px; display: flex; flex-direction: column; gap: 12px; }
+.feed-chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.feed-chips::-webkit-scrollbar { display: none; }
+.feed-chip {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
+  padding: 4px 13px 4px 4px; border: 1px solid var(--border); border-radius: 18px;
+  background: var(--surface); color: var(--text); font-size: 13px; cursor: pointer;
+}
+.feed-chip.all { padding-left: 14px; }
+.feed-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.feed-chip.empty-seats { padding-left: 13px; border-style: dashed; color: var(--text3); cursor: default; background: transparent; }
+.feed-avatar {
+  width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%; object-fit: cover;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; font-size: 12px; font-weight: 600;
+}
+.feed-chip .feed-avatar { width: 26px; height: 26px; font-size: 11px; }
+.feed-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.feed-card h3 { margin: 0 0 8px; font-size: 13px; }
+.wake-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 10px; font-size: 12px; color: var(--text2); }
+.wake-hint { margin-top: 8px; font-size: 11px; color: var(--text3); }
+.day-label { margin: 6px 2px 0; font-size: 12px; font-weight: 700; color: var(--text2); }
+.feed-item {
+  display: flex; gap: 10px; width: 100%; padding: 12px 14px; text-align: left;
+  border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text);
+  font: inherit; cursor: pointer;
+}
+.feed-item .feed-avatar { width: 32px; height: 32px; }
+.feed-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.feed-title { font-size: 14px; line-height: 1.45; }
+.feed-detail { font-size: 12px; line-height: 1.5; color: var(--text2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; white-space: pre-wrap; }
+.feed-meta { font-size: 11px; color: var(--text3); }
+.feed-thumb { width: 64px; height: 64px; flex-shrink: 0; border-radius: 10px; object-fit: cover; }
+.feed-empty { padding: 30px 0; text-align: center; font-size: 13px; color: var(--text3); }
+.feed-more { min-height: 42px; border: 1px dashed var(--border); border-radius: 14px; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="sub-page">
+  <div class="top-bar">
+    <button class="back-btn" onclick="navigateSubPageBack()" aria-label="返回">⬅</button>
+    <h2>AI 动态</h2>
+  </div>
+  <div class="feed-content">
+    <nav class="feed-chips" id="chips" aria-label="只看某一位"></nav>
+    <section class="feed-card" id="wakeCard" hidden>
+      <h3>下次醒来</h3>
+      <div class="wake-grid" id="wakeGrid"></div>
+      <div class="wake-hint">一段时间没聊，TA 会自己醒来做点事。频率以后在「开关总览」里调。</div>
+    </section>
+    <section id="timeline" aria-live="polite"></section>
+    <button class="feed-more" id="more" type="button" hidden>再往前看</button>
+  </div>
+</div>
+<script src="/static/common.js?v=ai-feed-20261101"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const state = { actors: [], emptySeats: 0, roles: [], items: [], hours: 72, filter: 'all' };
+  // 点开动态去哪看全文
+  const TARGET = { diary: '/diary', moment: '/moments', gift: '/gift', idle_event: '/family-dynamics' };
+
+  async function getJson(url) {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function actorOf(id) {
+    return state.actors.find(actor => actor.id === id) || null;
+  }
+
+  // 只用自己家的图片地址当头像；没有就显示名字首字
+  function avatar(actor) {
+    const src = String(actor?.avatar || '');
+    if (/^\/(public|skin-assets|static|uploads)\/[^"'()\s]+$/.test(src)) {
+      const img = el('img', 'feed-avatar');
+      img.src = src;
+      img.alt = '';
+      return img;
+    }
+    return el('span', 'feed-avatar', Array.from(String(actor?.name || '?'))[0] || '?');
+  }
+
+  function openPage(url) {
+    if (window.parent !== window && typeof window.parent.openSubPage === 'function') window.parent.openSubPage(url);
+    else location.href = url;
+  }
+
+  function renderChips() {
+    const root = $('chips');
+    root.replaceChildren();
+    const all = el('button', 'feed-chip all', '全部');
+    all.type = 'button';
+    all.dataset.filter = 'all';
+    root.appendChild(all);
+    state.actors.forEach(actor => {
+      const chip = el('button', 'feed-chip');
+      chip.type = 'button';
+      chip.dataset.filter = actor.id;
+      chip.append(avatar(actor), el('span', '', actor.name));
+      root.appendChild(chip);
+    });
+    if (state.emptySeats) {
+      // 还没住进来的 bot 留着位置，住进来后自动出现在这一排
+      root.appendChild(el('span', 'feed-chip empty-seats', `空位 ×${state.emptySeats}`));
+    }
+    root.querySelectorAll('[data-filter]').forEach(chip =>
+      chip.classList.toggle('active', chip.dataset.filter === state.filter));
+  }
+
+  function wakeText(role) {
+    if (role.config && role.config.enabled === false) return '没开自己醒来';
+    const minutes = role.remaining_minutes;
+    if (minutes == null) return '等下一次聊完再算';
+    if (minutes <= 1) return '马上';
+    if (minutes < 60) return `约 ${minutes} 分钟后`;
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return `约 ${hours} 小时${rest ? ` ${rest} 分` : ''}后`;
+  }
+
+  function renderWake() {
+    const roles = state.roles.filter(role => state.filter === 'all' || role.actor === state.filter);
+    $('wakeCard').hidden = roles.length === 0;
+    $('wakeGrid').replaceChildren(...roles.map(role => el('span', '', `${role.name} · ${wakeText(role)}`)));
+  }
+
+  function dayLabel(ts) {
+    const date = new Date(ts * 1000);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (date.toDateString() === today.toDateString()) return '今天';
+    if (date.toDateString() === yesterday.toDateString()) return '昨天';
+    return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+  }
+
+  function itemCard(item) {
+    const actor = actorOf(item.actor_id) || { name: item.actor };
+    const card = el('button', 'feed-item');
+    card.type = 'button';
+    const body = el('div', 'feed-body');
+    body.appendChild(el('span', 'feed-title', item.title || ''));
+    if (item.detail) body.appendChild(el('span', 'feed-detail', item.detail));
+    body.appendChild(el('span', 'feed-meta', item.time || ''));
+    card.append(avatar(actor), body);
+    const photo = (item.attachments || []).find(url => /^\/uploads\/[^"'()\s]+$/.test(String(url)));
+    if (photo) {
+      const img = el('img', 'feed-thumb');
+      img.src = photo;
+      img.alt = '';
+      img.loading = 'lazy';
+      card.appendChild(img);
+    }
+    const target = TARGET[item.kind];
+    if (target) card.addEventListener('click', () => openPage(target));
+    else card.disabled = true;
+    return card;
+  }
+
+  function renderTimeline() {
+    const aiIds = new Set(state.actors.map(actor => actor.id));
+    const items = state.items.filter(item => aiIds.has(item.actor_id)
+      && (state.filter === 'all' || item.actor_id === state.filter));
+    const root = $('timeline');
+    root.replaceChildren();
+    if (!items.length) {
+      root.appendChild(el('div', 'feed-empty', state.filter === 'all'
+        ? '这几天大家还没什么动静' : `${actorOf(state.filter)?.name || 'TA'} 这几天还没什么动静`));
+    }
+    let lastDay = '';
+    items.forEach(item => {
+      const label = dayLabel(item.timestamp);
+      if (label !== lastDay) {
+        root.appendChild(el('div', 'day-label', label));
+        lastDay = label;
+      }
+      root.appendChild(itemCard(item));
+    });
+    $('more').hidden = state.hours >= 720;
+  }
+
+  function render() {
+    renderChips();
+    renderWake();
+    renderTimeline();
+  }
+
+  async function loadTimeline() {
+    const data = await getJson(`/api/timeline?hours=${state.hours}&limit=500`);
+    state.items = Array.isArray(data.items) ? data.items : [];
+  }
+
+  async function load() {
+    try {
+      const [people, autonomy] = await Promise.all([getJson('/api/actors'), getJson('/api/idle-autonomy'), loadTimeline()]);
+      const all = Array.isArray(people.actors) ? people.actors : [];
+      state.actors = all.filter(actor => actor.enabled || actor.builtin);
+      state.emptySeats = all.length - state.actors.length;
+      state.roles = Array.isArray(autonomy.roles) ? autonomy.roles : [];
+    } catch (error) {
+      $('timeline').replaceChildren(el('div', 'feed-empty', '动态暂时读不出来，下拉或稍后再试'));
+      return;
+    }
+    render();
+  }
+
+  $('chips').addEventListener('click', event => {
+    const chip = event.target.closest('[data-filter]');
+    if (!chip) return;
+    state.filter = chip.dataset.filter;
+    render();
+  });
+  $('more').addEventListener('click', async () => {
+    state.hours = Math.min(720, state.hours * 2 + 24);
+    $('more').disabled = true;
+    try { await loadTimeline(); } catch (_) {}
+    $('more').disabled = false;
+    renderTimeline();
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  load();
+})();
+</script>
+</body>
+</html>

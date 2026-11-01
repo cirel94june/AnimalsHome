@@ -21,6 +21,7 @@ from activity import (
 from ws import manager
 from database import get_db
 from config import load_worldbook
+from actors import seat_names
 from chatroom import load_chatroom_config
 from location import load_location_status
 from autonomy_state import wake_summary_timeline_title
@@ -223,6 +224,7 @@ def _timeline_names() -> dict:
         "aion": wb.get("ai_name", "AI"),
         "connor": cr.get("connor_name", "第二位AI"),
         "system": "系统",
+        **seat_names(),  # 11-01：狗蛋在家庭动态 / 活动日志里还显示成 ai3（§100 漏了这一处）
     }
 
 
@@ -230,12 +232,14 @@ def _actor_name(actor: str, names: dict) -> str:
     return names.get(actor, actor or "未知")
 
 
-def _timeline_item(ts: float, kind: str, actor: str, title: str, detail: str = "", source_id: str = "", attachments=None) -> dict:
+def _timeline_item(ts: float, kind: str, actor: str, title: str, detail: str = "", source_id: str = "", attachments=None,
+                   actor_id: str = "") -> dict:
     return {
         "timestamp": ts,
         "time": time.strftime("%H:%M", time.localtime(ts)),
         "kind": kind,
         "actor": actor,
+        "actor_id": actor_id,  # aion / connor / ai3… / user；「AI 动态」页按它筛某一位
         "title": title,
         "detail": detail,
         "source_id": source_id,
@@ -319,7 +323,8 @@ async def get_timeline(hours: int = 24, limit: int = 300):
             title = f"{actor} 发布了朋友圈"
             if atts:
                 title += f"（{len(atts)}张图）"
-            items.append(_timeline_item(r["created_at"], "moment", actor, title, _clip(r["content"]), r["id"], atts))
+            items.append(_timeline_item(r["created_at"], "moment", actor, title, _clip(r["content"]), r["id"], atts,
+                                        actor_id=r["author"] or ""))
 
         cur = await db.execute(
             "SELECT id, author, title, content, created_at FROM diary_entries "
@@ -330,7 +335,8 @@ async def get_timeline(hours: int = 24, limit: int = 300):
             actor = _actor_name(r["author"], names)
             shown_diary_ids.add(str(r["id"]))
             detail = r["title"] or _clip(r["content"])
-            items.append(_timeline_item(r["created_at"], "diary", actor, f"{actor} 发布了日记", _clip(detail), r["id"]))
+            items.append(_timeline_item(r["created_at"], "diary", actor, f"{actor} 发布了日记", _clip(detail), r["id"],
+                                        actor_id=r["author"] or ""))
 
         cur = await db.execute(
             "SELECT id, image_path, message, created_at, sender FROM gifts "
@@ -344,7 +350,7 @@ async def get_timeline(hours: int = 24, limit: int = 300):
             items.append(_timeline_item(
                 r["created_at"], "gift", actor,
                 f"{actor} 给 {user_name} 送了礼物",
-                _clip(r["message"]), r["id"], atts,
+                _clip(r["message"]), r["id"], atts, actor_id=r["sender"] or "aion",
             ))
 
         cur = await db.execute(
@@ -367,10 +373,11 @@ async def get_timeline(hours: int = 24, limit: int = 300):
             items.append(_timeline_item(
                 r["created_at"], "idle_event", actor,
                 title, r["detail"] if meta.get("selected_action") == "album_browse" else _clip(r["detail"]), r["id"], photo_urls,
+                actor_id=r["actor"] or "",
             ))
 
     user_groups = await list_grouped_user_events(since=cutoff, limit=limit)
-    items.extend(build_user_timeline_items(user_groups, user_name))
+    items.extend({**item, "actor_id": "user"} for item in build_user_timeline_items(user_groups, user_name))
     items.extend(await list_compression_events(since=cutoff, limit=limit))
 
     status = load_location_status()
@@ -387,7 +394,7 @@ async def get_timeline(hours: int = 24, limit: int = 300):
         items.append(_timeline_item(
             changed_at, "location", user_name,
             f"{user_name} 的位置状态变为{state_label}",
-            "；".join(detail_parts),
+            "；".join(detail_parts), actor_id="user",
         ))
 
     items.sort(key=lambda x: x["timestamp"], reverse=True)

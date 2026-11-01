@@ -284,6 +284,32 @@ body[data-theme="dark"] .dock::before {
 }
 .dock .app-icon .icon-label { display: none; }
 
+/* ── AI 动态小卡片 ── */
+.home-feed-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 6px;
+  padding: 10px 14px;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.home-feed-card[hidden] { display: none; }
+.home-feed-title { flex-shrink: 0; font-size: 13px; font-weight: 700; }
+.home-feed-line { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; opacity: .8; }
+.home-feed-more { flex-shrink: 0; font-size: 12px; opacity: .65; }
+html[data-skin="ib"] .home-feed-card { color: var(--ib-tx); border-color: var(--ib-glass-line); box-shadow: var(--ib-shadow); }
+
 /* ── 分组文件夹 ── */
 .app-icon .folder-img {
   display: grid !important;
@@ -602,6 +628,13 @@ body[data-theme="dark"] .gsi-title { color: rgba(244,246,255,0.70); }
       <button id="homeBoardNotice" class="home-board-notice" type="button" hidden>留言板有新消息</button>
     </div>
 
+    <!-- AI 动态小卡片：最近谁做了什么，点开看全部（草图 ①） -->
+    <button class="home-feed-card" id="homeFeedCard" type="button" hidden>
+      <span class="home-feed-title">AI 动态</span>
+      <span class="home-feed-line" id="homeFeedLine"></span>
+      <span class="home-feed-more">全部 ›</span>
+    </button>
+
     <div class="app-pages" id="appPages" aria-label="应用分页">
       <div class="app-pages-track" id="appPagesTrack"></div>
     </div>
@@ -642,6 +675,7 @@ const APPS = [
   { id: 'chatroom', name: '群聊', icon: '/public/funIcon_0020_聊天室.png', url: '/chatroom?view=group' ,  dock: true  },
   { id: 'diary',    name: '日记本',   icon: '/public/funIcon_0006_日记本.png',  url: '/diary',  dock: true },
   { id: 'memory',   name: '记忆库',   icon: '/public/funIcon_0004_记忆库.png',  url: '/memory' ,  dock: true },
+  { id: 'ai-feed',  name: 'AI 动态',  icon: '/public/funIcon_0031_家庭动态.png', url: '/ai-feed' },
   { id: 'moments',  name: '朋友圈',   icon: '/public/funIcon_0010_朋友圈.png',  url: '/moments' },
   { id: 'music-station', name: '点歌台', icon: '/public/funIcon_0032_点歌台.png', url: '/music-station' },
   { id: 'album', name: '相册', icon: '/public/funIcon_0033_相册.png', url: '/album' },
@@ -680,7 +714,7 @@ const APPS = [
 // 没列进任何分组的新应用照旧单独放在桌面上。
 const FOLDERS = [
   { id: 'folder-play', name: '一起玩', apps: ['theater', 'music-station', 'playground', 'english-corner', 'reading', 'travel'] },
-  { id: 'folder-home', name: '家里的事', apps: ['moments', 'album', 'gift', 'wishes', 'lounge-friends', 'taobao', 'xhs-lite', 'family-dynamics'] },
+  { id: 'folder-home', name: '家里的事', apps: ['ai-feed', 'moments', 'album', 'gift', 'wishes', 'lounge-friends', 'taobao', 'xhs-lite', 'family-dynamics'] },
   { id: 'folder-life', name: '我的生活', apps: ['alarm', 'health', 'location', 'fund', 'app-supervision'] },
   { id: 'folder-switches', name: '家里的开关', apps: ['settings', 'worldbook', 'capabilities', 'camera', 'logs', 'activity', 'usage', 'mcp-tools', 'repair'] },
   { id: 'folder-later', name: '先收起来', apps: ['whisper', 'dateTheater', 'hug'] },
@@ -1518,6 +1552,26 @@ async function checkMomentsUnread() {
 }
 checkMomentsUnread();
 setInterval(checkMomentsUnread, 60000);
+
+/* ── AI 动态小卡片：只显示最近一条 AI 的动态（名字和标题都走 textContent） ── */
+async function loadHomeFeed() {
+  try {
+    const [people, timeline] = await Promise.all([
+      fetch('/api/actors', { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/timeline?hours=72&limit=80', { cache: 'no-store' }).then(r => r.json()),
+    ]);
+    const aiIds = new Set((people.actors || []).filter(a => a.enabled || a.builtin).map(a => a.id));
+    const latest = (timeline.items || []).find(item => aiIds.has(item.actor_id));
+    document.getElementById('homeFeedLine').textContent = latest
+      ? `${latest.time || ''} ${latest.title || ''}`.trim()
+      : '这几天大家还没什么动静';
+    document.getElementById('homeFeedCard').hidden = false;
+    handleHomeResize();
+  } catch (e) {}
+}
+document.getElementById('homeFeedCard').addEventListener('click', () => openApp('/ai-feed'));
+loadHomeFeed();
+setInterval(loadHomeFeed, 120000);
 </script>
 <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
 <script src="/static/home-popups.js?v=20260923"></script>

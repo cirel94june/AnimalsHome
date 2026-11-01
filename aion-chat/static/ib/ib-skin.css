@@ -396,6 +396,8 @@ html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="worl
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="xhs-lite"] .icon-img img { content: url("/static/ib/icons/xhs-lite.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="usage"] .icon-img img { content: url("/static/ib/icons/usage.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="diary"] .icon-img img { content: url("/static/ib/icons/diary.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="ai-feed"] .icon-img img { content: url("/static/ib/icons/family-dynamics.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="ai-feed"] img { content: url("/static/ib/icons/family-dynamics.svg"); }
 /* 文件夹里的小图标也换成 IB 线条图（11-01 主页分组） */
 html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="activity"] img { content: url("/static/ib/icons/activity.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="alarm"] img { content: url("/static/ib/icons/alarm.svg"); }
