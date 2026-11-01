@@ -317,24 +317,51 @@ def _idle_event_timeline_title(row, actor: str, shown_diary_ids: set[str], shown
     return row["title"]
 
 
+def _timeline_actor_filter(column: str, who: str, default: str = "") -> tuple[str, tuple]:
+    """who=""：全家（老页面）；"ai"：除了小猫和系统的；其他：只要这一位。先在库里筛再截断（Codex §111 M1）。"""
+    expr = f"COALESCE({column}, '{default}')" if default else f"COALESCE({column}, '')"
+    if not who:
+        return "", ()
+    if who == "ai":
+        return f" AND {expr} NOT IN ('user', 'system', '')", ()
+    return f" AND {expr} = ?", (who,)
+
+
+def _timeline_wanted(actor_id: str, who: str) -> bool:
+    if not who:
+        return True
+    if who == "ai":
+        return actor_id not in ("user", "system", "")
+    return actor_id == who
+
+
 @router.get("/api/timeline")
-async def get_timeline(hours: int = 24, limit: int = 300):
+async def get_timeline(hours: int = 24, limit: int = 300, who: str = "", before: Optional[float] = None):
     hours = max(1, min(hours, 24 * 30))
-    limit = max(20, min(limit, 1000))
+    limit = max(1, min(limit, 1000))
+    who = (who or "").strip()[:40]
     cutoff = time.time() - hours * 3600
+    # 往前翻：before 是上一页最后一条的时间。含这一刻本身，页面按 kind+source_id 去重，同一秒的不会漏
+    upper = float(before) if before else time.time() + 60
+    fetch_limit = limit + 1  # 每类多取一条：这样才知道后面还有没有，「再往前看」才会出现
     names = _timeline_names()
     user_name = _actor_name("user", names)
     items = []
     shown_moment_ids: set[str] = set()
     shown_diary_ids: set[str] = set()
 
+    moment_filter = _timeline_actor_filter("author", who)
+    diary_filter = _timeline_actor_filter("author", who)
+    gift_filter = _timeline_actor_filter("sender", who, default="aion")
+    idle_filter = _timeline_actor_filter("actor", who)
+
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
 
         cur = await db.execute(
             "SELECT id, author, content, attachments, created_at FROM moments "
-            "WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
-            (cutoff, limit),
+            "WHERE created_at >= ? AND created_at <= ?" + moment_filter[0] + " ORDER BY created_at DESC LIMIT ?",
+            (cutoff, upper, *moment_filter[1], fetch_limit),
         )
         for r in await cur.fetchall():
             actor = _actor_name(r["author"], names)
@@ -348,8 +375,8 @@ async def get_timeline(hours: int = 24, limit: int = 300):
 
         cur = await db.execute(
             "SELECT id, author, title, content, created_at FROM diary_entries "
-            "WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
-            (cutoff, limit),
+            "WHERE created_at >= ? AND created_at <= ?" + diary_filter[0] + " ORDER BY created_at DESC LIMIT ?",
+            (cutoff, upper, *diary_filter[1], fetch_limit),
         )
         for r in await cur.fetchall():
             actor = _actor_name(r["author"], names)
@@ -360,8 +387,8 @@ async def get_timeline(hours: int = 24, limit: int = 300):
 
         cur = await db.execute(
             "SELECT id, image_path, message, created_at, sender FROM gifts "
-            "WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
-            (cutoff, limit),
+            "WHERE created_at >= ? AND created_at <= ?" + gift_filter[0] + " ORDER BY created_at DESC LIMIT ?",
+            (cutoff, upper, *gift_filter[1], fetch_limit),
         )
         for r in await cur.fetchall():
             actor = _actor_name(r["sender"] or "aion", names)
@@ -375,8 +402,8 @@ async def get_timeline(hours: int = 24, limit: int = 300):
 
         cur = await db.execute(
             "SELECT id, actor, action, title, detail, target_type, target_id, result_type, result_id, metadata, created_at FROM idle_events "
-            "WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
-            (cutoff, limit),
+            "WHERE created_at >= ? AND created_at <= ?" + idle_filter[0] + " ORDER BY created_at DESC LIMIT ?",
+            (cutoff, upper, *idle_filter[1], fetch_limit),
         )
         for r in await cur.fetchall():
             actor = _actor_name(r["actor"], names)
@@ -396,13 +423,16 @@ async def get_timeline(hours: int = 24, limit: int = 300):
                 actor_id=r["actor"] or "",
             ))
 
-    user_groups = await list_grouped_user_events(since=cutoff, limit=limit)
-    items.extend({**item, "actor_id": "user"} for item in build_user_timeline_items(user_groups, user_name))
-    items.extend(await list_compression_events(since=cutoff, limit=limit))
+    if not who:  # 小猫自己的事件只在全家视图里
+        user_groups = await list_grouped_user_events(since=cutoff, limit=limit)
+        items.extend({**item, "actor_id": "user"} for item in build_user_timeline_items(user_groups, user_name))
+    # 记忆整理：author 就是这一位（Codex §111 L2：原来没带 actor_id，会被动态页漏掉）
+    items.extend({**event, "actor_id": event.get("actor_id") or event.get("author") or ""}
+                 for event in await list_compression_events(since=cutoff, limit=limit))
 
     status = load_location_status()
     changed_at = float(status.get("state_changed_at") or 0)
-    if changed_at >= cutoff:
+    if not who and changed_at >= cutoff:
         state = status.get("state", "unknown")
         state_label = {"at_home": "在家", "outside": "外出", "unknown": "未知"}.get(state, state)
         detail_parts = []
@@ -417,8 +447,12 @@ async def get_timeline(hours: int = 24, limit: int = 300):
             "；".join(detail_parts), actor_id="user",
         ))
 
+    items = [item for item in items
+             if _timeline_wanted(item.get("actor_id", ""), who) and float(item.get("timestamp") or 0) <= upper]
     items.sort(key=lambda x: x["timestamp"], reverse=True)
-    return {"items": items[:limit], "hours": hours, "total": len(items)}
+    page = items[:limit]
+    next_before = page[-1]["timestamp"] if len(items) > limit and page else None
+    return {"items": page, "hours": hours, "total": len(items), "next_before": next_before}
 
 
 @router.get("/api/activity/dates")

@@ -128,9 +128,17 @@
     return node;
   }
 
+  // 只认本站这几个目录下的图片；带 ..、反斜杠、编码过的斜杠或点的一律不用（Codex §111 L1）
+  function safeLocalUrl(value, prefixes) {
+    const raw = String(value || '');
+    if (!raw.startsWith('/') || raw.startsWith('//') || /[\\\s"'()<>]|%2e|%2f|%5c/i.test(raw)) return '';
+    if (raw.split('?')[0].split('/').some(segment => segment === '..' || segment === '.')) return '';
+    return prefixes.some(prefix => raw.startsWith(prefix)) ? raw : '';
+  }
+
   function avatar(actor) {
-    const src = String(actor?.avatar || '');
-    if (/^\/(public|skin-assets|static|uploads)\/[^"'()\s]+$/.test(src)) {
+    const src = safeLocalUrl(actor?.avatar, ['/public/', '/skin-assets/', '/static/', '/uploads/']);
+    if (src) {
       const img = el('img', 'sw-avatar');
       img.src = src;
       img.alt = '';

@@ -1578,7 +1578,8 @@ async function loadHomeFeed() {
   try {
     const [people, timeline] = await Promise.all([
       fetch('/api/actors', { cache: 'no-store' }).then(r => r.json()),
-      fetch('/api/timeline?hours=72&limit=80', { cache: 'no-store' }).then(r => r.json()),
+      // 服务器先只挑 AI 的再取最新一条（Codex §111 M1：先截全家 80 条会把 AI 的挤掉）
+      fetch('/api/timeline?hours=72&limit=5&who=ai', { cache: 'no-store' }).then(r => r.json()),
     ]);
     const aiIds = new Set((people.actors || []).filter(a => a.enabled || a.builtin).map(a => a.id));
     const latest = (timeline.items || []).find(item => aiIds.has(item.actor_id));

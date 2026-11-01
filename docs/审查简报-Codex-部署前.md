@@ -1730,3 +1730,19 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 本机 375 宽实测：打开 Jasper 自己醒来、选 4 小时（存成 192～288）；设静默 23:00～08:00；塞两条假通知（微信、淘宝）后挑微信不让看，微信进已过滤并写明原因，淘宝照常。时间写错时回 422。测完已把本机设置还原。
   - 新测试 `test_switches.py` 7 项：跨午夜判断、静默结束时间、静默时到点只推迟不运行、坏时间拒绝、被挑出的 App 过滤且不记录、总开关关掉全过滤、页面接口。
   - 自主活动和设备上下文相关旧测试 86 项改动前后都通过；`test_ai_feed.py`、`test_home_layout_migration.py`、`test_home_folders_ui.js` 通过。
+
+
+## 114. 修 §111 审查的 M1、L1、L2：AI 动态被挤掉、图片地址穿越、记忆整理缺 actor_id
+
+- **M1 先截全家再筛 AI 会漏**：
+  - `/api/timeline` 加 `who` 参数：空是全家（老页面不变）；`ai` 是除了小猫和系统的；其他值就只要这一位。
+  - 在 SQL 里先按作者筛：朋友圈和日记按 author，礼物按 COALESCE(sender,'aion')，自主活动按 actor，值走参数。筛完再截断。
+  - 带 who 时不放小猫自己的事件和位置变化。
+  - 加 `before` 游标（上一页最后一条的时间，含这一刻）。每类多取一条，用来判断后面还有没有，返回 `next_before`。
+  - 动态页按人筛时重新从第一页读，「再往前看」用 next_before 接着往前翻，按 kind+source_id+timestamp 去重（同一秒的那条会再来一次）。
+  - 主页卡片改成 `who=ai&limit=5`。
+  - 本机实测：90 条较新的小猫动态 + 1 小时前的狗蛋日记 + 45 篇小克日记。卡片显示狗蛋的日记；动态页第一页 40 条，「再往前看」补齐到 46 条，没有重复，翻到底按钮收起；只看狗蛋时只剩他的。
+  - 测完已删掉本机假数据。中途发现每类只取 limit 条时判断不出下一页，已改成多取一条，测试覆盖。
+- **L1 图片地址**：动态页和开关总览的头像 / 附图改用 `safeLocalUrl`。要求以 `/` 开头、不是 `//`；不能带反斜杠、空白、引号、括号、尖括号；不能带 `%2e` `%2f` `%5c`；路径段里不能有 `.` 或 `..`；再要求前缀在白名单里。新测试 `test_ai_feed_urls.js` 覆盖 Codex 的 `/uploads/../../cdn-cgi/access/logout` 和各种编码变体。
+- **L2 记忆整理**：`list_compression_events` 的事件按 author 补上 actor_id（aion / connor），动态页能显示。
+- **测试**：`test_ai_feed.py` 新加两项：挤掉场景、单人 + 游标翻页（含「正好多一篇」的判断），在不带本次修改的 activity.py 上会失败。相关 Python 28 项通过；`test_home_folders_ui.js`、`test_ai_feed_urls.js`、`test_family_dynamics_ui.js` 通过。

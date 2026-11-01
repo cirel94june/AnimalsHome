@@ -67,7 +67,8 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { actors: [], emptySeats: 0, roles: [], items: [], hours: 72, filter: 'all' };
+  const state = { actors: [], emptySeats: 0, roles: [], items: [], seen: new Set(), nextBefore: null, filter: 'all' };
+  const PAGE = 40;
   // 点开动态去哪看全文
   const TARGET = { diary: '/diary', moment: '/moments', gift: '/gift', idle_event: '/family-dynamics' };
 
@@ -88,10 +89,18 @@
     return state.actors.find(actor => actor.id === id) || null;
   }
 
+  // 只认本站这几个目录下的图片；带 ..、反斜杠、编码过的斜杠或点的一律不用（Codex §111 L1）
+  function safeLocalUrl(value, prefixes) {
+    const raw = String(value || '');
+    if (!raw.startsWith('/') || raw.startsWith('//') || /[\\\s"'()<>]|%2e|%2f|%5c/i.test(raw)) return '';
+    if (raw.split('?')[0].split('/').some(segment => segment === '..' || segment === '.')) return '';
+    return prefixes.some(prefix => raw.startsWith(prefix)) ? raw : '';
+  }
+
   // 只用自己家的图片地址当头像；没有就显示名字首字
   function avatar(actor) {
-    const src = String(actor?.avatar || '');
-    if (/^\/(public|skin-assets|static|uploads)\/[^"'()\s]+$/.test(src)) {
+    const src = safeLocalUrl(actor?.avatar, ['/public/', '/skin-assets/', '/static/', '/uploads/']);
+    if (src) {
       const img = el('img', 'feed-avatar');
       img.src = src;
       img.alt = '';
@@ -163,7 +172,7 @@
     if (item.detail) body.appendChild(el('span', 'feed-detail', item.detail));
     body.appendChild(el('span', 'feed-meta', item.time || ''));
     card.append(avatar(actor), body);
-    const photo = (item.attachments || []).find(url => /^\/uploads\/[^"'()\s]+$/.test(String(url)));
+    const photo = (item.attachments || []).map(url => safeLocalUrl(url, ['/uploads/'])).find(Boolean);
     if (photo) {
       const img = el('img', 'feed-thumb');
       img.src = photo;
@@ -179,8 +188,8 @@
 
   function renderTimeline() {
     const aiIds = new Set(state.actors.map(actor => actor.id));
-    const items = state.items.filter(item => aiIds.has(item.actor_id)
-      && (state.filter === 'all' || item.actor_id === state.filter));
+    // 服务器已经按人筛过了；这里再挡一下没启用的座位
+    const items = state.items.filter(item => aiIds.has(item.actor_id));
     const root = $('timeline');
     root.replaceChildren();
     if (!items.length) {
@@ -196,7 +205,7 @@
       }
       root.appendChild(itemCard(item));
     });
-    $('more').hidden = state.hours >= 720;
+    $('more').hidden = !state.nextBefore;
   }
 
   function render() {
@@ -205,9 +214,19 @@
     renderTimeline();
   }
 
-  async function loadTimeline() {
-    const data = await getJson(`/api/timeline?hours=${state.hours}&limit=500`);
-    state.items = Array.isArray(data.items) ? data.items : [];
+  // 先在服务器上按人筛、再一页一页往前翻（Codex §111 M1：原来先截全家最新 500 条，AI 的会被挤掉）
+  async function loadTimeline(more = false) {
+    const who = state.filter === 'all' ? 'ai' : state.filter;
+    const before = more && state.nextBefore ? `&before=${encodeURIComponent(state.nextBefore)}` : '';
+    const data = await getJson(`/api/timeline?hours=720&limit=${PAGE}&who=${encodeURIComponent(who)}${before}`);
+    if (!more) { state.items = []; state.seen = new Set(); }
+    (Array.isArray(data.items) ? data.items : []).forEach(item => {
+      const key = `${item.kind}:${item.source_id}:${item.timestamp}`;
+      if (state.seen.has(key)) return;  // 翻页时同一秒的那条会再来一次
+      state.seen.add(key);
+      state.items.push(item);
+    });
+    state.nextBefore = data.next_before || null;
   }
 
   async function load() {
@@ -224,16 +243,18 @@
     render();
   }
 
-  $('chips').addEventListener('click', event => {
+  $('chips').addEventListener('click', async event => {
     const chip = event.target.closest('[data-filter]');
     if (!chip) return;
     state.filter = chip.dataset.filter;
-    render();
+    renderChips();
+    renderWake();
+    try { await loadTimeline(); } catch (_) { state.items = []; state.nextBefore = null; }
+    renderTimeline();
   });
   $('more').addEventListener('click', async () => {
-    state.hours = Math.min(720, state.hours * 2 + 24);
     $('more').disabled = true;
-    try { await loadTimeline(); } catch (_) {}
+    try { await loadTimeline(true); } catch (_) {}
     $('more').disabled = false;
     renderTimeline();
   });
