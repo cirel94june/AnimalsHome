@@ -1455,6 +1455,8 @@ function connectWS() {
 // 「看到哪里」记在服务器上（/api/unread），手机和电脑共用；这里只负责：
 // 正在看的窗口记成已读、👥 按钮上有别的窗口未读时亮红点、停在别的页面时冒一条「有新回复」。
 let unreadState = { unread: [] };
+// 现在屏幕上的消息是从服务器成功取来的哪个窗口（没取成功就不算看到，Codex §122 M1）
+let currentMessagesConvId = null;
 let unreadRefreshTimer = 0;
 let unreadActorNames = {};
 fetch('/api/actors', { cache: 'no-store' }).then(r => r.json()).then(data => {
@@ -1483,12 +1485,18 @@ function renderUnreadDot() {
   button.classList.toggle('has-unread', others.length > 0);
 }
 
-// 小猫正看着这个窗口（页面在前台、上面没盖着别的页）才算已读
+// 小猫正看着这个窗口（页面在前台、上面没盖着别的页、消息确实加载出来了）才算已读，
+// 而且只记到屏幕上最后一条消息的时间：之后才到、还没显示的回复仍算未读
 function markCurrentConvRead() {
   if (!currentConvId || document.hidden || currentSubPage) return;
+  if (currentMessagesConvId !== currentConvId) return;
+  const seen = currentMessages
+    .filter(m => m && !String(m.id || '').startsWith('temp_'))
+    .reduce((latest, m) => Math.max(latest, Number(m.created_at) || 0), 0);
+  if (!seen) return;
   fetch('/api/unread/read', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ container: `conv:${currentConvId}` }),
+    body: JSON.stringify({ container: `conv:${currentConvId}`, at: seen }),
   }).then(scheduleUnreadRefresh).catch(() => {});
 }
 
@@ -2340,11 +2348,12 @@ async function copyAllSystemLogs() {
 function hubMemoryLogHtml(hub) {
   if (!hub || hub.status === 'off') return '';
   const secs = hub.seconds != null ? ` · ${hub.seconds}秒` : '';
+  const card = hub.handoff_chars ? (hub.status === 'ok' ? '（含交接卡）' : '（交接卡取到了）') : '';
   const text = {
-    ok: `🗂 Hub 记忆 ${hub.chars} 字${secs}`,
+    ok: `🗂 Hub 记忆 ${hub.chars} 字${card}${secs}`,
     empty: `🗂 Hub 没有相关记忆${secs}`,
-    timeout: `🗂 Hub 超时没取到${secs}`,
-    error: `🗂 Hub 出错没取到`,
+    timeout: `🗂 Hub 超时没取到${card}${secs}`,
+    error: `🗂 Hub 出错没取到${card}`,
     cooldown: '🗂 Hub 刚连续失败，暂停中',
   }[hub.status];
   if (!text) return '';
@@ -2824,8 +2833,8 @@ async function selectConv(id) {
   document.getElementById('privateReplyPreparation')?.remove();
   const loadId = ++privateConversationLoadId;
   currentConvId = id;
+  currentMessagesConvId = null;
   localStorage.setItem('aion_last_conv', id);
-  setTimeout(markCurrentConvRead, 0);
   renderUnreadDot();
   msgDebugData = {};
   _heartWhisperMsgIds.clear();
@@ -2849,6 +2858,8 @@ async function selectConv(id) {
   hasMoreMessages = currentMessages.length >= MSG_PAGE_SIZE;
   renderConvList();
   renderMessages();
+  currentMessagesConvId = id;
+  markCurrentConvRead();
   $("sendBtn").disabled = false;
   closeSidebar();
 
@@ -2894,6 +2905,7 @@ async function refreshCurrentConversationFromServer(options = {}) {
     setCurrentMessages(msgs);
     hasMoreMessages = msgs.length >= MSG_PAGE_SIZE;
     renderMessages();
+    currentMessagesConvId = convId;
     if (options && options.scroll) scrollBottom();
     return true;
   } catch (e) {
@@ -5818,12 +5830,17 @@ function closeSubPage(skipReload = false) {
   syncHealthRingPageVisibility();
   applyAionTheme(localStorage.getItem('aion_chat_theme') || document.body.dataset.theme || 'dark');
   // 回到聊天页后重新加载消息列表（拿到后台生成完成的新消息）
-  if (!skipReload && currentConvId) {
-    refreshCurrentConversationFromServer();
-  }
   document.getElementById('newReplyBanner')?.remove();
-  markCurrentConvRead();
-  refreshUnread();
+  if (!skipReload && currentConvId) {
+    // 等重新取到消息、显示出来以后再记已读；没取到就不记
+    refreshCurrentConversationFromServer().then(ok => {
+      if (ok) markCurrentConvRead();
+      refreshUnread();
+    });
+  } else {
+    markCurrentConvRead();
+    refreshUnread();
+  }
 }
 // 导航到 Home（从任何功能页返回 Home）
 function navigateToHome() {

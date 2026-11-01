@@ -7,12 +7,15 @@ of the latest asynchronously reported snapshot.
 from __future__ import annotations
 
 import copy
+import logging
 import re
 import threading
 import time
 import uuid
 
 from capabilities import is_capability_enabled
+
+log = logging.getLogger(__name__)
 
 
 APP_COMMAND_PATTERN = re.compile(
@@ -300,7 +303,34 @@ async def broadcast_app_supervision_command(command: dict | None) -> None:
         await _publish_command_result(command, success=False, reason="小猫的手机不在线，这次没去找手机")
         return
     from ws import manager
-    await manager.broadcast({"type": "app_supervision_command", "data": command})
+    # 排队前查过在线，但查完到发出去之间手机可能断了（Codex §122 M2）：
+    # 只发给手机的连接，没送到就把这条从「等手机来取」里撤掉，免得重连后补执行
+    try:
+        delivered = await manager.send_to_phones({"type": "app_supervision_command", "data": command})
+    except Exception as error:
+        log.warning("app supervision command send failed: %s", type(error).__name__)
+        delivered = False
+    if delivered:
+        return
+    from database import get_db
+    async with get_db() as db:
+        withdrawn = await withdraw_app_supervision_command(db, str(command.get("commandId") or ""))
+        await db.commit()
+    if withdrawn:
+        from routes.app_supervision import _publish_command_result
+        await _publish_command_result(command, success=False, reason="小猫的手机刚断开，这次没送到")
+
+
+async def withdraw_app_supervision_command(db, command_id: str) -> bool:
+    """没送到手机的命令改成 undelivered，手机重连时不会再取到。已经被手机处理过的不动。"""
+    if not command_id:
+        return False
+    await ensure_app_supervision_tables(db)
+    cursor = await db.execute(
+        "UPDATE app_supervision_commands SET status='undelivered' WHERE command_id=? AND status='pending'",
+        (command_id,),
+    )
+    return bool(cursor.rowcount)
 
 
 def format_app_supervision_result_message(

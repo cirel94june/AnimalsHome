@@ -137,6 +137,15 @@ class ConnectionManager:
     def has_active_pet(self) -> bool:
         return any(self.pet_clients.values())
 
+    async def send_to_phones(self, data: dict) -> bool:
+        """只发给小猫手机 App 的推送连接；至少一台确实发出去才算送到（Codex §122 M2）。"""
+        phone_ids = {str(cid) for ws, cid in list(self.client_ids.items())
+                     if str(cid).startswith("android-push:") and ws in self.active}
+        delivered = False
+        for client_id in phone_ids:
+            delivered = await self.send_to_client(client_id, data) or delivered
+        return delivered
+
     async def send_to_client(self, client_id: str, data: dict) -> bool:
         data = generation_event(data)
         """定向推送消息到指定 client_id 的客户端"""

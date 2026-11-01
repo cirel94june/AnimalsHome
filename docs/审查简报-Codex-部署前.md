@@ -1891,3 +1891,33 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **测试**（`test_memory_hub_bridge.py` 共 54 项全过）：
   - 新加：一次失败不暂停、成功清零、连续两次才停且不超过 15 秒；默认等待时间够一次真实调用；系统日志状态按窗口分开记、不含内容、超时也会记下。
   - 群聊、座位、上下文相关测试中的失败（6 项），改动前就同样失败（`test_chatroom_*` 的移动端样式 / 缓存号检查、`test_seat_chat` 的事务问题）。
+
+
+## 123. 修 §122 审查（67f31e7）的 M1、M2、L1、L2
+
+- **M1 消息没加载成功也记成已读**：
+  - 私聊（`chat.js`）：
+    - 新加 `currentMessagesConvId`，表示屏幕上的消息是从服务器成功取到的哪个窗口。`selectConv` 一开始把它清空，消息显示出来以后才设上、才记已读。去掉了原来请求前的 `setTimeout(markCurrentConvRead, 0)`。
+    - `refreshCurrentConversationFromServer` 成功后也设上。
+    - 从别的页面回到聊天页时，等重新取消息成功（返回 true）再记已读。
+  - 群聊和座位（`chatroom.js`）：
+    - 新加 `crRoomServerLoadedId`，只在 `crFetchRoomMessages` 真正取成功并显示后设上，并在那里记已读。
+    - `selectRoom` 不再在 `loadMessages()` 之后无条件记已读。只显示了本地旧快照时不算已读。
+    - 收到这个窗口的新消息时，等它显示出来（setTimeout 0）再记。
+  - 只记到实际显示的消息：两边都把屏幕上最后一条消息的 `created_at` 作为 `at` 传给 `POST /api/unread/read`（临时 temp_ 消息不算）。服务器记 `min(at, 现在)`，仍然只往后挪。显示之后才到的回复仍算未读。
+- **M2 查完在线后断线，命令仍可能重连后补执行**：
+  - `ws.py` 新增 `send_to_phones()`：只发给 `android-push:` 的连接，至少一台确实发出去才返回 True，网页收到不算。只有手机 App 处理这个事件。
+  - `broadcast_app_supervision_command` 改用 `send_to_phones`。没送到（发送前已断开，或发送失败）时，用 `withdraw_app_supervision_command` 把这条从 pending 改成 `undelivered`，手机重连时取不到。确实撤下了，才在原聊天留言「小猫的手机刚断开，这次没送到」。已经不是 pending 的（被手机处理过的）不动。
+  - 你给的两个反例都由这一处兜住：检查后、写库前断线；入队后、发送前连接失效。
+- **L1 坏窗口编号**（`routes/unread.py`）：编号只认 `conv:` / `room:` 加 1～120 位字母、数字、`_.-`，并核对 `conversations` / `chatroom_rooms` 里确实有这个窗口。不存在返回 404，失败时都不落库。线上 3 个私聊、4 个房间的编号都符合（只读核对）。
+- **L2 系统日志漏算交接卡**（`memory_hub_bridge.py`）：新对话两路读取合并后，有交接卡就记下 `handoff_chars`。incremental 为空时状态改成 ok，字数按合并后的总长。incremental 超时、交接卡取到时，日志写「Hub 超时没取到（交接卡取到了）」。
+- **测试**：
+  - 新加 7 项，在上一版代码上全部失败：
+    - 只记到显示的那条、不超过现在、不倒退。
+    - 空白、多余冒号、不存在的窗口都拒绝，而且不落库。
+    - 页面接线。
+    - 没送到就撤下并留言；送到了留着等手机确认。
+    - 只算手机连接。
+    - 交接卡计入日志。
+  - 相关 149 项全过。群聊、座位、哨兵等 261 项里有 8 项失败，都是改动前就有的那批。
+  - 用桩跑了真实的 `markCurrentConvRead` / `crMarkRoomRead`：没加载成功、盖着别的页、只有旧快照时都不发已读；加载成功时只记到最后一条消息的时间。

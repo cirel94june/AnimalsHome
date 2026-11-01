@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import aiosqlite
@@ -23,6 +24,8 @@ _NOT_AI = ("user", "system", "")
 
 class ReadBody(BaseModel):
     container: str
+    # 页面实际显示到的最后一条消息的时间；只记到这里，没加载出来的新消息仍算未读（Codex §122 M1）
+    at: float | None = None
 
 
 def _baseline() -> float:
@@ -40,9 +43,17 @@ async def _ensure_table(db) -> None:
     )
 
 
+_CONTAINER_RE = re.compile(r"(conv|room):([A-Za-z0-9_.-]{1,120})")
+
+
+def _parse_container(container: str) -> tuple[str, str] | None:
+    """只认「conv:编号」「room:编号」，编号里不能有空白、冒号等（Codex §122 L1）。"""
+    match = _CONTAINER_RE.fullmatch(container or "")
+    return (match.group(1), match.group(2)) if match else None
+
+
 def _valid_container(container: str) -> bool:
-    kind, _, ident = (container or "").partition(":")
-    return kind in ("conv", "room") and 0 < len(ident) <= 120
+    return _parse_container(container) is not None
 
 
 @router.get("/api/unread")
@@ -86,16 +97,24 @@ async def unread_summary():
 
 @router.post("/api/unread/read")
 async def mark_read(body: ReadBody):
-    """小猫正在看这个窗口：记到现在（只往后挪，不往回）。"""
-    if not _valid_container(body.container):
+    """小猫正在看这个窗口：记到她看到的那条（只往后挪，不往回，不超过现在）。"""
+    parsed = _parse_container(body.container)
+    if parsed is None:
         raise HTTPException(400, "窗口不对")
+    kind, ident = parsed
     now = time.time()
+    read_at = now if body.at is None else min(float(body.at), now)
+    if read_at <= 0:
+        raise HTTPException(400, "时间不对")
+    table = "conversations" if kind == "conv" else "chatroom_rooms"
     async with get_db() as db:
+        if await (await db.execute(f"SELECT 1 FROM {table} WHERE id=?", (ident,))).fetchone() is None:
+            raise HTTPException(404, "没有这个窗口")
         await _ensure_table(db)
         await db.execute(
             "INSERT INTO unread_read_marks (container, read_at) VALUES (?, ?) "
             "ON CONFLICT(container) DO UPDATE SET read_at=MAX(read_at, excluded.read_at)",
-            (body.container, now),
+            (body.container, read_at),
         )
         await db.commit()
-    return {"ok": True, "read_at": now}
+    return {"ok": True, "read_at": read_at}

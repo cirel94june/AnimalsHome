@@ -2087,11 +2087,12 @@ function crBuildAmbientLogEntry(d, detailId) {
 function crHubMemoryLogHtml(hub) {
   if (!hub || hub.status === 'off') return '';
   const secs = hub.seconds != null ? ` · ${hub.seconds}秒` : '';
+  const card = hub.handoff_chars ? (hub.status === 'ok' ? '（含交接卡）' : '（交接卡取到了）') : '';
   const text = {
-    ok: `🗂 Hub 记忆 ${hub.chars} 字${secs}`,
+    ok: `🗂 Hub 记忆 ${hub.chars} 字${card}${secs}`,
     empty: `🗂 Hub 没有相关记忆${secs}`,
-    timeout: `🗂 Hub 超时没取到${secs}`,
-    error: `🗂 Hub 出错没取到`,
+    timeout: `🗂 Hub 超时没取到${card}${secs}`,
+    error: `🗂 Hub 出错没取到${card}`,
     cooldown: '🗂 Hub 刚连续失败，暂停中',
   }[hub.status];
   if (!text) return '';
@@ -2365,6 +2366,7 @@ async function selectRoom(roomId) {
   const room = rooms.find(r => r.id === roomId);
   if (!room) return;
   currentRoom = room;
+  if (crRoomServerLoadedId !== roomId) crRoomServerLoadedId = null;
   crRenderProactiveOrbit();
   // 自动切换到对应 tab
   if (activeTab !== room.type) switchTab(room.type);
@@ -2379,10 +2381,9 @@ async function selectRoom(roomId) {
   composer.style.display = 'flex';
   updateHeaderActions();
   resetChatSearch();
-  await loadMessages();
+  await loadMessages();  // 取成功时里面会记已读
   crAmbientSyncRunning();
   closeSidebar();
-  crMarkRoomRead();
 }
 
 // ── 未读（11-01）：小猫正看着这个群 / 私聊窗口才算已读 ──
@@ -2397,11 +2398,20 @@ function crPageInFront() {
   }
 }
 
+// 这个窗口的消息确实从服务器取到、显示出来了，才记已读；只记到屏幕上最后一条（Codex §122 M1）
+let crRoomServerLoadedId = null;
+
 function crMarkRoomRead() {
   if (!currentRoom || !crPageInFront()) return;
+  const roomId = currentRoom.id;
+  if (crRoomServerLoadedId !== roomId || crRenderedRoomId !== roomId) return;
+  const seen = Object.values(crMessagesById)
+    .filter(m => m && !String(m.id || '').startsWith('temp_'))
+    .reduce((latest, m) => Math.max(latest, Number(m.created_at) || 0), 0);
+  if (!seen) return;
   fetch('/api/unread/read', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ container: `room:${currentRoom.id}` }),
+    body: JSON.stringify({ container: `room:${roomId}`, at: seen }),
   }).catch(() => {});
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) crMarkRoomRead(); });
@@ -2483,6 +2493,8 @@ function crFetchRoomMessages(options = {}) {
         renderMessages(msgs);
       }
       if (options.scroll) scrollToBottom(true);
+      crRoomServerLoadedId = roomId;
+      crMarkRoomRead();
       try {
         const payload = JSON.stringify({ savedAt: Date.now(), messages: msgs });
         if (payload.length < 900000) {
@@ -5647,7 +5659,7 @@ function connectWS() {
       if (data.type === 'chatroom_msg_created' && currentRoom) {
         const msg = data.data;
         if (msg.room_id === currentRoom.id) {
-          crMarkRoomRead();
+          setTimeout(crMarkRoomRead, 0);  // 等这条显示出来再记
           if (msg.id && msg.sender) crRememberTTSMsgSender(msg.id, msg.sender);
           // 避免重复：流式回复本身已有 streaming 行；异步跟进消息即使还在发送中也要显示。
           const existing = document.getElementById(`streaming-${msg.id}`);

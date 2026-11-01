@@ -265,6 +265,21 @@ def test_syslog_sees_whether_hub_memory_arrived(fake_hub, isolated_config):
     assert bridge.read_status("connor", "conv_1") is None
 
 
+def test_syslog_counts_the_handoff_card_too(fake_hub, isolated_config, monkeypatch):
+    """Codex §122 L2：交接卡取到了、incremental 为空，原来显示成「没有相关 / 0 字」。"""
+    _write(isolated_config, enabled=True, url=fake_hub, context_timeout_seconds=4)
+
+    async def empty_incremental(cfg, actor, message, chat_id="", chat_type="private"):
+        bridge._note_read(actor, chat_id, "empty", started=time.monotonic())
+        return ""
+
+    monkeypatch.setattr(bridge, "_incremental_block", empty_incremental)
+    block = asyncio.run(bridge.context_block("aion", "我回来了", "conv_9"))
+    status = bridge.read_status("aion", "conv_9")
+    assert block.startswith("[交接卡]")
+    assert status["status"] == "ok" and status["chars"] == len(block) and status["handoff_chars"] == len(block)
+
+
 def test_unwrap_text_handles_nested_result_payload():
     nested = json.dumps({"result": json.dumps({"text": "  记忆正文  ", "metadata": {}}, ensure_ascii=False)}, ensure_ascii=False)
     assert bridge._unwrap_text(nested) == "记忆正文"

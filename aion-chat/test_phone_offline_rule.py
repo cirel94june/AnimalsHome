@@ -129,6 +129,82 @@ class SendFailureAndStrictTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(manager.phone_online(grace=False))  # 真去找手机：只认现在连着
 
 
+class DeliveryRaceTests(unittest.IsolatedAsyncioTestCase):
+    """Codex §122 M2：排队前查过在线，之后才断线，命令不能留在「等手机来取」里、重连后补执行。"""
+
+    def _fake_db(self, db_path):
+        import aiosqlite
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def fake_db():
+            async with aiosqlite.connect(db_path) as db:
+                yield db
+        return fake_db
+
+    async def _queue_one(self, fake_db):
+        snapshot = ({"groups": [{"groupId": "social"}]}, time.time())
+        with patch.object(app_supervision_ai, "is_capability_enabled", return_value=True), \
+                patch.object(app_supervision_ai, "_phone_online", return_value=True), \
+                patch.object(app_supervision_ai.state_cache, "read", return_value=snapshot), \
+                patch("database.get_db", new=fake_db):
+            _, command = await app_supervision_ai.queue_app_supervision_reply_command(
+                "[COME_HOME:回来]", source_message_id="m1", role_id="aion", source_kind="private", source_ref="conv-1")
+        return command
+
+    async def _pending(self, fake_db):
+        async with fake_db() as db:
+            return await app_supervision_ai.list_pending_app_supervision_commands(db)
+
+    async def test_undelivered_command_is_withdrawn_and_noted(self):
+        import tempfile
+        from pathlib import Path
+        from routes import app_supervision as routes
+
+        with tempfile.TemporaryDirectory() as folder:
+            fake_db = self._fake_db(str(Path(folder) / "chat.db"))
+            command = await self._queue_one(fake_db)
+            self.assertTrue(command["commandId"])
+            self.assertEqual(1, len(await self._pending(fake_db)))
+            publish = AsyncMock()
+            # 写库后手机断了：发出去时已经没有手机连接
+            with patch("ws.manager.send_to_phones", new=AsyncMock(return_value=False)), \
+                    patch("database.get_db", new=fake_db), \
+                    patch.object(routes, "_publish_command_result", new=publish):
+                await app_supervision_ai.broadcast_app_supervision_command(command)
+            self.assertEqual([], await self._pending(fake_db))  # 重连也取不到
+            publish.assert_awaited_once()
+            self.assertIn("没送到", publish.await_args.kwargs["reason"])
+
+    async def test_delivered_command_stays_for_the_phone_to_ack(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as folder:
+            fake_db = self._fake_db(str(Path(folder) / "chat.db"))
+            command = await self._queue_one(fake_db)
+            send = AsyncMock(return_value=True)
+            with patch("ws.manager.send_to_phones", new=send), patch("database.get_db", new=fake_db):
+                await app_supervision_ai.broadcast_app_supervision_command(command)
+            send.assert_awaited_once()
+            self.assertEqual(1, len(await self._pending(fake_db)))
+
+    async def test_send_to_phones_only_counts_the_phone_connection(self):
+        manager = ConnectionManager()
+        page, phone = MagicMock(), MagicMock()
+        page.send_text = AsyncMock()
+        phone.send_text = AsyncMock(side_effect=RuntimeError("gone"))
+        manager.active.extend([page, phone])
+        manager.register_client_id(page, "web-1")
+        manager.register_client_id(phone, "android-push:abc")
+        self.assertFalse(await manager.send_to_phones({"type": "app_supervision_command", "data": {}}))
+        page.send_text.assert_not_awaited()  # 网页收到不算送到手机
+        phone.send_text = AsyncMock()
+        manager.active.append(phone)
+        manager.register_client_id(phone, "android-push:abc")
+        self.assertTrue(await manager.send_to_phones({"type": "app_supervision_command", "data": {}}))
+
+
 class PhoneCameraOfflineTests(unittest.IsolatedAsyncioTestCase):
     async def test_capture_stops_at_once_when_the_command_is_not_delivered(self):
         """Codex §118 M2：发送明确失败时还要等 15 秒再重发、总共等 45 秒。"""

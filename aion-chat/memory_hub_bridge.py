@@ -261,7 +261,16 @@ async def context_block(actor: str, message: str, chat_id: str = "", chat_type: 
         return await _incremental_block(cfg, actor, message, chat_id, chat_type)
     handoff, incremental = await asyncio.gather(handoff_block(actor, chat_type),
                                                 _incremental_block(cfg, actor, message, chat_id, chat_type))
-    return "\n\n".join(block for block in (handoff, incremental) if block)
+    result = "\n\n".join(block for block in (handoff, incremental) if block)
+    status = last_read_status.get((actor, chat_id or ""))
+    if handoff and status is not None:
+        # 系统日志把交接卡也算上（Codex §122 L2：交接卡取到了、incremental 为空，原来显示成「没有相关 / 0 字」）
+        status["handoff_chars"] = len(handoff)
+        if status["status"] == "empty":
+            status["status"] = "ok"
+        if status["status"] == "ok":
+            status["chars"] = len(result)
+    return result
 
 
 async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat_id: str = "",

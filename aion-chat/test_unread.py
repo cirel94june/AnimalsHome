@@ -27,6 +27,8 @@ class UnreadApiTests(unittest.TestCase):
             CREATE TABLE messages (id TEXT, conv_id TEXT, role TEXT, content TEXT, created_at REAL);
             CREATE TABLE chatroom_messages (id TEXT, room_id TEXT, sender TEXT, content TEXT, created_at REAL);
             CREATE TABLE chatroom_rooms (id TEXT, type TEXT, actor TEXT);
+            CREATE TABLE conversations (id TEXT);
+            INSERT INTO conversations VALUES ('conv1'), ('conv2'), ('conv3');
         """)
         db.executemany("INSERT INTO chatroom_rooms VALUES (?,?,?)",
                        [("g1", "group", ""), ("s1", "seat_1v1", "ai3"), ("c1", "connor_1v1", "")])
@@ -84,9 +86,28 @@ class UnreadApiTests(unittest.TestCase):
         self.assertEqual([], data["unread"])  # 起点之前的都不算，免得一上线满屏红点
 
     def test_bad_container_is_refused(self):
-        for bad in ("", "x:1", "conv:", "room:" + "a" * 200):
+        # Codex §122 L1：空白、多余的冒号、不存在的窗口都不能写进去
+        for bad in ("", "x:1", "conv:", "room:" + "a" * 200, "conv: ", "room:x:y", "room:nope", "conv:gone"):
             with self.assertRaises(HTTPException):
                 self.call(unread.mark_read, unread.ReadBody(container=bad))
+        db = sqlite3.connect(self.db_path)
+        has_table = db.execute("SELECT name FROM sqlite_master WHERE name='unread_read_marks'").fetchone()
+        count = db.execute("SELECT COUNT(*) FROM unread_read_marks").fetchone()[0] if has_table else 0
+        db.close()
+        self.assertEqual(0, count)
+
+    def test_read_only_reaches_the_message_actually_shown(self):
+        """Codex §122 M1：页面只显示到更早的消息时，之后才到的回复仍算未读。"""
+        with patch.object(unread.time, "time", return_value=self.now + 100):
+            self.call(unread.mark_read, unread.ReadBody(container="room:s1", at=self.now + 5))
+            self.assertIn("room:s1", [i["container"] for i in self.call(unread.unread_summary)["unread"]])
+            self.call(unread.mark_read, unread.ReadBody(container="room:s1", at=self.now + 20))
+            self.assertNotIn("room:s1", [i["container"] for i in self.call(unread.unread_summary)["unread"]])
+            # 记到将来也只记到现在；往回记不会倒退
+            result = self.call(unread.mark_read, unread.ReadBody(container="room:g1", at=self.now + 9999))
+            self.assertEqual(self.now + 100, result["read_at"])
+            self.call(unread.mark_read, unread.ReadBody(container="room:s1", at=self.now - 50))
+            self.assertNotIn("room:s1", [i["container"] for i in self.call(unread.unread_summary)["unread"]])
 
 
 class UnreadPagesTests(unittest.TestCase):
@@ -94,8 +115,15 @@ class UnreadPagesTests(unittest.TestCase):
         chat = (STATIC / "chat.js").read_text(encoding="utf-8")
         self.assertIn("noticeUnreadEvent(msg);", chat)
         self.assertIn("if (!currentConvId || document.hidden || currentSubPage) return;", chat)
+        # 消息取成功、显示出来以后才记已读（Codex §122 M1）
+        chat_lf = chat.replace("\r\n", "\n")
+        self.assertIn("if (currentMessagesConvId !== currentConvId) return;", chat)
+        self.assertNotIn("setTimeout(markCurrentConvRead, 0)", chat)
+        self.assertIn("refreshCurrentConversationFromServer().then(ok => {\n      if (ok) markCurrentConvRead();", chat_lf)
         room = (STATIC / "chatroom.js").read_text(encoding="utf-8")
         self.assertIn("window.frameElement?.dataset.aionSubPageVisible !== '0'", room)
+        self.assertIn("if (crRoomServerLoadedId !== roomId || crRenderedRoomId !== roomId) return;", room)
+        self.assertIn("crRoomServerLoadedId = roomId;\n      crMarkRoomRead();", room.replace("\r\n", "\n"))
         home = (STATIC / "home.html").read_text(encoding="utf-8")
         self.assertIn("var chatUnread", home)  # 不能用 let：首页一开始画图标就会用到
         self.assertIn('id="chatUnreadBadge"', home)
