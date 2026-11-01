@@ -1765,3 +1765,18 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - L1：选完微信后，App 列表的 display 是 none，名单里出现微信。
   - 测完已删假数据、还原通知设置。
 - 相关旧测试（`test_ai_feed` / `test_switches` / `test_autonomy_journey` / `test_autonomy_state`）41 项通过，`test_ai_feed_urls.js` 通过。
+
+
+## 116. 修 §115 审查的三个余项（R1 / R3 / R4）
+
+- **R1 扫满预算被当成到底**：
+  - 自主活动 10 批都满、还没凑够可显示的条目时，记下扫到的最后一行，叫 frontier。
+  - 这一页只给比 frontier 新的条目（这些已经确定），游标给到 frontier。所以可能返回空页带游标，不再判成读完。
+  - 其他来源比 frontier 旧的条目，下一页按游标重新读到。
+  - 动态页遇到「空页带游标」时，自动接着读，最多 5 次，每次都核对请求代数和人物。
+  - 测试：900 条内部记录后面还有一篇日记，limit=40。第一页是空页带游标，接着读能找到那篇，最后游标为空。
+- **R3 旧整页刷新失败盖掉新页面**：`load()` 开头记下这次的请求代数（loadTimeline 一开头会加到这个数），catch 里代数对不上就直接返回，不画错误提示。
+  - 本机实测：人为让「全部」的整页刷新 1.2 秒后失败，同时点狗蛋。最终选中狗蛋，列表是狗蛋的日记，没有错误提示。
+- **R4 第二次检查静默之后还有读库等待**：改成认领 → 读配置核对 enabled（这里有等待）→ 最后检查静默 → 紧接着开始采集，静默检查之后不再有等待。
+  - 测试：在第二次读配置时打开静默，采集和活动都没开始。
+- **测试**：`test_ai_feed_paging.py` 共 7 项（新加 2 项，在 67c5705 的 activity.py、autonomy.py 上会失败）；相关 Python 共 52 项通过；`test_ai_feed_urls.js`、`test_home_folders_ui.js`、`test_family_dynamics_ui.js` 通过。测完已删本机假数据。

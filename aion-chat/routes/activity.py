@@ -414,7 +414,8 @@ async def get_timeline(hours: int = 24, limit: int = 300, who: str = "", before:
         # 跳过的不算数：一批批往前读，直到凑够 limit+1 条能显示的或读完（最多 10 批）
         idle_shown = 0
         idle_after = cursor
-        for _ in range(10):
+        idle_frontier = None  # 预算用完还没读完时，扫到的最后一行；比它旧的这一页都不给，下一页从这里接着读
+        for batch_no in range(10):
             rows = await fetch(db, "SELECT id, actor, action, title, detail, target_type, target_id, result_type, "
                                "result_id, metadata, created_at FROM idle_events", "idle_event",
                                _timeline_actor_filter("actor", who), fetch_limit * 2, idle_after)
@@ -439,6 +440,8 @@ async def get_timeline(hours: int = 24, limit: int = 300, who: str = "", before:
             if idle_shown >= fetch_limit or len(rows) < fetch_limit * 2:
                 break
             idle_after = (float(rows[-1]["created_at"]), "idle_event", str(rows[-1]["id"]))
+            if batch_no == 9:  # 10 批都满了还没凑够：不能当成「到底」（Codex §115 R1）
+                idle_frontier = idle_after
 
     if not who:  # 小猫自己的事件只在全家视图里
         user_groups = await list_grouped_user_events(since=cutoff, limit=limit)
@@ -468,12 +471,17 @@ async def get_timeline(hours: int = 24, limit: int = 300, who: str = "", before:
         ))
 
     items = [item for item in items
-             if _timeline_wanted(item.get("actor_id", ""), who) and (cursor is None or _timeline_key(item) < cursor)]
+             if _timeline_wanted(item.get("actor_id", ""), who) and (cursor is None or _timeline_key(item) < cursor)
+             and (idle_frontier is None or _timeline_key(item) > idle_frontier)]
     items.sort(key=_timeline_key, reverse=True)
     page = items[:limit]
     next_cursor = None
     if len(items) > limit and page:
         ts, kind, source_id = _timeline_key(page[-1])
+        next_cursor = {"before": ts, "kind": kind, "id": source_id}
+    elif idle_frontier is not None:
+        # 这一页可能不满甚至是空的，但后面还没读完：从扫到的地方接着读
+        ts, kind, source_id = idle_frontier
         next_cursor = {"before": ts, "kind": kind, "id": source_id}
     return {"items": page, "hours": hours, "total": len(items), "next_cursor": next_cursor,
             "next_before": next_cursor["before"] if next_cursor else None}

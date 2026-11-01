@@ -183,3 +183,83 @@ class ClaimThenQuietTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScanBudgetTests(unittest.IsolatedAsyncioTestCase):
+    """Codex §115 R1：820 条不上时间线的内部记录后面还有一条，读满预算不能当成「到底」。"""
+
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self.tmp.name) / "chat.db")
+        now = time.time()
+        db = sqlite3.connect(self.db_path)
+        db.executescript("""
+            CREATE TABLE moments (id TEXT, author TEXT, content TEXT, attachments TEXT, created_at REAL);
+            CREATE TABLE diary_entries (id TEXT, author TEXT, title TEXT, content TEXT, created_at REAL);
+            CREATE TABLE gifts (id TEXT, image_path TEXT, message TEXT, created_at REAL, sender TEXT);
+            CREATE TABLE idle_events (id TEXT, actor TEXT, action TEXT, title TEXT, detail TEXT, target_type TEXT,
+                target_id TEXT, result_type TEXT, result_id TEXT, metadata TEXT, created_at REAL);
+        """)
+        for i in range(900):
+            db.execute("INSERT INTO idle_events VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                       (f"i{i:04d}", "aion", "memory_browse", "内部", "", "", "", "", "",
+                        '{"autonomy_wake_internal":true}', now - 10 - i))
+        db.execute("INSERT INTO diary_entries VALUES ('far','aion','很早的日记','x',?)", (now - 5000,))
+        db.commit()
+        db.close()
+
+    async def asyncTearDown(self):
+        self.tmp.cleanup()
+
+    async def test_budget_exhausted_returns_a_cursor_not_the_end(self):
+        patches = _timeline_patches(self.db_path)
+        for item in patches:
+            item.start()
+        try:
+            found, cursor, calls = [], None, 0
+            while calls < 10:
+                extra = {} if cursor is None else {"before": cursor["before"], "before_kind": cursor["kind"],
+                                                   "before_id": cursor["id"]}
+                data = await activity.get_timeline(hours=24, limit=40, who="ai", **extra)
+                calls += 1
+                found.extend(item["source_id"] for item in data["items"])
+                cursor = data["next_cursor"]
+                if cursor is None:
+                    break
+        finally:
+            for item in patches:
+                item.stop()
+        self.assertEqual(["far"], found)  # 第一页是空页 + 游标，接着读就找到了
+        self.assertGreater(calls, 1)
+        self.assertIsNone(cursor)
+
+
+class QuietDuringConfigReadTests(unittest.IsolatedAsyncioTestCase):
+    async def test_quiet_switched_on_while_rereading_config_still_stops_the_wake(self):
+        """Codex §115 R4：第二次检查静默之后不能再有等待；读配置那一下打开静默也要拦住。"""
+        import autonomy
+
+        state = {"quiet": False, "reads": 0}
+
+        async def config(actor):
+            state["reads"] += 1
+            if state["reads"] == 2:  # 认领之后那次读配置的时候，小猫打开了静默
+                state["quiet"] = True
+            return {"enabled": True, "next_wake_at": 1}
+
+        manager = autonomy.IdleAutonomyManager()
+        run, capture = AsyncMock(), AsyncMock()
+        with patch.object(autonomy, "get_actor_config", new=config), \
+                patch.object(autonomy, "_latest_user_message_ts", new=AsyncMock(return_value=0)), \
+                patch.object(autonomy, "refresh_actor_wake_for_user", new=AsyncMock(return_value=False)), \
+                patch.object(autonomy, "get_wake_quiet_hours", return_value={"enabled": True, "start": "23:00", "end": "08:00"}), \
+                patch.object(autonomy.quiet_hours, "is_quiet", side_effect=lambda cfg, now=None: state["quiet"]), \
+                patch.object(autonomy.quiet_hours, "quiet_end_after", return_value=5000.0), \
+                patch.object(autonomy, "claim_due_wake", new=AsyncMock(return_value={"enabled": True})), \
+                patch.object(autonomy, "restore_claimed_wake", new=AsyncMock(return_value=True)), \
+                patch.object(autonomy, "_capture_autonomy_monitor_context", new=capture), \
+                patch.object(autonomy, "_run_actor_once", new=run):
+            result = await manager.run_actor_once("aion", manual=False)
+        self.assertEqual("quiet hours", result["skipped"])
+        capture.assert_not_awaited()
+        run.assert_not_awaited()

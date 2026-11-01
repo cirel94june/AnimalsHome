@@ -2561,16 +2561,17 @@ class IdleAutonomyManager:
             timer = cfg if manual else await claim_due_wake(actor, now=time.time())
             if not timer:
                 return {"ok": False, "actor": actor, "skipped": "not due"}
+            if not (await get_actor_config(actor)).get("enabled"):
+                return {"ok": False, "actor": actor, "skipped": "disabled"}
             if not manual:
-                # 认领的这一会儿里可能刚进静默（或小猫刚打开静默）：再看一眼，是就放回静默结束后（Codex §114 R4）
+                # 认领和上面那次读库的等待里，可能刚进静默（或小猫刚打开静默）：最后再看一眼，
+                # 看完到开始采集之间不再有等待；是静默就放回静默结束后（Codex §114 R4、§115 R4）
                 quiet = get_wake_quiet_hours()
                 now = time.time()
                 if quiet_hours.is_quiet(quiet, now):
                     wake_at = quiet_hours.quiet_end_after(quiet, now) + random.randint(0, 30) * 60
                     await restore_claimed_wake(actor, wake_at=wake_at)
                     return {"ok": False, "actor": actor, "skipped": "quiet hours"}
-            if not (await get_actor_config(actor)).get("enabled"):
-                return {"ok": False, "actor": actor, "skipped": "disabled"}
             idle_minutes = max(0, int((time.time() - latest_user) // 60)) if latest_user else 0
             try:
                 monitor_context = await _capture_autonomy_monitor_context(actor)

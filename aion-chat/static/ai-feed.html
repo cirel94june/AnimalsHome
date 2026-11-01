@@ -227,7 +227,14 @@
     // 游标是上一页最后一条的（时间、类别、编号），同一时刻的不会卡住也不会漏（Codex §114 R1）
     const after = cursor ? `&before=${encodeURIComponent(cursor.before)}&before_kind=${encodeURIComponent(cursor.kind)}`
       + `&before_id=${encodeURIComponent(cursor.id)}` : '';
-    const data = await getJson(`/api/timeline?hours=720&limit=${PAGE}&who=${encodeURIComponent(who)}${after}`);
+    let data = await getJson(`/api/timeline?hours=720&limit=${PAGE}&who=${encodeURIComponent(who)}${after}`);
+    // 服务器一次读不完时（中间夹着大量不显示的记录）会给空页 + 游标：自动接着读几次（Codex §115 R1）
+    for (let hop = 0; hop < 5 && !(data.items || []).length && data.next_cursor; hop += 1) {
+      if (generation !== state.generation || filter !== state.filter) return false;
+      const next = data.next_cursor;
+      data = await getJson(`/api/timeline?hours=720&limit=${PAGE}&who=${encodeURIComponent(who)}`
+        + `&before=${encodeURIComponent(next.before)}&before_kind=${encodeURIComponent(next.kind)}&before_id=${encodeURIComponent(next.id)}`);
+    }
     if (generation !== state.generation || filter !== state.filter) return false;
     if (!more) { state.items = []; state.seen = new Set(); }
     (Array.isArray(data.items) ? data.items : []).forEach(item => {
@@ -241,6 +248,7 @@
   }
 
   async function load() {
+    const generation = state.generation + 1;  // loadTimeline() 一开头就会把代数加到这个数
     try {
       const [people, autonomy] = await Promise.all([getJson('/api/actors'), getJson('/api/idle-autonomy'), loadTimeline()]);
       const all = Array.isArray(people.actors) ? people.actors : [];
@@ -248,6 +256,8 @@
       state.emptySeats = all.length - state.actors.length;
       state.roles = Array.isArray(autonomy.roles) ? autonomy.roles : [];
     } catch (error) {
+      // 期间已经换人 / 重新读过：这次的失败不能把新页面换成错误提示（Codex §115 R3）
+      if (generation !== state.generation) return;
       $('timeline').replaceChildren(el('div', 'feed-empty', '动态暂时读不出来，下拉或稍后再试'));
       return;
     }
