@@ -163,9 +163,18 @@ def _note_read(actor: str, chat_id: str, status: str, *, chars: int = 0, started
         "seconds": round(time.monotonic() - started, 2) if started is not None else None,
     }
     last_read_status[(actor, chat_id or "")] = entry
-    # 11-01：小猫在 Lucien 私聊的系统日志里看不到 Hub 那一项，留一行日志对照（只有状态、字数、耗时，没有内容）
-    # 本模块的 logger 只输出 warning 以上；INFO 要走 uvicorn.error 才进 app.log（同 reply_timing）
-    logging.getLogger("uvicorn.error").info("[MemoryHub] 取记忆 %s/%s：%s %s字 %ss", actor, chat_id or "-", status, entry["chars"], entry["seconds"])
+
+
+def _log_read(actor: str, chat_id: str) -> None:
+    """一轮取完（交接卡也合进来以后）记一行日志，和系统日志看到的一致（Codex §128 L1）。
+    11-01：小猫在 Lucien 私聊的系统日志里看不到 Hub 那一项，留这一行对照；只有状态、字数、耗时，没有内容。
+    本模块的 logger 只输出 warning 以上；INFO 要走 uvicorn.error 才进 app.log（同 reply_timing）。"""
+    entry = last_read_status.get((actor, chat_id or ""))
+    if not entry:
+        return
+    card = f"（含交接卡 {entry['handoff_chars']} 字）" if entry.get("handoff_chars") else ""
+    logging.getLogger("uvicorn.error").info("[MemoryHub] 取记忆 %s/%s：%s %s字%s %ss", actor, chat_id or "-",
+                                            entry["status"], entry["chars"], card, entry["seconds"])
 
 
 def read_status(actor: str, chat_id: str = "") -> dict[str, Any] | None:
@@ -244,6 +253,12 @@ def _chat_type(chat_type: str) -> str:
 
 
 async def context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private") -> str:
+    result = await _context_block(actor, message, chat_id, chat_type)
+    _log_read(actor, chat_id)
+    return result
+
+
+async def _context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private") -> str:
     """生成前调用：返回可直接拼进背景注入的文本块；不可用时返回空串。
 
     chat_id：对话 / 房间编号，同一个对话保持不变。Hub 据此做「三轮内想起过的只提一句」

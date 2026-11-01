@@ -52,8 +52,12 @@ assert.strictEqual(api.hasLayoutPositions(null), false);
 // 文件夹打开用 textContent 写标题；应用格子仍由 appHTML 生成（名字过 escapeAttr）
 assert.ok(html.includes("document.getElementById('folderTitle').textContent = folder.name;"));
 assert.ok(/id="folderOverlay" hidden/.test(html));
-// 朋友圈红点挂在「家里的事」文件夹上，文件夹里那份不重复用这个 id
-assert.ok(html.includes("app.id === 'moments' && !options.inFolder"));
+// 红点：文件夹上汇总里面应用的红点；点开后里面那个应用、Dock 上的也同步亮（11-01）
+assert.ok(html.includes("const APP_BADGE_KEYS = { moments: 'moments', chat: 'chat-private', chatroom: 'chat-group' };"));
+assert.ok(html.includes('data-folder-badges="${keys}"'));
+assert.ok(html.includes("const badgeId = badgeKey ? `data-badge=\"${badgeKey}\"` : '';"));
+assert.ok(html.includes("document.querySelectorAll('[data-badge]').forEach(dot => dot.classList.toggle('show', Boolean(state[dot.dataset.badge])));"));
+assert.ok(!html.includes("!options.inFolder"));
 
 // IB 皮肤：日记本有线条图标，文件夹里的小图标也换成线条图
 const skin = fs.readFileSync(path.join(__dirname, 'static', 'ib', 'ib-skin.css'), 'utf8');

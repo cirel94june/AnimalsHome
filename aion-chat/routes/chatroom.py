@@ -4620,6 +4620,10 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
 
     if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
+        await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
+            room_id=room_id, model_key=connor_model_key, msg_id=connor_msg_id, history=connor_messages, digest_result=digest_out,
+            usage_meta=usage_meta, has_error=has_error, error_text=error_text,
+        ))
         _fire_chatroom_followups(
             triggered, room_id, "connor", connor_model_key, connor_msg_id
         )
@@ -4847,6 +4851,10 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
     if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
         await _q.put({"type": "aion_done", "message": None})
+        await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
+            room_id=room_id, model_key=model_key, msg_id=aion_msg_id, history=aion_history, digest_result=digest_out,
+            usage_meta=usage_meta, has_error=has_error, error_text=error_text,
+        ))
         _fire_chatroom_followups(triggered, room_id, "aion", model_key, aion_msg_id)
         return digest_out
 
@@ -4986,6 +4994,10 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
 
     if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
+        await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
+            room_id=room_id, model_key=connor_model_key, msg_id=connor_msg_id, history=connor_history, digest_result=digest_out,
+            usage_meta=usage_meta, has_error=has_error, error_text=error_text,
+        ))
         _fire_chatroom_followups(
             triggered, room_id, "connor", connor_model_key, connor_msg_id
         )

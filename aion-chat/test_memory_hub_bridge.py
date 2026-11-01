@@ -775,3 +775,28 @@ def closing_outbox():
     import sqlite3
     from contextlib import closing
     return closing(sqlite3.connect(bridge.OUTBOX_PATH))
+
+
+def test_read_log_is_written_once_after_the_handoff_card_is_merged(fake_hub, isolated_config, monkeypatch, caplog):
+    """Codex §128 L1：原来在交接卡合并前就记日志，交接卡取到了日志却写 empty 0字。"""
+    import logging
+    _write(isolated_config, enabled=True, url=fake_hub, context_timeout_seconds=4)
+
+    async def empty_incremental(cfg, actor, message, chat_id="", chat_type="private"):
+        bridge._note_read(actor, chat_id, "empty", started=time.monotonic())
+        return ""
+
+    monkeypatch.setattr(bridge, "_incremental_block", empty_incremental)
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        block = asyncio.run(bridge.context_block("aion", "我回来了", "conv_9"))
+    lines = [r.getMessage() for r in caplog.records if "取记忆" in r.getMessage()]
+    assert len(lines) == 1
+    assert "aion/conv_9：ok" in lines[0] and f"{len(block)}字" in lines[0] and "含交接卡" in lines[0]
+    assert "交接卡】" not in lines[0]  # 只有状态、字数，没有内容
+
+
+def test_tool_only_replies_still_write_the_syslog():
+    """Codex §128：只有搜记忆 / 巡逻指令、没有文字时提前返回，系统日志那条原来不发。"""
+    from pathlib import Path
+    source = (Path(__file__).resolve().parent / "routes" / "chatroom.py").read_text(encoding="utf-8")
+    assert source.count("# 只有搜记忆 / 巡逻指令时也写系统日志") == 3

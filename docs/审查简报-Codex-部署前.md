@@ -2006,3 +2006,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_memory_hub_bridge.py` 新加 3 项：群里小猫那一轮走 REST（地址、主人钥匙、owner、chat_id、event_id、无 sender_id、不再走 MCP）；没主人钥匙和私聊仍走 MCP 并带 chat_id；主人钥匙被拒时退回 MCP 照常记。
   - fake hub 的 capture 收 chat_id。`test_seat_chat` 的调用断言改成带 chat_type / chat_id / from_owner。
   - 相关 113 项里只有 `test_seat_chat::test_new_window_opens_another_room_for_the_same_seat` 失败，改动前就有。
+
+
+## 130. 修 §126–§128 审查的 L1、L2，并补上 Lucien 漏系统日志的入口
+
+- **L1 日志在交接卡合并前就记**：`_note_read` 不再写日志。`context_block` 改成一层外壳：调内部的 `_context_block` 取完（交接卡已经合进来），再由 `_log_read` 记一行汇总，状态和字数与系统日志一致；有交接卡时写「含交接卡 N 字」。只有状态、字数、耗时。
+- **L2 旧 Node 测试**：`test_home_folders_ui.js` 原来断言「文件夹里不显示朋友圈红点」，改成检查 `APP_BADGE_KEYS`、`data-badge`、`data-folder-badges` 和统一刷新，并且不再有 `!options.inFolder`。
+- **漏系统日志的入口**（你找到的）：回复只有搜记忆或巡逻指令、没有文字时提前 return，跳过了 debug。Lucien 私聊、小克群聊、Lucien 群聊三处同样的提前返回，都在 return 前补发 `_chatroom_debug_payload`。
+- **测试**：
+  - 新加：交接卡合并后只记一行日志，状态 ok、字数是合并后的、不含内容；三处提前返回都发 debug（源码检查）。
+  - `node test_home_folders_ui.js` 通过。
+  - bridge、chatroom、seat_chat 共 108 项里 6 项失败，都是改动前就有的。
