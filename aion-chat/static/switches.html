@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>开关总览</title>
+<link rel="stylesheet" href="/static/common.css">
+<link rel="manifest" href="/manifest.json">
+<style>
+/* 11-01 小猫：开关散在各个页面里找不到 → 常用的开关放一页，每个下面一句话说明（草图 ③） */
+.sw-content { flex: 1; overflow-y: auto; padding: 12px 14px 32px; display: flex; flex-direction: column; gap: 12px; }
+.sw-card { padding: 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+.sw-card h3 { margin: 0; font-size: 15px; }
+.sw-hint { margin: -6px 0 0; font-size: 12px; line-height: 1.55; color: var(--text2); }
+.sw-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; }
+.sw-row label { font-size: 14px; }
+.sw-person { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.sw-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 12px; }
+.sw-switch { position: relative; width: 48px; height: 28px; flex-shrink: 0; }
+.sw-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.sw-switch span { position: absolute; inset: 0; border-radius: 14px; background: var(--border); transition: background .15s; }
+.sw-switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); transition: transform .15s; }
+.sw-switch input:checked + span { background: var(--accent); }
+.sw-switch input:checked + span::after { transform: translateX(20px); }
+.sw-switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sw-freq { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.sw-freq button { min-height: 36px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.sw-freq button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sw-freq button:disabled { opacity: .45; cursor: default; }
+.sw-sep { height: 1px; background: var(--border); }
+.sw-times { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.sw-times input { min-height: 38px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; }
+.sw-seat { min-height: 40px; display: flex; align-items: center; padding: 0 12px; border: 1px dashed var(--border); border-radius: 12px; font-size: 12px; color: var(--text3); }
+.sw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sw-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 3px 4px 3px 12px; border: 1px solid var(--border); border-radius: 16px; font-size: 12px; background: transparent; color: var(--text); }
+.sw-chip button { min-width: 26px; min-height: 26px; border: 0; border-radius: 50%; background: transparent; color: var(--text2); font-size: 15px; cursor: pointer; }
+.sw-add { min-height: 32px; padding: 3px 12px; border: 1px dashed var(--accent); border-radius: 16px; background: transparent; color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
+.sw-picker { display: flex; flex-direction: column; gap: 6px; }
+.sw-picker button { min-height: 40px; text-align: left; padding: 0 12px; border: 1px solid var(--border); border-radius: 12px; background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.sw-links a { display: flex; align-items: center; justify-content: space-between; min-height: 42px; color: var(--accent); text-decoration: none; font-size: 14px; }
+.sw-status { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 16px; background: rgba(20, 30, 50, .85); color: #fff; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.sw-status.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="sub-page">
+  <div class="top-bar">
+    <button class="back-btn" onclick="navigateSubPageBack()" aria-label="返回">⬅</button>
+    <h2>开关总览</h2>
+  </div>
+  <div class="sw-content">
+    <section class="sw-card">
+      <h3>自己醒来</h3>
+      <p class="sw-hint">一段时间没聊，TA 会自己醒来做点事。每位单独选大概多久醒一次。</p>
+      <div id="wakeList"></div>
+      <div class="sw-sep"></div>
+      <div class="sw-row"><label for="wakeQuiet">静默时间（这段时间谁都不自己醒）</label><span class="sw-switch"><input type="checkbox" id="wakeQuiet"><span></span></span></div>
+      <div class="sw-times"><input type="time" id="wakeQuietStart" aria-label="静默开始">到<input type="time" id="wakeQuietEnd" aria-label="静默结束"></div>
+    </section>
+
+    <section class="sw-card">
+      <h3>摄像头和哨兵</h3>
+      <p class="sw-hint">哨兵隔一阵看一眼摄像头，需要时叫醒某位 AI。</p>
+      <div class="sw-row"><label for="patrol">哨兵巡逻</label><span class="sw-switch"><input type="checkbox" id="patrol"><span></span></span></div>
+      <p class="sw-hint" id="patrolNote"></p>
+      <div class="sw-row"><label for="camQuiet">哨兵静默时间</label><span class="sw-switch"><input type="checkbox" id="camQuiet"><span></span></span></div>
+      <div class="sw-times"><input type="time" id="camQuietStart" aria-label="哨兵静默开始">到<input type="time" id="camQuietEnd" aria-label="哨兵静默结束"></div>
+    </section>
+
+    <section class="sw-card">
+      <h3>手机通知给 AI 看</h3>
+      <p class="sw-hint">只看最近 30 分钟，广告会自动过滤。不想让 AI 看到的 App 加到下面，那个 App 的通知就不收了。</p>
+      <div class="sw-row"><label for="notifyOn">把通知告诉 AI</label><span class="sw-switch"><input type="checkbox" id="notifyOn"><span></span></span></div>
+      <div>
+        <div style="font-size:13px;margin-bottom:8px">不让 AI 看的 App</div>
+        <div class="sw-chips" id="blockedApps"></div>
+      </div>
+      <div class="sw-picker" id="appPicker" hidden></div>
+    </section>
+
+    <section class="sw-card sw-links">
+      <h3>更多设置</h3>
+      <a href="/settings" data-open="/settings">模型、语音和其他设置 <span>›</span></a>
+      <a href="/worldbook" data-open="/worldbook">每位 AI 的人设（世界书） <span>›</span></a>
+      <a href="/capabilities" data-open="/capabilities">工具与能力 <span>›</span></a>
+      <a href="/camera" data-open="/camera">摄像头 <span>›</span></a>
+      <a href="/usage" data-open="/usage">用量 <span>›</span></a>
+    </section>
+  </div>
+</div>
+<div class="sw-status" id="status" role="status"></div>
+<script src="/static/common.js?v=switches-20261101"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const PRESETS = [2, 4, 8];  // 小时；实际在 0.8～1.2 倍之间随机，不会准点得像闹钟
+  const state = { actors: [], emptySeats: 0, roles: [], notify: { enabled: true, blocked_apps: [], recent_apps: [] } };
+
+  async function api(method, url, body) {
+    const response = await fetch(url, {
+      method, cache: 'no-store',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }
+
+  let statusTimer = 0;
+  function say(text) {
+    const node = $('status');
+    node.textContent = text;
+    node.classList.add('show');
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => node.classList.remove('show'), 1600);
+  }
+
+  async function save(action, ok = '已保存') {
+    try { await action(); say(ok); return true; }
+    catch (_) { say('没存上，稍后再试'); return false; }
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function avatar(actor) {
+    const src = String(actor?.avatar || '');
+    if (/^\/(public|skin-assets|static|uploads)\/[^"'()\s]+$/.test(src)) {
+      const img = el('img', 'sw-avatar');
+      img.src = src;
+      img.alt = '';
+      return img;
+    }
+    return el('span', 'sw-avatar', Array.from(String(actor?.name || '?'))[0] || '?');
+  }
+
+  function switchInput(id, checked, label) {
+    const wrap = el('span', 'sw-switch');
+    const input = el('input');
+    input.type = 'checkbox';
+    input.id = id;
+    input.checked = Boolean(checked);
+    input.setAttribute('aria-label', label);
+    wrap.append(input, el('span'));
+    return { wrap, input };
+  }
+
+  function rangeFor(hours) {
+    const center = Math.round(hours * 60);
+    return { min_interval_minutes: Math.max(5, Math.round(center * 0.8)), max_interval_minutes: Math.min(1440, Math.round(center * 1.2)) };
+  }
+
+  function presetOf(config) {
+    const center = (Number(config.min_interval_minutes) + Number(config.max_interval_minutes)) / 2;
+    return PRESETS.find(hours => Math.abs(center - hours * 60) <= 5) || null;
+  }
+
+  function renderWake() {
+    const root = $('wakeList');
+    root.replaceChildren();
+    state.actors.forEach(actor => {
+      const role = state.roles.find(item => item.actor === actor.id);
+      if (!role) return;
+      const config = role.config || {};
+      const head = el('div', 'sw-row');
+      const who = el('span', 'sw-person');
+      who.append(avatar(actor), el('span', '', actor.name));
+      const toggle = switchInput(`wake-${actor.id}`, config.enabled, `${actor.name} 自己醒来`);
+      toggle.input.addEventListener('change', () => save(async () => {
+        await api('PUT', `/api/idle-autonomy/${encodeURIComponent(actor.id)}/config`, { enabled: toggle.input.checked });
+        await loadWake();
+      }, toggle.input.checked ? `${actor.name} 会自己醒来了` : `${actor.name} 不自己醒了`));
+      head.append(who, toggle.wrap);
+
+      const freq = el('div', 'sw-freq');
+      const preset = presetOf(config);
+      PRESETS.forEach(hours => {
+        const button = el('button', preset === hours ? 'active' : '', `${hours} 小时`);
+        button.type = 'button';
+        button.disabled = !config.enabled;
+        button.addEventListener('click', () => setFrequency(actor, hours));
+        freq.appendChild(button);
+      });
+      const center = (Number(config.min_interval_minutes) + Number(config.max_interval_minutes)) / 2 / 60;
+      const custom = el('button', preset ? '' : 'active', preset ? '自定' : `约 ${Math.round(center * 10) / 10} 时`);
+      custom.type = 'button';
+      custom.disabled = !config.enabled;
+      custom.addEventListener('click', () => {
+        const answer = window.prompt(`${actor.name} 大概多少小时醒一次？（0.5～20）`, '3');
+        const hours = Number(answer);
+        if (answer === null) return;
+        if (!Number.isFinite(hours) || hours < 0.5 || hours > 20) { say('写 0.5 到 20 之间的数字'); return; }
+        setFrequency(actor, hours);
+      });
+      freq.appendChild(custom);
+      root.append(head, freq);
+    });
+    if (state.emptySeats) {
+      root.appendChild(el('div', 'sw-seat', `空位 ×${state.emptySeats} —— 新 AI 住进来后自动出现在这里`));
+    }
+  }
+
+  async function setFrequency(actor, hours) {
+    await save(async () => {
+      await api('PUT', `/api/idle-autonomy/${encodeURIComponent(actor.id)}/config`, rangeFor(hours));
+      await loadWake();
+    }, `${actor.name} 大约每 ${hours} 小时醒一次`);
+  }
+
+  function renderNotify() {
+    $('notifyOn').checked = state.notify.enabled;
+    const root = $('blockedApps');
+    root.replaceChildren();
+    state.notify.blocked_apps.forEach(app => {
+      const chip = el('span', 'sw-chip', app.name);
+      const remove = el('button', '', '×');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `让 AI 看 ${app.name} 的通知`);
+      remove.addEventListener('click', () => saveNotify(state.notify.enabled,
+        state.notify.blocked_apps.filter(item => item.package !== app.package), `${app.name} 的通知又能告诉 AI 了`));
+      chip.appendChild(remove);
+      root.appendChild(chip);
+    });
+    const add = el('button', 'sw-add', '+ 添加');
+    add.type = 'button';
+    add.addEventListener('click', () => { $('appPicker').hidden = !$('appPicker').hidden; renderPicker(); });
+    root.appendChild(add);
+  }
+
+  function renderPicker() {
+    const root = $('appPicker');
+    root.replaceChildren();
+    const blocked = new Set(state.notify.blocked_apps.map(app => app.package));
+    const choices = state.notify.recent_apps.filter(app => !blocked.has(app.package));
+    if (!choices.length) {
+      root.appendChild(el('div', 'sw-hint', '最近还没有收到哪个 App 的通知。等手机来过通知，这里就能选了。'));
+      return;
+    }
+    root.appendChild(el('div', 'sw-hint', '最近发过通知的 App，点一个就不让 AI 看了：'));
+    choices.forEach(app => {
+      const button = el('button', '', app.name);
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        root.hidden = true;
+        saveNotify(state.notify.enabled, [...state.notify.blocked_apps, { package: app.package, name: app.name }],
+          `${app.name} 的通知不给 AI 看了`);
+      });
+      root.appendChild(button);
+    });
+  }
+
+  async function saveNotify(enabled, blockedApps, ok) {
+    await save(async () => {
+      state.notify = await api('PUT', '/api/device-context/notification-settings', { enabled, blocked_apps: blockedApps });
+      renderNotify();
+      if (!$('appPicker').hidden) renderPicker();
+    }, ok);
+  }
+
+  async function loadWake() {
+    const autonomy = await api('GET', '/api/idle-autonomy');
+    state.roles = Array.isArray(autonomy.roles) ? autonomy.roles : [];
+    renderWake();
+  }
+
+  async function load() {
+    try {
+      const [people, quiet, cam, notify] = await Promise.all([
+        api('GET', '/api/actors'), api('GET', '/api/idle-autonomy/quiet-hours'),
+        api('GET', '/api/cam/status'), api('GET', '/api/device-context/notification-settings'), loadWake(),
+      ]);
+      const all = Array.isArray(people.actors) ? people.actors : [];
+      state.actors = all.filter(actor => actor.enabled || actor.builtin);
+      state.emptySeats = all.length - state.actors.length;
+      renderWake();
+      $('wakeQuiet').checked = Boolean(quiet.enabled);
+      $('wakeQuietStart').value = quiet.start;
+      $('wakeQuietEnd').value = quiet.end;
+      $('patrol').checked = Boolean(cam.monitoring);
+      $('patrolNote').textContent = cam.patrol_note || '';
+      $('camQuiet').checked = Boolean(cam.quiet_hours_enabled);
+      $('camQuietStart').value = cam.quiet_hours_start || '00:00';
+      $('camQuietEnd').value = cam.quiet_hours_end || '09:00';
+      state.notify = notify;
+      renderNotify();
+    } catch (_) {
+      say('有些开关暂时读不出来，稍后再试');
+    }
+  }
+
+  function saveWakeQuiet() {
+    const body = { enabled: $('wakeQuiet').checked, start: $('wakeQuietStart').value, end: $('wakeQuietEnd').value };
+    if (!body.start || !body.end) return;
+    save(() => api('PUT', '/api/idle-autonomy/quiet-hours', body),
+      body.enabled ? `${body.start} 到 ${body.end} 谁都不自己醒` : '静默时间关了');
+  }
+
+  function saveCamQuiet() {
+    const body = { quiet_hours_enabled: $('camQuiet').checked, quiet_hours_start: $('camQuietStart').value, quiet_hours_end: $('camQuietEnd').value };
+    if (!body.quiet_hours_start || !body.quiet_hours_end) return;
+    save(() => api('PUT', '/api/cam/config', body),
+      body.quiet_hours_enabled ? `哨兵 ${body.quiet_hours_start} 到 ${body.quiet_hours_end} 不巡逻` : '哨兵静默时间关了');
+  }
+
+  ['wakeQuiet', 'wakeQuietStart', 'wakeQuietEnd'].forEach(id => $(id).addEventListener('change', saveWakeQuiet));
+  ['camQuiet', 'camQuietStart', 'camQuietEnd'].forEach(id => $(id).addEventListener('change', saveCamQuiet));
+  $('patrol').addEventListener('change', event => {
+    const on = event.currentTarget.checked;
+    save(async () => {
+      await api('POST', on ? '/api/cam/monitor/start' : '/api/cam/monitor/stop');
+      const cam = await api('GET', '/api/cam/status');
+      $('patrol').checked = Boolean(cam.monitoring);
+      $('patrolNote').textContent = cam.patrol_note || '';
+    }, on ? '哨兵开始巡逻' : '哨兵停了');
+  });
+  $('notifyOn').addEventListener('change', event => saveNotify(event.currentTarget.checked, state.notify.blocked_apps,
+    event.currentTarget.checked ? '通知会告诉 AI' : '通知不告诉 AI 了'));
+  document.querySelectorAll('[data-open]').forEach(link => link.addEventListener('click', event => {
+    if (window.parent !== window && typeof window.parent.openSubPage === 'function') {
+      event.preventDefault();
+      window.parent.openSubPage(link.dataset.open);
+    }
+  }));
+  load();
+})();
+</script>
+</body>
+</html>

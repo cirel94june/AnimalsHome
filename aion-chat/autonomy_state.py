@@ -321,6 +321,28 @@ async def refresh_actor_wake_for_user(
             await db.close()
 
 
+async def postpone_due_wake(actor: str, *, wake_at: float, now: float | None = None, db=None) -> bool:
+    """到点了但正处在静默时段：只把「已经到点」的那次醒来挪到 wake_at，没到点的不动。"""
+    actor = normalize_actor(actor)
+    owns_db = db is None
+    if owns_db:
+        db = await aiosqlite.connect(DB_PATH)
+        db.row_factory = aiosqlite.Row
+    try:
+        await ensure_autonomy_tables(db)
+        timestamp = float(time.time() if now is None else now)
+        cur = await db.execute(
+            "UPDATE autonomy_actor_configs SET next_wake_at=?,updated_at=? "
+            "WHERE actor_id=? AND enabled=1 AND next_wake_at IS NOT NULL AND next_wake_at<=?",
+            (float(wake_at), timestamp, actor, timestamp),
+        )
+        await db.commit()
+        return bool(cur.rowcount)
+    finally:
+        if owns_db:
+            await db.close()
+
+
 async def claim_due_wake(actor: str, *, now: float | None = None, db=None) -> dict | None:
     """Atomically claim one due actor countdown."""
     actor = normalize_actor(actor)

@@ -29,6 +29,12 @@ class ActorConfigUpdate(BaseModel):
     actions: Optional[dict[str, bool]] = None
 
 
+class QuietHoursUpdate(BaseModel):
+    enabled: bool
+    start: str
+    end: str
+
+
 class NicheCardUpdate(BaseModel):
     mentioned: bool
 
@@ -56,6 +62,21 @@ async def read_autonomy_status():
         # 座位 3～6 只显示已经能做的活动
         role["available_actions"] = [k for k in ACTION_DEFS if not _is_seat(role["actor"]) or k in SEAT_ACTIONS]
     return payload
+
+
+@router.get("/quiet-hours")
+async def read_quiet_hours():
+    from autonomy import get_wake_quiet_hours
+    return get_wake_quiet_hours()
+
+
+@router.put("/quiet-hours")
+async def update_quiet_hours(body: QuietHoursUpdate):
+    from autonomy import save_wake_quiet_hours
+    try:
+        return save_wake_quiet_hours(enabled=body.enabled, start=body.start, end=body.end)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
 
 
 @router.get("/niches")

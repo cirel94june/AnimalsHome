@@ -1702,3 +1702,31 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
     - C：真旧排法。照常迁移。
   - 新测试 `test_home_layout_migration.py` 4 项：迟到的迁移不覆盖、旧排法会被迁移、普通保存照常覆盖、页面里取消迁移在应用新排法之前。
   - `test_ai_feed.py`、`test_home_folders_ui.js` 通过。
+
+
+## 113. 主页改版第 3 步：「开关总览」页 + 自己醒来静默时间 + 通知总开关 / 不让 AI 看的 App
+
+草图 ③。小猫 10-31 要求：自己醒来能选 2/4/8 小时、能设静默时间；哨兵也能设静默时间；不想让 AI 看的 App 能挑出来。
+
+- **自己醒来频率**：每位本来就有 `min/max_interval_minutes`（默认 5～1440 随机，所以显得没规律）。页面选「N 小时」就存成 0.8N～1.2N 小时之间随机（如 4 小时 → 192～288 分钟）；「自定」可填 0.5～20 小时。走原有的 `PUT /api/idle-autonomy/{actor}/config`。
+- **自己醒来静默时间（新）**：
+  - `quiet_hours.py`：HH:MM 到 HH:MM，可以跨午夜，按服务进程本地时间算（线上 TZ=Asia/Shanghai，和摄像头静默同一算法）；格式不对或首尾相同都当没开。
+  - `SETTINGS.idle_autonomy_quiet_hours`，接口 `GET/PUT /api/idle-autonomy/quiet-hours`（时间格式不对回 422）。
+  - `run_actor_once` 非手动时，若正处在静默时段：用新函数 `postpone_due_wake` 只把「已经到点」的那次挪到静默结束后 0～30 分钟内，不跑，回 `skipped: quiet hours`。手动「现在醒一次」不受影响。
+- **哨兵**：直接用现有的 `/api/cam/monitor/start|stop` 和 `/api/cam/config` 的 quiet_hours_*，后端没改。
+- **通知（新）**：
+  - `device_context.notification_settings()` / `save_notification_settings()`：`SETTINGS.notification_context = {enabled, blocked_apps:[{package,name}]}`，按包名去重，最多 100 个。
+  - 过滤分两层。`_fresh_notifications` 把总开关关着时的通知、被挑出来的 App 的通知归进已过滤，写明原因，不进提示词。`activity.record_notification` 遇到这两种直接不存，也不进活动日志。
+  - `recent_apps()` 只给包名、名字和时间，不给通知内容，供页面挑选。
+  - 接口：`GET/PUT /api/device-context/notification-settings`。
+- **页面 `/switches`**（`static/switches.html`，`main.py` 加路由；主页「家里的开关」文件夹第一个，IB 用设置的线条图标）：
+  - 自己醒来：每位一个开关 + 2/4/8/自定；空位提示；静默开关和起止时间。
+  - 哨兵：巡逻开关和巡逻说明；静默开关和起止时间。
+  - 通知：总开关；不让看的 App 显示成小标签，点 × 恢复，「+ 添加」从最近发过通知的 App 里挑。
+  - 更多设置的链接。
+  - 全部 textContent；头像只认本站地址。
+- **「你不在线时改成留言」暂不放**：这个功能还没做，不放按了没用的开关。
+- **验证**：
+  - 本机 375 宽实测：打开 Jasper 自己醒来、选 4 小时（存成 192～288）；设静默 23:00～08:00；塞两条假通知（微信、淘宝）后挑微信不让看，微信进已过滤并写明原因，淘宝照常。时间写错时回 422。测完已把本机设置还原。
+  - 新测试 `test_switches.py` 7 项：跨午夜判断、静默结束时间、静默时到点只推迟不运行、坏时间拒绝、被挑出的 App 过滤且不记录、总开关关掉全过滤、页面接口。
+  - 自主活动和设备上下文相关旧测试 86 项改动前后都通过；`test_ai_feed.py`、`test_home_layout_migration.py`、`test_home_folders_ui.js` 通过。

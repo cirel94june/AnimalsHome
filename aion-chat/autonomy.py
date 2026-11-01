@@ -24,10 +24,12 @@ from autonomy_state import (
     ACTOR_IDS,
     claim_due_wake,
     get_actor_config,
+    postpone_due_wake,
     refresh_actor_wake_for_user,
     schedule_actor_wake,
     wake_summary_timeline_title,
 )
+import quiet_hours
 from autonomy_niches import archive_album_event, create_niche_card, recent_niche_index
 
 _AUTONOMY_WAKE_INTERNAL = ContextVar("autonomy_wake_internal", default=False)
@@ -171,6 +173,23 @@ def save_idle_config(
         SETTINGS["idle_autonomy_actions"] = current
     save_settings(SETTINGS)
     return get_idle_config()
+
+
+def get_wake_quiet_hours() -> dict[str, Any]:
+    """「自己醒来」的静默时段：这段时间谁都不自己醒（11-01 小猫要的，开关总览里设）。"""
+    raw = SETTINGS.get("idle_autonomy_quiet_hours")
+    raw = raw if isinstance(raw, dict) else {}
+    start = raw.get("start") if quiet_hours.valid_hhmm(raw.get("start")) else "00:00"
+    end = raw.get("end") if quiet_hours.valid_hhmm(raw.get("end")) else "08:00"
+    return {"enabled": bool(raw.get("enabled")), "start": start, "end": end}
+
+
+def save_wake_quiet_hours(*, enabled: bool, start: str, end: str) -> dict[str, Any]:
+    if not (quiet_hours.valid_hhmm(start) and quiet_hours.valid_hhmm(end)):
+        raise ValueError("时间要写成 HH:MM")
+    SETTINGS["idle_autonomy_quiet_hours"] = {"enabled": bool(enabled), "start": start, "end": end}
+    save_settings(SETTINGS)
+    return get_wake_quiet_hours()
 
 
 def _schedule_next_idle_delay(cfg: dict[str, Any] | None = None) -> int:
@@ -2531,6 +2550,13 @@ class IdleAutonomyManager:
             if not manual and not cfg.get("next_wake_at") and not refreshed:
                 await schedule_actor_wake(actor, anchor_at=latest_user or time.time())
                 return {"ok": False, "actor": actor, "skipped": "not due"}
+            quiet = get_wake_quiet_hours()
+            now = time.time()
+            if not manual and quiet_hours.is_quiet(quiet, now):
+                # 静默时段里到点的那次，挪到静默结束后的半小时内；手动「现在醒一次」不受影响
+                wake_at = quiet_hours.quiet_end_after(quiet, now) + random.randint(0, 30) * 60
+                await postpone_due_wake(actor, wake_at=wake_at, now=now)
+                return {"ok": False, "actor": actor, "skipped": "quiet hours"}
             timer = cfg if manual else await claim_due_wake(actor, now=time.time())
             if not timer:
                 return {"ok": False, "actor": actor, "skipped": "not due"}

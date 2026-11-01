@@ -690,6 +690,7 @@ const APPS = [
   { id: 'dateTheater', name: '去约会', icon: '/public/funIcon_0026_去约会.png', url: '/date-theater' },
   { id: 'whisper',  name: '密语时刻', icon: '/public/funIcon_0011_密语时刻.png', url: '/toys' },
   { id: 'alarm',    name: '日程监督',     icon: '/public/funIcon_0012_闹钟.png',    url: '/schedule' },
+  { id: 'switches', name: '开关总览', icon: '/public/funIcon_0008_设置.png', url: '/switches' },
   { id: 'settings', name: '设置',     icon: '/public/funIcon_0008_设置.png',    url: '/settings' },
   { id: 'capabilities', name: '工具与能力', icon: '/public/funIcon_0025_工具能力.png', url: '/capabilities' },
   { id: 'app-supervision', name: '监管', icon: '/public/funIcon_0027_监管.png', url: '/app-supervision' },
@@ -716,7 +717,7 @@ const FOLDERS = [
   { id: 'folder-play', name: '一起玩', apps: ['theater', 'music-station', 'playground', 'english-corner', 'reading', 'travel'] },
   { id: 'folder-home', name: '家里的事', apps: ['ai-feed', 'moments', 'album', 'gift', 'wishes', 'lounge-friends', 'taobao', 'xhs-lite', 'family-dynamics'] },
   { id: 'folder-life', name: '我的生活', apps: ['alarm', 'health', 'location', 'fund', 'app-supervision'] },
-  { id: 'folder-switches', name: '家里的开关', apps: ['settings', 'worldbook', 'capabilities', 'camera', 'logs', 'activity', 'usage', 'mcp-tools', 'repair'] },
+  { id: 'folder-switches', name: '家里的开关', apps: ['switches', 'settings', 'worldbook', 'capabilities', 'camera', 'logs', 'activity', 'usage', 'mcp-tools', 'repair'] },
   { id: 'folder-later', name: '先收起来', apps: ['whisper', 'dateTheater', 'hug'] },
 ];
 const FOLDERED_APP_IDS = new Set(FOLDERS.flatMap(folder => folder.apps));

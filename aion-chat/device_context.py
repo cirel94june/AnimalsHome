@@ -59,6 +59,41 @@ LIGHT_TEXT = {
     "bright": "环境明亮",
 }
 SCREEN_TEXT = {"on": "亮屏", "off": "熄屏"}
+def notification_settings() -> dict:
+    """小猫在开关总览里定的：要不要把手机通知告诉 AI、哪些 App 的通知不让 AI 看（11-01）。"""
+    from config import SETTINGS
+    raw = SETTINGS.get("notification_context")
+    raw = raw if isinstance(raw, dict) else {}
+    blocked, seen = [], set()
+    for entry in raw.get("blocked_apps") or []:
+        if not isinstance(entry, dict):
+            continue
+        package = _clean_text(entry.get("package"), 120)
+        if not package or package in seen:
+            continue
+        seen.add(package)
+        blocked.append({"package": package, "name": _clean_text(entry.get("name"), 36) or package})
+    return {"enabled": raw.get("enabled", True) is not False, "blocked_apps": blocked[:100]}
+
+
+def save_notification_settings(*, enabled: bool, blocked_apps: list[dict]) -> dict:
+    from config import SETTINGS, save_settings
+    SETTINGS["notification_context"] = {"enabled": bool(enabled), "blocked_apps": list(blocked_apps or [])}
+    cleaned = notification_settings()  # 走一遍清理：去重、截断、丢掉没有包名的
+    SETTINGS["notification_context"] = cleaned
+    save_settings(SETTINGS)
+    return cleaned
+
+
+def _hidden_by_user(item: dict, settings: dict) -> str:
+    if not settings["enabled"]:
+        return "小猫关了「把通知告诉 AI」"
+    package = str(item.get("package_name") or "")
+    if package and any(entry["package"] == package for entry in settings["blocked_apps"]):
+        return "小猫设了不让 AI 看这个 App"
+    return ""
+
+
 def _number(value: Any, fallback: float) -> float:
     try:
         return float(value)
@@ -205,6 +240,21 @@ class DeviceContextStore:
             received_at,
         )
 
+    def recent_apps(self, limit: int = 30) -> list[dict]:
+        """最近发过通知的 App（新的在前），开关总览里「不让 AI 看」从这里挑。只给包名和名字，不给通知内容。"""
+        latest: dict[str, dict] = {}
+        for event in self.events:
+            item = event.get("notification") if event.get("kind") == "notification" else None
+            package = _clean_text((item or {}).get("package_name"), 120)
+            if not package:
+                continue
+            latest[package] = {
+                "package": package,
+                "name": _clean_text(item.get("app_name"), 36) or package,
+                "at": _number(event.get("timestamp"), 0),
+            }
+        return sorted(latest.values(), key=lambda row: row["at"], reverse=True)[:limit]
+
     def hydrate(self, events: list[dict], now: float) -> None:
         self.slots.clear()
         self.notifications.clear()
@@ -234,8 +284,14 @@ class DeviceContextStore:
 
     def _fresh_notifications(self, now: float) -> tuple[list[dict], list[dict]]:
         active, filtered = [], []
+        settings = notification_settings()
         for item in self.notifications.values():
             if now - _number(item.get("received_at"), 0) > self.fresh_seconds:
+                continue
+            hidden = _hidden_by_user(item, settings)
+            if hidden:
+                item = {**deepcopy(item), "filter_reason": hidden}
+                filtered.append(item)
                 continue
             target = filtered if item.get("noise") else active
             target.append(deepcopy(item))

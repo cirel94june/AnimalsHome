@@ -158,6 +158,26 @@ async def report_family_event(body: FamilyEventBody):
     return {"ok": True, "recorded": recorded}
 
 
+class NotificationSettingsUpdate(BaseModel):
+    enabled: bool
+    blocked_apps: list[dict] = []
+
+
+@router.get("/api/device-context/notification-settings")
+async def read_notification_settings():
+    from activity import device_context_store
+    from device_context import notification_settings
+    return {**notification_settings(), "recent_apps": device_context_store.recent_apps()}
+
+
+@router.put("/api/device-context/notification-settings")
+async def update_notification_settings(body: NotificationSettingsUpdate):
+    from activity import device_context_store
+    from device_context import save_notification_settings
+    saved = save_notification_settings(enabled=body.enabled, blocked_apps=body.blocked_apps)
+    return {**saved, "recent_apps": device_context_store.recent_apps()}
+
+
 @router.get("/api/device-context/status")
 async def device_context_status():
     snapshot = get_device_context_snapshot()

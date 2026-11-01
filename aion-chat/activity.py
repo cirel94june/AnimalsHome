@@ -1081,6 +1081,9 @@ def record_phone_context(payload: dict, received_at: float | None = None) -> lis
 
 
 def record_notification(payload: dict, received_at: float | None = None) -> dict:
+    from device_context import _hidden_by_user, notification_settings
+    if _hidden_by_user(payload or {}, notification_settings()):
+        return {}  # 小猫关了通知或不让 AI 看这个 App：不存、不进活动日志
     received_at = float(received_at or time.time())
     event = device_context_store.upsert_notification(payload, received_at)
     if event:
