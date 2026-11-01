@@ -2446,6 +2446,25 @@ def build_monitor_alert_data(content: str, **extra) -> dict:
 CAM_CHECK_CMD = "[CAM_CHECK]"
 
 
+# 10-30 小猫定的规矩：她的手机不在线时不去找手机（看手机摄像头也一样），让 AI 直接留言
+PHONE_OFFLINE_NO_IMAGE_CONTEXT = (
+    "[手机摄像头采集状态]\n"
+    "小猫的手机现在不在线（App 没连上），这次看不到手机摄像头，本轮没有图像附件。"
+    "不得描述或推断画面；想她了就直接在聊天里留言，她上线会看到。"
+)
+
+
+def _phone_offline_result() -> "MonitorImageResult | None":
+    try:
+        online = manager.phone_online(grace=False)
+    except Exception:
+        return None  # 拿不到在线状态时照旧去取
+    if online:
+        return None
+    return MonitorImageResult(status="unavailable", source="phone",
+                              no_image_context=PHONE_OFFLINE_NO_IMAGE_CONTEXT, error="phone_offline")
+
+
 PHONE_CAMERA_NO_IMAGE_CONTEXT = (
     "[手机摄像头采集状态]\n"
     "本次手机摄像头请求没有成功取得有效画面。本轮没有图像附件，"
@@ -2543,6 +2562,9 @@ async def acquire_monitor_image(
     retry_after_seconds: float = 15.0,
 ) -> MonitorImageResult:
     if cam.cfg.get("active_source", "local") == "phone":
+        offline = _phone_offline_result()
+        if offline is not None:
+            return offline
         phone_screen_requested_at = time.time()
         try:
             result = await phone_camera.request_capture(
@@ -2649,6 +2671,9 @@ def acquire_monitor_image_sync(
     retry_after_seconds: float = 15.0,
 ) -> MonitorImageResult:
     if cam.cfg.get("active_source", "local") == "phone":
+        offline = _phone_offline_result()
+        if offline is not None:
+            return offline
         phone_screen_requested_at = time.time()
         if send_command is None:
             if cam._loop is None:

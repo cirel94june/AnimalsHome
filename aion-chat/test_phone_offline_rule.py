@@ -89,3 +89,89 @@ class OfflineCommandTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SendFailureAndStrictTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_send_clears_the_phone_registration(self):
+        """Codex §118 M1：发送失败只从 active 里去掉、登记还在，会一直被当成在线。"""
+        manager = ConnectionManager()
+        phone = MagicMock()
+        phone.send_text = AsyncMock(side_effect=RuntimeError("broken pipe"))
+        manager.active.append(phone)
+        manager.register_client_id(phone, "android-push:abc")
+        self.assertTrue(manager.phone_online(grace=False))
+        self.assertFalse(await manager.send_to_client("android-push:abc", {"type": "x"}))
+        self.assertNotIn(phone, manager.client_ids)
+        self.assertFalse(manager.phone_online(grace=False))
+        self.assertFalse(manager.phone_online(now=time.time() + 10000))
+
+    async def test_broadcast_failure_also_clears_it(self):
+        manager = ConnectionManager()
+        phone = MagicMock()
+        phone.send_text = AsyncMock(side_effect=RuntimeError("gone"))
+        manager.active.append(phone)
+        manager.register_client_id(phone, "android-push:abc")
+        with patch("ws.persist_sync_event", new=AsyncMock(return_value=0), create=True):
+            try:
+                await manager.broadcast({"type": "pong"})
+            except Exception:
+                pass
+        self.assertNotIn(phone, manager.client_ids)
+        self.assertFalse(manager.phone_online(grace=False))
+
+    def test_grace_only_applies_to_the_hint_not_to_actually_queueing(self):
+        manager = ConnectionManager()
+        phone = MagicMock()
+        manager.active.append(phone)
+        manager.register_client_id(phone, "android-push:abc")
+        manager.disconnect(phone)
+        self.assertTrue(manager.phone_online())             # 给 AI 的说明：刚断开先别切
+        self.assertFalse(manager.phone_online(grace=False))  # 真去找手机：只认现在连着
+
+
+class PhoneCameraOfflineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_capture_stops_at_once_when_the_command_is_not_delivered(self):
+        """Codex §118 M2：发送明确失败时还要等 15 秒再重发、总共等 45 秒。"""
+        import tempfile
+        from pathlib import Path
+        import phone_camera
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = phone_camera.PhoneCameraCoordinator(capture_dir=Path(folder), upload_dir=Path(folder))
+            store.arm("android-push:abc", "back", 1.0, {})
+            sends = []
+
+            async def send(client_id, event):
+                sends.append(client_id)
+                return False
+
+            started = time.monotonic()
+            result = await store.request_capture("ai_cam_check", send, timeout_seconds=30, retry_after_seconds=10)
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(("unavailable", "phone_offline"), (result.status, result.error))
+            self.assertEqual(1, len(sends))  # 不重发
+
+            sync_sends = []
+            started = time.monotonic()
+            sync_result = store.request_capture_sync(
+                "ai_cam_check", lambda client_id, event: sync_sends.append(client_id) or False,
+                timeout_seconds=30, retry_after_seconds=10)
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual("phone_offline", sync_result.error)
+            self.assertEqual(1, len(sync_sends))
+
+    async def test_monitor_image_returns_offline_without_asking_the_phone(self):
+        import camera
+
+        ask = AsyncMock(side_effect=AssertionError("不该去找手机"))
+        with patch.dict(camera.cam.cfg, {"active_source": "phone"}), \
+                patch.object(camera.manager, "phone_online", return_value=False), \
+                patch.object(camera.phone_camera, "request_capture", new=ask):
+            result = await camera.acquire_monitor_image("测试")
+        self.assertEqual(("unavailable", "phone_offline"), (result.status, result.error))
+        self.assertIn("留言", result.no_image_context)
+        with patch.dict(camera.cam.cfg, {"active_source": "phone"}), \
+                patch.object(camera.manager, "phone_online", return_value=False), \
+                patch.object(camera.phone_camera, "request_capture_sync", side_effect=AssertionError("不该去找手机")):
+            sync_result = camera.acquire_monitor_image_sync("测试", send_command=lambda *a: True)
+        self.assertEqual("phone_offline", sync_result.error)

@@ -64,7 +64,9 @@ def test_ib_popups_are_solid_so_chat_text_does_not_show_through():
     """10-31 小猫：私聊侧栏「系统日志」在手机上透出底下的聊天。毛玻璃在手机上不一定生效，弹窗改实底色。"""
     css = _read("ib/ib-skin.css")
     block = re.search(r"弹窗/抽屉用实底色[^{]*\{[^}]*\}", css).group(0)
-    for cls in (".modal", ".sidebar", ".config-popup", ".wallet-panel", ".plus-menu"):
+    # 11-01：群聊页那套弹窗名字不一样（cr-syslog-modal 等），上次漏了
+    for cls in (".modal", ".sidebar", ".config-popup", ".wallet-panel", ".plus-menu",
+                ".cr-syslog-modal", ".cr-wallet-panel", ".cr-transfer-dialog"):
         assert f'html[data-skin="ib"] {cls}' in block, cls
     assert "background: color-mix(in srgb, var(--ib-base) 55%, #ffffff);" in block
 

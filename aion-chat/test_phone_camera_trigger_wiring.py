@@ -19,8 +19,16 @@ def _jpeg() -> bytes:
     return encoded.tobytes()
 
 
+def _phone_connected(test):
+    # 这些测试测的是手机在线时怎么取画面；离线时直接返回「手机不在线」见 test_phone_offline_rule.py
+    online = patch.object(camera.manager, "phone_online", return_value=True)
+    online.start()
+    test.addCleanup(online.stop)
+
+
 class PhoneCameraTriggerTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        _phone_connected(self)
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
         self.coordinator = PhoneCameraCoordinator(
@@ -110,6 +118,9 @@ class PhoneCameraTriggerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PhoneCameraSyncTriggerTests(unittest.TestCase):
+    def setUp(self):
+        _phone_connected(self)
+
     def test_sentinel_patrol_uses_sync_request(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

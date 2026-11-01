@@ -270,7 +270,7 @@ async def queue_app_supervision_reply_command(
     )
     if command is None:
         return cleaned, None
-    if not _phone_online():
+    if not _phone_online(grace=False):
         # 不排队：排着也送不到，等手机上线时只会刷出一串「命令已过期」（10-27）
         return cleaned, {
             "commandId": "", "action": command["action"], "groupId": command["groupId"],
@@ -457,10 +457,10 @@ PHONE_OFFLINE_TEXT = (
 )
 
 
-def _phone_online() -> bool:
+def _phone_online(*, grace: bool = True) -> bool:
     try:
         from ws import manager
-        return manager.phone_online()
+        return manager.phone_online(grace=grace)
     except Exception:
         return True  # 拿不到状态时照旧，不因为这一步把功能关掉
 

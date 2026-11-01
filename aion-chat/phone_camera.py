@@ -247,7 +247,10 @@ class PhoneCameraCoordinator:
         try:
             delivered = send_command(pending.client_id, event)
             if inspect.isawaitable(delivered):
-                await delivered
+                delivered = await delivered
+            if delivered is False:
+                # 明确没送到（手机不在线）：立刻结束，不再干等、重发（Codex §118 M2）
+                return self._finish_without_image(pending, "unavailable", "phone_offline")
             first_wait = min(
                 max(0.0, float(retry_after_seconds)),
                 max(0.0, float(timeout_seconds)),
@@ -256,7 +259,9 @@ class PhoneCameraCoordinator:
             if not completed and first_wait < max(0.0, float(timeout_seconds)):
                 delivered = send_command(pending.client_id, event)
                 if inspect.isawaitable(delivered):
-                    await delivered
+                    delivered = await delivered
+                if delivered is False:
+                    return self._finish_without_image(pending, "unavailable", "phone_offline")
                 remaining = max(0.0, float(timeout_seconds) - first_wait)
                 completed = await asyncio.to_thread(pending.event.wait, remaining)
             if completed and pending.result:
@@ -289,7 +294,8 @@ class PhoneCameraCoordinator:
         deadline = time.monotonic() + max(0.0, float(timeout_seconds))
         retried = False
         try:
-            send_command_sync(pending.client_id, event)
+            if send_command_sync(pending.client_id, event) is False:
+                return self._finish_without_image(pending, "unavailable", "phone_offline")
             while True:
                 if should_continue is not None and not should_continue():
                     return self._finish_without_image(
@@ -299,7 +305,8 @@ class PhoneCameraCoordinator:
                     return pending.result
                 now = time.monotonic()
                 if not retried and now >= retry_at and now < deadline:
-                    send_command_sync(pending.client_id, event)
+                    if send_command_sync(pending.client_id, event) is False:
+                        return self._finish_without_image(pending, "unavailable", "phone_offline")
                     retried = True
                 if now >= deadline:
                     return self._finish_without_image(

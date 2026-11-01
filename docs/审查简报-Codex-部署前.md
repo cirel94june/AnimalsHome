@@ -1850,3 +1850,22 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 停在旅行页时来一条群消息，冒出「AI回复了 · 点这里去看」。
   - 窗口页关到后台后，`crPageInFront()` 为 false。
 - **测试**：新文件 `test_unread.py` 4 项：只算起点之后、AI 发的；私聊和群分开；已读只往后挪；第一次用设起点；坏编号拒绝；页面接线。读取聊天页代码的 JS 测试里，改动前后失败的是同一批，原因完全相同（缺函数、缺 playwright 等老问题）。
+
+
+## 121. 修 §118 审查的两处 + 群聊页系统日志透字
+
+- **M1 发送失败后仍算在线**（`ws.py`）：
+  - broadcast 和 send_to_client 发送失败时都走 `disconnect()`，连登记一起清掉。
+  - `phone_online` 要求 android-push 连接同时还在 active 里。
+- **宽限期补执行**：`phone_online(grace=...)`。
+  - `grace=True`（默认）：给 AI 看的那句说明用，刚断开 90 秒内仍算在线，免得网络一抖就来回切。
+  - `grace=False`：真要排队找手机（`queue_app_supervision_reply_command`）、取手机摄像头时用，只认现在确实连着。断网后不再有命令排进队、等重连补执行。
+- **M2 手机摄像头漏了离线规则**：
+  - `camera.acquire_monitor_image` 和 `acquire_monitor_image_sync` 一开头，手机不在线（严格判断）就直接返回 `phone_offline`。这时的 no_image_context 写明手机不在线、不要描述画面、想她就留言。拿不到在线状态时照旧去取。
+  - `phone_camera.request_capture` / `request_capture_sync`：发送明确返回 False 时立刻结束（unavailable / phone_offline），不再等 15 秒重发、总共 45 秒。
+- **群聊页系统日志透字**（小猫截图）：群聊页的弹窗叫 `cr-syslog-modal`、`cr-wallet-panel`、`cr-transfer-dialog`，私聊转账叫 `transfer-dialog`，§102 只盖到私聊页的 `.modal`。已加进 IB 实底列表。本机开「减少动效」实测是实底。
+- **测试**：
+  - `test_phone_offline_rule.py` 共 9 项。新加：发送失败清登记（定向和广播）、宽限只用于说明、摄像头发送失败立刻返回且不重发（异步和同步）、手机不在线时取图直接返回不找手机。新加的 5 项在上一版代码上都失败。
+  - `test_phone_camera_trigger_wiring.py` 测手机在线时的取图，在 setUp 里设成在线。
+  - `test_phone_usability.py` 加群聊弹窗的检查。
+  - 摄像头、应用监管、哨兵相关共 209 项，只有 `test_sentinel_routes.py` 的 2 项失败，改动前就失败。

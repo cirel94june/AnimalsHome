@@ -169,7 +169,12 @@ html[data-skin="ib"] .plus-menu,
 html[data-skin="ib"] .config-popup,
 html[data-skin="ib"] .wallet-panel,
 html[data-skin="ib"] .persona-history-dialog,
-html[data-skin="ib"] .toy-edit-sheet {
+html[data-skin="ib"] .toy-edit-sheet,
+/* 群聊页自己那套弹窗（11-01 小猫截图：群聊侧栏的系统日志还透字，上次只盖到私聊页的 .modal） */
+html[data-skin="ib"] .cr-syslog-modal,
+html[data-skin="ib"] .cr-transfer-dialog,
+html[data-skin="ib"] .cr-wallet-panel,
+html[data-skin="ib"] .transfer-dialog {
   background: #f0f5fc;
   background: color-mix(in srgb, var(--ib-base) 55%, #ffffff);
 }

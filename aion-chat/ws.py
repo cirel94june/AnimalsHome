@@ -97,11 +97,17 @@ class ConnectionManager:
 
     PHONE_GRACE_SECONDS = 90  # 网络抖一下重连的空档不算离线
 
-    def phone_online(self, now: float | None = None) -> bool:
-        """小猫的手机 App 连着没有。10-30 小猫定的规矩：不在线时不去找手机，改成留言。"""
+    def phone_online(self, now: float | None = None, *, grace: bool = True) -> bool:
+        """小猫的手机 App 连着没有。10-30 小猫定的规矩：不在线时不去找手机，改成留言。
+
+        grace=True（给 AI 看的说明用）：刚断开 90 秒内仍算在线，免得网络一抖就来回切换；
+        grace=False（真要排队找手机、取手机摄像头时用）：只认现在确实连着（Codex §118：宽限期里排进队会在重连后补执行）。
+        """
         import time as _time
-        if any(str(cid).startswith("android-push:") for cid in self.client_ids.values()):
+        if any(str(cid).startswith("android-push:") and ws in self.active for ws, cid in self.client_ids.items()):
             return True
+        if not grace:
+            return False
         last = getattr(self, "_phone_left_at", 0.0)
         return bool(last) and (_time.time() if now is None else now) - last < self.PHONE_GRACE_SECONDS
 
@@ -143,6 +149,7 @@ class ConnectionManager:
                     sent = True
                 except Exception as e:
                     log.warning("WS send_to_client failed: %s", e)
+                    self.disconnect(ws)
         return sent
 
     async def send_to_last_sender(self, data: dict):
@@ -289,8 +296,8 @@ class ConnectionManager:
                 sent += 1
             except Exception as e:
                 log.warning("WS send failed: %s", e)
-                if ws in self.active:
-                    self.active.remove(ws)
+                # 走完整的断开清理：连登记一起去掉，手机在线判断才不会还当它在（Codex §118 M1）
+                self.disconnect(ws)
                 failed += 1
         log.info("broadcast type=%s sent=%d failed=%d total_clients=%d",
                  msg_type, sent, failed, len(self.active))
