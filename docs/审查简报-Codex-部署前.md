@@ -1943,3 +1943,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 仍然只改 pending 的。
   - 现在两条路都不再直接等裸的撤单协程。
 - **测试**：新加 `test_cancel_while_withdrawing_after_a_failed_send`，用真实 ConnectionManager 让发送失败、撤单卡在等数据库时取消任务。验证三件事：外面收到 CancelledError；放开数据库后，后台撤单做完、引用释放；pending 清空，只留言一次。这一项在 ddafd87 上失败。应用监管和离线相关 60 项全过。
+
+
+## 126. 首页红点：文件夹亮了，点开里面那个应用也亮
+
+- **小猫反映**：文件夹上出现红点，但不知道是哪个应用。是「家里的事」文件夹，红点来自朋友圈未读。原来 `momentsBadge` 只挂在文件夹图标上，文件夹里的朋友圈图标特意不挂（`!options.inFolder`），点开以后看不到是谁。
+- **改动**（`home.html`）：
+  - 红点不再靠唯一 id，改成 `data-badge="<key>"`。现在有三个：`APP_BADGE_KEYS = { moments, chat → chat-private, chatroom → chat-group }`。同一个红点可以同时出现在 Dock、主页格子、文件夹里，原来 `!options.grid` 那些避免 id 重复的条件都去掉了。
+  - 文件夹图标的红点改成 `data-folder-badges="<文件夹里各应用的 key>"`，任意一个亮就亮。
+  - 状态统一放在 `var badgeState`，`applyUnreadBadges()` 一次刷新所有红点。`renderApps`、`openFolder`、朋友圈和聊天未读的轮询都调它。
+- **验证**：本机浏览器把朋友圈设成未读：「家里的事」文件夹亮，点开后朋友圈图标亮，其他不亮；Dock 聊天红点照常；控制台无报错（截图见对话）。`test_unread.py` 和 `test_home*.py` 共 116 项全过。

@@ -721,6 +721,8 @@ const FOLDERS = [
   { id: 'folder-later', name: '先收起来', apps: ['whisper', 'dateTheater', 'hug'] },
 ];
 const FOLDERED_APP_IDS = new Set(FOLDERS.flatMap(folder => folder.apps));
+// 哪些应用有红点：同一个红点可以同时出现在文件夹上、文件夹里、Dock 上
+const APP_BADGE_KEYS = { moments: 'moments', chat: 'chat-private', chatroom: 'chat-group' };
 
 function folderApps(folder) {
   return folder.apps.map(id => APPS.find(app => app.id === id)).filter(Boolean);
@@ -1054,8 +1056,8 @@ function appCellHTML(cell, cellIndex) {
 function folderHTML(folder, options = {}) {
   const minis = folderApps(folder).slice(0, 4).map(app =>
     `<span class="mini-icon" data-app-id="${escapeAttr(app.id)}"><img src="${app.icon}" alt="" draggable="false"></span>`).join('');
-  // 朋友圈收进了「家里的事」：未读红点挂在文件夹上
-  const badgeId = folder.apps.includes('moments') ? 'id="momentsBadge"' : '';
+  // 文件夹里哪个应用有红点，文件夹也亮；点开后里面那个应用自己也亮（11-01 小猫：只看到文件夹亮，不知道是谁）
+  const keys = folder.apps.map(id => APP_BADGE_KEYS[id]).filter(Boolean).join(' ');
   return `
     <button class="app-icon folder-icon"
        type="button"
@@ -1064,7 +1066,7 @@ function folderHTML(folder, options = {}) {
        data-grid-app="${options.grid ? '1' : '0'}"
        ${options.grid ? `data-cell="${options.cell}"` : ''}
        aria-label="${escapeAttr(folder.name)}（文件夹）">
-      <div class="icon-img folder-img">${minis}<div class="badge-dot" ${badgeId}></div></div>
+      <div class="icon-img folder-img">${minis}<div class="badge-dot" data-folder-badges="${keys}"></div></div>
       <span class="icon-label">${escapeAttr(folder.name)}</span>
     </button>`;
 }
@@ -1072,6 +1074,7 @@ function folderHTML(folder, options = {}) {
 function openFolder(folder) {
   document.getElementById('folderTitle').textContent = folder.name;
   document.getElementById('folderGrid').innerHTML = folderApps(folder).map(app => appHTML(app, { inFolder: true })).join('');
+  applyUnreadBadges();
   document.getElementById('folderOverlay').hidden = false;
 }
 
@@ -1082,9 +1085,8 @@ function closeFolder() {
 function appHTML(app, options = {}) {
   if (app.folder) return folderHTML(app, options);
   const disabled = !app.url;
-  const badgeId = app.id === 'moments' && !options.inFolder ? 'id="momentsBadge"'
-    : app.id === 'chat' && !options.grid ? 'id="chatUnreadBadge"'
-      : app.id === 'chatroom' && !options.grid ? 'id="groupUnreadBadge"' : '';
+  const badgeKey = APP_BADGE_KEYS[app.id];
+  const badgeId = badgeKey ? `data-badge="${badgeKey}"` : '';
   return `
     <button class="app-icon ${disabled ? 'disabled' : ''}"
        type="button"
@@ -1569,8 +1571,8 @@ async function checkMomentsUnread() {
   try {
     const res = await fetch('/api/moments/unread');
     const data = await res.json();
-    const badge = document.getElementById('momentsBadge');
-    if (badge) badge.classList.toggle('show', data.has_unread);
+    badgeState.moments = Boolean(data.has_unread);
+    applyUnreadBadges();
   } catch(e) {}
 }
 checkMomentsUnread();
@@ -1578,16 +1580,20 @@ setInterval(checkMomentsUnread, 60000);
 
 /* ── 聊天未读红点（11-01）：私聊有没看的新回复亮「聊天」，群聊的亮「群聊」 ── */
 // 用 var：首页一开始画图标时就会调 applyUnreadBadges，那时这里还没执行到，let 会直接报错把后面的脚本全卡住
-var chatUnread = { private: false, group: false };
+var badgeState = { moments: false, 'chat-private': false, 'chat-group': false };
 function applyUnreadBadges() {
-  const state = chatUnread || {};
-  document.getElementById('chatUnreadBadge')?.classList.toggle('show', Boolean(state.private));
-  document.getElementById('groupUnreadBadge')?.classList.toggle('show', Boolean(state.group));
+  const state = badgeState || {};
+  document.querySelectorAll('[data-badge]').forEach(dot => dot.classList.toggle('show', Boolean(state[dot.dataset.badge])));
+  document.querySelectorAll('[data-folder-badges]').forEach(dot => {
+    const keys = dot.dataset.folderBadges.split(' ').filter(Boolean);
+    dot.classList.toggle('show', keys.some(key => state[key]));
+  });
 }
 async function checkChatUnread() {
   try {
     const data = await (await fetch('/api/unread', { cache: 'no-store' })).json();
-    chatUnread = { private: Boolean(data.private), group: Boolean(data.group) };
+    badgeState['chat-private'] = Boolean(data.private);
+    badgeState['chat-group'] = Boolean(data.group);
     applyUnreadBadges();
   } catch (e) {}
 }

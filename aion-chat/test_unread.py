@@ -125,8 +125,11 @@ class UnreadPagesTests(unittest.TestCase):
         self.assertIn("if (crRoomServerLoadedId !== roomId || crRenderedRoomId !== roomId) return;", room)
         self.assertIn("crRoomServerLoadedId = roomId;\n      crMarkRoomRead();", room.replace("\r\n", "\n"))
         home = (STATIC / "home.html").read_text(encoding="utf-8")
-        self.assertIn("var chatUnread", home)  # 不能用 let：首页一开始画图标就会用到
-        self.assertIn('id="chatUnreadBadge"', home)
+        self.assertIn("var badgeState", home)  # 不能用 let：首页一开始画图标就会用到
+        self.assertIn("chat: 'chat-private', chatroom: 'chat-group'", home)
+        # 文件夹亮红点时，点开后里面那个应用也要亮（11-01 小猫：不知道是哪个应用）
+        self.assertIn('data-folder-badges="${keys}"', home)
+        self.assertNotIn("!options.inFolder ? 'id=\"momentsBadge\"'", home)
         contacts = (STATIC / "contacts.js").read_text(encoding="utf-8")
         self.assertIn("api('GET', '/api/unread')", contacts)
 
