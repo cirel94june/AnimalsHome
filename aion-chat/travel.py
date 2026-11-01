@@ -189,14 +189,27 @@ def _split_title(text: str, fallback: str) -> tuple[str, str]:
     return text.strip(), fallback
 
 
+def _place_source(place: travel_places.Place) -> dict:
+    """游记卡片里存一份「这个地方」：全部照片、简介、当地天气和时间（11-01：原来只存了一张封面）。"""
+    return {
+        "title": place.name, "url": place.wiki_url, "place": place.label,
+        "intro": place.intro, "weather": place.weather, "local_time": place.local_time,
+        "photos": [{"path": p["path"], "credit": p.get("credit", "")} for p in place.photos],
+    }
+
+
+def _photo_for(place: travel_places.Place, index: int) -> str:
+    return place.photos[index % len(place.photos)]["path"] if place.photos else ""
+
+
 async def _keepsake(actor: str, session_id: str, title: str, text: str, place: travel_places.Place,
-                    tags: list[str]) -> dict | None:
+                    tags: list[str], photo_index: int = 0) -> dict | None:
     from autonomy_niches import create_niche_card
     try:
         return await create_niche_card(
             actor=actor, session_id=f"{session_id}_{actor}", title=title, reflection=text,
-            tags=tags, photo_path=(place.photos[0]["path"] if place.photos else ""),
-            sources=[{"title": place.name, "url": place.wiki_url}] if place.wiki_url else [],
+            tags=tags, photo_path=_photo_for(place, photo_index),  # 全家出游时每位用不同的一张
+            sources=[_place_source(place)],
         )
     except Exception as error:
         log.warning("[travel] 纪念卡没存上：%s", error)
@@ -291,11 +304,13 @@ async def _trip(mode: str, actors: list[str], *, where: str, named: str, wish: s
         position = "first" if i == 0 else ("last" if i == len(actors) - 1 else "middle")
         text = await _write(actor, _family_prompt(place, user, wish, names, names[i], story, position), models[actor])
         story.append((names[i], text))
+        photo = _photo_for(place, i)
         await autonomy._save_autonomy_chatroom_message(
-            room_id, actor, text, attachments=_photo_attachments(place) if i == 0 else [], auto_tts=False,
+            room_id, actor, text, attachments=[photo] if photo else [], auto_tts=False,  # 每位配自己看到的那一张
         )
         parts.append({"actor": actor, "text": text})
-        card = await _keepsake(actor, session_id, f"全家去{place.name}", text, place, ["旅行", "全家", place.name])
+        card = await _keepsake(actor, session_id, f"全家去{place.name}", text, place, ["旅行", "全家", place.name],
+                               photo_index=i)
         if card:
             cards.append(card)
     for actor in actors:

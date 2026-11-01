@@ -1,6 +1,7 @@
 """Small SQLite store for private autonomous-journey keepsakes."""
 
 import json
+import re
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -76,7 +77,19 @@ def _sources(values) -> list[dict]:
             continue
         title = _clip(value.get("title"), 120)
         url = _clip(value.get("url"), 800)
-        if url:
+        place = _clip(value.get("place"), 120)
+        if place:
+            # 旅行游记的「这个地方」：全部照片、简介、当地天气和时间（11-01）；照片只认旅行下载的本站图
+            photos = [
+                {"path": photo["path"], "credit": _clip(photo.get("credit"), 120)}
+                for photo in (value.get("photos") if isinstance(value.get("photos"), list) else [])[:8]
+                if isinstance(photo, dict) and isinstance(photo.get("path"), str)
+                and re.fullmatch(r"/uploads/travel/[\w.-]+", photo["path"]) and ".." not in photo["path"]
+            ]
+            result.append({"title": title or place, "url": url, "place": place,
+                           "intro": _clip(value.get("intro"), 600), "weather": _clip(value.get("weather"), 40),
+                           "local_time": _clip(value.get("local_time"), 40), "photos": photos})
+        elif url:
             result.append({"title": title or "旅行线索", "url": url})
         if len(result) >= 3:
             break

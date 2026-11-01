@@ -26,7 +26,7 @@ TRAVEL_PHOTO_DIR = UPLOADS_DIR / "travel"
 # 维基和 OpenStreetMap 要求 User-Agent 带联系方式，这里放项目主页（不放任何个人信息）
 USER_AGENT = "AionsHome/1.0 (+https://github.com/cirel94june/AnimalsHome)"
 TIMEOUT = 15.0
-MAX_PHOTOS = 3
+MAX_PHOTOS = 6  # 11-01 小猫：三位都拿同一张、只有个封面 → 多找几张，每位用不同的一张
 MAX_PHOTO_BYTES = 6 * 1024 * 1024
 
 WEATHER_CODES = {

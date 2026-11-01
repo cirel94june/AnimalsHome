@@ -105,8 +105,14 @@ def test_family_trip_each_ai_writes_its_own_part_in_turn(env):
     assert "你先开场" in prompts[0] and "接着前面的写" in prompts[1] and "你来收尾" in prompts[2]
     assert "小克：aion 写的一段" in prompts[1] and "Lucien：connor 写的一段" in prompts[2]
     assert all("不要替别人说话" in p for p in prompts)
-    assert [(g[1], bool(g[3])) for g in env["group"]] == [("aion", True), ("connor", False), ("ai3", False)]
+    # 11-01：每位配不同的一张（两张照片时第三位轮回第一张），不再只有第一位带图
+    assert [(g[1], g[3]) for g in env["group"]] == [
+        ("aion", ["/uploads/travel/a.jpg"]), ("connor", ["/uploads/travel/b.jpg"]), ("ai3", ["/uploads/travel/a.jpg"])]
     assert {c["actor"] for c in env["cards"]} == {"aion", "connor", "ai3"}
+    assert [c["photo_path"] for c in env["cards"]] == ["/uploads/travel/a.jpg", "/uploads/travel/b.jpg", "/uploads/travel/a.jpg"]
+    place = env["cards"][0]["sources"][0]  # 游记里存一份「这个地方」：全部照片 + 天气
+    assert [p["path"] for p in place["photos"]] == ["/uploads/travel/a.jpg", "/uploads/travel/b.jpg"]
+    assert place["weather"] == "阴，7°C"
 
 
 def test_ai_picks_destination_with_its_own_model(env, monkeypatch):
@@ -265,3 +271,17 @@ def test_display_name_never_truncates_multi_word_places(monkeypatch):
     assert asyncio.run(travel._lookup_place("New York Central Park", model)).name == "Central Park"
     assert asyncio.run(travel._lookup_place("美国 夏威夷 Waikiki Beach", model)).name == "美国 夏威夷 Waikiki Beach"
     assert asyncio.run(travel._lookup_place("日本 东京 浅草 寺", model)).name == "日本 东京 浅草 寺"
+
+
+def test_keepsake_keeps_the_place_but_only_our_travel_photos():
+    """11-01：游记里留一份「这个地方」；照片地址只认旅行下载的本站图。"""
+    kept = autonomy_niches._sources([{
+        "title": "威基基海滩", "url": "", "place": "威基基海滩，夏威夷，美国", "intro": "简介" * 400,
+        "weather": "晴，27°C", "local_time": "11月01日 09:30",
+        "photos": [{"path": "/uploads/travel/a1.jpg", "credit": "c"}, {"path": "/uploads/../config.py"},
+                   {"path": "https://evil.example/a.jpg"}, {"path": "/uploads/travel/x/../y.jpg"}, "坏的"],
+    }, {"title": "只有网址", "url": "https://zh.wikipedia.org/wiki/x"}, {"title": "什么都没有"}])
+    assert [p["path"] for p in kept[0]["photos"]] == ["/uploads/travel/a1.jpg"]
+    assert len(kept[0]["intro"]) <= 600 and kept[0]["weather"] == "晴，27°C"
+    assert kept[1] == {"title": "只有网址", "url": "https://zh.wikipedia.org/wiki/x"}
+    assert len(kept) == 2
