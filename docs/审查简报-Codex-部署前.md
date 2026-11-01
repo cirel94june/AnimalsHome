@@ -1932,3 +1932,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 仍然只改 status='pending' 的，已确认的命令不动。
 - **文案**：按建议把「这次没送到」改成「小猫的手机刚断开，没能确认送到」（可能其实已经执行了）。
 - **测试**：新加 `test_cancelled_send_still_withdraws_before_cancelling`，走真实的 ConnectionManager 发送链路和临时 SQLite：发送卡住时取消任务，外面收到 CancelledError 之前 pending 已清空，也只留言一次。这一项在 797399b 上失败。应用监管和离线相关 59 项全过。
+
+
+## 125. 修 §124 复审：发送明确失败后的撤单也要防取消
+
+- **问题**：发送明确失败后，普通路径直接 `await _withdraw_undelivered(command)`。正在等数据库时任务被取消，撤单跟着中断，命令还在 pending。
+- **改动**：抽出 `_withdraw_protected(command)`，发送被取消和发送失败两条路都用它。
+  - 撤单单独跑成任务，引用放在 `_withdraw_tasks`，做完自动移除。
+  - 用 `shield` 加 `wait_for` 最多等 5 秒。等的时候被取消，就把取消往外传，撤单在后台做完；超时或撤单本身出错只记日志。
+  - 仍然只改 pending 的。
+  - 现在两条路都不再直接等裸的撤单协程。
+- **测试**：新加 `test_cancel_while_withdrawing_after_a_failed_send`，用真实 ConnectionManager 让发送失败、撤单卡在等数据库时取消任务。验证三件事：外面收到 CancelledError；放开数据库后，后台撤单做完、引用释放；pending 清空，只留言一次。这一项在 ddafd87 上失败。应用监管和离线相关 60 项全过。

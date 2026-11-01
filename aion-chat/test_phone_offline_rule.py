@@ -207,6 +207,47 @@ class DeliveryRaceTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([], await self._pending(fake_db))  # 取消往外传之前已经撤下
                 publish.assert_awaited_once()
 
+    async def test_cancel_while_withdrawing_after_a_failed_send(self):
+        """Codex §124：发送明确失败、正在等数据库撤单时任务被取消，撤单跟着中断，命令还在 pending。"""
+        import asyncio
+        import tempfile
+        from contextlib import asynccontextmanager
+        from pathlib import Path
+        from routes import app_supervision as routes
+
+        with tempfile.TemporaryDirectory() as folder:
+            real_db = self._fake_db(str(Path(folder) / "chat.db"))
+            command = await self._queue_one(real_db)
+            manager = ConnectionManager()
+            phone = MagicMock()
+            phone.send_text = AsyncMock(side_effect=RuntimeError("gone"))
+            manager.active.append(phone)
+            manager.register_client_id(phone, "android-push:abc")
+            opening, release = asyncio.Event(), asyncio.Event()
+
+            @asynccontextmanager
+            async def slow_db():
+                opening.set()
+                await release.wait()  # 撤单卡在等数据库
+                async with real_db() as db:
+                    yield db
+
+            publish = AsyncMock()
+            with patch("ws.manager", new=manager), patch("database.get_db", new=slow_db),                     patch.object(routes, "_publish_command_result", new=publish):
+                task = asyncio.create_task(app_supervision_ai.broadcast_app_supervision_command(command))
+                await opening.wait()
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                release.set()
+                for _ in range(50):  # 后台撤单接着做完
+                    if not app_supervision_ai._withdraw_tasks:
+                        break
+                    await asyncio.sleep(0.02)
+                self.assertEqual(set(), app_supervision_ai._withdraw_tasks)
+            self.assertEqual([], await self._pending(real_db))
+            publish.assert_awaited_once()
+
     async def test_delivered_command_stays_for_the_phone_to_ack(self):
         import tempfile
         from pathlib import Path

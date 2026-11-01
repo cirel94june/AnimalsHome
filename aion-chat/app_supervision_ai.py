@@ -309,26 +309,35 @@ async def broadcast_app_supervision_command(command: dict | None) -> None:
     try:
         delivered = await manager.send_to_phones({"type": "app_supervision_command", "data": command})
     except asyncio.CancelledError:
-        # 发送途中被取消（Codex §123 R1）：先把撤单落库再把取消往外传。
-        # 撤单单独跑、外面再取消也不打断它，最多等 WITHDRAW_TIMEOUT_SECONDS 秒
-        cleanup = asyncio.ensure_future(_withdraw_undelivered(command))
-        _withdraw_tasks.add(cleanup)
-        cleanup.add_done_callback(_withdraw_tasks.discard)
-        try:
-            await asyncio.wait_for(asyncio.shield(cleanup), timeout=WITHDRAW_TIMEOUT_SECONDS)
-        except BaseException as error:  # 超时、再次取消：撤单仍在后台做完
-            log.warning("app supervision withdraw after cancel not confirmed: %s", type(error).__name__)
+        # 发送途中被取消（Codex §123 R1）：先把撤单落库再把取消往外传
+        await _withdraw_protected(command)
         raise
     except Exception as error:
         log.warning("app supervision command send failed: %s", type(error).__name__)
         delivered = False
     if delivered:
         return
-    await _withdraw_undelivered(command)
+    # 发送明确失败后撤单时被取消也一样（Codex §124）：不能直接等裸的撤单协程
+    await _withdraw_protected(command)
 
 
 WITHDRAW_TIMEOUT_SECONDS = 5.0
 _withdraw_tasks: set[asyncio.Future] = set()
+
+
+async def _withdraw_protected(command: dict) -> None:
+    """撤单单独跑成一个任务，外面取消也不打断它；最多等 WITHDRAW_TIMEOUT_SECONDS 秒。
+    等的时候被取消：撤单在后台继续做完，取消照常往外传；超时只记日志。"""
+    cleanup = asyncio.ensure_future(_withdraw_undelivered(command))
+    _withdraw_tasks.add(cleanup)
+    cleanup.add_done_callback(_withdraw_tasks.discard)
+    try:
+        await asyncio.wait_for(asyncio.shield(cleanup), timeout=WITHDRAW_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        log.warning("app supervision withdraw continues in background after cancel")
+        raise
+    except Exception as error:  # 超时、撤单本身出错
+        log.warning("app supervision withdraw not confirmed: %s", type(error).__name__)
 
 
 async def _withdraw_undelivered(command: dict) -> None:
