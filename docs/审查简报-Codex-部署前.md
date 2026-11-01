@@ -1972,3 +1972,16 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **测试**：
   - 新文件 `test_clock_text.py` 4 项：星期日下午的完整输出、时段和工作日、日历库不可用时的退路、各提示都改用它（座位日记有当前时间）。
   - 相关 16 个测试文件共 132 项，4 项失败，都是改动前就有的：`test_role_device_context_injection` 3 项是 fake_provider 不收 `request_timeout`，`test_seat_chat` 1 项是事务问题。
+
+
+## 128. 取 Hub 记忆每次记一行日志（排查 Lucien 私聊系统日志里看不到 Hub 项）
+
+- **小猫反映**：部署 2f6117e 后，在 Lucien 私聊里从侧边栏打开系统日志，仍然看不到「🗂 Hub」。
+- **已排除**：
+  - 手机用的是新页面：服务器日志里有她的 `/api/unread/read` 请求，这是新加的接口；脚本带 `must-revalidate`。
+  - 服务器上的 `chatroom.js`、`routes/chatroom.py`、`context_builder.py` 都是新版。
+  - Lucien 私聊走 `build_connor_1v1_context` → `build_memory_blocks(memory_hub_actor="connor")` → `_chatroom_debug_payload` 的 `memory_hub`。本机直接调 `build_memory_blocks` 能拿到状态；本机群聊页喂一条带 `memory_hub` 的 debug，能显示「🗂 Hub 记忆 900 字（含交接卡） · 7.5秒」。
+  - 线上那次回复的 `memory_context` 用了 7.6 秒，说明确实去 Hub 取了。
+  - 服务器进程里 Hub 是开着的，connor 对应 lucien。
+- **改动**：`_note_read` 每次通过 `uvicorn.error` logger 写一行 INFO：「[MemoryHub] 取记忆 actor/chat_id：状态 N字 Ns」。本模块自己的 logger 只输出 warning 以上，所以和 reply_timing 走同一个 logger。只有状态、字数、耗时，没有内容。部署后请小猫和 Lucien 说一句，对照日志和她看到的系统日志。
+- **测试**：`test_memory_hub_bridge.py` 55 项全过。

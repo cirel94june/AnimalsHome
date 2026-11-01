@@ -158,10 +158,14 @@ def _note_read(actor: str, chat_id: str, status: str, *, chars: int = 0, started
                error: str = "") -> None:
     if len(last_read_status) > 500:
         last_read_status.clear()
-    last_read_status[(actor, chat_id or "")] = {
+    entry = {
         "status": status, "chars": int(chars), "error": error, "at": time.time(),
         "seconds": round(time.monotonic() - started, 2) if started is not None else None,
     }
+    last_read_status[(actor, chat_id or "")] = entry
+    # 11-01：小猫在 Lucien 私聊的系统日志里看不到 Hub 那一项，留一行日志对照（只有状态、字数、耗时，没有内容）
+    # 本模块的 logger 只输出 warning 以上；INFO 要走 uvicorn.error 才进 app.log（同 reply_timing）
+    logging.getLogger("uvicorn.error").info("[MemoryHub] 取记忆 %s/%s：%s %s字 %ss", actor, chat_id or "-", status, entry["chars"], entry["seconds"])
 
 
 def read_status(actor: str, chat_id: str = "") -> dict[str, Any] | None:
