@@ -395,6 +395,48 @@ html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="wish
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="worldbook"] .icon-img img { content: url("/static/ib/icons/worldbook.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="xhs-lite"] .icon-img img { content: url("/static/ib/icons/xhs-lite.svg"); }
 html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="usage"] .icon-img img { content: url("/static/ib/icons/usage.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="diary"] .icon-img img { content: url("/static/ib/icons/diary.svg"); }
+/* 文件夹里的小图标也换成 IB 线条图（11-01 主页分组） */
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="activity"] img { content: url("/static/ib/icons/activity.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="alarm"] img { content: url("/static/ib/icons/alarm.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="album"] img { content: url("/static/ib/icons/album.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="app-supervision"] img { content: url("/static/ib/icons/app-supervision.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="camera"] img { content: url("/static/ib/icons/camera.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="capabilities"] img { content: url("/static/ib/icons/capabilities.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="chat"] img { content: url("/static/ib/icons/chat.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="chatroom"] img { content: url("/static/ib/icons/chatroom.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="dateTheater"] img { content: url("/static/ib/icons/dateTheater.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="doudizhu"] img { content: url("/static/ib/icons/doudizhu.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="english-corner"] img { content: url("/static/ib/icons/english-corner.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="family-dynamics"] img { content: url("/static/ib/icons/family-dynamics.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="fund"] img { content: url("/static/ib/icons/fund.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="ghost-forest"] img { content: url("/static/ib/icons/ghost-forest.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="gift"] img { content: url("/static/ib/icons/gift.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="health"] img { content: url("/static/ib/icons/health.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="hug"] img { content: url("/static/ib/icons/hug.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="location"] img { content: url("/static/ib/icons/location.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="logs"] img { content: url("/static/ib/icons/logs.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="memory"] img { content: url("/static/ib/icons/memory.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="moments"] img { content: url("/static/ib/icons/moments.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="music-station"] img { content: url("/static/ib/icons/music-station.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="playground"] img { content: url("/static/ib/icons/playground.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="mcp-tools"] img { content: url("/static/ib/icons/mcp-tools.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="travel"] img { content: url("/static/ib/icons/location.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="reading"] img { content: url("/static/ib/icons/reading.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="repair"] img { content: url("/static/ib/icons/repair.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="seeky"] img { content: url("/static/ib/icons/seeky.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="settings"] img { content: url("/static/ib/icons/settings.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="taobao"] img { content: url("/static/ib/icons/taobao.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="theater"] img { content: url("/static/ib/icons/theater.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="visual"] img { content: url("/static/ib/icons/visual.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="whisper"] img { content: url("/static/ib/icons/whisper.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="wishes"] img { content: url("/static/ib/icons/wishes.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="worldbook"] img { content: url("/static/ib/icons/worldbook.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="xhs-lite"] img { content: url("/static/ib/icons/xhs-lite.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="usage"] img { content: url("/static/ib/icons/usage.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="diary"] img { content: url("/static/ib/icons/diary.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon .folder-img { background: linear-gradient(172deg, rgba(255,255,255,.7), rgba(226,236,250,.75)); }
+html[data-skin="ib"] .folder-sheet { background: rgba(255, 255, 255, 0.86); border: 1px solid var(--ib-glass-line); }
 
 /* ══ IB 式页头 ══ */
 html[data-skin="ib"] .top-bar > h2[data-ib-title] {

@@ -160,6 +160,20 @@
     copy.append(title, meta, requesterRow);
 
     card.append(cover, copy);
+    if (!state.managing) {
+      // 11-01 小猫：删歌藏在「管理」里太难找 → 每首歌上直接能删
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'track-delete';
+      remove.textContent = '删除';
+      remove.setAttribute('aria-label', `删除 ${track.title || '这首歌'}`);
+      remove.onclick = event => {
+        event.stopPropagation();
+        if (window.confirm(`删除「${track.title || '这首歌'}」？歌曲文件和点歌记录会一起删掉。`)) deleteTracks([track.id]);
+      };
+      remove.onkeydown = event => event.stopPropagation();
+      card.appendChild(remove);
+    }
     card.onclick = () => {
       if (trackRowAction(state.managing) === 'select') toggleTrackSelection(track.id);
       else selectAndPlay(track.id);
@@ -605,7 +619,10 @@
   }
 
   async function deleteSelectedTracks() {
-    const ids = selectedTrackIds();
+    await deleteTracks(selectedTrackIds());
+  }
+
+  async function deleteTracks(ids) {
     try {
       const result = await api('/api/music-station/tracks', {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
@@ -615,7 +632,7 @@
       state.currentTrackId = next.currentTrackId;
       if (next.shouldStop) clearCurrentPlayer();
       state.selectedTrackIds.clear();
-      $('deleteTracksDialog').close();
+      if ($('deleteTracksDialog').open) $('deleteTracksDialog').close();
       await loadPlaylists(); await loadTracks(); updateManageUi();
       notice(result.warnings && result.warnings.length ? '歌曲已删除，个别文件清理失败' : '歌曲已删除');
     } catch (error) { notice(error.message, 0); }

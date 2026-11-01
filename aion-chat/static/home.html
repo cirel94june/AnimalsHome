@@ -284,6 +284,51 @@ body[data-theme="dark"] .dock::before {
 }
 .dock .app-icon .icon-label { display: none; }
 
+/* ── 分组文件夹 ── */
+.app-icon .folder-img {
+  display: grid !important;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+  gap: 3px;
+  padding: 7px;
+  background: rgba(255, 255, 255, 0.42);
+}
+.app-icon .folder-img .mini-icon { display: block; min-width: 0; min-height: 0; }
+.app-icon .folder-img .mini-icon img {
+  width: 100% !important;
+  height: 100% !important;
+  padding: 0 !important;
+  object-fit: contain;
+  border-radius: 5px;
+}
+.folder-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 30, 50, 0.28);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.folder-overlay[hidden] { display: none; }
+.folder-sheet {
+  width: min(340px, 100%);
+  max-height: 80dvh;
+  overflow-y: auto;
+  padding: 18px 14px 14px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 50px rgba(30, 50, 90, 0.25);
+  animation: folderIn .18s ease;
+}
+@keyframes folderIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+.folder-title { margin-bottom: 14px; text-align: center; font-size: 17px; font-weight: 700; color: #0a1e42; }
+.folder-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 6px; }
+.folder-grid .app-icon .icon-label { display: block; }
+
 /* ── 红点徽章 ── */
 .badge-dot {
   position: absolute;
@@ -565,6 +610,14 @@ body[data-theme="dark"] .gsi-title { color: rgba(244,246,255,0.70); }
     <!-- 底部 Dock -->
     <div class="dock" id="dock"></div>
 
+    <!-- 分组文件夹（点开桌面上的文件夹） -->
+    <div class="folder-overlay" id="folderOverlay" hidden>
+      <div class="folder-sheet" role="dialog" aria-modal="true" aria-labelledby="folderTitle">
+        <div class="folder-title" id="folderTitle"></div>
+        <div class="folder-grid" id="folderGrid"></div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -587,8 +640,9 @@ body[data-theme="dark"] .gsi-title { color: rgba(244,246,255,0.70); }
 const APPS = [
   { id: 'chat',     name: '聊天',     icon: '/public/funIcon_0005_聊天.png',   url: '/contacts',  dock: true },
   { id: 'chatroom', name: '群聊', icon: '/public/funIcon_0020_聊天室.png', url: '/chatroom?view=group' ,  dock: true  },
-  { id: 'memory',   name: '记忆库',   icon: '/public/funIcon_0006_日记本.png',  url: '/memory' ,  dock: true },
-  { id: 'moments',  name: '朋友圈',   icon: '/public/funIcon_0010_朋友圈.png',  url: '/moments' ,  dock: true },
+  { id: 'diary',    name: '日记本',   icon: '/public/funIcon_0006_日记本.png',  url: '/diary',  dock: true },
+  { id: 'memory',   name: '记忆库',   icon: '/public/funIcon_0004_记忆库.png',  url: '/memory' ,  dock: true },
+  { id: 'moments',  name: '朋友圈',   icon: '/public/funIcon_0010_朋友圈.png',  url: '/moments' },
   { id: 'music-station', name: '点歌台', icon: '/public/funIcon_0032_点歌台.png', url: '/music-station' },
   { id: 'album', name: '相册', icon: '/public/funIcon_0033_相册.png', url: '/album' },
   { id: 'taobao', name: '逛淘宝', icon: '/public/funIcon_0034_逛淘宝.png', url: '/taobao' },
@@ -621,6 +675,21 @@ const APPS = [
   { id: 'usage', name: '用量', icon: '/public/funIcon_0025_工具能力.png', url: '/usage' },
   { id: 'repair', name: '维修室', icon: '/public/funIcon_0035_维修室.png', url: '/repair' },
 ];
+
+// 11-01 小猫：三十多个图标平铺，翻都翻不到 → 收进分组文件夹（草图 ①）。常用四个在底下 Dock。
+// 没列进任何分组的新应用照旧单独放在桌面上。
+const FOLDERS = [
+  { id: 'folder-play', name: '一起玩', apps: ['theater', 'music-station', 'playground', 'english-corner', 'reading', 'travel'] },
+  { id: 'folder-home', name: '家里的事', apps: ['moments', 'album', 'gift', 'wishes', 'lounge-friends', 'taobao', 'xhs-lite', 'family-dynamics'] },
+  { id: 'folder-life', name: '我的生活', apps: ['alarm', 'health', 'location', 'fund', 'app-supervision'] },
+  { id: 'folder-switches', name: '家里的开关', apps: ['settings', 'worldbook', 'capabilities', 'camera', 'logs', 'activity', 'usage', 'mcp-tools', 'repair'] },
+  { id: 'folder-later', name: '先收起来', apps: ['whisper', 'dateTheater', 'hug'] },
+];
+const FOLDERED_APP_IDS = new Set(FOLDERS.flatMap(folder => folder.apps));
+
+function folderApps(folder) {
+  return folder.apps.map(id => APPS.find(app => app.id === id)).filter(Boolean);
+}
 
 function applyAionTheme(theme) {
   const next = theme === 'light' ? 'light' : 'dark';
@@ -698,7 +767,10 @@ function clampNumber(value, min, max) {
 }
 
 function getGridApps() {
-  return APPS.filter(app => !app.dock);
+  return [
+    ...FOLDERS.map(folder => ({ ...folder, folder: true })),
+    ...APPS.filter(app => !app.dock && !FOLDERED_APP_IDS.has(app.id)),
+  ];
 }
 
 function getGridAppIds() {
@@ -706,7 +778,8 @@ function getGridAppIds() {
 }
 
 function getAppById(id) {
-  return APPS.find(app => app.id === id);
+  const folder = FOLDERS.find(item => item.id === id);
+  return folder ? { ...folder, folder: true } : APPS.find(app => app.id === id);
 }
 
 function getRowsPerPage() {
@@ -731,7 +804,8 @@ function extractLayoutPositions(payload) {
 
 function hasLayoutPositions(positions) {
   if (!positions || typeof positions !== 'object') return false;
-  return getGridAppIds().some(id => Number.isInteger(Number(positions[id])) && Number(positions[id]) >= 0);
+  // 改成文件夹以前存下的排法（里面一个文件夹都没有）不再用，按新的默认排法排一次
+  return FOLDERS.some(folder => Number.isInteger(Number(positions[folder.id])) && Number(positions[folder.id]) >= 0);
 }
 
 function sameLayout(a, b) {
@@ -777,7 +851,7 @@ function loadLayout() {
   localLayoutFromStorage = false;
   try {
     const saved = JSON.parse(localStorage.getItem(HOME_LAYOUT_KEY) || 'null');
-    if (saved && saved.version === 2 && saved.positions && typeof saved.positions === 'object') {
+    if (saved && saved.version === 2 && hasLayoutPositions(saved.positions)) {
       rawLayout = saved.positions;
       localLayoutFromStorage = true;
     }
@@ -786,7 +860,7 @@ function loadLayout() {
   if (!rawLayout) {
     try {
       const savedOrder = JSON.parse(localStorage.getItem(HOME_GRID_ORDER_KEY) || 'null');
-      if (Array.isArray(savedOrder)) {
+      if (Array.isArray(savedOrder) && savedOrder.some(id => FOLDERS.some(folder => folder.id === id))) {
         rawLayout = buildSequentialLayout(savedOrder);
         localLayoutFromStorage = true;
       }
@@ -833,7 +907,7 @@ async function syncLayoutFromServer(options = {}) {
     const payload = await res.json();
     const serverPositions = extractLayoutPositions(payload);
     if (!hasLayoutPositions(serverPositions)) {
-      if (localLayoutFromStorage) scheduleLayoutServerSave();
+      scheduleLayoutServerSave();  // 服务器上还是旧排法：把新的默认排法存上去，换手机也一样
       return;
     }
     if (!options.force && (layoutRevision !== revisionAtStart || dragState.active)) return;
@@ -922,9 +996,38 @@ function appCellHTML(cell, cellIndex) {
   return `<div class="app-slot ${cell ? '' : 'empty'}" data-cell="${cellIndex}">${content}</div>`;
 }
 
+function folderHTML(folder, options = {}) {
+  const minis = folderApps(folder).slice(0, 4).map(app =>
+    `<span class="mini-icon" data-app-id="${escapeAttr(app.id)}"><img src="${app.icon}" alt="" draggable="false"></span>`).join('');
+  // 朋友圈收进了「家里的事」：未读红点挂在文件夹上
+  const badgeId = folder.apps.includes('moments') ? 'id="momentsBadge"' : '';
+  return `
+    <button class="app-icon folder-icon"
+       type="button"
+       data-app-id="${escapeAttr(folder.id)}"
+       data-folder="1"
+       data-grid-app="${options.grid ? '1' : '0'}"
+       ${options.grid ? `data-cell="${options.cell}"` : ''}
+       aria-label="${escapeAttr(folder.name)}（文件夹）">
+      <div class="icon-img folder-img">${minis}<div class="badge-dot" ${badgeId}></div></div>
+      <span class="icon-label">${escapeAttr(folder.name)}</span>
+    </button>`;
+}
+
+function openFolder(folder) {
+  document.getElementById('folderTitle').textContent = folder.name;
+  document.getElementById('folderGrid').innerHTML = folderApps(folder).map(app => appHTML(app, { inFolder: true })).join('');
+  document.getElementById('folderOverlay').hidden = false;
+}
+
+function closeFolder() {
+  document.getElementById('folderOverlay').hidden = true;
+}
+
 function appHTML(app, options = {}) {
+  if (app.folder) return folderHTML(app, options);
   const disabled = !app.url;
-  const badgeId = app.id === 'moments' ? 'id="momentsBadge"' : '';
+  const badgeId = app.id === 'moments' && !options.inFolder ? 'id="momentsBadge"' : '';
   return `
     <button class="app-icon ${disabled ? 'disabled' : ''}"
        type="button"
@@ -975,6 +1078,11 @@ function handleAppClick(e) {
   e.preventDefault();
   const app = getAppById(icon.dataset.appId);
   if (!app) return;
+  if (app.folder) {
+    openFolder(app);
+    return;
+  }
+  closeFolder();
   if (app.url) {
     openApp(app.url);
   } else {
@@ -1376,6 +1484,11 @@ document.getElementById('appPages').addEventListener('pointercancel', e => {
 document.getElementById('appPages').addEventListener('click', handleAppClick);
 document.getElementById('appPages').addEventListener('keydown', handleAppKeydown);
 document.getElementById('dock').addEventListener('click', handleAppClick);
+document.getElementById('folderGrid').addEventListener('click', handleAppClick);
+document.getElementById('folderGrid').addEventListener('keydown', handleAppKeydown);
+document.getElementById('folderOverlay').addEventListener('click', e => {
+  if (e.target.id === 'folderOverlay') closeFolder();
+});
 document.getElementById('dock').addEventListener('keydown', handleAppKeydown);
 document.getElementById('pageDots').addEventListener('click', e => {
   const dot = e.target.closest('.page-dot');
@@ -1391,7 +1504,7 @@ document.getElementById('globalSearchOverlay').addEventListener('click', e => {
   if (e.target.id === 'globalSearchOverlay') closeGlobalSearch();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeGlobalSearch();
+  if (e.key === 'Escape') { closeGlobalSearch(); closeFolder(); }
 });
 
 /* ── 朋友圈未读红点检查 ── */

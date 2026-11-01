@@ -110,6 +110,18 @@ button { color: inherit; cursor: pointer; }
 }
 .track-card:hover, .track-card.current { border-color: color-mix(in srgb, var(--station-accent) 55%, transparent); background: var(--station-accent-soft); }
 .track-card.managing { position: relative; padding-right: 34px; cursor: pointer; }
+/* 每首歌上直接能删（11-01 小猫：原来藏在「管理」里） */
+.track-card:has(.track-delete) { grid-template-columns: 32px minmax(0, 1fr) auto; }
+.track-delete {
+  min-height: 30px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, #c05555 35%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: #c05555;
+  font-size: 12px;
+  cursor: pointer;
+}
 .track-card.managing::after { content: ''; position: absolute; right: 9px; width: 16px; height: 16px; border: 1px solid var(--border, #aeb3c4); border-radius: 50%; background: var(--surface, #fff); }
 .track-card.managing.selected::after { content: '✓'; display: grid; place-items: center; color: #fff; border-color: var(--station-accent); background: var(--station-accent); font-size: 10px; }
 .track-cover { width: 32px; height: 32px; border-radius: 7px; object-fit: cover; display: grid; place-items: center; background: linear-gradient(135deg, #ffc6b6, #a9c5ff); color: #fff; font-size: 15px; }
@@ -209,6 +221,7 @@ body[data-theme="dark"] { --station-card: rgba(16, 21, 47, .82); }
   .upload-button { width: 34px; min-height: 34px; padding: 0; font-size: 21px; }
   .library-panel { padding: 10px; border-radius: 16px; }
   .track-card { grid-template-columns: 30px minmax(0, 1fr); gap: 7px; padding: 3px 5px; }
+  .track-card:has(.track-delete) { grid-template-columns: 30px minmax(0, 1fr) auto; }
   .track-cover { width: 30px; height: 30px; }
   .track-copy { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .track-meta { display: none; }
