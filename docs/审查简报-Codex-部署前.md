@@ -1780,3 +1780,19 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **R4 第二次检查静默之后还有读库等待**：改成认领 → 读配置核对 enabled（这里有等待）→ 最后检查静默 → 紧接着开始采集，静默检查之后不再有等待。
   - 测试：在第二次读配置时打开静默，采集和活动都没开始。
 - **测试**：`test_ai_feed_paging.py` 共 7 项（新加 2 项，在 67c5705 的 activity.py、autonomy.py 上会失败）；相关 Python 共 52 项通过；`test_ai_feed_urls.js`、`test_home_folders_ui.js`、`test_family_dynamics_ui.js` 通过。测完已删本机假数据。
+
+
+## 117. 定位：查地址失败后不再一直用空结果；日志写清高德给的原因（11-01 小猫填了高德钥匙仍没有天气 / 地点）
+
+- **线上只读排查**（没看钥匙本身，只看长度和格式）：
+  - 定位已启用，钥匙 32 位，手机心跳正常。
+  - app.log 只有一行「逆地理编码失败: 」，后面是空的。
+  - 用这把钥匙查一个公开坐标（天安门）：regeo 和 weather 都回 `USERKEY_PLAT_NOMATCH (10009)`，说明钥匙的服务平台不是「Web 服务」。已请小猫重新申请一把「Web 服务」类型的钥匙。
+- **代码问题**：
+  - 查地址失败那次，`last_api_lng/lat` 照样写了。之后没走够 movement_threshold，就一直走「轻量处理」，用空地址和空天气，换了钥匙也不会重查。
+  - 天气要靠 adcode，所以天气也一直是空的。
+- **改法**（`location.py`）：
+  - `missing_geo = amap_key 不为空 且 旧状态里没有 adcode`。成立时也走全量刷新，每次心跳都重查，直到查到为止。
+  - 钥匙错着的时候大约 10 分钟一次，一天约 144 次，远低于高德免费额度。
+  - `amap_regeo` 在 status 不是 1 时，把高德的 info 和 infocode 打进日志（不含钥匙）。
+- **测试**：`test_location_api_usage.py` 加 1 项：有旧坐标、没有 adcode、没移动时也会重查，并存下地址和天气。在旧 location.py 上会失败。定位相关 15 项通过。

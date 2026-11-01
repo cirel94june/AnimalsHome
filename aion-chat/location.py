@@ -193,6 +193,9 @@ async def amap_regeo(lng: float, lat: float, key: str) -> dict | None:
             record_amap_usage("regeo")
             resp = await client.get(url, params=params)
             data = resp.json()
+            if data.get("status") != "1":
+                # 高德把原因写在 info 里（如 USERKEY_PLAT_NOMATCH：钥匙不是「Web 服务」类型）
+                print(f"[Location] 逆地理编码失败: {data.get('info')} ({data.get('infocode')})")
             if data.get("status") == "1" and data.get("regeocode"):
                 rc = data["regeocode"]
                 return {
@@ -455,7 +458,9 @@ async def process_heartbeat(lng: float, lat: float, accuracy: float = 0.0, is_gc
     #   级别1（轻量）: 没有显著移动 → 只存坐标（天气缓存过期时仅刷新天气）
     #   级别2（刷新）: 显著移动     → 刷新地址，天气仍遵守缓存，不自动搜索 POI
     #   级别3（全量）: 状态变化     → 刷新 + 哨兵通知；手动 force_full 才刷新 POI
-    need_full_api = state_changed or significant_move or force_full
+    # 上次没查到地址（比如钥匙类型不对、网络断了）：每次心跳都再查，修好钥匙后不用等走远（11-01 小猫）
+    missing_geo = bool(amap_key) and not old_status.get("adcode")
+    need_full_api = state_changed or significant_move or force_full or missing_geo
 
     if need_full_api:
         # ── 刷新级/全量级：刷新地址；天气按缓存；POI 仅手动全量刷新 ──

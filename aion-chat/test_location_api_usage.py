@@ -201,6 +201,37 @@ class HeartbeatAmapPolicyTest(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(saved["weather_fetched_at"], status["weather_fetched_at"])
 
 
+class MissingAddressRetryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_lookup_is_retried_without_moving(self):
+        """11-01：钥匙类型不对那次查地址失败后，坐标已经记下，没走远就一直用空结果；修好钥匙也不会重查。"""
+        now = time.time()
+        config = {**location.DEFAULT_LOCATION_CONFIG, "amap_key": "test-key", "enabled": True,
+                  "home_lng": 0.0, "home_lat": 0.0, "quiet_hours_enabled": False}
+        status = {**location.DEFAULT_LOCATION_STATUS, "state": "unknown", "lng": 116.3, "lat": 39.9,
+                  "last_api_lng": 116.3, "last_api_lat": 39.9, "address": "", "adcode": "",
+                  "weather": {}, "forecast": [], "weather_fetched_at": 0, "updated_at": now - 600}
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "location_config.json"
+            status_path = Path(tmp) / "location_status.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            regeo = AsyncMock(return_value={"address": "修好后的地址", "adcode": "110101"})
+            with (
+                patch.object(location, "LOCATION_CONFIG_PATH", config_path),
+                patch.object(location, "LOCATION_STATUS_PATH", status_path),
+                patch.object(location, "amap_regeo", new=regeo),
+                patch.object(location, "amap_weather", new=AsyncMock(return_value={"live": {"weather": "晴"}, "forecast": []})),
+                patch.object(location, "amap_poi_search", new=AsyncMock(return_value=[])),
+                patch.object(location.manager, "broadcast", new=AsyncMock()),
+            ):
+                result = await location.process_heartbeat(116.3, 39.9, is_gcj02=True, skip_sentinel=True)
+            saved = json.loads(status_path.read_text(encoding="utf-8"))
+        regeo.assert_awaited_once()  # 没动也重查
+        self.assertTrue(result["full_api"])
+        self.assertEqual("修好后的地址", saved["address"])
+        self.assertEqual({"weather": "晴"}, saved["weather"])
+
+
 class LocationConfigPrivacyTest(unittest.TestCase):
     def test_config_endpoint_never_returns_the_raw_amap_key(self):
         app = FastAPI()
