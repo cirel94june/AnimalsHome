@@ -1748,11 +1748,20 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **测试**：`test_ai_feed.py` 新加两项：挤掉场景、单人 + 游标翻页（含「正好多一篇」的判断），在不带本次修改的 activity.py 上会失败。相关 Python 28 项通过；`test_home_folders_ui.js`、`test_ai_feed_urls.js`、`test_family_dynamics_ui.js` 通过。
 
 
-## 115. 修 §114 审查的 R1–R4、L1（已写好，测试待补）
+## 115. 修 §114 审查的 R1–R4、L1
 
 - R1：时间线改用复合游标（时间、类别、编号），SQL 里按 created_at DESC, CAST(id AS TEXT) DESC 排序并按游标接着取；返回 next_cursor。
 - R2：记忆整理按 who 映射 target（aion→main、connor→chatroom，座位不查），带同样的游标、多取一条，时间线读取时按文本比编号。
 - R3：动态页加请求代数，换人后晚到的旧回应直接丢掉，游标只在代数和人物都对得上时更新。
 - R4：认领醒来之后再看一次静默；是就用 restore_claimed_wake 只在 next_wake_at 仍为空时放回静默结束后，不覆盖期间新起的计时。
 - L1：.sw-picker[hidden] { display: none; }。
-- 还没做：为 R1–R4 补专门的回归测试和本机页面实测，然后才交狐狸复审。
+- **测试**：新文件 `test_ai_feed_paging.py`，5 项。
+  - R1：42 条同一时刻，每页 40 条，两页读完、不重复、不打转。
+  - R2：who=connor 时只查 chatroom、多取一条、游标原样传下去；座位不查记忆整理。`_read_completed_batches` 在临时库里不会被小克的 5 条挤掉，同一时刻里只取编号更小的。
+  - R4：认领后进静默会放回、不运行；放回时不覆盖期间新起的计时。
+  - 把 activity.py、memory_compression.py、autonomy.py、autonomy_state.py 换回 a96a3cd 的版本时，这 5 项全部失败；换回来后全部通过。
+- **本机页面实测**：
+  - R3：人为让「小克」那次请求晚 1.5 秒回来，先点小克再点狗蛋。最后选中的是狗蛋，列表只有狗蛋的日记。
+  - L1：选完微信后，App 列表的 display 是 none，名单里出现微信。
+  - 测完已删假数据、还原通知设置。
+- 相关旧测试（`test_ai_feed` / `test_switches` / `test_autonomy_journey` / `test_autonomy_state`）41 项通过，`test_ai_feed_urls.js` 通过。
