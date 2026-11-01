@@ -1796,3 +1796,17 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 钥匙错着的时候大约 10 分钟一次，一天约 144 次，远低于高德免费额度。
   - `amap_regeo` 在 status 不是 1 时，把高德的 info 和 infocode 打进日志（不含钥匙）。
 - **测试**：`test_location_api_usage.py` 加 1 项：有旧坐标、没有 adcode、没移动时也会重查，并存下地址和天气。在旧 location.py 上会失败。定位相关 15 项通过。
+
+
+## 118. 小猫不在线时不去找手机，改成留言；手机上线不再刷出一串「命令已过期」
+
+小猫 10-30 定的规矩：她常断 VPN 去忙自己的；App 不在线时，「要找手机的事」不排队，AI 干自己的事或给她留言。
+
+- **在不在线**（`ws.py`）：手机推送服务连上时用 `android-push:<设备号>` 报到。`manager.phone_online()` 看有没有这样的连接；断开后 90 秒内仍算在线，当作网络抖动。网页、桌宠的连接不算。
+- **AI 看到的说明**（`app_supervision_ai.build_app_supervision_ability_text`）：手机不在线时，只给一句 `PHONE_OFFLINE_TEXT`（手机不在线，找手机的指令先别用，想她就直接留言），不给指令格式，也省了这段长说明的字数。拿不到在线状态时照旧给完整说明。
+- **不排队**（`queue_app_supervision_reply_command`）：AI 回复里如果还是带了指令，而手机不在线，就不写进 `app_supervision_commands`。返回一个带 `skipped: phone_offline` 的命令对象（字段和排队的一样，commandId 为空）；`broadcast_app_supervision_command` 见到它，不再发给手机，而是在原聊天里发一条「…未能唤回小猫：小猫的手机不在线，这次没去找手机」，用的还是原来的 `_publish_command_result`。
+- **过期合并**（`GET /api/app-supervision/commands/pending`）：一次查出多条过期命令时，只在最近那条的位置发一条「手机离线时的 N 条命令都过期了」；只有一条时照旧写「命令已过期」。原来 10-27 手机上线时一下刷出 26 条。
+- **测试**：
+  - 新文件 `test_phone_offline_rule.py` 4 项：android-push 才算在线、断开 90 秒宽限；不在线时 AI 只拿到一句话、没有指令格式；不在线时不排队、只发一条提示、不广播给手机；26 条过期只发一条（最近那条、写明 26 条）。不带本次修改时这 4 项都失败。
+  - `test_app_supervision_ai.py` 里测完整说明的那组，在 setUp 里设成手机在线。
+  - 应用监管相关共 56 项通过。

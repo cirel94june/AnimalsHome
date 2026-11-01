@@ -85,12 +85,25 @@ class ConnectionManager:
         for generation, owner in list(self._tts_generation_clients.items()):
             if owner is ws:
                 del self._tts_generation_clients[generation]
+        if str(self.client_ids.get(ws, "")).startswith("android-push:"):
+            import time as _time
+            self._phone_left_at = _time.time()
         self.client_ids.pop(ws, None)
         self.pet_clients.pop(ws, None)
         log.info("WS disconnected, total=%d", len(self.active))
 
     def register_client_id(self, ws: WebSocket, client_id: str):
         self.client_ids[ws] = client_id
+
+    PHONE_GRACE_SECONDS = 90  # 网络抖一下重连的空档不算离线
+
+    def phone_online(self, now: float | None = None) -> bool:
+        """小猫的手机 App 连着没有。10-30 小猫定的规矩：不在线时不去找手机，改成留言。"""
+        import time as _time
+        if any(str(cid).startswith("android-push:") for cid in self.client_ids.values()):
+            return True
+        last = getattr(self, "_phone_left_at", 0.0)
+        return bool(last) and (_time.time() if now is None else now) - last < self.PHONE_GRACE_SECONDS
 
     def set_last_sender(self, client_id: str):
         self._last_sender_client_id = client_id

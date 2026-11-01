@@ -105,8 +105,11 @@ async def get_pending_commands():
         expired = await expire_pending_app_supervision_commands(db)
         commands = await list_pending_app_supervision_commands(db)
         await db.commit()
-    for command in expired:
-        await _publish_command_result(command, success=False, reason="命令已过期")
+    if expired:
+        # 手机离线时攒下的过期命令只说一次，用最近那条的位置（原来上线时一下刷出 26 条，10-27）
+        latest = max(expired, key=lambda item: float(item.get("createdAt") or 0))
+        reason = "命令已过期" if len(expired) == 1 else f"手机离线时的 {len(expired)} 条命令都过期了"
+        await _publish_command_result(latest, success=False, reason=reason)
     return {"commands": commands}
 
 

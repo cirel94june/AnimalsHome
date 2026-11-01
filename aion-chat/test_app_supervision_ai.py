@@ -35,6 +35,10 @@ from web_search import WebCommandStreamFilter
 class AppSupervisionCapabilityTests(unittest.TestCase):
     def setUp(self):
         self.cache = AppSupervisionStateCache()
+        # 这组测的是手机在线时的完整说明；不在线时只给一句话，见 test_phone_offline_rule.py
+        online = patch("app_supervision_ai._phone_online", return_value=True)
+        online.start()
+        self.addCleanup(online.stop)
 
     def test_capability_catalog_contains_stable_toggle(self):
         item = capabilities.get_capability_def("app_supervision")

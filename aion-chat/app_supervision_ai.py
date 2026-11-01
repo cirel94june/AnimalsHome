@@ -270,6 +270,14 @@ async def queue_app_supervision_reply_command(
     )
     if command is None:
         return cleaned, None
+    if not _phone_online():
+        # 不排队：排着也送不到，等手机上线时只会刷出一串「命令已过期」（10-27）
+        return cleaned, {
+            "commandId": "", "action": command["action"], "groupId": command["groupId"],
+            "minutes": command.get("minutes"), "message": command.get("message", ""),
+            "sourceMessageId": source_message_id, "roleId": role_id,
+            "sourceKind": source_kind, "sourceRef": source_ref, "skipped": "phone_offline",
+        }
     from database import get_db
     async with get_db() as db:
         queued = await enqueue_app_supervision_command(
@@ -286,6 +294,10 @@ async def queue_app_supervision_reply_command(
 
 async def broadcast_app_supervision_command(command: dict | None) -> None:
     if not command:
+        return
+    if command.get("skipped") == "phone_offline":
+        from routes.app_supervision import _publish_command_result
+        await _publish_command_result(command, success=False, reason="小猫的手机不在线，这次没去找手机")
         return
     from ws import manager
     await manager.broadcast({"type": "app_supervision_command", "data": command})
@@ -438,6 +450,21 @@ def _minutes(milliseconds: float) -> str:
     return f"{max(0.0, milliseconds) / 60_000:.1f} 分钟"
 
 
+PHONE_OFFLINE_TEXT = (
+    "小猫的手机现在不在线（App 没连上，她可能断了网在忙自己的事）。"
+    "找手机的指令（APP_LOCK、COME_HOME、LOOK_AT_ME 这些）这会儿送不到，先别用；"
+    "想她了就直接在聊天里留言，她上线会看到。"
+)
+
+
+def _phone_online() -> bool:
+    try:
+        from ws import manager
+        return manager.phone_online()
+    except Exception:
+        return True  # 拿不到状态时照旧，不因为这一步把功能关掉
+
+
 def build_app_supervision_ability_text(
     cache: AppSupervisionStateCache | None = None,
     *,
@@ -445,6 +472,8 @@ def build_app_supervision_ability_text(
 ) -> str:
     if not is_capability_enabled("app_supervision"):
         return ""
+    if not _phone_online():
+        return PHONE_OFFLINE_TEXT
 
     selected_cache = cache or state_cache
     snapshot, received_at = selected_cache.read()
