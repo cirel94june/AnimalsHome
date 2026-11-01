@@ -5,6 +5,7 @@
 - 所有日程持久化在 SQLite schedules 表，重启后自动恢复
 """
 
+from clock_text import now_text
 import asyncio, json, time, threading, logging, re
 from datetime import datetime
 
@@ -542,7 +543,7 @@ class ScheduleManager:
         origin = item.get("origin")
         content = item.get("content") or ""
         user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        now_str = now_text()
         attachment = ""
         no_image_context = ""
         if is_capability_enabled("cam_check"):
@@ -593,7 +594,7 @@ class ScheduleManager:
         if prompt:
             pass
         elif item.get("type") == PROACTIVE_TYPE:
-            now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+            now_str = now_text()
             prompt = (f"[主动陪伴触发] 截至当前 {now_str}，这段时间没有新的对话消息。"
                       f"请结合最新上下文，自然地主动和{user_name}继续聊下去。")
         else:
@@ -715,7 +716,7 @@ class ScheduleManager:
                     include_image_attachments=False,
                 )
 
-            now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+            now_str = now_text()
             if is_proactive:
                 trigger_prompt = (
                     f"[主动陪伴触发]\n截至当前 {now_str}，这段时间没有新的对话消息。"
@@ -754,7 +755,7 @@ class ScheduleManager:
                 prefix.append({"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"})
                 prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
 
-            now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+            now_str = now_text()
             if prefix:
                 prefix[-1]["content"] += f"\n系统当前的准确时间是 {now_str}"
 
@@ -1037,7 +1038,7 @@ class ScheduleManager:
             from config import aion_model_key
             model_key = aion_model_key(model_key)
 
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        now_str = now_text()
 
         # 当前设备状态与近期使用历史并存，补齐本轮尚未生成摘要的变化。
         activity_summary_text = ""

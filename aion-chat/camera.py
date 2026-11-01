@@ -2,6 +2,7 @@
 摄像头监控：CameraMonitor 类、Sentinel 分析、Core 唤醒、监控日志读写
 """
 
+from clock_text import now_text
 import json, time, re, base64, asyncio, threading, sqlite3, random, urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -1484,7 +1485,7 @@ class CameraMonitor:
             connor_name = load_chatroom_config().get("connor_name") or "AI"
         except Exception:
             pass
-        now_str = time.strftime("%Y年%m月%d日  %H时:%M分:%S秒")
+        now_str = now_text()
 
         conv_id = None
         try:

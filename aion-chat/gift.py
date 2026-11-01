@@ -2,6 +2,7 @@
 礼物系统：AI 判断送礼 + 硅基流动 Kolors 生图 + 礼物数据 CRUD
 """
 
+from clock_text import now_text
 import json, time
 from datetime import datetime
 
@@ -33,7 +34,7 @@ async def judge_and_send_gift(
     from ai_providers import simple_ai_call
 
     now = datetime.now()
-    time_str = now.strftime("%Y年%m月%d日 %A %H:%M:%S")
+    time_str = now_text(now)
 
     summaries_text = "\n".join(f"- {s}" for s in all_summaries)
 

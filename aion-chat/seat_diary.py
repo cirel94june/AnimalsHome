@@ -8,6 +8,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
+from clock_text import now_text
 import asyncio
 import logging
 import time
@@ -67,6 +70,7 @@ async def _recent_messages(seat: str, anchor: float, last_ts: float) -> list[dic
 
 def _diary_prompt(name: str, user_name: str, context_text: str) -> str:
     return (
+        f"当前时间：{now_text()}\n\n"
         f"【最近上下文】\n{context_text}\n\n"
         f"请以{name}的身份、从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
         "日记可以记录你对这段时间的感想，只写值得记录或有感触的事，不用每件事都提起，不要记流水账。语气必须符合你的人设。"
@@ -136,6 +140,7 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
     user_name = (load_worldbook().get("user_name") or "用户").strip() or "用户"
     name = seat_chat.actors.display_name(seat)
     context_text = "\n".join(
+        f"[{datetime.fromtimestamp(m['created_at']).strftime('%m-%d %H:%M')}]"
         f"【{seat_chat._speaker_name(m['sender'], user_name)}】{m['content']}" for m in recent if m["content"].strip()
     )
     messages = [

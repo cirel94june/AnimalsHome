@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from clock_text import now_text
 import asyncio
 from datetime import datetime
 
@@ -155,7 +156,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             {"role": "user", "content": f"[{user_name}信息]\n{wb['user_persona']}"},
             {"role": "assistant", "content": "收到，我会记住。"},
         ]
-    now = datetime.now().strftime("%Y-%m-%d %H:%M（%A）")
+    now = now_text(seconds=False)
     background = [f"[当前时间] {now}", await hub_task]
     from capabilities import is_capability_enabled
     if is_capability_enabled("schedule"):  # 日程不会自己响，要在提示词里看得到才能「合适时机自然提起」

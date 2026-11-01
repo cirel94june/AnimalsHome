@@ -7,6 +7,7 @@
 - 每日定时任务（14:45 交易日自动触发）
 """
 
+from clock_text import now_text
 import asyncio, json, time, threading, logging
 from datetime import datetime, date
 
@@ -367,7 +368,7 @@ async def run_fund_analysis(manual: bool = False):
         prefix.append({"role": "user", "content": f"[系统设定 - 用户信息]\n{wb['user_persona']}"})
         prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
 
-    now_str = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
+    now_str = now_text()
     if prefix:
         prefix[-1]["content"] += f"\n系统当前的准确时间是 {now_str}"
 

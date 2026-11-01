@@ -2,6 +2,7 @@
 高德地图定位模块：坐标转换、距离计算、高德 API 调用、状态机管理、哨兵联动
 """
 
+from clock_text import now_text
 import json, time, math, asyncio, re
 from pathlib import Path
 
@@ -608,7 +609,7 @@ async def _on_state_change(old_state: str, new_state: str, status: dict, cfg: di
     wb = load_worldbook()
     user_name = (wb.get("user_name") or "你").strip() or "你"
     ai_name = (wb.get("ai_name") or "AI").strip() or "AI"
-    now_str = time.strftime("%Y年%m月%d日 %H:%M:%S")
+    now_str = now_text()
 
     # 1. 更新 chat_status
     if new_state == "outside":
@@ -662,7 +663,7 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
         connor_name = (load_chatroom_config().get("connor_name") or connor_name).strip() or connor_name
     except Exception:
         connor_name = (wb.get("connor_name") or connor_name).strip() or connor_name
-    now_str = time.strftime("%Y年%m月%d日 %H:%M:%S")
+    now_str = now_text()
 
     scfg = get_sentinel_config()
     if not scfg.get("ready"):

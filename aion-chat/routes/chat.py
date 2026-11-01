@@ -5,6 +5,8 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 
 import json, time, asyncio, re, shutil
 from datetime import datetime
+
+from clock_text import now_text
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -1421,7 +1423,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         _do_surfacing(), _do_recall()
     )
 
-    now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+    now_str = now_text()
     bg_block = f"系统当前的准确时间是 {now_str}"
     health_text = await build_health_summary()
     if health_text:
@@ -2053,7 +2055,7 @@ async def send_message(conv_id: str, body: MsgCreate):
 
     if body.fast_mode:
         # ── 快速模式：仅注入当前时间，跳过哨兵和记忆 ──
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        now_str = now_text()
         bg_block = f"系统当前的准确时间是 {now_str}"
         health_text = await build_health_summary()
         if health_text:
@@ -2092,7 +2094,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         )
 
         # 注入当前时间（缓存分界点）+ 背景记忆（动态内容）
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        now_str = now_text()
         bg_block = f"系统当前的准确时间是 {now_str}"
         health_text = await build_health_summary()
         if health_text:
@@ -3518,7 +3520,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
 
     if fast_mode:
         # ── 快速模式：仅注入当前时间 ──
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        now_str = now_text()
         bg_block = f"系统当前的准确时间是 {now_str}"
         health_text = await build_health_summary()
         if health_text:
@@ -3537,7 +3539,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
 
         # 3. 注入当前时间（缓存分界点）+ 背景记忆（动态内容）
         surfaced, surfaced_ids = await build_surfacing_memories(topic, recall_keywords)
-        now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+        now_str = now_text()
         bg_block = f"系统当前的准确时间是 {now_str}"
         health_text = await build_health_summary()
         if health_text:

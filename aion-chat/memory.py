@@ -2,6 +2,7 @@
 向量记忆库：embedding、recall、手动总结、本地前置路由
 """
 
+from clock_text import now_text
 from reply_timing import timed
 import json, time, struct, math, asyncio, re
 from datetime import datetime, timedelta
@@ -1441,7 +1442,7 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
                 context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
             context_text = "\n".join(context_lines)
             summaries_text = "\n".join(f"- {s}" for s in all_summaries)
-            time_str = datetime.now().strftime("%Y年%m月%d日 %A %H:%M:%S")
+            time_str = now_text()
             diary_prompt = (
                 f"{persona_block}"
                 f"当前时间：{time_str}\n\n"

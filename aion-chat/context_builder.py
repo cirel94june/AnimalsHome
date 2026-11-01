@@ -3,6 +3,7 @@
 被 routes/chat.py（私聊）和 chatroom.py（群聊）共同使用。
 """
 
+from clock_text import now_text
 from reply_timing import timed
 import json, re, time, asyncio
 from datetime import datetime
@@ -395,7 +396,7 @@ async def build_memory_blocks(
       memory_block: str — 相关记忆 + 记忆证据文本（可能为空）
       digest_result: dict — instant_digest 的结果
     """
-    now_str = datetime.now().strftime("%Y年%m月%d日  %H:%M:%S")
+    now_str = now_text()
     time_block = f"系统当前的准确时间是 {now_str}"
     hub_task = None
     if memory_hub_actor:

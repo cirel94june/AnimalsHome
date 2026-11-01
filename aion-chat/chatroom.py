@@ -2,6 +2,7 @@
 聊天室核心逻辑：Connor 代理调用、跨窗口上下文构建、AI 互聊控制、聊天室记忆管理
 """
 
+from clock_text import now_text
 from reply_timing import timed
 import json, time, struct, asyncio, uuid, os, threading
 from typing import Optional
@@ -928,7 +929,7 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                 name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m["sender"], m["sender"])
                 context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
             context_text = "\n".join(context_lines)
-            time_str = time.strftime("%Y年%m月%d日 %A %H:%M:%S", time.localtime())
+            time_str = now_text()
             diary_prompt = (
                 f"{persona_block}"
                 f"当前时间：{time_str}\n\n"

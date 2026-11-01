@@ -1953,3 +1953,22 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 文件夹图标的红点改成 `data-folder-badges="<文件夹里各应用的 key>"`，任意一个亮就亮。
   - 状态统一放在 `var badgeState`，`applyUnreadBadges()` 一次刷新所有红点。`renderApps`、`openFolder`、朋友圈和聊天未读的轮询都调它。
 - **验证**：本机浏览器把朋友圈设成未读：「家里的事」文件夹亮，点开后朋友圈图标亮，其他不亮；Dock 聊天红点照常；控制台无报错（截图见对话）。`test_unread.py` 和 `test_home*.py` 共 116 项全过。
+
+
+## 127. 给 AI 的时间写清星期几、上午下午、今天上不上班
+
+- **小猫反映**：小克下午写的日记以为是凌晨，还以为今天是工作日（11-01 是星期日）。
+- **排查**（只看元数据，没看日记内容）：
+  - 服务进程时区是 Asia/Shanghai，没问题。小克那篇在北京时间 17:33 写，来源消息是 15:04～16:49。
+  - 原来各处给 AI 的时间格式是「2026年11月01日 17:33:05」：没有星期几，要模型自己推算；没有上午下午。日记那几处用 `%A`，给的是英文「Sunday」；也都没说今天上不上班。
+  - **座位日记（狗蛋等，`seat_diary.py`）的提示里完全没有当前时间**，上下文每条消息也没有时间。
+- **改动**：
+  - 新模块 `clock_text.now_text()`，输出例如「2026年11月1日 星期日 下午 17:33:05（北京时间，今天是休息日）」。
+    - 时段分凌晨、早上、上午、中午、下午、晚上、深夜。
+    - 工作日或休息日用 `chinese_calendar.is_workday` 判断（fund.py 已在用，包含调休和法定假日）。日历库不认识的年份退回按周末算。
+  - 替换这些地方的时间：私聊 5 处 bg_block、`context_builder`（群聊、Lucien）、`seat_chat`、`schedule` 5 处、私聊日记（`memory.py`）、群聊日记（`chatroom.py`）、送礼（`gift.py`）、基金、定位 2 处、摄像头。
+  - `seat_diary`：提示开头加「当前时间」，上下文每条加 `[月-日 时:分]`。
+  - 「系统当前的准确时间是」这几个前缀字没变，`ai_providers._DYNAMIC_START_MARKERS` 的缓存切分不受影响。
+- **测试**：
+  - 新文件 `test_clock_text.py` 4 项：星期日下午的完整输出、时段和工作日、日历库不可用时的退路、各提示都改用它（座位日记有当前时间）。
+  - 相关 16 个测试文件共 132 项，4 项失败，都是改动前就有的：`test_role_device_context_injection` 3 项是 fake_provider 不收 `request_timeout`，`test_seat_chat` 1 项是事务问题。
