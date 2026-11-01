@@ -192,7 +192,7 @@ def test_seat_reply_streams_saves_and_captures_as_seat(seats, monkeypatch):
     assert [e["type"] for e in events][0] == "seat_start" and events[-1]["type"] == "seat_done"
     assert all(e.get("actor") == "ai3" for e in events)
     assert saved["sender"] == "ai3" and saved["content"] == "好呀，我在。"
-    capture.assert_called_once_with("ai3", "在吗", "好呀，我在。")
+    capture.assert_called_once_with("ai3", "在吗", "好呀，我在。", chat_type="private", chat_id="room", from_owner=True)
 
 
 def test_seat_reply_without_model_explains_instead_of_switching(seats, monkeypatch):

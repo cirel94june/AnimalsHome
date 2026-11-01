@@ -52,11 +52,14 @@ def fake_hub():
 
     @hub.tool()
     def capture(action: str = "log", source_ai: str = "claude", user_message: str = "",
-                ai_response: str = "", platform: str = "mcp", chat_type: str = "", event_id: str = "") -> str:
+                ai_response: str = "", platform: str = "mcp", chat_type: str = "", event_id: str = "",
+                chat_id: str = "") -> str:
         args = {"action": action, "source_ai": source_ai, "user_message": user_message,
                 "ai_response": ai_response, "platform": platform}
         if chat_type:
             args["chat_type"] = chat_type
+        if chat_id:
+            args["chat_id"] = chat_id
         CALLS.append(("capture", args))
         # 和真 Hub 一样：同一位 AI + 同一个 event_id 只记一次
         if event_id and (source_ai, event_id) in STORED_IDS:
@@ -688,3 +691,87 @@ def test_remember_outcome_tells_duplicate_from_full_queue_and_unavailable(isolat
     assert outcome["failed"] == "full"
     assert bridge.schedule_remember("ai4", [{"content": "x"}], request_key="d", outcome=outcome) == []
     assert outcome["failed"] == "unavailable"  # ai4 没有 Hub 身份
+
+
+class _FakeResponse:
+    def __init__(self, status_code, text=""):
+        self.status_code, self.text = status_code, text
+
+
+def _fake_httpx(monkeypatch, status_code, posts):
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            posts.append((url, json, headers))
+            return _FakeResponse(status_code)
+
+    monkeypatch.setattr(bridge, "_http_client", FakeClient)  # 只换主人钥匙那条 REST，MCP 照常
+
+
+def test_group_turn_from_xiaomao_goes_through_owner_rest(fake_hub, isolated_config, monkeypatch):
+    """Hub #131：群里小猫说的那一轮走 REST + 主人钥匙 + sender_type=owner + chat_id，Hub 才认得出是她。"""
+    _write(isolated_config, enabled=True, url=fake_hub, token="shared-token")
+    monkeypatch.setenv("MEMORY_HUB_OWNER_SECRET", "owner-secret")
+    posts = []
+    _fake_httpx(monkeypatch, 200, posts)
+
+    async def run():
+        bridge.schedule_chatroom_capture("connor", "我今天去爬山了", "好厉害", "group", "cr_group1")
+        await asyncio.gather(*list(bridge._background_tasks))
+    asyncio.run(run())
+    assert len(posts) == 1
+    url, body, headers = posts[0]
+    assert url == fake_hub[: -len("/mcp")] + "/api/capture/log"
+    assert headers["Authorization"] == "Bearer owner-secret"
+    assert body["sender_type"] == "owner" and body["chat_id"] == "cr_group1" and body["event_id"]
+    assert body["platform"] == "aionshome-group" and body["chat_type"] == "private_group"
+    assert body["ai_id"] == "lucien" and "sender_id" not in body
+    assert not [c for c in CALLS if c[0] == "capture"]  # 没再走 MCP
+    with closing_outbox() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
+
+
+def test_private_turns_and_missing_owner_key_stay_on_mcp_with_chat_id(fake_hub, isolated_config, monkeypatch):
+    _write(isolated_config, enabled=True, url=fake_hub)
+    monkeypatch.delenv("MEMORY_HUB_OWNER_SECRET", raising=False)
+    posts = []
+    _fake_httpx(monkeypatch, 200, posts)
+
+    async def run():
+        bridge.schedule_chatroom_capture("connor", "在吗", "在", "group", "cr_group1")  # 没有主人钥匙
+        await asyncio.gather(*list(bridge._background_tasks))
+        bridge.schedule_chatroom_capture("connor", "晚安", "晚安", "connor_1v1", "cr_private")  # 私聊
+        await asyncio.gather(*list(bridge._background_tasks))
+    asyncio.run(run())
+    assert posts == []
+    captures = [c[1] for c in CALLS if c[0] == "capture"]
+    assert [c.get("chat_id") for c in captures] == ["cr_group1", "cr_private"]
+    assert all("sender_type" not in c for c in captures)
+
+
+def test_rejected_owner_key_falls_back_to_shared_key(fake_hub, isolated_config, monkeypatch):
+    _write(isolated_config, enabled=True, url=fake_hub)
+    monkeypatch.setenv("MEMORY_HUB_OWNER_SECRET", "wrong")
+    posts = []
+    _fake_httpx(monkeypatch, 403, posts)
+
+    async def run():
+        bridge.schedule_chatroom_capture("aion", "我回来啦", "欢迎", "group", "cr_group1")
+        await asyncio.gather(*list(bridge._background_tasks))
+    asyncio.run(run())
+    assert len(posts) == 1
+    assert [c[1].get("chat_id") for c in CALLS if c[0] == "capture"] == ["cr_group1"]  # 照常记下，只是认不出是她
+
+
+def closing_outbox():
+    import sqlite3
+    from contextlib import closing
+    return closing(sqlite3.connect(bridge.OUTBOX_PATH))

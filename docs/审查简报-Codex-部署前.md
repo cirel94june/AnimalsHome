@@ -1985,3 +1985,24 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 服务器进程里 Hub 是开着的，connor 对应 lucien。
 - **改动**：`_note_read` 每次通过 `uvicorn.error` logger 写一行 INFO：「[MemoryHub] 取记忆 actor/chat_id：状态 N字 Ns」。本模块自己的 logger 只输出 warning 以上，所以和 reply_timing 走同一个 logger。只有状态、字数、耗时，没有内容。部署后请小猫和 Lucien 说一句，对照日志和她看到的系统日志。
 - **测试**：`test_memory_hub_bridge.py` 55 项全过。
+
+
+## 129. 群聊里小猫说的那一轮让 Hub 认得出是她（接 Hub #131）
+
+- **背景**：Hub 窗口反馈，AionsHome 群聊的回合没写「是谁说的」，Hub 把小猫当成「群里有人（不确定是谁）」，10-29 以来 71 条一条都没记下。所以 TG bot 不记得前端聊的内容。Hub #131 已上线，接口见 Hub 仓库 `docs/给AionsHome的接口说明.md` 优先级 1 第 4 项。
+- **改动**（`memory_hub_bridge.py`）：
+  - outbox 加两列：`chat_id`（哪个窗口）和 `sender_type`（`owner` 表示用户那半句是小猫本人说的）。入队时固定下来，和身份快照一样。
+  - `schedule_chatroom_capture(..., room_id)` 统一带 `chat_id=room_id`，并标 `from_owner`。用户那半句来自 `paired_user_message`，它只认 `sender == "user"` 的消息。服务端只有 `/rooms/{id}/send` 会存 sender=user，那只能是小猫自己发的；环境语音（`ambient_context`）的回合本来就不记。
+  - `_send_capture`：同时满足五条才走 REST——群聊、`sender_type=owner`、平台是 aionshome / aionshome-group、有 event_id、有 chat_id。
+    - REST 调 `POST {Hub}/api/capture/log`，带 `MEMORY_HUB_OWNER_SECRET`，body 为 `{user_message, ai_response, ai_id, platform, chat_type: private_group, chat_id, event_id, sender_type: "owner"}`，不带 sender_id。
+    - Hub 返回：2xx 算送达；5xx 或网络错按不确定重发（有 event_id，Hub 去重）；其他 4xx 算拒收。
+    - 401 / 403（主人钥匙不对）或没配主人钥匙：这条改走原来的 MCP 加共用钥匙，照常记下，只是 Hub 认不出是她。没配钥匙时只警告一次。
+    - 主人钥匙只在服务器这一个函数里读环境变量，不写进 outbox、不写日志、不进任何 AI 能调的工具。
+  - 私聊和其余走 MCP 的回合：有 chat_id 就带上（Hub 的 capture 新增参数）。私聊 Hub 本来就默认是小猫，不用主人钥匙。
+  - 测试里只替换 `_http_client`，不动全局 httpx（MCP 客户端也用它）。
+- **调用点**（`routes/chatroom.py`）：小克、Lucien 在群里的回复带上 room_id；Lucien 私聊、座位私聊改用 `schedule_chatroom_capture(..., "private", room_id)`。座位在群里说的话照旧不记（原来就是 `if not group`）。
+- **旧的 71 条**：AionsHome 送达后就删 outbox 记录，本地没留 event_id，列不出逐条清单。但按上面的代码，AionsHome 发出的每一条 aionshome-group 回合，用户那半句都是小猫本人发的消息（只读核对：10-29 以来群里 sender=user 37 条，小克、Lucien 群消息各 43 条，和 71 条回合对得上）。建议 Hub 按「平台 aionshome-group、event_id 以 `aionshome-` 开头」整批认定。等小猫批准。
+- **测试**：
+  - `test_memory_hub_bridge.py` 新加 3 项：群里小猫那一轮走 REST（地址、主人钥匙、owner、chat_id、event_id、无 sender_id、不再走 MCP）；没主人钥匙和私聊仍走 MCP 并带 chat_id；主人钥匙被拒时退回 MCP 照常记。
+  - fake hub 的 capture 收 chat_id。`test_seat_chat` 的调用断言改成带 chat_type / chat_id / from_owner。
+  - 相关 113 项里只有 `test_seat_chat::test_new_window_opens_another_room_for_the_same_seat` 失败，改动前就有。

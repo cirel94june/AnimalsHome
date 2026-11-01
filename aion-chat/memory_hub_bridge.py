@@ -370,7 +370,8 @@ def _outbox() -> sqlite3.Connection:
     # 入队时就把「记到谁名下、哪个平台、发往哪个 Hub」固定下来（快照）：之后改 AI 名片上的身份或换 Hub，
     # 已经排队的旧对话也不会跟着变成别人的。没有快照的旧记录不自动发送。
     cols = {row[1] for row in conn.execute("PRAGMA table_info(outbox)")}
-    for col in ("event_id", "source_ai", "platform", "hub", "payload"):
+    # chat_id：哪个窗口（群里几位 AI 的回合 Hub 按它合进同一个缓冲区）；sender_type：owner = 用户那半句是小猫本人说的
+    for col in ("event_id", "source_ai", "platform", "hub", "payload", "chat_id", "sender_type"):
         if col not in cols:
             conn.execute(f"ALTER TABLE outbox ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
     # kind：capture = 一轮对话原话（Hub 自己提取）；remember = AI 明确要记的一件事（Hub 的 remember 工具）
@@ -467,7 +468,8 @@ def hub_id(cfg: dict[str, Any]) -> str:
     return f"{HUB_ID_VERSION}:" + hashlib.sha1(normalized.encode()).hexdigest()[:16]
 
 
-def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) -> int | None:
+def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str, *, chat_id: str = "",
+             from_owner: bool = False) -> int | None:
     global _dropped
     cfg = load_config()
     source_ai = source_ai_for(actor, cfg)
@@ -484,9 +486,9 @@ def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str) ->
             return None
         cur = conn.execute(
             "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
-            " source_ai, platform, hub) VALUES (?,?,?,?,?,0,?,?,?,?)",
+            " source_ai, platform, hub, chat_id, sender_type) VALUES (?,?,?,?,?,0,?,?,?,?,?,?)",
             (actor, user_message, ai_response, chat_type, time.time(), f"aionshome-{uuid.uuid4().hex}",
-             source_ai, platform, hub_id(cfg)),
+             source_ai, platform, hub_id(cfg), str(chat_id or "")[:200], "owner" if from_owner else ""),
         )
         return int(cur.lastrowid)
 
@@ -648,10 +650,77 @@ async def _send_remember(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, st
     return "ok", ""
 
 
+OWNER_PLATFORMS = ("aionshome", "aionshome-group")
+_warned_no_owner_key = False
+
+
+def _owner_rest(cfg: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
+    """Hub 的 REST 地址和带主人钥匙的请求头；没配主人钥匙时返回 None。
+    主人钥匙只在服务器这里用来标「这句是小猫说的」，不进任何 AI 能调的工具、不写日志。"""
+    owner = os.environ.get("MEMORY_HUB_OWNER_SECRET", "").strip()
+    if not owner:
+        return None
+    base = str(cfg.get("url") or "").rstrip("/")
+    if base.endswith("/mcp"):
+        base = base[: -len("/mcp")]
+    headers = {k: v for k, v in (cfg.get("headers") or {}).items() if str(k).lower() != "authorization"}
+    return base, _headers({**cfg, "token": owner, "headers": headers})
+
+
+def _http_client(timeout: float):
+    import httpx
+    return httpx.AsyncClient(timeout=timeout)
+
+
+async def _send_owner_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str] | None:
+    """群聊里小猫说的那一轮：走 REST + 主人钥匙 + sender_type=owner，Hub 才认得出是她（Hub #131）。
+    返回 None 表示这条不走这条路（没配主人钥匙、钥匙被拒），由调用方改走 MCP。"""
+    global _warned_no_owner_key
+    rest = _owner_rest(cfg)
+    if rest is None:
+        if not _warned_no_owner_key:
+            log.warning("[MemoryHub] 没配主人钥匙，群聊里小猫的话 Hub 认不出是她（仍照常记录）")
+            _warned_no_owner_key = True
+        return None
+    base, headers = rest
+    body = {
+        "user_message": row["user_message"][:8000],
+        "ai_response": row["ai_response"][:8000],
+        "ai_id": row["source_ai"],
+        "platform": row["platform"],
+        "chat_type": "private" if row["chat_type"] == "private" else "private_group",
+        "chat_id": row["chat_id"],
+        "event_id": row["event_id"],
+        "sender_type": "owner",
+    }
+    try:
+        async with _http_client(float(cfg.get("capture_timeout_seconds") or 20.0)) as client:
+            response = await client.post(f"{base}/api/capture/log", json=body, headers=headers)
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:
+        _trip(cfg, error, "write")
+        # 带 event_id：可能已经送到也没关系，重发时 Hub 会去重
+        return "uncertain", type(error).__name__
+    if response.status_code in (401, 403):
+        log.warning("[MemoryHub] 主人钥匙被 Hub 拒绝（%s），这条改走共用钥匙，Hub 认不出是小猫", response.status_code)
+        return None
+    if response.status_code >= 500:
+        return "uncertain", f"Hub {response.status_code}"
+    if response.status_code >= 400:
+        return "rejected", f"Hub 拒收 {response.status_code}：{response.text[:200]}"
+    return "ok", ""
+
+
 async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
     """只用入队时的快照发送。返回 ("ok"|"not_sent"|"uncertain", 错误说明)。"""
     if row["kind"] == "remember":
         return await _send_remember(cfg, row)
+    if (row["sender_type"] == "owner" and row["chat_type"] != "private" and row["platform"] in OWNER_PLATFORMS
+            and row["event_id"] and row["chat_id"]):
+        result = await _send_owner_capture(cfg, row)
+        if result is not None:
+            return result
     arguments = {
         "action": "log",
         "source_ai": row["source_ai"],
@@ -664,6 +733,8 @@ async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str
         arguments["chat_type"] = "private_group"
     if row["event_id"]:
         arguments["event_id"] = row["event_id"]  # 重复提交时 Hub 回 {"status": "duplicate"}，同样算送达
+    if row["chat_id"]:
+        arguments["chat_id"] = row["chat_id"]  # 群里几位 AI 的回合进同一个缓冲区，只提取一次（Hub #131）
     sent: list = []
     try:
         await asyncio.wait_for(
@@ -797,7 +868,8 @@ def _clean_reply(ai_response: str) -> str:
         return ai_response or ""
 
 
-def schedule_capture(actor: str, user_message: str, ai_response: str, *, chat_type: str = "private") -> None:
+def schedule_capture(actor: str, user_message: str, ai_response: str, *, chat_type: str = "private",
+                     chat_id: str = "", from_owner: bool = False) -> None:
     """回复落库后调用：先同步落盘到 outbox，再后台发送，不阻塞当前请求。"""
     cfg = load_config()
     if not _is_active(cfg) or not cfg.get("capture_enabled", True) or not source_ai_for(actor, cfg):
@@ -807,7 +879,7 @@ def schedule_capture(actor: str, user_message: str, ai_response: str, *, chat_ty
     if not user_message or not ai_response:
         return
     try:
-        if _enqueue(actor, user_message, ai_response, chat_type) is None:
+        if _enqueue(actor, user_message, ai_response, chat_type, chat_id=chat_id, from_owner=from_owner) is None:
             return
     except Exception as error:
         log.warning("[MemoryHub] 写入待补传队列失败：%s", error)
@@ -832,9 +904,14 @@ def paired_user_message(history: list[dict], sender: str) -> str:
     return ""
 
 
-def schedule_chatroom_capture(sender: str, user_message: str, ai_response: str, room_type: str) -> None:
-    """聊天室里一次正常回复完成后调用（失败提示、主动消息、工具后续不要调用）。"""
-    schedule_capture(sender, user_message, ai_response, chat_type="group" if room_type == "group" else "private")
+def schedule_chatroom_capture(sender: str, user_message: str, ai_response: str, room_type: str,
+                              room_id: str = "") -> None:
+    """聊天室里一次正常回复完成后调用（失败提示、主动消息、工具后续不要调用）。
+
+    user_message 要用 paired_user_message 取：它只认 sender == "user" 的消息，那只能是小猫自己发的，
+    所以这里标 from_owner；群聊时 Hub 凭主人钥匙认出是她（Hub #131）。"""
+    schedule_capture(sender, user_message, ai_response, chat_type="group" if room_type == "group" else "private",
+                     chat_id=room_id, from_owner=True)
 
 
 def rebind_legacy_held(confirmed_url: str) -> int:

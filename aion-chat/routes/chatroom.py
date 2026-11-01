@@ -4516,7 +4516,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
     _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
     if not group and not extra_prompt:  # 群聊、闹铃这类系统叫来的话不单独记入 Memory Hub
-        memory_hub_bridge.schedule_capture(actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text)
+        memory_hub_bridge.schedule_chatroom_capture(
+            actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text, "private", room_id)
 
 
 @_chatroom_reply_guard("connor")
@@ -4649,7 +4650,8 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
     )
     await _q.put({"type": "connor_done", "message": msg})
     if not has_error and not safety_notice:
-        memory_hub_bridge.schedule_capture("connor", memory_hub_bridge.paired_user_message(msgs, "connor"), reply)
+        memory_hub_bridge.schedule_chatroom_capture(
+            "connor", memory_hub_bridge.paired_user_message(msgs, "connor"), reply, "private", room_id)
     await _emit_chatroom_debug(_q, _chatroom_debug_payload(
         room_id=room_id,
         model_key=connor_model_key,
@@ -4870,6 +4872,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
     if not has_error and not safety_notice and not ambient_context:
         memory_hub_bridge.schedule_chatroom_capture(
             "aion", memory_hub_bridge.paired_user_message(msgs, "aion"), clean_text, await _get_room_type(room_id),
+            room_id,
         )
     await _emit_chatroom_debug(_q, _chatroom_debug_payload(
         room_id=room_id,
@@ -5015,6 +5018,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
     if not has_error and not safety_notice and not ambient_context:
         memory_hub_bridge.schedule_chatroom_capture(
             "connor", memory_hub_bridge.paired_user_message(msgs, "connor"), clean_text, await _get_room_type(room_id),
+            room_id,
         )
     await _emit_chatroom_debug(_q, _chatroom_debug_payload(
         room_id=room_id,
