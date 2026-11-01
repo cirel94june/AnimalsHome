@@ -540,8 +540,11 @@ async def build_memory_blocks(
         "debug_top6": [_memory_debug_item(m) for m in debug_candidates[:6]],
     })
 
+    time_block = await _with_hub(time_block)
+    if memory_hub_actor:
+        debug_digest["memory_hub"] = memory_hub_bridge.read_status(memory_hub_actor, memory_hub_chat_id)
     return {
-        "time_block": await _with_hub(time_block),
+        "time_block": time_block,
         "memory_block": memory_block,
         "digest_result": debug_digest,
     }

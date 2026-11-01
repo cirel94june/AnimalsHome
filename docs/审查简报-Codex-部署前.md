@@ -1869,3 +1869,25 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_phone_camera_trigger_wiring.py` 测手机在线时的取图，在 setUp 里设成在线。
   - `test_phone_usability.py` 加群聊弹窗的检查。
   - 摄像头、应用监管、哨兵相关共 209 项，只有 `test_sentinel_routes.py` 的 2 项失败，改动前就失败。
+
+
+## 122. 家里聊的 TG bot 不记得：Hub 取记忆常超时，一次超时全员停 60 秒
+
+- **小猫反映**：在前端聊的，去问 TG bot 都不记得。这次只修 AionsHome 这一侧；Hub 是否把群聊捕获变成 bot 能想起来的记忆，另外问 Hub 窗口。
+- **只读排查**（只看日志、计数，不看聊天内容）：
+  - 写入正常：群聊回合进了 Hub outbox，今天也有发出去的，outbox 里没积压。
+  - 读取不正常：app.log 里约 99 条「[MemoryHub] read 调用失败，60.0s 内暂停：」，冒号后面是空的（超时异常的文字是空的）。
+  - 用生产参数对 Hub 计时，一次 context 要 2.3～4 秒。上限是 6 秒，群里几位同时取会更慢。
+  - 原来的逻辑是一次失败就设一个全局暂停，所有人 60 秒内都不去取。群里一位超时，接下来一分钟里谁都拿不到 Hub 记忆。
+  - 系统日志里「召回 N 条 / 无相关记忆」只看本机旧记忆库，Hub 取没取到完全看不出来。所以看上去像「小克不召回」。
+- **改动**（`memory_hub_bridge.py`）：
+  - `context_timeout_seconds` 默认从 6 改成 12，交接卡读取也一样。
+  - `_trip` 改成连续失败 2 次才暂停，暂停时长默认从 60 秒改成 15 秒；读成功一次（incremental 或交接卡）就清零。写入是另一个计数，互不影响。
+  - 日志写出异常类型（如 `TimeoutError`），区分是超时还是连不上。
+  - 新增 `read_status(actor, chat_id)`：按「AI + 对话」记最近一次取 Hub 记忆的状态（ok / empty / timeout / error / cooldown / off）、字数、耗时，只有这些，不存记忆内容。超过 500 条时整体清空。
+- **系统日志**：
+  - 私聊（`routes/chat.py` 三处 debug）和群聊 / 座位（`context_builder.py` → `routes/chatroom.py`）的 debug 里加 `memory_hub`。
+  - `chat.js` / `chatroom.js` 在「召回 N 条」旁边加一项，例如「🗂 Hub 记忆 812 字 · 2.6秒」、「Hub 超时没取到」、「Hub 刚连续失败，暂停中」。没接 Hub 的 AI 不显示这一项。
+- **测试**（`test_memory_hub_bridge.py` 共 54 项全过）：
+  - 新加：一次失败不暂停、成功清零、连续两次才停且不超过 15 秒；默认等待时间够一次真实调用；系统日志状态按窗口分开记、不含内容、超时也会记下。
+  - 群聊、座位、上下文相关测试中的失败（6 项），改动前就同样失败（`test_chatroom_*` 的移动端样式 / 缓存号检查、`test_seat_chat` 的事务问题）。

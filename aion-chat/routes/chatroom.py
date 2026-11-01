@@ -2280,6 +2280,7 @@ def _chatroom_debug_payload(
         "recall_topic": digest.get("topic", ""),
         "is_search_needed": digest.get("is_search_needed", False),
         "recalled_memories": digest.get("recalled_memories") or [],
+        "memory_hub": digest.get("memory_hub"),
         "debug_top6": digest.get("debug_top6") or [],
         "prompt_messages": [
             {"role": m.get("role", ""), "content": str(m.get("content", ""))}

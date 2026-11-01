@@ -2336,6 +2336,21 @@ async function copyAllSystemLogs() {
   }
 }
 
+// 11-01：上面「召回 N 条」只是本机旧记忆；Hub 里的共享记忆取没取到单独显示
+function hubMemoryLogHtml(hub) {
+  if (!hub || hub.status === 'off') return '';
+  const secs = hub.seconds != null ? ` · ${hub.seconds}秒` : '';
+  const text = {
+    ok: `🗂 Hub 记忆 ${hub.chars} 字${secs}`,
+    empty: `🗂 Hub 没有相关记忆${secs}`,
+    timeout: `🗂 Hub 超时没取到${secs}`,
+    error: `🗂 Hub 出错没取到`,
+    cooldown: '🗂 Hub 刚连续失败，暂停中',
+  }[hub.status];
+  if (!text) return '';
+  return `<span class="syslog-mem${hub.status === 'ok' ? '' : ' none'}">${text}</span>`;
+}
+
 function renderSystemLogList() {
   const el = $("sysLogList");
   const countEl = $("sysLogCount");
@@ -2404,6 +2419,7 @@ function renderSystemLogList() {
       <span class="syslog-model">📦 ${escHtml(d.model || '?')}</span>
       <span class="syslog-tokens">${tokenText}</span>
       <span class="${memCls}">${memText}</span>
+      ${hubMemoryLogHtml(d.memory_hub)}
       ${hasDetail ? `<button class="syslog-detail-toggle" onclick="toggleSysLogDetail('${detailId}')">详情 ▾</button>` : ''}
       ${hasDetail ? `<button class="syslog-detail-toggle" onclick="copySystemLogEntry('${d._id}')">复制全文</button>` : ''}
       ${hasDetail ? `<div class="syslog-detail" id="${detailId}">${detailHtml}</div>` : ''}

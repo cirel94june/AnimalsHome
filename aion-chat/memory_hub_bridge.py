@@ -49,10 +49,12 @@ _DEFAULT_CONFIG: dict[str, Any] = {
     "actors": {},
     "platform": "aionshome",
     "context_max_chars": 2500,
-    "context_timeout_seconds": 6.0,
+    # 11-01 实测一次 context 要 2.3～4 秒（新建连接 + 握手 + 查询），群聊几位同时取更慢；6 秒常超时
+    "context_timeout_seconds": 12.0,
     "capture_timeout_seconds": 20.0,
     "capture_enabled": True,
-    "failure_cooldown_seconds": 60.0,
+    # 连续失败两次才暂停，而且只停 15 秒：原来一次超时就让所有人 60 秒都取不到记忆（11-01）
+    "failure_cooldown_seconds": 15.0,
 }
 
 _CONTEXT_HEADER = (
@@ -145,9 +147,43 @@ def _in_cooldown(kind: str = "read") -> bool:
     return time.monotonic() < _cooldown_until.get(kind, 0.0)
 
 
+_consecutive_failures: dict[str, int] = {}
+FAILURES_BEFORE_COOLDOWN = 2
+
+# 每位 AI 最近一次去 Hub 取记忆的情况，系统日志里显示（11-01：原来只显示本地旧记忆，Hub 取没取到看不出来）
+last_read_status: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def _note_read(actor: str, chat_id: str, status: str, *, chars: int = 0, started: float | None = None,
+               error: str = "") -> None:
+    if len(last_read_status) > 500:
+        last_read_status.clear()
+    last_read_status[(actor, chat_id or "")] = {
+        "status": status, "chars": int(chars), "error": error, "at": time.time(),
+        "seconds": round(time.monotonic() - started, 2) if started is not None else None,
+    }
+
+
+def read_status(actor: str, chat_id: str = "") -> dict[str, Any] | None:
+    """给系统日志用：这位 AI 在这个对话里最近一次取 Hub 记忆的结果（只有状态、字数、耗时，没有内容）。"""
+    status = last_read_status.get((actor, chat_id or ""))
+    return dict(status) if status else None
+
+
+def _succeeded(kind: str = "read") -> None:
+    _consecutive_failures[kind] = 0
+
+
 def _trip(cfg: dict[str, Any], error: BaseException, kind: str = "read") -> None:
-    _cooldown_until[kind] = time.monotonic() + float(cfg.get("failure_cooldown_seconds") or 60.0)
-    log.warning("[MemoryHub] %s 调用失败，%ss 内暂停：%s", kind, cfg.get("failure_cooldown_seconds"), error)
+    failures = _consecutive_failures.get(kind, 0) + 1
+    _consecutive_failures[kind] = failures
+    # 超时的异常文字是空的，日志里原来只剩一个冒号；写上类型才看得出是超时还是连不上
+    reason = f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+    if failures < FAILURES_BEFORE_COOLDOWN:
+        log.warning("[MemoryHub] %s 调用失败（第 %s 次，先不暂停）：%s", kind, failures, reason)
+        return
+    _cooldown_until[kind] = time.monotonic() + float(cfg.get("failure_cooldown_seconds") or 15.0)
+    log.warning("[MemoryHub] %s 连续失败 %s 次，%ss 内暂停：%s", kind, failures, cfg.get("failure_cooldown_seconds"), reason)
 
 
 async def _call_tool(cfg: dict[str, Any], tool: str, arguments: dict[str, Any], sent: list | None = None) -> str:
@@ -214,9 +250,11 @@ async def context_block(actor: str, message: str, chat_id: str = "", chat_type: 
     群聊不读交接卡：交接卡是写给和小猫一对一时的自己看的，不该带进群里。
     """
     cfg = load_config()
-    if not _is_active(cfg) or _in_cooldown("read"):
+    if not _is_active(cfg) or not source_ai_for(actor, cfg):
+        _note_read(actor, chat_id, "off")
         return ""
-    if not source_ai_for(actor, cfg):
+    if _in_cooldown("read"):
+        _note_read(actor, chat_id, "cooldown")
         return ""
     chat_type = _chat_type(chat_type)
     if chat_type != "private" or not is_new_session(last_activity(actor)):
@@ -238,17 +276,22 @@ async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat
     }
     if chat_id:
         arguments["chat_id"] = str(chat_id)[:200]
+    started = time.monotonic()
     try:
         raw = await asyncio.wait_for(
             _call_tool(cfg, "context", arguments),
-            timeout=float(cfg.get("context_timeout_seconds") or 6.0),
+            timeout=float(cfg.get("context_timeout_seconds") or 12.0),
         )
     except asyncio.CancelledError:
         raise
     except Exception as error:  # 包含超时与 anyio 的 ExceptionGroup
         _trip(cfg, error, "read")
+        _note_read(actor, chat_id, "timeout" if isinstance(error, (asyncio.TimeoutError, TimeoutError)) else "error",
+                   started=started, error=type(error).__name__)
         return ""
+    _succeeded("read")
     text = _unwrap_text(raw)
+    _note_read(actor, chat_id, "ok" if text else "empty", chars=len(text), started=started)
     if not text:
         return ""
     return _CONTEXT_HEADER + text
@@ -283,13 +326,14 @@ async def handoff_block(actor: str, chat_type: str = "private") -> str:
     try:
         raw = await asyncio.wait_for(
             _call_tool(cfg, "context", arguments),
-            timeout=float(cfg.get("context_timeout_seconds") or 6.0),
+            timeout=float(cfg.get("context_timeout_seconds") or 12.0),
         )
     except asyncio.CancelledError:
         raise
     except Exception as error:
         _trip(cfg, error, "read")
         return ""
+    _succeeded("read")
     text = _unwrap_text(raw)
     if not text or text.startswith("（暂无交接卡）"):
         return ""

@@ -2083,6 +2083,21 @@ function crBuildAmbientLogEntry(d, detailId) {
   </div>`;
 }
 
+// 11-01：上面「召回 N 条」只是本机旧记忆；Hub 里的共享记忆取没取到单独显示
+function crHubMemoryLogHtml(hub) {
+  if (!hub || hub.status === 'off') return '';
+  const secs = hub.seconds != null ? ` · ${hub.seconds}秒` : '';
+  const text = {
+    ok: `🗂 Hub 记忆 ${hub.chars} 字${secs}`,
+    empty: `🗂 Hub 没有相关记忆${secs}`,
+    timeout: `🗂 Hub 超时没取到${secs}`,
+    error: `🗂 Hub 出错没取到`,
+    cooldown: '🗂 Hub 刚连续失败，暂停中',
+  }[hub.status];
+  if (!text) return '';
+  return `<span class="cr-syslog-mem${hub.status === 'ok' ? '' : ' none'}">${text}</span>`;
+}
+
 function crRenderSystemLogList() {
   const el = document.getElementById('crSysLogList');
   const countEl = document.getElementById('crSysLogCount');
@@ -2153,6 +2168,7 @@ function crRenderSystemLogList() {
       <span class="cr-syslog-model">📦 ${esc(d.model || '?')}</span>
       <span class="cr-syslog-tokens">${tokenText}</span>
       <span class="${memCls}">${memText}</span>
+      ${crHubMemoryLogHtml(d.memory_hub)}
       ${hasDetail ? `<button class="cr-syslog-detail-toggle" onclick="crToggleSysLogDetail('${detailId}')">详情 ▾</button>` : ''}
       ${hasDetail ? `<button class="cr-syslog-detail-toggle" onclick="crCopySystemLogEntry('${d._id}')">复制全文</button>` : ''}
       ${hasDetail ? `<div class="cr-syslog-detail" id="${detailId}">${detailHtml}</div>` : ''}

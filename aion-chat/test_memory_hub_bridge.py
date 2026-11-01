@@ -103,6 +103,8 @@ def fake_hub():
 def isolated_config(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge, "CONFIG_PATH", tmp_path / "memory_hub.json")
     monkeypatch.setattr(bridge, "_cooldown_until", {"read": 0.0, "write": 0.0})
+    monkeypatch.setattr(bridge, "_consecutive_failures", {})
+    monkeypatch.setattr(bridge, "last_read_status", {})
     monkeypatch.setattr(bridge, "OUTBOX_PATH", tmp_path / "outbox.db")
     monkeypatch.setattr(bridge, "_dropped", 0)
     for key in ("MEMORY_HUB_URL", "MEMORY_HUB_TOKEN", "MEMORY_HUB_ENABLED"):
@@ -230,6 +232,37 @@ def test_slow_hub_times_out_without_blocking_chat(fake_hub, isolated_config):
     started = time.monotonic()
     assert asyncio.run(bridge.context_block("aion", "slow")) == ""
     assert time.monotonic() - started < 1.5
+
+
+def test_one_slow_read_does_not_pause_everyone(isolated_config):
+    """11-01：群里几位同时取记忆，一次超时就让所有人 60 秒都取不到。现在连续两次才停 15 秒，成功一次就清零。"""
+    cfg = {"failure_cooldown_seconds": 15.0}
+    bridge._trip(cfg, TimeoutError(), "read")
+    assert not bridge._in_cooldown()
+    bridge._succeeded("read")
+    bridge._trip(cfg, TimeoutError(), "read")
+    assert not bridge._in_cooldown()
+    bridge._trip(cfg, TimeoutError(), "read")
+    assert bridge._in_cooldown()
+    assert bridge._cooldown_until["read"] - time.monotonic() <= 15.0
+
+
+def test_default_wait_fits_a_real_hub_call():
+    assert bridge._DEFAULT_CONFIG["context_timeout_seconds"] >= 10
+    assert bridge._DEFAULT_CONFIG["failure_cooldown_seconds"] <= 20
+
+
+def test_syslog_sees_whether_hub_memory_arrived(fake_hub, isolated_config):
+    _write(isolated_config, enabled=True, url=fake_hub, context_timeout_seconds=4)
+    block = asyncio.run(bridge.context_block("aion", "今天怎么样", "conv_1"))
+    status = bridge.read_status("aion", "conv_1")
+    assert status["status"] == "ok" and status["chars"] > 0 and block
+    assert "content" not in status and "text" not in status  # 只有状态，没有记忆内容
+    _write(isolated_config, enabled=True, url=fake_hub, context_timeout_seconds=0.5)
+    asyncio.run(bridge.context_block("aion", "slow", "conv_2"))
+    assert bridge.read_status("aion", "conv_2")["status"] == "timeout"
+    assert bridge.read_status("aion", "conv_1")["status"] == "ok"  # 别的窗口不受影响
+    assert bridge.read_status("connor", "conv_1") is None
 
 
 def test_unwrap_text_handles_nested_result_payload():
