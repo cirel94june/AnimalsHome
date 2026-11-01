@@ -224,6 +224,33 @@ async def trip(mode: str, actors: list[str], *, where: str = "pick", named: str 
         release()
 
 
+async def _map_query(place_name: str, model: dict) -> str:
+    """请模型把地名改写成地图认得的英文写法（地点, 城市, 州或省, 国家）。只改写，不带人设和聊天。"""
+    from memory_hub_jobs import complete
+    text = await complete(model["key"], [{"role": "user", "content": (
+        "把下面这个地名改写成 OpenStreetMap 能查到的英文写法，格式：地点, 城市, 州或省, 国家。"
+        "只返回这一行，不要解释。\n地名：" + place_name)}], snapshot=model["snapshot"])
+    lines = [line.strip().strip("\"'「」`") for line in (text or "").splitlines() if line.strip()]
+    return lines[0][:120] if lines else ""
+
+
+async def _lookup_place(place_name: str, model: dict) -> travel_places.Place:
+    """先按原样查；查不到（中文写的外国地名常这样，11-01 狗蛋没去成威基基海滩）就换成英文写法再查一次。"""
+    try:
+        return await travel_places.lookup(place_name)
+    except ValueError:
+        query = await _map_query(place_name, model)
+        if not query or query == place_name:
+            raise
+    try:
+        place = await travel_places.lookup(query)
+    except ValueError:
+        raise ValueError(f"没找到「{place_name}」这个地方") from None
+    if not travel_places._has_cjk(place.name):
+        place.name = place_name.split()[-1]  # 地图只给了英文名时，用小猫写的中文名
+    return place
+
+
 async def _trip(mode: str, actors: list[str], *, where: str, named: str, wish: str) -> dict[str, Any]:
     import autonomy
     if not actors or (mode != "family" and len(actors) != 1) or (mode == "family" and len(actors) < 2):
@@ -232,7 +259,7 @@ async def _trip(mode: str, actors: list[str], *, where: str, named: str, wish: s
     user = _user_name()
     wish = (wish or "").strip()[:200]
     place_name = await choose_place(actors[0], where=where, named=named, wish=wish, model=models[actors[0]])
-    place = await travel_places.lookup(place_name)
+    place = await _lookup_place(place_name, models[actors[0]])
     session_id = f"travel_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
     if mode in ("solo", "duo"):

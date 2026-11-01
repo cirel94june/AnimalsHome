@@ -212,3 +212,38 @@ def test_bad_combinations_are_rejected(env):
 def test_title_line_is_split_off():
     assert travel._split_title("正文\n第二行\n标题：海边", "默认") == ("正文\n第二行", "海边")
     assert travel._split_title("没有标题", "默认") == ("没有标题", "默认")
+
+
+def test_foreign_place_in_chinese_retries_with_english_map_query(monkeypatch):
+    """11-01：狗蛋没去成「美国 檀香山 威基基海滩」——地图认不出中文写的外国地名，换成英文写法再查。"""
+    asked = []
+
+    async def fake_lookup(name, **_):
+        asked.append(name)
+        if name == "Waikiki Beach, Honolulu, Hawaii, USA":
+            return travel_places.Place(name="Waikīkī Beach", country="美国", latitude=21.27, longitude=-157.83)
+        raise ValueError(f"没找到「{name}」这个地方")
+
+    async def fake_complete(key, messages, snapshot=None):
+        assert "美国 檀香山 威基基海滩" in messages[-1]["content"]
+        return "Waikiki Beach, Honolulu, Hawaii, USA\n"
+
+    monkeypatch.setattr(travel_places, "lookup", fake_lookup)
+    monkeypatch.setattr(_mhj, "complete", fake_complete)
+    place = asyncio.run(travel._lookup_place("美国 檀香山 威基基海滩", {"key": "m", "snapshot": None}))
+    assert asked == ["美国 檀香山 威基基海滩", "Waikiki Beach, Honolulu, Hawaii, USA"]
+    assert place.name == "威基基海滩"  # 地图只给英文名时用小猫写的中文
+    assert place.latitude == 21.27
+
+
+def test_place_still_not_found_reports_the_original_name(monkeypatch):
+    async def never(name, **_):
+        raise ValueError(f"没找到「{name}」这个地方")
+
+    async def fake_complete(key, messages, snapshot=None):
+        return "Nowhere Land, Atlantis"
+
+    monkeypatch.setattr(travel_places, "lookup", never)
+    monkeypatch.setattr(_mhj, "complete", fake_complete)
+    with pytest.raises(ValueError, match="没找到「亚特兰蒂斯」"):
+        asyncio.run(travel._lookup_place("亚特兰蒂斯", {"key": "m", "snapshot": None}))
