@@ -246,8 +246,10 @@ async def _lookup_place(place_name: str, model: dict) -> travel_places.Place:
         place = await travel_places.lookup(query)
     except ValueError:
         raise ValueError(f"没找到「{place_name}」这个地方") from None
-    if not travel_places._has_cjk(place.name):
-        place.name = place_name.split()[-1]  # 地图只给了英文名时，用小猫写的中文名
+    # 地图只给了英文名、原来写的是中文时，显示原来那整串（不按空格猜哪段是地点，Codex §108 M1：会把多词地名截坏）；
+    # 原来就是英文写的，用地图查到的名字
+    if not travel_places._has_cjk(place.name) and travel_places._has_cjk(place_name):
+        place.name = place_name.strip()
     return place
 
 

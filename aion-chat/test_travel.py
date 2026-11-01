@@ -232,7 +232,7 @@ def test_foreign_place_in_chinese_retries_with_english_map_query(monkeypatch):
     monkeypatch.setattr(_mhj, "complete", fake_complete)
     place = asyncio.run(travel._lookup_place("美国 檀香山 威基基海滩", {"key": "m", "snapshot": None}))
     assert asked == ["美国 檀香山 威基基海滩", "Waikiki Beach, Honolulu, Hawaii, USA"]
-    assert place.name == "威基基海滩"  # 地图只给英文名时用小猫写的中文
+    assert place.name == "美国 檀香山 威基基海滩"  # 地图只给英文名时用小猫写的整串中文，不按空格截
     assert place.latitude == 21.27
 
 
@@ -247,3 +247,21 @@ def test_place_still_not_found_reports_the_original_name(monkeypatch):
     monkeypatch.setattr(_mhj, "complete", fake_complete)
     with pytest.raises(ValueError, match="没找到「亚特兰蒂斯」"):
         asyncio.run(travel._lookup_place("亚特兰蒂斯", {"key": "m", "snapshot": None}))
+
+
+def test_display_name_never_truncates_multi_word_places(monkeypatch):
+    """Codex §108 M1：按空格取最后一段会把「New York Central Park」截成「Park」。"""
+    async def fake_lookup(name, **_):
+        if name.startswith("EN:"):
+            return travel_places.Place(name="Central Park", country="美国")
+        raise ValueError(f"没找到「{name}」这个地方")
+
+    async def fake_complete(key, messages, snapshot=None):
+        return "EN:" + messages[-1]["content"].split("地名：")[-1]
+
+    monkeypatch.setattr(travel_places, "lookup", fake_lookup)
+    monkeypatch.setattr(_mhj, "complete", fake_complete)
+    model = {"key": "m", "snapshot": None}
+    assert asyncio.run(travel._lookup_place("New York Central Park", model)).name == "Central Park"
+    assert asyncio.run(travel._lookup_place("美国 夏威夷 Waikiki Beach", model)).name == "美国 夏威夷 Waikiki Beach"
+    assert asyncio.run(travel._lookup_place("日本 东京 浅草 寺", model)).name == "日本 东京 浅草 寺"
