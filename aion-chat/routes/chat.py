@@ -1756,7 +1756,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             await manager.broadcast({"type": "msg_created", "data": ai_msg})
             await broadcast_app_supervision_command(supervision_command)
             await export_conversation(conv_id)
-            memory_hub_bridge.schedule_capture("aion", body.content, full_text)
+            memory_hub_bridge.schedule_capture("aion", body.content, full_text, chat_id=conv_id)
 
             if toy_matches and allow_legacy_toy():
                 toy_data = {'type': 'toy_command', 'commands': toy_matches, 'msg_id': ai_msg_id, 'epoch': toy_selection_state()['epoch']}
@@ -2487,7 +2487,7 @@ async def send_message(conv_id: str, body: MsgCreate):
             await manager.broadcast({"type": "msg_created", "data": ai_msg})
             await broadcast_app_supervision_command(supervision_command)
             await export_conversation(conv_id)
-            memory_hub_bridge.schedule_capture("aion", body.content, full_text)
+            memory_hub_bridge.schedule_capture("aion", body.content, full_text, chat_id=conv_id)
 
             # 推送 [TOY:x] 指令到前端
             if toy_matches and allow_legacy_toy():
@@ -3894,7 +3894,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             ai_msg = {"id": ai_msg_id, "conv_id": conv_id, "role": "assistant", "content": full_text, "created_at": now2, "attachments": reply_atts, "reasoning_content": usage_meta.get("reasoning_content", "").strip()}
             await manager.broadcast({"type": "msg_created", "data": ai_msg})
             await export_conversation(conv_id)
-            memory_hub_bridge.schedule_capture("aion", lounge_request_text, full_text)
+            memory_hub_bridge.schedule_capture("aion", lounge_request_text, full_text, chat_id=conv_id)
 
             # 推送 [TOY:x] 指令到前端
             if toy_matches and allow_legacy_toy():

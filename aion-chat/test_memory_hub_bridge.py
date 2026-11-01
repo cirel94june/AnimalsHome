@@ -800,3 +800,58 @@ def test_tool_only_replies_still_write_the_syslog():
     from pathlib import Path
     source = (Path(__file__).resolve().parent / "routes" / "chatroom.py").read_text(encoding="utf-8")
     assert source.count("# 只有搜记忆 / 巡逻指令时也写系统日志") == 3
+
+
+def _owner_row_after(monkeypatch, isolated_config, fake_hub, post, **cfg):
+    """排一条群里小猫的回合，用给定的 post 行为补传一次，返回 outbox 里这条的 (state, next_at, last_error)。"""
+    _write(isolated_config, enabled=True, url=fake_hub, **cfg)
+    monkeypatch.setenv("MEMORY_HUB_OWNER_SECRET", "owner-secret")
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            return await post()
+
+    monkeypatch.setattr(bridge, "_http_client", FakeClient)
+    assert bridge._enqueue("connor", "我今天去爬山了", "好厉害", "group", chat_id="cr_g", from_owner=True)
+    asyncio.run(bridge.drain_outbox())
+    with closing_outbox() as conn:
+        return conn.execute("SELECT state, next_at, last_error FROM outbox").fetchall()
+
+
+@pytest.mark.parametrize("status", [302, 307])
+def test_redirect_is_not_counted_as_delivered(fake_hub, isolated_config, monkeypatch, status):
+    """Codex §129 M1：3xx 原来算送达、删掉记录，其实 Hub 没收到。"""
+    async def post():
+        return _FakeResponse(status)
+    rows = _owner_row_after(monkeypatch, isolated_config, fake_hub, post)
+    assert len(rows) == 1 and rows[0][0] == "pending" and rows[0][1] > time.time()
+    assert "跳转" in rows[0][2]
+
+
+@pytest.mark.parametrize("status", [408, 429, 503])
+def test_rate_limit_and_timeouts_are_retried_not_parked(fake_hub, isolated_config, monkeypatch, status):
+    """Codex §129 M2：429 原来当永久拒收停放，以后再也不重发。"""
+    async def post():
+        return _FakeResponse(status)
+    rows = _owner_row_after(monkeypatch, isolated_config, fake_hub, post)
+    assert len(rows) == 1 and rows[0][0] == "pending" and rows[0][1] > time.time()
+
+
+def test_whole_request_has_one_deadline(fake_hub, isolated_config, monkeypatch):
+    """Codex §129 M3：Hub 一点点慢慢回时没有总时限，会一直占着补传锁。"""
+    async def post():
+        await asyncio.sleep(5)  # 比总时限长得多
+        return _FakeResponse(200)
+    started = time.monotonic()
+    rows = _owner_row_after(monkeypatch, isolated_config, fake_hub, post, capture_timeout_seconds=0.3)
+    assert time.monotonic() - started < 3
+    assert len(rows) == 1 and rows[0][0] == "pending"  # 不确定送到没有：保留，同一个 event_id 稍后重发

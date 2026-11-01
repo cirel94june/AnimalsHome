@@ -2017,3 +2017,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 新加：交接卡合并后只记一行日志，状态 ok、字数是合并后的、不含内容；三处提前返回都发 debug（源码检查）。
   - `node test_home_folders_ui.js` 通过。
   - bridge、chatroom、seat_chat 共 108 项里 6 项失败，都是改动前就有的。
+
+
+## 131. 修 §129 审查的 M1–M3、L1
+
+- **M1 跳转算成送达**：只有 2xx 算送达。3xx 返回 `not_sent`，记录保留，稍后按退避重发，状态页写「Hub 地址跳转了（3xx），请检查 Hub 地址」。httpx 默认不跟随跳转，带着主人钥匙也不会跳去别的地址。
+- **M2 限流当成永久拒收**：408、429、5xx 都返回 `uncertain`，记录保留，用同一个 event_id 按现有的有界退避重发（30 秒起，最长 30 分钟）。还没读 `Retry-After`，退避本身已经有上限。其余 4xx 仍算拒收。
+- **M3 没有总时限**：建连接、发请求、读完回复整体放进一个 `asyncio.wait_for`，时限用 `capture_timeout_seconds`，和 MCP 路径一致。超时按不确定处理，记录保留、同一个 event_id 重发。
+- **L1 小克私聊不带 chat_id**：`routes/chat.py` 三处 `schedule_capture` 都加上 `chat_id=conv_id`。
+- **§129 身份前提的说法更正**：`paired_user_message` 只认 sender=user，但剧场同步、归巢导入也会写 sender=user 的消息。所以准确的说法是：「sender=user 的消息都是小猫这边的内容（她本人发的，或者从她的剧场、归巢里同步进来的）」，而不是「一定是她刚刚直接打的原话」。目前没有哪条路径能让陌生人写进 sender=user。71 条旧记录按小猫的同意整批补身份，结论不变。
+- **测试**：新加 6 项：302、307 不删记录；408、429、503 留着重发；Hub 慢慢回时整体超时（0.3 秒）后记录保留。其中 5 项在 0903395 上失败（503 原来就会重发）。`test_memory_hub_bridge.py` 66 项全过。`schedule_capture` 相关的座位测试里只有改动前就有的那 1 项失败。

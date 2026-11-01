@@ -708,23 +708,35 @@ async def _send_owner_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[st
         "event_id": row["event_id"],
         "sender_type": "owner",
     }
-    try:
-        async with _http_client(float(cfg.get("capture_timeout_seconds") or 20.0)) as client:
+    timeout = float(cfg.get("capture_timeout_seconds") or 20.0)
+
+    async def _post() -> tuple[int, str]:
+        # 不跟随跳转（httpx 默认）：带着主人钥匙跳去别的地址不安全
+        async with _http_client(timeout) as client:
             response = await client.post(f"{base}/api/capture/log", json=body, headers=headers)
+            return response.status_code, response.text[:200]
+
+    try:
+        # 建连接、发请求、读完回复整体限时：Hub 一点点慢慢回，也不会一直占着补传（Codex §129 M3）
+        status, text = await asyncio.wait_for(_post(), timeout=timeout)
     except asyncio.CancelledError:
         raise
-    except Exception as error:
+    except Exception as error:  # 含整体超时
         _trip(cfg, error, "write")
         # 带 event_id：可能已经送到也没关系，重发时 Hub 会去重
         return "uncertain", type(error).__name__
-    if response.status_code in (401, 403):
-        log.warning("[MemoryHub] 主人钥匙被 Hub 拒绝（%s），这条改走共用钥匙，Hub 认不出是小猫", response.status_code)
+    if status in (401, 403):
+        log.warning("[MemoryHub] 主人钥匙被 Hub 拒绝（%s），这条改走共用钥匙，Hub 认不出是小猫", status)
         return None
-    if response.status_code >= 500:
-        return "uncertain", f"Hub {response.status_code}"
-    if response.status_code >= 400:
-        return "rejected", f"Hub 拒收 {response.status_code}：{response.text[:200]}"
-    return "ok", ""
+    if 200 <= status < 300:
+        return "ok", ""
+    if 300 <= status < 400:
+        # 跳转说明 Hub 地址配得不对：没送到，留着稍后重发（Codex §129 M1）
+        return "not_sent", f"Hub 地址跳转了（{status}），请检查 Hub 地址"
+    if status in (408, 429) or status >= 500:
+        # 超时、限流、Hub 出错都是暂时的：用同一个 event_id 退避重发（Codex §129 M2）
+        return "uncertain", f"Hub {status}"
+    return "rejected", f"Hub 拒收 {status}：{text}"
 
 
 async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
