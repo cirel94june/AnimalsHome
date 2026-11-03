@@ -2113,3 +2113,15 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **改动**：条件改成只看 `extra_prompt`（闹铃、主动陪伴这类系统叫来的话照旧不记）。群聊回复用 `schedule_chatroom_capture(actor_id, paired_user_message(...), clean_text, "group" if group else "private", room_id)`，和小克、Lucien 走同一条路：群聊带 chat_id、from_owner，小猫那一轮走主人钥匙 REST。
 - **测试**：`test_seat_chat` 新加：座位群聊回复以 `chat_type="group"`、`chat_id=房间`、`from_owner=True` 入队。座位、群、bridge 共 285 项里有 2 项失败（seat_chat 事务、bridge 的计时用例），改动前就有。
 - 同批还有 §135（718b255）：没换模型时不广播空模型。
+
+
+## 137. 时间选择改成 24 小时制的下拉框
+
+- **小猫反映**：静默时段的表盘（手机 WebView 自带的 `<input type="time">` 选择器）只有 12 小时，怎么选都是上午；想要 24 小时只能手动输入。
+- **改动**：新增 `static/time24.js`，在开关总览、摄像头、定位、健康四个页面引入。
+  - 把页面上的 `input[type=time]` 换成「几点（00～23，后面标凌晨/上午/下午/晚上）」和「几分（5 分钟一格；以前存的不是 5 的倍数就补上那一项）」两个下拉框。
+  - 原输入框藏起来照旧使用：在这个元素上重定义 `value`，页面代码赋值时下拉框跟着变；选下拉框时写回原输入框，并派发 `input` 和 `change`（含 `onchange` 属性），各页面原来的保存逻辑一行不改。
+- **验证**：
+  - 本机浏览器开关总览：选「23 点」后，`/api/idle-autonomy/quiet-hours` 存成 23:00，下面写「一共 9 小时」（截图见对话）。
+  - 摄像头、定位、健康页各有 2 组下拉框，读到已有值，控制台无报错。
+  - `test_1103_fixes` 新加 1 项。

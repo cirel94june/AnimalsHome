@@ -167,3 +167,15 @@ class EmptyModelBroadcastTests(unittest.TestCase):
     def test_empty_model_is_not_broadcast(self):
         source = (ROOT / "routes" / "chat.py").read_text(encoding="utf-8")
         self.assertIn('payload.pop("model", None)  # 没换模型', source)
+
+
+class Time24Tests(unittest.TestCase):
+    def test_every_time_picker_page_uses_the_24_hour_selects(self):
+        """11-03 小猫：手机自带的时间表盘只有 12 小时，怎么选都是上午。"""
+        for page in ("switches", "camera", "location", "health"):
+            html = (STATIC / f"{page}.html").read_text(encoding="utf-8")
+            self.assertIn('<script src="/static/time24.js', html, page)
+        js = (STATIC / "time24.js").read_text(encoding="utf-8")
+        self.assertIn("for (let h = 0; h < 24; h++)", js)
+        self.assertIn("input.dispatchEvent(new Event('change', { bubbles: true }));", js)
+        self.assertIn("Object.defineProperty(input, 'value'", js)  # 页面代码赋值时下拉框跟着变
