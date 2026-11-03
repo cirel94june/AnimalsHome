@@ -110,7 +110,7 @@ def _patch_sleep(monkeypatch, xhs_lite, sleep):
 def xhs(seat, monkeypatch, tmp_path):
     import xhs_lite
     monkeypatch.setattr(xhs_lite, "CONFIG_PATH", tmp_path / "xhs.json")
-    xhs_lite.save_config({"enabled": True, "auto_enabled": True, "allow_write_comments": True, "cookie": "c",
+    xhs_lite.save_config({"enabled": True, "auto_enabled": True, "allow_write_comments": True, "cookie": "c", "roam_mode": "target",
                           "target_user_id": "u", "write_delay_seconds": 5, "actors": {"ai3": {"enabled": True}}})
     import actors
     monkeypatch.setattr(actors, "display_name", lambda a: "狗蛋")

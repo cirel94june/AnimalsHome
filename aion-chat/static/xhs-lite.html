@@ -178,6 +178,8 @@ button:disabled {
 .config-toggle-grid {
   margin-top:10px;
 }
+.roam-mode { display:flex; flex-direction:column; gap:6px; margin-top:12px; font-size:13px; }
+.roam-mode select { min-height:38px; padding:6px 10px; border-radius:12px; border:1px solid var(--border, #ccd); background:var(--surface, #fff); color:inherit; font:inherit; max-width:100%; }
 .action-layout {
   display:grid;
   grid-template-columns:minmax(280px,.85fr) minmax(320px,1.15fr);
@@ -561,6 +563,12 @@ pre {
               <span class="switch-copy"><strong>真实评论/回复</strong><span>允许外部写入</span></span>
             </label>
           </div>
+          <label class="roam-mode">巡游方式
+            <select id="roamModeInput">
+              <option value="explore">随便逛：刷首页推荐或按自己的兴趣搜，看完回来说两句</option>
+              <option value="target">只看上面填的目标账号最新帖子</option>
+            </select>
+          </label>
         </div>
       </div>
 
@@ -669,6 +677,8 @@ function pill(text, cls = 'neutral') {
 function statusName(status) {
   return {
     observed:'只观察',
+    browsed:'看完一篇',
+    skipped:'没点开',
     drafted:'已生成草稿',
     commented:'已评论',
     replied:'已回复'
@@ -729,8 +739,12 @@ function summarizeObject(value) {
       ? result.actor_name + '：' + statusName(status)
       : '操作完成';
     const lines = [];
+    if (result.mode === 'explore') lines.push(result.source === 'search' ? '搜了：' + (result.keyword || '') : '刷了首页推荐');
     if (target.nickname || target.user_id) lines.push('目标：' + (target.nickname || target.user_id));
     if (note.title || note.note_id) lines.push('帖子：' + (note.title || note.note_id));
+    if (result.thoughts) lines.push('感想：' + brief(result.thoughts, 180));
+    if (result.message) lines.push((result.share === 'group' ? '在群里说：' : '跟小猫说：') + brief(result.message, 180)
+      + (result.shared === false ? '（没发出去）' : ''));
     if (result.comment_text) lines.push('评论：' + brief(result.comment_text, 180));
     else if (decision.reason || result.error) lines.push('说明：' + brief(decision.reason || result.error, 180));
     renderStatus({
@@ -769,6 +783,7 @@ async function loadConfig(options = {}) {
   currentConfig = await api('GET', '/api/xhs-lite/config');
   $('enabledInput').checked = !!currentConfig.enabled;
   $('autoEnabledInput').checked = !!currentConfig.auto_enabled;
+  $('roamModeInput').value = currentConfig.roam_mode === 'target' ? 'target' : 'explore';
   $('writeInput').checked = !!currentConfig.allow_write_comments;
   $('targetUserIdInput').value = currentConfig.target_user_id || '';
   $('targetNicknameInput').value = currentConfig.target_nickname || '';
@@ -837,6 +852,7 @@ function collectPayload() {
     auto_enabled: $('autoEnabledInput').checked,
     allow_write_comments: $('writeInput').checked,
     use_following_list: false,
+    roam_mode: $('roamModeInput').value || 'explore',
     clear_cookie: $('clearCookieInput').checked,
     target_user_id: $('targetUserIdInput').value.trim(),
     target_nickname: $('targetNicknameInput').value.trim(),

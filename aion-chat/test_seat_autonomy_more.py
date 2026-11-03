@@ -55,7 +55,7 @@ def test_role_chat_reply_goes_through_the_partners_own_path(family, monkeypatch,
     asyncio.run(autonomy._run_role_chat("ai3", {"message": "在干嘛", "target": target}))
     assert calls[replier].await_count == 1
     if replier == "_generate_seat_reply":
-        assert calls[replier].await_args.kwargs == {"actor": "ai4", "group": True}
+        assert calls[replier].await_args.kwargs == {"actor": "ai4", "group": True, "capture_user_turn": False}  # §138
     assert sum(m.await_count for m in calls.values()) == 1
 
 

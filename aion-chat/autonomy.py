@@ -85,7 +85,7 @@ ACTION_DEFS = {
     "album_browse": "翻看家庭相册（随机两张未看过的照片）",
     "web_roam": "上网冲浪搜索感兴趣的内容",
     "wish_pool": "查看许愿池并尝试实现用户的愿望",
-    "xhs_roam": "去小红书查看指定账号最新帖子并按人设评论或回复",
+    "xhs_roam": "去小红书随便逛逛（刷推荐或按兴趣搜），看一篇感兴趣的笔记，回来可以跟小猫聊聊",
     "taobao_roam": "按照自己的近期兴趣去淘宝搜索真实商品，挑选后保存在独立收藏篮并写小感想（不加购、不购买）",
     "friend_visit": "拜访一位 AI 好友",
     "board_check": "自己去看看家里的朋友留言板，决定要不要接话",
@@ -1939,6 +1939,26 @@ async def _run_xhs_roam(actor: str) -> dict:
     note = result.get("note") or {}
     target = result.get("target") or {}
     status = str(result.get("status") or "")
+    if result.get("mode") == "explore":  # 随便逛（11-03）
+        where = f"搜了「{result['keyword']}」" if result.get("source") == "search" else "刷了首页推荐"
+        if status == "skipped":
+            title, detail_parts = f"{actor_name}逛了逛小红书，没看到想点开的", [where]
+        else:
+            said = {"private": "，还跟小猫说了", "group": "，还在群里说了"}.get(result.get("share") or "", "")
+            title = f"{actor_name}在小红书看了一篇笔记{said if result.get('shared') else ''}"
+            detail_parts = [where, f"笔记：{note.get('title') or '无标题'}"]
+            if result.get("thoughts"):
+                detail_parts.append(f"感想：{result['thoughts']}")
+            if result.get("share_error"):
+                detail_parts.append(result["share_error"])
+        event = await append_idle_event(
+            actor, "xhs_roam", title, "\n".join(detail_parts),
+            target_type="xhs_note", target_id=str(note.get("note_id") or ""), result_type="xhs_view",
+            metadata={"status": status, "mode": "explore", "source": result.get("source"),
+                      "keyword": result.get("keyword"), "note": note, "share": result.get("share"),
+                      "shared": bool(result.get("shared"))},
+        )
+        return {"event": event, "xhs": result}
     if result.get("wrote") and status == "replied":
         title = f"{actor_name}在小红书回复了评论"
     elif result.get("wrote"):

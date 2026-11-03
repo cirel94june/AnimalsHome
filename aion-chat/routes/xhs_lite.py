@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Literal, Any, Optional
 import time
 
 from fastapi import APIRouter, Query
@@ -25,6 +25,7 @@ class XhsConfigUpdate(BaseModel):
     target_profile_url: Optional[str] = None
     task_instruction: Optional[str] = None
     use_following_list: Optional[bool] = None
+    roam_mode: Optional[Literal["explore", "target"]] = None  # 随便逛 / 看指定账号（11-03）
     max_following_pages: Optional[int] = None
     allow_write_comments: Optional[bool] = None
     write_delay_seconds: Optional[float] = None
@@ -54,6 +55,7 @@ async def update_config(body: XhsConfigUpdate):
         "target_profile_url",
         "task_instruction",
         "use_following_list",
+        "roam_mode",
         "allow_write_comments",
         "comment_signature_template",
     ):
