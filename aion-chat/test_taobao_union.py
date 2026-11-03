@@ -73,6 +73,19 @@ class UnionApiTests(unittest.TestCase):
         self.assertEqual("", taobao_union.normalize({**LEGACY_ITEM, "pict_url": "https://evil.example/a.jpg"})["image"])
         self.assertIsNone(taobao_union.normalize({**LEGACY_ITEM, "title": ""}))
 
+    def test_tricky_links_are_rejected_without_breaking_the_search(self):
+        """Codex §139 L1：反斜杠、坏端口、解析不了的链接，服务器要拒，而且只跳过那一件。"""
+        for bad in ("https://evil.example\\x.taobao.com/", "https://s.click.taobao.com:bad/x", "https://[bad",
+                    "https://s.click.taobao.com:8080/x", "https://s.click.taobao.com/a b"):
+            self.assertIsNone(taobao_union.normalize({**LEGACY_ITEM, "url": bad}), bad)
+        self.assertIsNotNone(taobao_union.normalize({**LEGACY_ITEM, "url": "https://s.click.taobao.com:443/x"}))
+        calls = []
+        answers = [{"tbk_dg_material_optional_upgrade_response": {"result_list": {"map_data": [
+            {**LEGACY_ITEM, "url": "https://[bad"}, UPGRADE_ITEM]}}}]
+        with patch.object(taobao_union, "_client", fake_client(answers, calls)):
+            result = asyncio.run(taobao_union.search("x", app_key="12345678", adzone_id="1111111"))
+        self.assertEqual((1, 1), (len(result["products"]), result["skipped"]))
+
     def test_falls_back_to_the_approved_legacy_search_when_upgrade_is_not_granted(self):
         calls = []
         answers = [{"error_response": {"code": 11, "msg": "Insufficient isv permissions"}},

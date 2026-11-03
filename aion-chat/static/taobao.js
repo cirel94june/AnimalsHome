@@ -44,7 +44,8 @@
   function productLink(p, text) {
     const link = node('a', '', text);
     // Server verifies provenance; also restrict navigation at the rendering boundary.
-    const url = new URL(p.url);
+    let url;
+    try { url = new URL(p.url); } catch (_) { return link; }  // 解析不了的链接：只显示文字，不能点
     // 淘宝联盟给的是推广链接（s.click.taobao.com 等），也只放行淘宝、天猫自己的域名
     const host = url.hostname;
     const taobaoHost = ['taobao.com', 'tmall.com'].includes(host) || host.endsWith('.taobao.com') || host.endsWith('.tmall.com');

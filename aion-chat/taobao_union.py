@@ -120,9 +120,26 @@ def _https(url: str) -> str:
     return "https:" + url if url.startswith("//") else url
 
 
-def _taobao_link(url: str) -> str:
+def _clean_url(url: str) -> tuple[str, object] | None:
+    """解析不了、带反斜杠 / 空白 / 控制字符、端口不是 443 的都不要（Codex §139 L1：服务器和浏览器对这些的解析不一致）。"""
     url = _https(url)
-    parts = urlsplit(url)
+    if not url or any(ch == "\\" or ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        return None
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if port not in (None, 443):
+        return None
+    return url, parts
+
+
+def _taobao_link(url: str) -> str:
+    cleaned = _clean_url(url)
+    if not cleaned:
+        return ""
+    url, parts = cleaned
     host = (parts.hostname or "").lower()
     if parts.scheme != "https" or parts.username or not (
             host in ("taobao.com", "tmall.com") or host.endswith(".taobao.com") or host.endswith(".tmall.com")):
@@ -131,8 +148,10 @@ def _taobao_link(url: str) -> str:
 
 
 def _image(url: str) -> str:
-    url = _https(url)
-    parts = urlsplit(url)
+    cleaned = _clean_url(url)
+    if not cleaned:
+        return ""
+    url, parts = cleaned
     host = (parts.hostname or "").lower()
     if parts.scheme == "https" and (host == "alicdn.com" or host.endswith(".alicdn.com")):
         return url[:2500]
@@ -194,5 +213,12 @@ async def search(keyword: str, *, app_key: str, adzone_id: str, page_size: int =
         # 新版还没批下来：用已经批了的旧版「物料搜索」
         data, method = await call(METHOD_LEGACY, biz, app_key=app_key), METHOD_LEGACY
     raw_items = _map_data(data)
-    products = [p for p in (normalize(r) for r in raw_items) if p]
+    products = []
+    for raw in raw_items:
+        try:
+            product = normalize(raw)
+        except (ValueError, TypeError, AttributeError):
+            product = None  # 一件坏商品只跳过它，不让整次搜索失败
+        if product:
+            products.append(product)
     return {"products": products, "skipped": len(raw_items) - len(products), "method": method}

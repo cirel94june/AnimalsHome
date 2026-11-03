@@ -2160,3 +2160,11 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 联盟搜索结果能记录、能收藏。
   - 和原来的 `test_taobao_shopping` 一起 22 项全过。本机浏览器看过设置对话框（截图见对话），没有在本机真的保存钥匙。
 - **还没用真钥匙验证过**：上线后由小猫在页面里填，再点「检查已保存的连接」。
+
+
+## 140. §139 的 L1：淘宝链接解析边界
+
+- 2026-11-03 16:49（北京时间）已部署 9f98c17（718b255～9f98c17，你审过）。
+- `taobao_union._clean_url`：带反斜杠、空白、控制字符的，解析出错的（如 `https://[bad`、`:bad` 端口），端口不是 443 的，一律不要。`_taobao_link` 和 `_image` 都先过这一关。`search` 逐件 `normalize`，单件抛异常只计入 skipped，不让整次搜索失败。
+- `taobao.js` 的 `productLink`：`new URL()` 包 try，解析不了的只显示文字、不能点。
+- 测试：`test_taobao_union` 新加 1 项，覆盖你给的三个反例和 8080 端口、带空格；`https://s.click.taobao.com:443/x` 照常接受；一件坏链接加一件好商品时得到 1 件、skipped 1。淘宝相关 23 项全过。
