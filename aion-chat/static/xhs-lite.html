@@ -892,6 +892,12 @@ async function saveConfig(options = {}) {
   return true;
 }
 async function checkLogin() {
+  // 11-03 小猫：贴好 cookie 直接点「测试登录」，因为没先保存，测的是空的。填了新的就先存再测
+  if (($('cookieInput')?.value || '').trim()) {
+    setStatus('先保存刚填的 cookie...', 'busy');
+    const saved = await saveConfig({ quiet:true });
+    if (saved === false) return;
+  }
   setStatus('测试登录中...', 'busy');
   const res = await api('POST', '/api/xhs-lite/check-login');
   if (res.ok && res.account) {

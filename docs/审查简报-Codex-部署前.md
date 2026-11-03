@@ -2168,3 +2168,9 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `taobao_union._clean_url`：带反斜杠、空白、控制字符的，解析出错的（如 `https://[bad`、`:bad` 端口），端口不是 443 的，一律不要。`_taobao_link` 和 `_image` 都先过这一关。`search` 逐件 `normalize`，单件抛异常只计入 skipped，不让整次搜索失败。
 - `taobao.js` 的 `productLink`：`new URL()` 包 try，解析不了的只显示文字、不能点。
 - 测试：`test_taobao_union` 新加 1 项，覆盖你给的三个反例和 8080 端口、带空格；`https://s.click.taobao.com:443/x` 照常接受；一件坏链接加一件好商品时得到 1 件、skipped 1。淘宝相关 23 项全过。
+
+
+## 141. 小红书页「测试登录」先保存刚填的 cookie
+
+- **小猫反映**：贴好 cookie 点「测试登录」不行。服务器上没有 `xhs_lite_config.json`，也没有 `PUT /api/xhs-lite/config` 请求：她没点保存，测试登录读的是空设置（「未配置小红书 cookie」）。
+- **改动**（`static/xhs-lite.html` 的 `checkLogin`）：Cookie 输入框里有新内容时，先 `saveConfig({quiet:true})`，失败就停，成功后再测。`saveConfig` 本来就在保存后清空输入框，所以不会重复保存。
