@@ -1420,11 +1420,14 @@ def _pick_partner(actor: str, wanted: str = "") -> str:
 async def _reply_in_group(target: str, room_id: str, room, msgs, context_limit, message: str, queue):
     from routes.chatroom import _generate_seat_reply, _reply_aion, _reply_connor
     if target == "aion":
-        await _reply_aion(room_id, msgs, context_limit, message, await _aion_model(), queue)
+        await _reply_aion(room_id, msgs, context_limit, message, await _aion_model(), queue, capture_user_turn=False)
     elif target == "connor":
-        await _reply_connor(room_id, msgs, context_limit, message, queue, connor_model_key=_connor_model())
+        await _reply_connor(room_id, msgs, context_limit, message, queue, connor_model_key=_connor_model(),
+                            capture_user_turn=False)
     else:  # 座位：用 TA 自己的人设和模型在群里接话（没准备好会留「没能回复」，不换人）
-        await _generate_seat_reply(room_id, room or {}, msgs, queue, context_limit, actor=target, group=True)
+        await _generate_seat_reply(room_id, room or {}, msgs, queue, context_limit, actor=target, group=True,
+                                   capture_user_turn=False)
+    # 这是 AI 之间自主叫来接话，不是小猫刚说话：不按「小猫的回合」记入 Hub（Codex §136 R1）
 
 
 async def _run_role_chat(actor: str, selected: dict | None = None) -> dict:

@@ -4447,7 +4447,8 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
 
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
-                               extra_prompt: str = "", proceed_check=None, extra_attachments: list | None = None):
+                               extra_prompt: str = "", proceed_check=None, extra_attachments: list | None = None,
+                               capture_user_turn: bool = True):
     """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
 
     私聊时 actor 取房间登记的座位；群聊时由调用方指定，并按群聊方式组织上下文。
@@ -4537,7 +4538,9 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
     _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
-    if not extra_prompt:  # 闹铃、主动陪伴这类系统叫来的话不单独记入 Memory Hub
+    # 闹铃、主动陪伴这类系统叫来的话、AI 之间自主叫来接话（capture_user_turn=False）不单独记入 Memory Hub：
+    # 那时往回找到的「小猫上一句」是旧的，配成新回合会冒充她刚说的，并发时还会记两次（Codex §136 R1）
+    if not extra_prompt and capture_user_turn:
         # 群聊回复也记（11-03 Hub 窗口：一条狗蛋的群聊回合都没收到）。原来写「群聊不单独记，和小克、Lucien 一致」，
         # 后来小克、Lucien 的群聊回复都记了，这里没跟上；三位规则对等
         memory_hub_bridge.schedule_chatroom_capture(
@@ -4783,7 +4786,7 @@ def _group_seat_members() -> list[str]:
 
 
 @_chatroom_reply_guard("aion")
-async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *, tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = ""):
+async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *, tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = "", capture_user_turn: bool = True):
     ai_label = _name_for_identity("aion")
     await _q.put({"type": "preparing", "sender": "aion"})
     aion_history, digest_out = await build_aion_group_context(
@@ -4902,7 +4905,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "aion_done", "message": aion_msg})
-    if not has_error and not safety_notice and not ambient_context:
+    if not has_error and not safety_notice and not ambient_context and capture_user_turn:
         memory_hub_bridge.schedule_chatroom_capture(
             "aion", memory_hub_bridge.paired_user_message(msgs, "aion"), clean_text, await _get_room_type(room_id),
             room_id,
@@ -4925,7 +4928,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
 
 @_chatroom_reply_guard("connor")
-async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_model_key="Codex", tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = ""):
+async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_model_key="Codex", tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = "", capture_user_turn: bool = True):
     connor_label = _name_for_identity("connor")
     await _q.put({"type": "preparing", "sender": "connor"})
     connor_history, digest_out = await build_connor_group_context(
@@ -5052,7 +5055,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "connor_done", "message": connor_msg})
-    if not has_error and not safety_notice and not ambient_context:
+    if not has_error and not safety_notice and not ambient_context and capture_user_turn:
         memory_hub_bridge.schedule_chatroom_capture(
             "connor", memory_hub_bridge.paired_user_message(msgs, "connor"), clean_text, await _get_room_type(room_id),
             room_id,

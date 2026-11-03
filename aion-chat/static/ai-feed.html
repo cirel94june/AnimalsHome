@@ -9,7 +9,8 @@
 <style>
 /* 11-01 小猫：活动日志、家庭动态、日记藏得深，翻起来难 → 一条时间线看大家都干了什么（草图 ②） */
 .feed-content { flex: 1; overflow-y: auto; padding: 12px 14px 28px; display: flex; flex-direction: column; gap: 12px; }
-.feed-chips { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+/* flex-shrink:0：能横向滚动的这一排在内容多时会被压成一条缝（11-03 小猫：人名按钮被挡住） */
+.feed-chips { display: flex; flex-shrink: 0; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
 .feed-chips::-webkit-scrollbar { display: none; }
 .feed-chip {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 36px;

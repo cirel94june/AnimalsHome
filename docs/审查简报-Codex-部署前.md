@@ -2125,3 +2125,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 本机浏览器开关总览：选「23 点」后，`/api/idle-autonomy/quiet-hours` 存成 23:00，下面写「一共 9 小时」（截图见对话）。
   - 摄像头、定位、健康页各有 2 组下拉框，读到已有值，控制台无报错。
   - `test_1103_fixes` 新加 1 项。
+
+
+## 138. 修 §136 的 R1：AI 之间自主接话不按「小猫的回合」记；AI 动态页人名一排被压扁
+
+- **R1**：`autonomy._reply_in_group`（AI 自主找家人在群里聊）叫小克、Lucien、座位接话时，`paired_user_message` 会往回找到小猫旧的那句，配成新的 owner 回合；并发时还会记两次。小克、Lucien 本来也有同样的问题，§136 之后座位也有了。
+  - `_generate_seat_reply`、`_reply_aion`、`_reply_connor` 加参数 `capture_user_turn: bool = True`，为 False 时不调 `schedule_chatroom_capture`。
+  - `_reply_in_group` 三处都传 `capture_user_turn=False`。
+  - 小猫发起的群聊、`trigger_ai_chat`（多轮里 `paired_user_message` 在 AI 说过话后返回空串）不变。系统叫来的（带 `extra_prompt` 或 `ambient_context`）本来就不记。
+- **AI 动态页**（小猫截图：顶部人名一排只剩一条缝）：`.feed-chips` 是能横向滚动的元素，在纵向 flex 的滚动容器里最小高度按 0 算，内容一多就被压扁。加 `flex-shrink: 0`。本机手机宽度塞 40 张卡片验证：不加时 2px，加了 38px（截图见对话）。
+- **测试**：`test_seat_chat` 新加 2 项：座位 `capture_user_turn=False` 时不入队；`_reply_in_group` 三处都关掉捕获。座位、自主、群相关 58 项里只有 seat_chat 事务那 1 项失败，改动前就有。

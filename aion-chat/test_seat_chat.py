@@ -291,3 +291,27 @@ def test_group_history_names_every_speaker_and_merges_turns(seats):
     private = seat_chat._history("ai3", msgs, 30)
     assert all("【" not in h["content"] for h in private)
     assert [h["role"] for h in private] == ["user", "assistant", "user"]
+
+
+def test_ai_initiated_group_reply_does_not_claim_an_old_user_line(seats, monkeypatch):
+    """Codex §136 R1：别的 AI 自主叫座位接话时，往回找到的是小猫旧的那句，不能配成新的「小猫回合」记两次。"""
+    async def save_msg(room_id, sender, content, msg_id=None, attachments=None, **kw):
+        return {"room_id": room_id, "sender": sender, "content": content, "id": msg_id}
+
+    capture = MagicMock()
+    monkeypatch.setattr(seat_chat, "build_context", AsyncMock(return_value=[{"role": "user", "content": "x"}]))
+    monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[]))
+    monkeypatch.setattr(chatroom_routes, "stream_ai", _stream("来啦"))
+    monkeypatch.setattr(chatroom_routes, "_save_msg", save_msg)
+    monkeypatch.setattr(memory_hub_bridge, "schedule_capture", capture)
+    msgs = [{"sender": "user", "content": "很久以前的一句", "created_at": 1}, {"sender": "aion", "content": "狗蛋来聊天", "created_at": 9}]
+    asyncio.run(chatroom_routes._generate_seat_reply("grp", {"actor": ""}, msgs, asyncio.Queue(), 30, actor="ai3",
+                                                     group=True, capture_user_turn=False))
+    capture.assert_not_called()
+
+
+def test_autonomy_group_handoffs_never_capture_a_user_turn():
+    import inspect
+    import autonomy
+    source = inspect.getsource(autonomy._reply_in_group)
+    assert source.count("capture_user_turn=False") == 3  # 小克、Lucien、座位三处
