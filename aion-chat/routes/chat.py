@@ -1085,6 +1085,7 @@ async def update_conversation(conv_id: str, body: ConvUpdate):
         actors.set_own_model_from_elsewhere("aion", model)
         actors._sync_chatroom_model("aion", model)
     payload = body.dict(exclude_none=True)
+    payload.pop("model", None)  # 没换模型（空值）时不广播空模型，免得页面把缓存的模型清掉（Codex §134 L）
     if model is not None:
         payload["model"] = model
     await manager.broadcast({"type": "conv_updated", "data": {"id": conv_id, **payload}})

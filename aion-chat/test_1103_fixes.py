@@ -161,3 +161,9 @@ class SaveChoiceTests(unittest.TestCase):
 class AsyncNoop:
     async def __call__(self, *a, **k):
         return None
+
+
+class EmptyModelBroadcastTests(unittest.TestCase):
+    def test_empty_model_is_not_broadcast(self):
+        source = (ROOT / "routes" / "chat.py").read_text(encoding="utf-8")
+        self.assertIn('payload.pop("model", None)  # 没换模型', source)
