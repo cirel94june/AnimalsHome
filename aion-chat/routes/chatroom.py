@@ -3378,6 +3378,10 @@ async def update_message_feedback(msg_id: str, body: MessageFeedbackUpdate):
 #  发送消息 + AI 回复 (SSE)
 # ══════════════════════════════════════════════════
 
+class MessageBlocked(RuntimeError):
+    """写入前核对没过：这条消息不发。"""
+
+
 async def _save_msg(
     room_id: str,
     sender: str,
@@ -3390,8 +3394,12 @@ async def _save_msg(
     dedupe_key: str | None = None,
     dedupe_target_type: str = "chatroom",
     dedupe_target_id: str = "",
+    guard=None,
 ) -> dict:
-    """保存消息到数据库"""
+    """保存消息到数据库。
+
+    guard：可选，写入前最后一刻调用（链接预览、查重这些等待都做完以后，和 INSERT 之间没有等待）。
+    返回非空字符串表示不该发了，抛 MessageBlocked，什么都不写（Codex §143：小红书随便逛分享前再核对）。"""
     now = time.time()
     if not msg_id:
         msg_id = f"cm_{int(now * 1000)}_{sender[:1]}"
@@ -3433,6 +3441,9 @@ async def _save_msg(
                         now=now,
                     )
         if not duplicate_msg:
+            blocked = guard() if guard else ""
+            if blocked:
+                raise MessageBlocked(blocked)  # 还没提交：查重占位跟着回滚
             await db.execute(
                 "INSERT INTO chatroom_messages (id, room_id, sender, content, attachments, reasoning_content, created_at) VALUES (?,?,?,?,?,?,?)",
                 (msg_id, room_id, sender, content, att_json, reasoning_content, now),

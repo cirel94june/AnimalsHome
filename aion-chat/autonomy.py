@@ -868,6 +868,7 @@ async def _save_aion_private_message(
     attachments: list | None = None,
     *,
     auto_tts: bool = True,
+    guard=None,
 ) -> dict | None:
     content = (content or "").strip()
     if not content:
@@ -886,11 +887,20 @@ async def _save_aion_private_message(
         await db.commit()
     msg_id = f"msg_{int(now * 1000)}_idle"
     from capabilities import process_pat_commands
+    from routes.chatroom import MessageBlocked
+
+    def _check():  # 写入前核对（见 _save_msg 的 guard）
+        blocked = guard() if guard else ""
+        if blocked:
+            raise MessageBlocked(blocked)
+
+    _check()  # 拍一拍之前
     content = await process_pat_commands(
         content, source_type="private", source_id=conv_id,
         sender="aion", source_msg_id=msg_id,
     )
     async with get_db() as db:
+        _check()  # 和 INSERT 之间没有等待
         await db.execute(
             "INSERT INTO messages (id, conv_id, role, content, created_at, attachments) VALUES (?,?,?,?,?,?)",
             (msg_id, conv_id, "assistant", content, now, json.dumps(att_list, ensure_ascii=False)),
@@ -1024,9 +1034,15 @@ async def _run_web_journey(actor: str, session_id: str):
 
 
 async def _save_autonomy_chatroom_message(room_id, sender, content, **kwargs):
-    """Parse pats in autonomous messages that bypass the normal reply pipeline."""
+    """Parse pats in autonomous messages that bypass the normal reply pipeline.
+    kwargs 里的 guard 原样交给 _save_msg；有拍一拍时先核对一次，免得核对不过却已经拍出去了。"""
     from capabilities import PAT_COMMAND_PATTERN, process_pat_commands
-    from routes.chatroom import _save_msg
+    from routes.chatroom import MessageBlocked, _save_msg
+    guard = kwargs.get("guard")
+    if guard and PAT_COMMAND_PATTERN.search(content or ""):
+        blocked = guard()
+        if blocked:
+            raise MessageBlocked(blocked)
 
     if PAT_COMMAND_PATTERN.search(content or ""):
         msg_id = kwargs.setdefault("msg_id", f"cm_{time.time_ns()}_{sender[:1]}")
@@ -1044,7 +1060,10 @@ async def _save_private_message(
     *,
     force_private: bool = False,
     auto_tts: bool = True,
+    guard=None,
 ) -> dict | None:
+    """guard：可选的写入前核对，一路传到最后写库的地方（见 routes.chatroom._save_msg）。"""
+    extra = {"guard": guard} if guard else {}
     if actor == "aion":
         if not force_private:
             target = manager.get_aion_last_active()
@@ -1057,11 +1076,13 @@ async def _save_private_message(
                         content,
                         attachments=attachments or [],
                         auto_tts=auto_tts,
+                        **extra,
                     )
         return await _save_aion_private_message(
             content,
             attachments,
             auto_tts=auto_tts,
+            guard=guard,
         )
     if _is_seat(actor):
         from routes.chatroom import _get_or_create_seat_room
@@ -1071,7 +1092,7 @@ async def _save_private_message(
             from seat_chat import seat_target_room
             room_id, _ = await seat_target_room(actor)
         return await _save_autonomy_chatroom_message(
-            room_id, actor, content, attachments=attachments or [], auto_tts=False,
+            room_id, actor, content, attachments=attachments or [], auto_tts=False, **extra,
         )
     if force_private:
         from routes.chatroom import _get_or_create_connor_private_room
@@ -1086,6 +1107,7 @@ async def _save_private_message(
         content,
         attachments=attachments or [],
         auto_tts=auto_tts,
+        **extra,
     )
 
 

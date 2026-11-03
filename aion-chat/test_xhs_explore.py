@@ -72,7 +72,9 @@ class ExploreTests(unittest.TestCase):
         self.assertEqual(("search", {"keyword": "银杏", "page": 1, "sort_by": "general"}), calls[0])
         self.assertEqual("pc_search", calls[1][1]["xsec_source"])
         self.assertEqual("group", result["share"])
-        group.assert_awaited_once_with("grp", "aion", "大家看，银杏黄了")
+        group.assert_awaited_once()
+        self.assertEqual(("grp", "aion", "大家看，银杏黄了"), group.await_args.args)
+        self.assertIn("guard", group.await_args.kwargs)  # 核对一路传进保存函数
         private.assert_not_awaited()
 
     def test_nothing_interesting_or_no_share_stays_quiet(self):
@@ -105,7 +107,10 @@ class ExploreTests(unittest.TestCase):
         result, _, _, private, group = self.run_explore(
             [{"pick": 0}, {"thoughts": "好看", "share": "private", "message": "看这个"}], source_roll=0.9, actor="ai3")
         self.assertTrue(result["shared"])
-        group.assert_awaited_once_with("seatroom", "ai3", "看这个", auto_tts=False)
+        group.assert_awaited_once()
+        self.assertEqual(("seatroom", "ai3", "看这个"), group.await_args.args)
+        self.assertFalse(group.await_args.kwargs["auto_tts"])
+        self.assertIn("guard", group.await_args.kwargs)
         private.assert_not_awaited()
 
     def test_explore_does_not_need_a_target_account(self):

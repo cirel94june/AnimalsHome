@@ -513,11 +513,13 @@ async def _run_explore(actor: str, cfg: dict, cookie: str, *, manual: bool = Fal
             blocked = _still_allowed_to_share(actor)
             if blocked:
                 raise RuntimeError(blocked)
+            # 保存函数里还有等待（查窗口、链接预览）：把核对一路传进去，在真正写库前最后再核对一次（Codex §143 余项）
+            guard = lambda: _still_allowed_to_share(actor)  # noqa: E731
             if room_id:
-                await _save_autonomy_chatroom_message(room_id, actor, message,
+                await _save_autonomy_chatroom_message(room_id, actor, message, guard=guard,
                                                      **({"auto_tts": False} if actor in SEAT_ACTORS else {}))
             else:
-                await _save_private_message(actor, message, force_private=True)
+                await _save_private_message(actor, message, force_private=True, guard=guard)
             result["shared"] = True
         except Exception as exc:
             result["shared"] = False

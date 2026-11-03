@@ -2202,3 +2202,21 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 新增 `xhs_lite._still_allowed_to_share(actor)`：总开关、这一位的开关；座位再走 `autonomy.verify_seat_pin`（启用、人设、所选模型、后台线路、线路配置都没变）。不看写评论开关，因为在家里说话不往小红书写东西。
 - `_run_explore` 分享时先把房间选好：群聊用 `_latest_group_room_id`；座位私聊用 `_get_or_create_seat_room`，不再经过 `_save_private_message`，那里面还有等待。然后核对，核对和保存之间没有别的等待。核对没过就 `shared=False` 并写 `share_error`，这次逛的结果照常保留。小克、Lucien 私聊仍走 `_save_private_message(force_private=True)`：他们没有座位那种固定线路，核对放在调用之前。
 - 测试：`test_xhs_explore` 新加 2 项，都在 8ceef74 上失败：生成期间关了模块、关了这一位、座位换模型，都不再发出，但逛的结果保留；座位私聊发到自己的房间，并且在核对之后发。小红书和自主相关 27 项全过。
+
+
+## 144. 修 §143 余项：写库前最后一刻再核对（guard 传进保存函数）
+
+- `routes/chatroom.py`：新增 `MessageBlocked`。`_save_msg` 加可选参数 `guard`：链接预览、手环附件、查重占位这些等待都做完以后，紧挨着 INSERT 调一次，中间没有等待。返回非空就抛 `MessageBlocked`；事务没提交，查重占位跟着回滚，什么都不写。
+- `autonomy.py`：
+  - `_save_autonomy_chatroom_message`：`guard` 随 kwargs 交给 `_save_msg`；内容里有拍一拍时，先在 `process_pat_commands` 之前核对一次，免得没发消息却先拍出去了。
+  - `_save_aion_private_message` 加 `guard`：拍一拍之前核对一次；打开写库连接后、INSERT 之前再核对一次，中间没有等待。
+  - `_save_private_message` 加 `guard`，传到所有分支：小克在群、小克私聊、座位、Lucien。
+- `xhs_lite._run_explore`：原来的「选好房间后核对」保留；再把 `guard=lambda: _still_allowed_to_share(actor)` 传给保存函数。被拦下时按原逻辑 `shared=False` 并写 `share_error`。
+- 测试：
+  - 新文件 `test_save_guard.py` 4 项，用真实的保存函数和临时 SQLite：
+    - 群聊 `_save_msg`：链接预览期间关了开关，消息不写；
+    - 小克私聊：查窗口、链接预览之后关了开关，消息不写；
+    - 没关开关时照常写入；
+    - `guard` 传到 `_save_private_message` 的每个分支。
+  - `test_xhs_explore` 的两个断言改成接受 `guard` 参数。
+  - 小红书、自主、聊天室相关 87 项里有 5 项失败，都是改动前就有的 chatroom 样式和缓存号用例。
