@@ -3045,8 +3045,7 @@ async def get_room_settings(room_id: str):
 @router.patch("/rooms/{room_id}/settings")
 async def patch_room_settings(room_id: str, body: ChatroomSettingsUpdate):
     """Save all visible setting fields in one idempotent request."""
-    before = load_chatroom_config()
-    cfg = _apply_config_update(dict(before), body)
+    _apply_config_update(load_chatroom_config(), body)  # 先校验（Codex 只给 Lucien 等），不合规就什么都不改
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM chatroom_rooms WHERE id=?", (room_id,))
@@ -3074,12 +3073,17 @@ async def patch_room_settings(room_id: str, body: ChatroomSettingsUpdate):
         cur = await db.execute("SELECT * FROM chatroom_rooms WHERE id=?", (room_id,))
         room = dict(await cur.fetchone())
         room["context_limit"] = room.get("context_minutes", 30)
+        # 读最新配置 → 只合并这次明确提交的字段 → 同步名片 → 写回，中间没有 await，
+        # 别处（名片、PUT /config）的写入不会被这里的旧快照盖掉（Codex §133 R2）。
+        # 配置文件在数据库提交前写好：后面登记同步事件失败时房间改动会回滚，配置这次已经存下
+        before = load_chatroom_config()
+        cfg = _apply_config_update(dict(before), body)
+        _sync_model_cards(before, cfg)
+        save_chatroom_config(cfg)
         public_cfg = _public_chatroom_config(cfg)
         payload = {"room_id": room_id, "room": room, "config": public_cfg}
         sync_event = {"type": "chatroom_settings_updated", "data": payload}
         seq = await append_sync_event(db, sync_event)
-        _sync_model_cards(before, cfg)
-        save_chatroom_config(cfg)
         await db.commit()
 
     # The HTTP save result no longer waits for every WebSocket client.

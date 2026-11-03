@@ -2079,3 +2079,21 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_1103_fixes` 新加：名片是 New 时，`aion_model_key("Old")` 返回 New；`_sync_model_cards` 只在真的换了模型时同步；两个保存入口都调用它；前端只提交改过的模型；起止相同时的说明。
   - 相关 410 项只有 2 项失败（`idle_autonomy` 的 friend_visit、`seat_chat` 的事务），改动前就有。
   - 浮窗、闹铃、定位、基金、英语角、人设演化、礼物、维修室、剧场、摄像头等 27 个文件里有 3 项失败（英语角 2 项、剧场 1 项），单独在改动前的代码上也同样失败。
+
+
+## 134. 修 §133 复审的 R1、R2
+
+- **R1 私聊换模型失效**：
+  - 把「运行时选模型」和「保存小猫的选择」分开。新增 `config.aion_selectable(key)`：还在、没停用、不是 Codex（只给 Lucien）、不是别人专属线路，就返回它，否则返回空。
+  - `aion_model_key` 改成 `aion_own_model() or aion_selectable(key) or default_model_key()`，行为和 §133 一样。
+  - `PUT /api/conversations/{id}` 保存模型时用 `aion_selectable(body.model)`：合规就存下并同步名片、群聊设置；不合规返回 400，什么都不改。`body.model` 为空时当作没换模型。
+- **R2 PATCH 房间设置写回旧快照**：
+  - 开头只用 `_apply_config_update` 做校验（不合规就 400，什么都不改）。
+  - 真正的「读最新配置 → 只合并这次提交的字段 → `_sync_model_cards` → `save_chatroom_config`」挪到所有数据库读写之后、`append_sync_event` 之前，中间没有 await。名片（`actors` 同步写）、`PUT /config`（同步的读改写）都不会被它的旧快照覆盖。
+  - 取舍：配置文件仍在数据库提交前写好；如果之后登记同步事件失败，房间改动会回滚，但这次的配置已经存下。
+- **测试**（`test_1103_fixes` 新加 3 项）：
+  - 私聊提交 New 后，名片和群聊都同步成 New；提交 Codex 返回 400。
+  - `aion_selectable` 保留各项限制。
+  - PATCH 里从读最新配置到写回之间没有 await，而且发生在房间读写之后。
+  - 相关 328 项里有 3 项失败（聊天气泡样式、friend_visit、seat_chat 事务），改动前就同样失败。
+  - `test_model_defaults` 的计时用例在机器忙时偶尔超时，单独重跑两次都通过。

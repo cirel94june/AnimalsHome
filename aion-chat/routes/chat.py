@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Any
 
-from config import DEFAULT_MODEL, MODELS, aion_model_key as private_model_key, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
+from config import DEFAULT_MODEL, MODELS, aion_model_key as private_model_key, aion_selectable, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
 from database import get_db
 from ws import manager
 from reply_timing import model_started
@@ -1065,7 +1065,12 @@ async def create_conversation(body: ConvCreate):
 
 @router.put("/api/conversations/{conv_id}")
 async def update_conversation(conv_id: str, body: ConvUpdate):
-    model = private_model_key(body.model) if body.model is not None else None
+    model = None
+    if body.model:  # 空的不算换模型
+        # 保存小猫这次选的，不走运行时的「名片优先」（Codex §133 R1：那样会把新选的解析回旧的）
+        model = aion_selectable(body.model)
+        if not model:
+            raise HTTPException(400, "这个模型小克用不了（已停用、是只给 Lucien 的 Codex，或是别人的专属线路）")
     async with get_db() as db:
         if body.title is not None:
             await db.execute("UPDATE conversations SET title=?, updated_at=? WHERE id=?",
