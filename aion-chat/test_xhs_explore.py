@@ -28,7 +28,8 @@ class ExploreTests(unittest.TestCase):
             p.stop()
         self.tmp.cleanup()
 
-    def run_explore(self, asks, *, source_roll, share_patches=None):
+    def run_explore(self, asks, *, source_roll, share_patches=None, actor="aion", live_cfg=None, pin_error=None,
+                    seat_room=None):
         calls = []
 
         async def worker(endpoint, body=None, *, cookie=None, timeout=90):
@@ -43,8 +44,8 @@ class ExploreTests(unittest.TestCase):
                 patch.object(autonomy, "_save_private_message", new=private), \
                 patch.object(autonomy, "_save_autonomy_chatroom_message", new=group), \
                 patch.object(autonomy, "_latest_group_room_id", new=AsyncMock(return_value="grp")), \
-                patch("random.random", return_value=source_roll):
-            result = asyncio.run(xhs_lite._run_explore("aion", self.cfg, self.cfg["cookie"]))
+                patch.object(xhs_lite, "load_config", return_value=live_cfg or self.cfg),                 patch.object(autonomy, "verify_seat_pin", side_effect=pin_error),                 patch("routes.chatroom._get_or_create_seat_room", new=AsyncMock(return_value=seat_room or "seatroom")),                 patch("random.random", return_value=source_roll):
+            result = asyncio.run(xhs_lite._run_explore(actor, self.cfg, self.cfg["cookie"]))
         return result, calls, ask, private, group
 
     def test_home_feed_pick_read_and_tell_her_in_private(self):
@@ -83,6 +84,29 @@ class ExploreTests(unittest.TestCase):
         self.assertEqual(("none", ""), (result["share"], result["message"]))
         private.assert_not_awaited()
         group.assert_not_awaited()
+
+    def test_share_is_rechecked_right_before_posting(self):
+        """Codex §142 M1：生成感想期间停用了模块 / 这一位，或座位换了模型、改绑线路，旧的那句话不能再发。"""
+        asks = lambda: [{"pick": 0}, {"thoughts": "好看", "share": "group", "message": "看这个"}]
+        for live in ({**self.cfg, "enabled": False}, {**self.cfg, "actors": {"aion": {"enabled": False}}}):
+            result, _, _, private, group = self.run_explore(asks(), source_roll=0.9, live_cfg=live)
+            self.assertFalse(result["shared"])
+            self.assertEqual("browsed", result["status"])  # 逛的结果保留
+            group.assert_not_awaited()
+        result, _, _, private, group = self.run_explore(
+            [{"pick": 0}, {"thoughts": "好看", "share": "private", "message": "看这个"}], source_roll=0.9,
+            actor="ai3", pin_error=RuntimeError("Jasper 刚刚换了模型，这次活动停下"))
+        self.assertFalse(result["shared"])
+        self.assertIn("换了模型", result["share_error"])
+        group.assert_not_awaited()
+        private.assert_not_awaited()
+
+    def test_seat_private_share_goes_to_its_own_room_after_the_check(self):
+        result, _, _, private, group = self.run_explore(
+            [{"pick": 0}, {"thoughts": "好看", "share": "private", "message": "看这个"}], source_roll=0.9, actor="ai3")
+        self.assertTrue(result["shared"])
+        group.assert_awaited_once_with("seatroom", "ai3", "看这个", auto_tts=False)
+        private.assert_not_awaited()
 
     def test_explore_does_not_need_a_target_account(self):
         cfg = {**self.cfg, "auto_enabled": True, "target_user_id": "", "target_nickname": ""}

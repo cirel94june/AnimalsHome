@@ -2195,3 +2195,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_seat_autonomy_guard` 里看指定账号的用例改成显式 `roam_mode: "target"`。
   - `test_seat_autonomy_more` 补上 §138 的 `capture_user_turn: False`（这个断言是 §138 漏改的）。
   - 自主相关 49 项全过，`node test_xhs_seat_run_ui.js` 通过。本机浏览器看过页面和运行结果显示（截图见对话）。
+
+
+## 143. 修 §142 的 M1：随便逛分享前再核对一次
+
+- 新增 `xhs_lite._still_allowed_to_share(actor)`：总开关、这一位的开关；座位再走 `autonomy.verify_seat_pin`（启用、人设、所选模型、后台线路、线路配置都没变）。不看写评论开关，因为在家里说话不往小红书写东西。
+- `_run_explore` 分享时先把房间选好：群聊用 `_latest_group_room_id`；座位私聊用 `_get_or_create_seat_room`，不再经过 `_save_private_message`，那里面还有等待。然后核对，核对和保存之间没有别的等待。核对没过就 `shared=False` 并写 `share_error`，这次逛的结果照常保留。小克、Lucien 私聊仍走 `_save_private_message(force_private=True)`：他们没有座位那种固定线路，核对放在调用之前。
+- 测试：`test_xhs_explore` 新加 2 项，都在 8ceef74 上失败：生成期间关了模块、关了这一位、座位换模型，都不再发出，但逛的结果保留；座位私聊发到自己的房间，并且在核对之后发。小红书和自主相关 27 项全过。

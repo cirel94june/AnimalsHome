@@ -503,7 +503,19 @@ async def _run_explore(actor: str, cfg: dict, cookie: str, *, manual: bool = Fal
                 room_id = await _latest_group_room_id()
                 if not room_id:
                     raise RuntimeError("还没有群聊")
-                await _save_autonomy_chatroom_message(room_id, actor, message)
+            elif actor in SEAT_ACTORS:
+                from routes.chatroom import _get_or_create_seat_room
+                room_id = await _get_or_create_seat_room(actor)
+            else:
+                room_id = ""
+            # 房间找好以后、真正发出去之前再核对一次（Codex §142 M1）：生成这段话的时候
+            # 可能停用了模块或这一位，座位可能换了模型、改绑了线路。和下面的保存之间没有别的等待
+            blocked = _still_allowed_to_share(actor)
+            if blocked:
+                raise RuntimeError(blocked)
+            if room_id:
+                await _save_autonomy_chatroom_message(room_id, actor, message,
+                                                     **({"auto_tts": False} if actor in SEAT_ACTORS else {}))
             else:
                 await _save_private_message(actor, message, force_private=True)
             result["shared"] = True
@@ -562,6 +574,23 @@ async def run_actor_roam(actor: str, *, manual: bool = False) -> dict:
         raise RuntimeError(f"{actor_label(actor)} 正在巡游小红书，这次没有重复发起")
     async with lock:
         return await _run_actor_roam(actor, manual=manual)
+
+
+def _still_allowed_to_share(actor: str) -> str:
+    """随便逛看完、要在私聊或群里说之前：模块和这一位还开着，座位的身份和线路没变。返回拦下的原因。
+    不看写评论开关：这里只是在家里说话，不往小红书写东西。"""
+    cfg = load_config()
+    if not cfg.get("enabled"):
+        return "小红书 Lite 已关闭，这次不说了"
+    if not cfg.get("actors", {}).get(actor, {}).get("enabled", True):
+        return f"{actor_label(actor)} 的小红书巡游已关闭，这次不说了"
+    if actor in SEAT_ACTORS:
+        try:
+            from autonomy import verify_seat_pin
+            verify_seat_pin(actor)
+        except Exception as exc:
+            return str(exc) or "座位设置变了，这次不说了"
+    return ""
 
 
 def _still_allowed_to_write(actor: str) -> str:
