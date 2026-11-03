@@ -195,6 +195,22 @@ def test_seat_reply_streams_saves_and_captures_as_seat(seats, monkeypatch):
     capture.assert_called_once_with("ai3", "在吗", "好呀，我在。", chat_type="private", chat_id="room", from_owner=True)
 
 
+def test_seat_group_reply_is_captured_like_xiaoke_and_lucien(seats, monkeypatch):
+    """11-03 Hub 窗口：一条狗蛋的群聊回合都没收到。原来座位群聊回复特意不记，现在和小克、Lucien 一样记。"""
+    async def save_msg(room_id, sender, content, msg_id=None, attachments=None, **kw):
+        return {"room_id": room_id, "sender": sender, "content": content, "id": msg_id}
+
+    capture = MagicMock()
+    monkeypatch.setattr(seat_chat, "build_context", AsyncMock(return_value=[{"role": "user", "content": "x"}]))
+    monkeypatch.setattr(seat_chat, "merged_messages", AsyncMock(return_value=[]))
+    monkeypatch.setattr(chatroom_routes, "stream_ai", _stream("我也在！"))
+    monkeypatch.setattr(chatroom_routes, "_save_msg", save_msg)
+    monkeypatch.setattr(memory_hub_bridge, "schedule_capture", capture)
+    msgs = [{"sender": "user", "content": "大家好", "created_at": 1}, {"sender": "aion", "content": "嗨", "created_at": 2}]
+    asyncio.run(chatroom_routes._generate_seat_reply("grp", {"actor": ""}, msgs, asyncio.Queue(), 30, actor="ai3", group=True))
+    capture.assert_called_once_with("ai3", "大家好", "我也在！", chat_type="group", chat_id="grp", from_owner=True)
+
+
 def test_seat_reply_without_model_explains_instead_of_switching(seats, monkeypatch):
     data = actors._load_raw()
     data["seats"]["ai3"]["model"] = ""

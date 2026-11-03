@@ -4537,9 +4537,12 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
     _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
-    if not group and not extra_prompt:  # 群聊、闹铃这类系统叫来的话不单独记入 Memory Hub
+    if not extra_prompt:  # 闹铃、主动陪伴这类系统叫来的话不单独记入 Memory Hub
+        # 群聊回复也记（11-03 Hub 窗口：一条狗蛋的群聊回合都没收到）。原来写「群聊不单独记，和小克、Lucien 一致」，
+        # 后来小克、Lucien 的群聊回复都记了，这里没跟上；三位规则对等
         memory_hub_bridge.schedule_chatroom_capture(
-            actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text, "private", room_id)
+            actor_id, memory_hub_bridge.paired_user_message(msgs, actor_id), clean_text,
+            "group" if group else "private", room_id)
 
 
 @_chatroom_reply_guard("connor")

@@ -2104,3 +2104,12 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 2026-11-03 13:49（北京时间）已部署 87e6a4d（§132–§134，你审过）。
 - `PUT /api/conversations/{id}` 提交 `model=""` 时，存储的模型原来就不动，但广播里还带着空模型，页面会据此把缓存的模型清空。现在广播前先去掉 payload 里的 model，只有真的换了模型才带上。
 - 测试：`test_1103_fixes` 新加 1 项（源码检查）。
+
+
+## 136. 狗蛋（座位）在群里的回复也记进 Hub
+
+- **Hub 窗口反馈**：一条狗蛋（jasper）的 aionshome-group 回合都没收到，只有 claude 和 lucien 的。
+- **只读核对**：狗蛋在群里，10-29 以来群消息 41 条；服务器上 `source_ai_for("ai3")` 是 `jasper`，映射正常。原因在 `_generate_seat_reply` 里写着 `if not group and not extra_prompt`：座位的群聊回复特意不记，注释说「和小克、Lucien 的群聊回复一致」（§ 第三批）。后来小克、Lucien 的群聊回复都通过 `schedule_chatroom_capture` 记进了 Hub，这里没跟上，三位不对等。
+- **改动**：条件改成只看 `extra_prompt`（闹铃、主动陪伴这类系统叫来的话照旧不记）。群聊回复用 `schedule_chatroom_capture(actor_id, paired_user_message(...), clean_text, "group" if group else "private", room_id)`，和小克、Lucien 走同一条路：群聊带 chat_id、from_owner，小猫那一轮走主人钥匙 REST。
+- **测试**：`test_seat_chat` 新加：座位群聊回复以 `chat_type="group"`、`chat_id=房间`、`from_owner=True` 入队。座位、群、bridge 共 285 项里有 2 项失败（seat_chat 事务、bridge 的计时用例），改动前就有。
+- 同批还有 §135（718b255）：没换模型时不广播空模型。
