@@ -877,14 +877,10 @@ async def _save_aion_private_message(
     conv_id, model = await _latest_conversation()
     att_list = await _with_link_previews(content, attachments or [])
     content = strip_urls_for_message(content)
-    async with get_db() as db:
-        if not conv_id:
-            conv_id = f"conv_{int(now * 1000)}_idle"
-            await db.execute(
-                "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?,?,?,?,?)",
-                (conv_id, "空闲消息", model or DEFAULT_MODEL, now, now),
-            )
-        await db.commit()
+    # 还没有私聊窗口时，新建窗口和写消息放在同一个事务里：写入前核对没过，就连窗口一起不建（Codex §144 L）
+    new_conv = not conv_id
+    if new_conv:
+        conv_id = f"conv_{int(now * 1000)}_idle"
     msg_id = f"msg_{int(now * 1000)}_idle"
     from capabilities import process_pat_commands
     from routes.chatroom import MessageBlocked
@@ -901,6 +897,11 @@ async def _save_aion_private_message(
     )
     async with get_db() as db:
         _check()  # 和 INSERT 之间没有等待
+        if new_conv:
+            await db.execute(
+                "INSERT INTO conversations (id, title, model, created_at, updated_at) VALUES (?,?,?,?,?)",
+                (conv_id, "空闲消息", model or DEFAULT_MODEL, now, now),
+            )
         await db.execute(
             "INSERT INTO messages (id, conv_id, role, content, created_at, attachments) VALUES (?,?,?,?,?,?)",
             (msg_id, conv_id, "assistant", content, now, json.dumps(att_list, ensure_ascii=False)),

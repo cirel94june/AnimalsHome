@@ -76,6 +76,17 @@ class SaveGuardTests(unittest.TestCase):
                 asyncio.run(autonomy._save_aion_private_message("看这个", guard=self.guard, auto_tts=False))
         self.assertEqual(0, self.count("messages"))
 
+    def test_blocked_message_does_not_leave_an_empty_new_window(self):
+        """Codex §144 L：没有私聊窗口时原来先建窗口并提交，再核对，拦下后留下一扇空窗口。"""
+        db = sqlite3.connect(self.db_path)
+        db.execute("DELETE FROM conversations")
+        db.commit()
+        db.close()
+        with patch.object(autonomy, "get_db", self.fake_db),                 patch.object(autonomy, "_latest_conversation", AsyncMock(return_value=(None, "m"))),                 patch.object(autonomy, "_with_link_previews", self.switch_off_while_previewing()),                 patch.object(autonomy.manager, "broadcast", AsyncMock()):
+            with self.assertRaises(chatroom_routes.MessageBlocked):
+                asyncio.run(autonomy._save_aion_private_message("看这个", guard=self.guard, auto_tts=False))
+        self.assertEqual((0, 0), (self.count("conversations"), self.count("messages")))
+
     def test_without_a_guard_or_when_still_allowed_it_saves(self):
         with patch.object(autonomy, "get_db", self.fake_db), \
                 patch.object(autonomy, "_latest_conversation", AsyncMock(return_value=("c1", "m"))), \
