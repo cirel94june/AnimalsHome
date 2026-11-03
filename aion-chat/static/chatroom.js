@@ -2412,6 +2412,8 @@ function crMarkRoomRead() {
   fetch('/api/unread/read', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ container: `room:${roomId}`, at: seen }),
+  }).then(() => {
+    try { window.top?.refreshUnread?.(); } catch (_) {}  // 让首页、聊天页的红点马上跟着消
   }).catch(() => {});
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) crMarkRoomRead(); });

@@ -2220,6 +2220,15 @@ def _collect_last_user_images(msgs: list[dict]) -> list[dict]:
     return []
 
 
+def _room_models(body) -> tuple[str, str]:
+    """小克、Lucien 这一轮用哪个模型：以服务器上保存的设置为准，页面带来的只在设置是空的时候用。
+    11-03 小猫：在名片里换了模型，开着的群聊页还把打开时记住的旧模型发上来，一直报旧渠道的错。"""
+    cfg = load_chatroom_config()
+    aion = (cfg.get("aion_model") or "").strip() or (getattr(body, "model", None) or "")
+    connor = (cfg.get("connor_model") or "").strip() or (getattr(body, "connor_model", None) or "")
+    return aion_model_key(aion), _resolve_connor_model(connor)
+
+
 def _resolve_connor_model(model_key: str | None = None) -> str:
     requested = (model_key or "").strip()
     if requested and (requested != "Codex" or requested in MODELS):
@@ -2889,6 +2898,11 @@ async def get_config():
 async def update_config(body: ConfigUpdate):
     cfg = _apply_config_update(load_chatroom_config(), body)
     save_chatroom_config(cfg)
+    import actors
+    if body.aion_model:
+        actors.set_own_model_from_elsewhere("aion", cfg.get("aion_model"))
+    if body.connor_model:
+        actors.set_own_model_from_elsewhere("connor", cfg.get("connor_model"))
     if body.ambient_voice_enabled is False:
         global _AMBIENT_ACTIVE_LISTENER
         if _AMBIENT_ACTIVE_LISTENER:
@@ -3585,8 +3599,7 @@ async def send_message(room_id: str, body: MsgSend):
 
     room_type = room["type"]
     await record_chatroom_active(room_id, room_type)
-    model_key = aion_model_key(body.model)
-    connor_model_key = _resolve_connor_model(body.connor_model)
+    model_key, connor_model_key = _room_models(body)
 
     # ── 更新用户最后活跃窗口追踪 ──
     if room_type == "group":
@@ -3662,8 +3675,7 @@ async def reply_once(room_id: str, body: ReplyOnceTrigger):
 
     context_limit = room.get("context_minutes", 30)
     query_text = msgs[-1]["content"] if msgs else ""
-    model_key = aion_model_key(body.model)
-    connor_model_key = _resolve_connor_model(body.connor_model)
+    model_key, connor_model_key = _room_models(body)
 
     _q: asyncio.Queue = GenerationQueue()
 
@@ -3803,8 +3815,7 @@ async def ambient_voice_evaluate(room_id: str, body: AmbientVoiceEvaluate):
         speaker=speaker,
     )
     _AMBIENT_LAST_TRIGGER_BY_ROOM[room_id] = now
-    model_key = aion_model_key((body.model or cfg.get("aion_model") or "").strip())
-    connor_model_key = _resolve_connor_model(body.connor_model or cfg.get("connor_model"))
+    model_key, connor_model_key = _room_models(body)
 
     spawn_generation_task(_run_ambient_voice_reply(
         room_id,
@@ -3873,8 +3884,7 @@ async def edit_resend_chatroom_message(msg_id: str, body: MsgEditResend):
 
     room_type = room["type"]
     await record_chatroom_active(room_id, room_type)
-    model_key = aion_model_key(body.model)
-    connor_model_key = _resolve_connor_model(body.connor_model)
+    model_key, connor_model_key = _room_models(body)
     context_limit = room.get("context_minutes", 30)
     if room_type == "group":
         cam.reset_patrol_timer()
@@ -3954,8 +3964,7 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
 
     context_limit = room.get("context_minutes", 30)
     query_text = msgs[-1]["content"] if msgs else ""
-    model_key = aion_model_key(body.model)
-    connor_model_key = _resolve_connor_model(body.connor_model)
+    model_key, connor_model_key = _room_models(body)
     _q: asyncio.Queue = GenerationQueue()
 
     async def _bg_generate():
@@ -5065,8 +5074,7 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
         raise HTTPException(409, "只有群聊可以让 AI 们互相聊天")
 
     max_rounds = body.rounds or room.get("ai_chat_rounds", 1)
-    model_key = aion_model_key(body.model)
-    connor_model_key = _resolve_connor_model(body.connor_model)
+    model_key, connor_model_key = _room_models(body)
     context_limit = room.get("context_minutes", 30)
     tts_enabled = body.tts_enabled
     tts_aion_voice = body.tts_aion_voice

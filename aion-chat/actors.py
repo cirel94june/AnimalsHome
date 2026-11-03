@@ -213,6 +213,20 @@ def remove_seat_api(actor_id: str) -> None:
     _write_routes([r for r in _seat_routes() if r.get("id") != rid])
 
 
+def set_own_model_from_elsewhere(actor_id: str, model: str) -> None:
+    """在私聊页、群聊设置里给小克 / Lucien 换模型时，名片上的「TA 自己的模型」也跟着换。
+    11-03 小猫：在名片里换了模型，开着的群聊和私聊还在用旧的、报旧渠道的错。现在三处是同一个设置。"""
+    model = str(model or "").strip()
+    if actor_id not in ("aion", "connor") or not model:
+        return
+    data = _load_raw()
+    seat = data.setdefault("seats", {}).setdefault(actor_id, {})
+    if seat.get("model") == model:
+        return
+    seat["model"] = model
+    _save_raw(data)
+
+
 def _sync_chatroom_model(actor_id: str, model: str) -> None:
     """前两位在聊天室里也用 TA 自己的模型。"""
     if actor_id not in ("aion", "connor") or not model:

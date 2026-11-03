@@ -31,6 +31,9 @@ from autonomy_state import (
     wake_summary_timeline_title,
 )
 import quiet_hours
+import logging
+
+log = logging.getLogger("autonomy")
 from autonomy_niches import archive_album_event, create_niche_card, recent_niche_index
 
 _AUTONOMY_WAKE_INTERNAL = ContextVar("autonomy_wake_internal", default=False)
@@ -96,6 +99,15 @@ ACTION_DEFS = {
 DEFAULT_OFF_ACTIONS = {"album_browse", "seeky_interaction"}
 SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel", "taobao_roam",
                 "role_chat", "home_dynamics", "memory_browse", "xhs_roam"}
+
+# 没做成时标题里用的简短说法
+ACTION_SHORT_NAMES = {
+    "private_chat": "找小猫说话", "role_chat": "找家人聊天", "web_roam": "上网冲浪", "wish_pool": "看许愿池",
+    "xhs_roam": "逛小红书", "taobao_roam": "逛淘宝", "friend_visit": "拜访 AI 好友", "board_check": "看留言板",
+    "board_visit": "去朋友家留言板串门", "mcp_outing": "出门逛逛", "travel": "旅行", "memory_browse": "翻记忆库",
+    "album_browse": "翻相册", "home_dynamics": "看家庭动态", "seeky_interaction": "照顾 Seeky",
+    "billiards_play": "打台球",
+}
 
 SEEKY_ACTIONS = {
     "feed": "投喂",
@@ -792,21 +804,40 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         "其他动作的 message 留空。\n"
         '格式：{"action":"上面的key之一","reason":"选择这个动作的理由","message":"聊天动作要实际发送的完整正文，其他动作为空","target":""}'
     )
-    try:
-        data = await _ask_actor_json(actor, instruction)
-    except Exception:
-        return {"action": "rest", "reason": "本次行动选择调用失败，休息兜底。", "message": ""}
-    fallback = {"action": "rest", "reason": "模型未返回有效的行动数据，本次休息兜底。", "message": ""}
+    # 11-03 小猫：小克总是「觉得没什么想做」，其实是调用失败 / 回的不是 JSON 被兜底成休息。
+    # 现在失败或读不懂时再问一次；还不行就如实记成「没醒成」并写下原因，不再假装是他自己想休息
+    problem = ""
+    for attempt in range(2):
+        try:
+            data = await _ask_actor_json(actor, instruction)
+        except Exception as exc:
+            problem = f"模型调用失败（{_error_text(exc)}）"
+            log.warning("[autonomy] %s 选择行动第 %s 次调用失败：%s", actor, attempt + 1, _error_text(exc))
+            continue
+        choice = _parse_action_choice(data, enabled)
+        if choice is not None:
+            return choice
+        problem = "模型回的内容读不懂（不是要求的格式，或选了不能做的事）"
+        log.warning("[autonomy] %s 选择行动第 %s 次回的内容读不懂", actor, attempt + 1)
+    return {"action": "rest", "reason": f"这次没醒成：{problem}", "message": "", "wake_failed": True}
+
+
+def _error_text(exc: BaseException) -> str:
+    """异常的说明；超时一类的异常文字是空的，就写类型（11-03：狗蛋旅行失败没留下原因）。"""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}"[:300] if text else type(exc).__name__
+
+
+def _parse_action_choice(data, enabled) -> dict | None:
     if not isinstance(data, dict):
-        return fallback
-    raw_action = str(data.get("action") or "").strip()
-    action = raw_action
+        return None
+    action = str(data.get("action") or "").strip()
     if action not in enabled:
-        return fallback
+        return None
     message = data.get("message")
     message = message.strip() if isinstance(message, str) else ""
     if action in {"private_chat", "role_chat"} and not message:
-        return fallback
+        return None
     target = data.get("target")
     return {
         "action": action,
@@ -2434,7 +2465,8 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         card = None
         shared = False
         ok = False
-        error = str(exc)
+        error = _error_text(exc)
+        log.warning("[autonomy] %s 的 %s 没做成：%s", actor, action, error)
 
     action_titles = {
         "rest": f"{actor_name}觉得暂时没什么想做，继续休息了",
@@ -2456,8 +2488,11 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         "travel": f"{actor_name}出门旅行了",
     }
     title = action_titles.get(action, f"{actor_name}进行了一次自主行动")
+    if action == "rest" and selected.get("wake_failed"):
+        title = f"{actor_name}这次没醒成"
     if outcome in {"round_limit", "failed", "no_direction", "tool_failed"}:
-        title = f"{actor_name}的这次旅行没有完成"
+        # 原来不管做的是什么都写「旅行没有完成」（11-03 狗蛋逛淘宝失败也这么写）
+        title = f"{actor_name}这次没做成：{ACTION_SHORT_NAMES.get(action, '自主行动')}"
     detail_parts = trace or [selected.get("reason", "")]
     if action == "taobao_roam" and ok:
         detail_parts = [result.get("message", "")]

@@ -222,4 +222,5 @@ ${count}会一起删掉，删了找不回来。
   // 从别的页面回来时刷新（新消息、新窗口）
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load().catch(() => {}); });
   window.onAionSubPageVisibilityChanged = visible => { if (visible) load().catch(() => {}); };  // 重新翻到这页时刷新红点
+  window.onAionUnreadChanged = () => { load().catch(() => {}); };  // 聊天页说有已读 / 新消息时马上刷新（11-03）
 })();

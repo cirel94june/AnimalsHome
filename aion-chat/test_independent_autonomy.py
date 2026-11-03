@@ -133,7 +133,8 @@ class IndependentAutonomyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("- rest:", ask.await_args.args[1])
                 self.assertIn("- home_dynamics:", ask.await_args.args[1])
                 self.assertEqual(result["action"], "home_dynamics" if response == {"action": "home_dynamics"} else "rest")
-                self.assertEqual(ask.await_count, 1)
+                # 读不懂时再问一次（11-03），读得懂的只问一次
+                self.assertEqual(ask.await_count, 1 if response == {"action": "home_dynamics"} else 2)
 
     async def test_no_enabled_action_avoids_model_call(self):
         with patch.object(autonomy, "get_actor_config", new=AsyncMock(return_value={"actions": {"rest": False}})), \

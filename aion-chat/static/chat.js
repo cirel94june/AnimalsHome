@@ -1470,7 +1470,23 @@ async function refreshUnread() {
     unreadState = await response.json();
   } catch (_) { return; }
   renderUnreadDot();
+  refreshUnreadInSubPages();
 }
+
+// 首页、换人页等是叠在聊天页上的子页面，各自隔一阵才查一次红点，手机放后台时还会被暂停。
+// 一有已读 / 新消息就让它们马上重查（11-03 小猫：看过了红点还在，要重进 App 才消）
+function refreshUnreadInSubPages() {
+  document.querySelectorAll('iframe').forEach(frame => {
+    try {
+      const win = frame.contentWindow;
+      win?.checkChatUnread?.();
+      win?.checkMomentsUnread?.();
+      // 换人页刷新要读好几样，只刷正显示着的；藏着的翻出来时自己会刷
+      if (frame.dataset.aionSubPageVisible !== '0') win?.onAionUnreadChanged?.();
+    } catch (_) {}
+  });
+}
+window.refreshUnread = refreshUnread;
 
 function scheduleUnreadRefresh() {
   clearTimeout(unreadRefreshTimer);

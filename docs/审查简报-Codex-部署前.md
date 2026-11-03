@@ -2027,3 +2027,36 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **L1 小克私聊不带 chat_id**：`routes/chat.py` 三处 `schedule_capture` 都加上 `chat_id=conv_id`。
 - **§129 身份前提的说法更正**：`paired_user_message` 只认 sender=user，但剧场同步、归巢导入也会写 sender=user 的消息。所以准确的说法是：「sender=user 的消息都是小猫这边的内容（她本人发的，或者从她的剧场、归巢里同步进来的）」，而不是「一定是她刚刚直接打的原话」。目前没有哪条路径能让陌生人写进 sender=user。71 条旧记录按小猫的同意整批补身份，结论不变。
 - **测试**：新加 6 项：302、307 不删记录；408、429、503 留着重发；Hub 慢慢回时整体超时（0.3 秒）后记录保留。其中 5 项在 0903395 上失败（503 原来就会重发）。`test_memory_hub_bridge.py` 66 项全过。`schedule_capture` 相关的座位测试里只有改动前就有的那 1 项失败。
+
+
+## 132. 小猫 11-03 报的几处：自主醒来兜底、失败标题、静默时段、红点、朋友圈互回、换模型不生效
+
+只读排查结论（只看元数据、计数、系统写的失败原因，没看聊天内容）：
+- 小克两次「觉得暂时没什么想做」都是兜底：11-02 是「模型未返回有效的行动数据」，11-03 是「本次行动选择调用失败」（同一时间他的线路报 503）。Lucien 两次都是自己选的。
+- 狗蛋 11-03 选的是逛淘宝，标题却写成「旅行没有完成」。原因是 `taobao_native_mcp.native_command` 写死了原作者 Windows 上的路径（`C:/Program Files/nodejs/node.exe`、`H:/taobao/bin/cli-rpc.js`），服务器上没有；A2A 退路返回 401。狗蛋 11-02 旅行失败没留下原因：`str(exc)` 是空的，所以没写「中断原因」。
+- 静默时段存的是 `idle_autonomy_quiet_hours = 11:00→08:00`，哨兵是 `11:00→09:00`，应该是手机 12 小时制把晚上 11 点选成了上午。所以一天只有 8～11 点能醒，他们都扎堆在 8 点多醒。最近 3 天 0～8 点没有任何 AI 消息；凌晨 5 点那两条是每天固定的记忆整理。
+- 红点：服务器已读标记都对、`/api/unread` 为空，是子页面自己隔 30～60 秒才查一次，后台时还会被暂停。
+- 朋友圈：只有小猫评论时才叫被评论的 AI 回；AI 评论 AI 的朋友圈，原作者不回。朋友圈完全不进 Hub。
+- 换模型：她 11:16:23 在名片里换了模型（actors.json、chatroom_config.json 同时更新），11:16:53 群聊里小克还在用 kiro 渠道。群聊页把打开时的 `chatroomModel` 放在请求 body 里，服务器以 body 为准。私聊每个窗口自己存 `conversations.model`，名片换了也不改它。
+
+改动：
+- **自主醒来**（`autonomy.py`）：
+  - 选行动时调用失败、或回的内容读不懂，再问一次。还不行就返回 `rest` 并带 `wake_failed`，理由写「这次没醒成：模型调用失败（类型: 说明）」或「模型回的内容读不懂」，并记 warning。时间线标题改成「X这次没醒成」，不再写「觉得暂时没什么想做」。
+  - 行动失败的标题按实际动作写，「X这次没做成：逛淘宝」等（`ACTION_SHORT_NAMES`），不再一律写「旅行没有完成」。
+  - 失败原因用 `_error_text`：异常说明为空时写类型名（如 TimeoutError），并记 warning。
+- **静默时段**（`switches.html`）：两处时间下面用大白话写「从上午 11:00 到第二天上午 8:00，一共 21 小时」。超过 12 小时时标红，提示确认上午下午有没有选反。`clock_text` 和页面上的时段分界一致：12 点前算上午。设置本身由小猫自己改。
+- **红点立刻刷新**：
+  - `chat.js` 的 `refreshUnread` 每次拿到结果后，让各子页面马上重查：首页 `checkChatUnread` / `checkMomentsUnread`，换人页只在显示时 `onAionUnreadChanged`。
+  - 群聊页记已读、朋友圈页 mark-read 成功后调 `window.top.refreshUnread()`。
+- **朋友圈 AI 互回**（`routes/moments.py`）：AI 在另一位 AI 的朋友圈下发了顶层评论，原作者回这一条一次。作者的回复带 `target_comment_id`，不会再触发，所以不会来回没完。评论 20 条上限照旧。
+- **小克的模型只认一个设置**：
+  - 群聊各发送入口改用 `_room_models(body)`，以 `chatroom_config` 里保存的为准，页面带来的只在没保存时用。
+  - 私聊发送以 `aion_own_model()`（名片上的）为准，窗口里存的只在名片没选时用；会话列表显示的也是它。
+  - 私聊页换模型、群聊设置换小克或 Lucien 的模型时，用 `actors.set_own_model_from_elsewhere` 同步到名片（私聊页同时同步群聊设置）。
+- **没做的**：淘宝（小猫找到了别的思路，等她发来）；朋友圈进 Hub（她选了全部都送，要先问 Hub 要什么格式）。
+
+测试：
+- 新加 `test_autonomy_wake_honesty.py` 4 项、`test_1103_fixes.py` 6 项，其中静默时段的文字用 node 跑真实函数。
+- `test_independent_autonomy` 原来断言读不懂只问 1 次，改成读不懂问 2 次。
+- 本机浏览器在开关总览页验证：11:00→08:00 显示 21 小时并标红；23:00→08:00 显示 9 小时。
+- 相关 48 个文件里 6 项失败，都是改动前就有的：model_audio / model_transport 4 项、seat_chat 1 项、bridge 的计时用例 1 项（你上次也提过）。friend_visit 测试文件改动前就会卡住。

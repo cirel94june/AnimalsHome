@@ -564,6 +564,12 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
             pass
 
     print(f"[moments] {who} 回复了朋友圈 {moment_id}: {comment_text[:50]}")
+
+    # AI 评论了另一位 AI 的朋友圈：原作者回这一条一次（11-03 小猫：除了她，他们都不回别的 AI）。
+    # 只在顶层评论时触发；作者的回复带着 target_comment_id，不会再触发，所以不会来回没完
+    author = moment.get("author")
+    if target_comment_id is None and author not in (None, "", "user", who) and author in _ai_authors():
+        spawn_generation_task(_ai_reply_to_moment(author, moment_id, comment_id))
     return comment_data
 
 

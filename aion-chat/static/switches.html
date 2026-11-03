@@ -29,6 +29,9 @@
 .sw-freq button:disabled { opacity: .45; cursor: default; }
 .sw-sep { height: 1px; background: var(--border); }
 .sw-times { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+/* 用大白话写出静默的是哪一段（11-03：手机选时间时上午下午容易看漏，存成了上午 11 点） */
+.sw-quiet-say { margin: 4px 0 0; font-size: 13px; color: var(--text2, var(--text)); line-height: 1.5; }
+.sw-quiet-say.warn { color: #c0392b; }
 .sw-times input { min-height: 38px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; }
 .sw-seat { min-height: 40px; display: flex; align-items: center; padding: 0 12px; border: 1px dashed var(--border); border-radius: 12px; font-size: 12px; color: var(--text3); }
 .sw-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -57,6 +60,7 @@
       <div class="sw-sep"></div>
       <div class="sw-row"><label for="wakeQuiet">静默时间（这段时间谁都不自己醒）</label><span class="sw-switch"><input type="checkbox" id="wakeQuiet"><span></span></span></div>
       <div class="sw-times"><input type="time" id="wakeQuietStart" aria-label="静默开始">到<input type="time" id="wakeQuietEnd" aria-label="静默结束"></div>
+      <p class="sw-quiet-say" id="wakeQuietSay" aria-live="polite"></p>
     </section>
 
     <section class="sw-card">
@@ -66,6 +70,7 @@
       <p class="sw-hint" id="patrolNote"></p>
       <div class="sw-row"><label for="camQuiet">哨兵静默时间</label><span class="sw-switch"><input type="checkbox" id="camQuiet"><span></span></span></div>
       <div class="sw-times"><input type="time" id="camQuietStart" aria-label="哨兵静默开始">到<input type="time" id="camQuietEnd" aria-label="哨兵静默结束"></div>
+      <p class="sw-quiet-say" id="camQuietSay" aria-live="polite"></p>
     </section>
 
     <section class="sw-card">
@@ -295,11 +300,37 @@
       $('camQuiet').checked = Boolean(cam.quiet_hours_enabled);
       $('camQuietStart').value = cam.quiet_hours_start || '00:00';
       $('camQuietEnd').value = cam.quiet_hours_end || '09:00';
+      refreshQuietSay();
       state.notify = notify;
       renderNotify();
     } catch (_) {
       say('有些开关暂时读不出来，稍后再试');
     }
+  }
+
+  // 「23:00」→「晚上 11:00」；跨过半夜时写「第二天」，再写一共几个小时；超过 12 小时标红提醒
+  function clockSay(hhmm) {
+    const [h, m] = String(hhmm || '').split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return '';
+    const period = h < 5 ? '凌晨' : h < 8 ? '早上' : h < 12 ? '上午' : h < 13 ? '中午' : h < 18 ? '下午' : h < 23 ? '晚上' : '深夜';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${period} ${h12}:${String(m).padStart(2, '0')}`;
+  }
+  function quietSay(id, enabled, start, end) {
+    const el = $(id);
+    if (!el) return;
+    const toMin = v => { const [h, m] = String(v || '').split(':').map(Number); return h * 60 + m; };
+    if (!enabled || !start || !end) { el.textContent = ''; el.classList.remove('warn'); return; }
+    const a = toMin(start), b = toMin(end);
+    const minutes = a === b ? 0 : (b - a + 1440) % 1440;
+    const hours = Math.round(minutes / 6) / 10;
+    el.textContent = `从${clockSay(start)}到${b <= a ? '第二天' : ''}${clockSay(end)}，一共 ${hours} 小时`
+      + (minutes > 12 * 60 ? '。这段比半天还长，确认一下上午下午没有选反？' : '');
+    el.classList.toggle('warn', minutes > 12 * 60);
+  }
+  function refreshQuietSay() {
+    quietSay('wakeQuietSay', $('wakeQuiet').checked, $('wakeQuietStart').value, $('wakeQuietEnd').value);
+    quietSay('camQuietSay', $('camQuiet').checked, $('camQuietStart').value, $('camQuietEnd').value);
   }
 
   function saveWakeQuiet() {
@@ -318,6 +349,10 @@
 
   ['wakeQuiet', 'wakeQuietStart', 'wakeQuietEnd'].forEach(id => $(id).addEventListener('change', saveWakeQuiet));
   ['camQuiet', 'camQuietStart', 'camQuietEnd'].forEach(id => $(id).addEventListener('change', saveCamQuiet));
+  ['wakeQuiet', 'wakeQuietStart', 'wakeQuietEnd', 'camQuiet', 'camQuietStart', 'camQuietEnd']
+    .forEach(id => $(id).addEventListener('input', refreshQuietSay));
+  ['wakeQuiet', 'wakeQuietStart', 'wakeQuietEnd', 'camQuiet', 'camQuietStart', 'camQuietEnd']
+    .forEach(id => $(id).addEventListener('change', refreshQuietSay));
   $('patrol').addEventListener('change', event => {
     const on = event.currentTarget.checked;
     save(async () => {

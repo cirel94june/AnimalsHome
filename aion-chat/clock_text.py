@@ -17,7 +17,7 @@ def _period(hour: int) -> str:
         return "凌晨"
     if hour < 8:
         return "早上"
-    if hour < 11:
+    if hour < 12:
         return "上午"
     if hour < 13:
         return "中午"

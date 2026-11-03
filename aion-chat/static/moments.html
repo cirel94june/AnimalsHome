@@ -334,7 +334,9 @@ async function init() {
   renderList();
 
   // 标记已读
-  api('POST', '/api/moments/mark-read').catch(() => {});
+  api('POST', '/api/moments/mark-read').then(() => {
+    try { window.top?.refreshUnread?.(); } catch (_) {}  // 首页「家里的事」的红点马上跟着消
+  }).catch(() => {});
   await momentsPromise;
 }
 
