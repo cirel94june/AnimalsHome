@@ -2135,3 +2135,28 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 小猫发起的群聊、`trigger_ai_chat`（多轮里 `paired_user_message` 在 AI 说过话后返回空串）不变。系统叫来的（带 `extra_prompt` 或 `ambient_context`）本来就不记。
 - **AI 动态页**（小猫截图：顶部人名一排只剩一条缝）：`.feed-chips` 是能横向滚动的元素，在纵向 flex 的滚动容器里最小高度按 0 算，内容一多就被压扁。加 `flex-shrink: 0`。本机手机宽度塞 40 张卡片验证：不加时 2px，加了 38px（截图见对话）。
 - **测试**：`test_seat_chat` 新加 2 项：座位 `capture_user_turn=False` 时不入队；`_reply_in_group` 三处都关掉捕获。座位、自主、群相关 58 项里只有 seat_chat 事务那 1 项失败，改动前就有。
+
+
+## 139. 逛淘宝改用淘宝联盟官方接口（服务器上直接搜商品）
+
+- **背景**：原来的 `taobao_native_mcp` 写死了原作者 Windows 上的 Node 和淘宝脚本路径，服务器上用不了，A2A 退路也返回 401。小猫申请了淘宝联盟的应用（他方平台 / 社交平台 / 爱分享），「物料搜索」（16516，`taobao.tbk.dg.material.optional`）、「物料信息查询」（16189）、「物料精选」（16518）已批，新版「商品物料获取」（27939，`taobao.tbk.dg.material.optional.upgrade`）还在审核。
+- **新模块 `taobao_union.py`**（只读，只搜商品）：
+  - 调淘宝开放平台网关 `https://eco.taobao.com/router/rest`，MD5 签名（secret + 按参数名排序的 key+value + secret，大写十六进制），时间戳用北京时间。
+  - 先调新版 upgrade；返回权限错误（code 11 或说明含 permission）才退回旧版物料搜索；其他错误（限流等）直接报，不重试。
+  - `normalize` 兼容新旧两版返回：商品 ID 允许加密 ID（`[0-9A-Za-z_-]{5,80}`），必须有标题。链接优先用能核对 id 的 `item_url`，否则用联盟推广链接（click_url / url / coupon_share_url），只认 https 的 taobao.com / tmall.com 及其子域；图片只认 https 的 alicdn。不合格的计入 skipped。
+  - AppSecret 单独存 `data/taobao_union_secret.json`：先以 0600 新建临时文件再替换，git 忽略。不进设置 JSON，不回给页面，不进请求参数（只用于算签名），也不进报错。
+- **接入 `taobao_shopping`**：
+  - 设置多一种连接方式 `union`，`union_app_key`、`union_adzone_id` 存在设置里；`settings()` 只回 `union_secret_set` 布尔值。
+  - `set_settings`：校验 AppKey 和推广位 ID 格式；选 union 时三样必须齐（AppSecret 可沿用已存的）；AppSecret 留空表示不换。
+  - `search_and_record`：union 走 `taobao_union.search`，候选标 `transport="union"`，skipped 透传。
+  - `check_connection`：union 时试搜「水杯」3 件，并说明用的是哪个接口。
+- **页面**（`taobao.html` / `taobao.js`）：连接方式第一项是「淘宝联盟官方接口（推荐）」，下面三栏 AppKey、AppSecret（密码框，打开时永远是空的，旁边提示「已存过（不显示）」）、推广位 ID；保存后清空密码框。商品链接放行 taobao.com / tmall.com 及其子域（联盟推广链接是 s.click.taobao.com）。
+- **测试**：新文件 `test_taobao_union.py` 6 项：
+  - 签名算法；
+  - 新旧两版返回的解析和拒收；
+  - 新版没权限时退回旧版，请求里只有签名不含 AppSecret；
+  - 限流等错误不重试；
+  - AppSecret 不回给页面、留空沿用、格式校验；
+  - 联盟搜索结果能记录、能收藏。
+  - 和原来的 `test_taobao_shopping` 一起 22 项全过。本机浏览器看过设置对话框（截图见对话），没有在本机真的保存钥匙。
+- **还没用真钥匙验证过**：上线后由小猫在页面里填，再点「检查已保存的连接」。

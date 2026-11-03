@@ -19,7 +19,9 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from config import DB_PATH
 
-DEFAULT_SETTINGS = {"transport": "native_bridge", "url": "http://127.0.0.1:3654/mcp", "autonomy_enabled": True}
+DEFAULT_SETTINGS = {"transport": "native_bridge", "url": "http://127.0.0.1:3654/mcp", "autonomy_enabled": True,
+                    # 淘宝联盟官方接口（11-03）：AppKey、推广位 ID 存这里；AppSecret 另存（见 taobao_union）
+                    "union_app_key": "", "union_adzone_id": ""}
 SHOPPING_LOCK = asyncio.Lock()  # Keep searches and independent shopping trips serialized.
 ACTIVE_TRIPS: dict[str, dict] = {}
 
@@ -96,32 +98,48 @@ class TaobaoStore:
             await db.commit()
 
     async def settings(self):
+        import taobao_union
         async with self.connect() as db:
             row = await (await db.execute("SELECT value FROM settings WHERE id=1")).fetchone()
-        return {**DEFAULT_SETTINGS, **(json.loads(row[0]) if row else {})}
+        # union_secret_set 只说有没有填过，AppSecret 本身永远不回给页面
+        return {**DEFAULT_SETTINGS, **(json.loads(row[0]) if row else {}), "union_secret_set": taobao_union.has_secret()}
 
     async def set_settings(self, value: dict):
+        import taobao_union
         mode = value.get("transport")
-        if mode not in ("native_bridge", "http"):
-            raise ValueError("不支持的 MCP 连接类型")
-        url = str(value.get("url", "")).strip()
+        if mode not in ("native_bridge", "http", "union"):
+            raise ValueError("不支持的连接类型")
+        url = str(value.get("url", "")).strip() or DEFAULT_SETTINGS["url"]
         parsed = urlsplit(url)
         if (parsed.scheme not in ("http", "https") or parsed.hostname not in ("127.0.0.1", "localhost", "::1")
                 or parsed.username or parsed.password or parsed.fragment):
             raise ValueError("淘宝 MCP 地址必须是本机 localhost / 127.0.0.1 的 HTTP 地址")
-        settings = {"transport": mode, "url": url, "autonomy_enabled": bool(value.get("autonomy_enabled"))}
+        app_key = str(value.get("union_app_key") or "").strip()
+        adzone_id = str(value.get("union_adzone_id") or "").strip()
+        secret = str(value.get("union_app_secret") or "").strip()
+        if app_key and not taobao_union.valid_app_key(app_key):
+            raise ValueError("AppKey 格式不对（应是一串字母和数字）")
+        if adzone_id and not taobao_union.valid_adzone_id(adzone_id):
+            raise ValueError("推广位 ID 应是一串数字（mm_xxx_xxx_数字 的最后一段）")
+        if mode == "union" and not (app_key and adzone_id and (secret or taobao_union.has_secret())):
+            raise ValueError("用淘宝联盟要填齐 AppKey、AppSecret 和推广位 ID")
+        if secret:  # 只有这次填了才替换；留空表示沿用已存的
+            taobao_union.save_secret(secret)
+        settings = {"transport": mode, "url": url, "autonomy_enabled": bool(value.get("autonomy_enabled")),
+                    "union_app_key": app_key, "union_adzone_id": adzone_id}
         async with self.connect() as db:
             await db.execute("INSERT OR REPLACE INTO settings(id,value) VALUES(1,?)", (json.dumps(settings),))
             await db.commit()
-        return settings
+        return {**settings, "union_secret_set": taobao_union.has_secret()}
 
-    async def record_search(self, keyword: str, products: list, transport="native_bridge"):
+    async def record_search(self, keyword: str, products: list, transport="native_bridge", *, skipped: int = 0):
         search_id, now = uuid.uuid4().hex, time.time()
-        found, seen, skipped = [], set(), 0
+        found, seen = [], set()
         async with self.connect() as db:
             for raw in products:
                 try:
-                    p = normalize_product(raw)
+                    # 淘宝联盟的商品已经在 taobao_union.normalize 里核对过（加密商品 ID、联盟推广链接）
+                    p = raw if transport == "union" else normalize_product(raw)
                 except (ValueError, TypeError, AttributeError):
                     skipped += 1
                     continue
@@ -274,6 +292,16 @@ def tool_payload(result):
 
 
 async def check_connection(settings):
+    if settings["transport"] == "union":
+        import taobao_union
+        try:
+            result = await taobao_union.search("水杯", app_key=settings["union_app_key"],
+                                               adzone_id=settings["union_adzone_id"], page_size=3)
+        except taobao_union.UnionError as exc:
+            raise RuntimeError("淘宝联盟检查失败：" + str(exc)) from None
+        which = "新版商品物料获取" if result["method"] == taobao_union.METHOD_UPGRADE else "物料搜索"
+        return {"ok": True, "transport": "union", "tools": [result["method"]],
+                "message": f"淘宝联盟接通了（用的是「{which}」），试搜「水杯」拿到 {len(result['products'])} 件商品"}
     try:
         async with asyncio.timeout(25), mcp_session(settings) as session:
             names = [t.name for t in (await session.list_tools()).tools]
@@ -299,6 +327,14 @@ async def search_and_record(store: TaobaoStore, keyword: str):
     if not keyword or len(keyword) > 120:
         raise ValueError("搜索词应为 1 到 120 字")
     settings = await store.settings()
+    if settings["transport"] == "union":
+        import taobao_union
+        try:
+            result = await taobao_union.search(keyword, app_key=settings["union_app_key"],
+                                               adzone_id=settings["union_adzone_id"])
+        except taobao_union.UnionError as exc:
+            raise RuntimeError("淘宝联盟搜索失败：" + str(exc)) from None
+        return await store.record_search(keyword, result["products"], "union", skipped=result["skipped"])
     payload = await mcp_search(keyword, settings)
     # Retry only a genuinely empty response, not rejected links or MCP errors.
     if not payload["products"]:

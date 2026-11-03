@@ -65,8 +65,15 @@
   <dialog id="settingsDialog">
     <form id="settingsForm">
       <h2>淘宝连接</h2>
-      <label>连接方式<select id="transport"><option value="native_bridge">MCP 原生桥接（本项目提供）</option><option value="http">淘宝官方 HTTP MCP</option></select></label>
-      <p class="muted">桥接通过标准 MCP 调用本机淘宝官方原生工具。它不是淘宝自带的 HTTP 服务。两种方式都需要电脑上的淘宝已启动、登录并启用 AI 代理。</p>
+      <label>连接方式<select id="transport"><option value="union">淘宝联盟官方接口（推荐，服务器直接用）</option><option value="native_bridge">MCP 原生桥接（原作者电脑上的工具）</option><option value="http">淘宝官方 HTTP MCP</option></select></label>
+      <div id="unionFields">
+        <p class="muted">在淘宝联盟开放平台的应用里能看到 AppKey 和 AppSecret；推广位 ID 是 mm_数字_数字_数字 的最后一段。只用来搜商品，不登录你的淘宝、不加购、不下单。</p>
+        <label>AppKey<input id="unionAppKey" type="text" maxlength="40" autocomplete="off" spellcheck="false"></label>
+        <label>AppSecret<input id="unionAppSecret" type="password" maxlength="80" autocomplete="new-password" spellcheck="false"></label>
+        <p class="muted" id="unionSecretHint"></p>
+        <label>推广位 ID<input id="unionAdzoneId" type="text" inputmode="numeric" maxlength="20" autocomplete="off"></label>
+      </div>
+      <p class="muted" id="bridgeHint">桥接通过标准 MCP 调用本机淘宝官方原生工具。它不是淘宝自带的 HTTP 服务。两种方式都需要电脑上的淘宝已启动、登录并启用 AI 代理。</p>
       <label id="urlField">官方 MCP 地址<input id="mcpUrl" type="url" maxlength="500"></label>
       <label class="checkbox"><input id="autonomyEnabled" type="checkbox">允许在已有的自主醒来中选择逛淘宝</label>
       <p class="muted">不会新增定时任务；仍需在自主意识中启用该角色。没有每周件数限制。</p>

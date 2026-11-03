@@ -14,7 +14,7 @@
     return true;
   };
   const phaseName = {thinking:'在想逛什么',searching:'正在搜商品',selecting:'正在挑选',finished:'已结束',failed:'这次没完成',interrupted:'这次中断了'};
-  const modeName = mode => mode === 'http' ? '淘宝官方 HTTP MCP' : 'MCP 原生桥接';
+  const modeName = mode => mode === 'union' ? '淘宝联盟官方接口' : mode === 'http' ? '淘宝官方 HTTP MCP' : 'MCP 原生桥接';
   const date = t => new Date(t * 1000).toLocaleString('zh-CN', {hour12: false});
   const node = (tag, className, text) => {
     const el = document.createElement(tag);
@@ -45,7 +45,10 @@
     const link = node('a', '', text);
     // Server verifies provenance; also restrict navigation at the rendering boundary.
     const url = new URL(p.url);
-    if (url.protocol === 'https:' && ['item.taobao.com', 'detail.tmall.com'].includes(url.hostname)) link.href = url.href;
+    // 淘宝联盟给的是推广链接（s.click.taobao.com 等），也只放行淘宝、天猫自己的域名
+    const host = url.hostname;
+    const taobaoHost = ['taobao.com', 'tmall.com'].includes(host) || host.endsWith('.taobao.com') || host.endsWith('.tmall.com');
+    if (url.protocol === 'https:' && !url.username && taobaoHost) link.href = url.href;
     link.target = '_blank'; link.rel = 'noopener noreferrer';
     return link;
   }
@@ -278,15 +281,28 @@
   $('settingsButton').onclick = () => {
     if (!state) return notice('页面尚未连接，请点击刷新重试。', true);
     $('transport').value = state.settings.transport; $('mcpUrl').value = state.settings.url;
-    $('autonomyEnabled').checked = state.settings.autonomy_enabled; $('urlField').hidden = $('transport').value !== 'http';
+    $('autonomyEnabled').checked = state.settings.autonomy_enabled;
+    $('unionAppKey').value = state.settings.union_app_key || ''; $('unionAdzoneId').value = state.settings.union_adzone_id || '';
+    $('unionAppSecret').value = '';  // AppSecret 从不回到页面：留空表示沿用已存的
+    $('unionSecretHint').textContent = state.settings.union_secret_set ? '已经存过 AppSecret（不显示）。要换才重新填。' : '还没存 AppSecret。';
+    showTransportFields();
     notice('', false, 'settingsNotice'); $('settingsDialog').showModal();
   };
-  $('transport').onchange = () => {$('urlField').hidden = $('transport').value !== 'http';};
+  function showTransportFields() {
+    const mode = $('transport').value;
+    $('urlField').hidden = mode !== 'http';
+    $('unionFields').hidden = mode !== 'union';
+    $('bridgeHint').hidden = mode === 'union';
+  }
+  $('transport').onchange = showTransportFields;
   $('closeSettings').onclick = () => $('settingsDialog').close();
   $('settingsForm').onsubmit = async e => {
     e.preventDefault();
     try {
-      await api('/settings', 'PUT', {transport: $('transport').value, url: $('mcpUrl').value, autonomy_enabled: $('autonomyEnabled').checked});
+      await api('/settings', 'PUT', {transport: $('transport').value, url: $('mcpUrl').value, autonomy_enabled: $('autonomyEnabled').checked,
+        union_app_key: $('unionAppKey').value.trim(), union_adzone_id: $('unionAdzoneId').value.trim(),
+        union_app_secret: $('unionAppSecret').value.trim()});
+      $('unionAppSecret').value = '';
       await refresh(); notice('已保存。可以检查连接，再做一次真实搜索。', false, 'settingsNotice');
     } catch (err) {notice(err.message, true, 'settingsNotice');}
   };

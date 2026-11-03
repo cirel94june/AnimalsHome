@@ -29,9 +29,12 @@ class SaveBody(ActorBody):
 
 
 class SettingsBody(BaseModel):
-    transport: Literal["native_bridge", "http"]
-    url: str = Field(max_length=500)
+    transport: Literal["native_bridge", "http", "union"]
+    url: str = Field(default="", max_length=500)
     autonomy_enabled: bool = True
+    union_app_key: str = Field(default="", max_length=40)
+    union_adzone_id: str = Field(default="", max_length=20)
+    union_app_secret: str = Field(default="", max_length=80)  # 留空 = 沿用已存的；从不回给页面
 
 
 @router.get("/state")
