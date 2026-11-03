@@ -2894,15 +2894,22 @@ async def get_config():
     return _public_chatroom_config(load_chatroom_config())
 
 
+def _sync_model_cards(before: dict, cfg: dict) -> None:
+    """群聊设置里给小克 / Lucien 换了模型：名片上的「TA 自己的模型」跟着换（11-03，和私聊同一个设置）。
+    只在这次保存真的改了模型时才同步：别的设置（比如上下文条数）一起保存时带回来的旧模型不算换（Codex §132 M2）。"""
+    import actors
+    for actor_id, key in (("aion", "aion_model"), ("connor", "connor_model")):
+        new = str(cfg.get(key) or "").strip()
+        if new and new != str(before.get(key) or "").strip():
+            actors.set_own_model_from_elsewhere(actor_id, new)
+
+
 @router.put("/config")
 async def update_config(body: ConfigUpdate):
-    cfg = _apply_config_update(load_chatroom_config(), body)
+    before = load_chatroom_config()
+    cfg = _apply_config_update(dict(before), body)
+    _sync_model_cards(before, cfg)
     save_chatroom_config(cfg)
-    import actors
-    if body.aion_model:
-        actors.set_own_model_from_elsewhere("aion", cfg.get("aion_model"))
-    if body.connor_model:
-        actors.set_own_model_from_elsewhere("connor", cfg.get("connor_model"))
     if body.ambient_voice_enabled is False:
         global _AMBIENT_ACTIVE_LISTENER
         if _AMBIENT_ACTIVE_LISTENER:
@@ -3038,7 +3045,8 @@ async def get_room_settings(room_id: str):
 @router.patch("/rooms/{room_id}/settings")
 async def patch_room_settings(room_id: str, body: ChatroomSettingsUpdate):
     """Save all visible setting fields in one idempotent request."""
-    cfg = _apply_config_update(load_chatroom_config(), body)
+    before = load_chatroom_config()
+    cfg = _apply_config_update(dict(before), body)
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM chatroom_rooms WHERE id=?", (room_id,))
@@ -3070,6 +3078,7 @@ async def patch_room_settings(room_id: str, body: ChatroomSettingsUpdate):
         payload = {"room_id": room_id, "room": room, "config": public_cfg}
         sync_event = {"type": "chatroom_settings_updated", "data": payload}
         seq = await append_sync_event(db, sync_event)
+        _sync_model_cards(before, cfg)
         save_chatroom_config(cfg)
         await db.commit()
 

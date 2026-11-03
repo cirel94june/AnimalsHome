@@ -230,7 +230,8 @@ def test_xiaoke_falls_back_to_his_own_model_not_the_global_default(models, monke
     assert config.default_model_key() == "红豆沙·claude"      # 全局默认：第一个能用的共用线路
     assert config.aion_own_model() == "自己的·claude"
     assert config.aion_model_key("") == "自己的·claude"       # 没选：用他自己的
-    assert config.aion_model_key("红豆沙·claude") == "红豆沙·claude"  # 选了别的：照她选的
+    # 11-03 起只认名片：窗口里存的、页面带来的别的模型不再优先（在别处换模型会同步到名片）
+    assert config.aion_model_key("红豆沙·claude") == "自己的·claude"
     assert config.aion_model_key("Codex-6.1-Sol") == "自己的·claude"  # Codex 只给 Lucien：换成他自己的
     monkeypatch.setattr(actors, "get_actor", lambda actor_id: {"model": "Codex-6.1-Sol"})  # 名片里是 Codex：不算
     assert config.aion_own_model() == "" and config.aion_model_key("") == "红豆沙·claude"

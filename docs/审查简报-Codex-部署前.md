@@ -2060,3 +2060,22 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `test_independent_autonomy` 原来断言读不懂只问 1 次，改成读不懂问 2 次。
 - 本机浏览器在开关总览页验证：11:00→08:00 显示 21 小时并标红；23:00→08:00 显示 9 小时。
 - 相关 48 个文件里 6 项失败，都是改动前就有的：model_audio / model_transport 4 项、seat_chat 1 项、bridge 的计时用例 1 项（你上次也提过）。friend_visit 测试文件改动前就会卡住。
+
+
+## 133. 修 §132 审查的 M1–M3、L1：小克的模型真正只认一个设置
+
+- **M3 其他生成入口还在用窗口里的旧模型**：
+  - 不再一个个改调用方，直接改统一入口 `config.aion_model_key`：名片上「TA 自己的模型」（`aion_own_model()`，要求还在、能用、不是 Codex、不是别人专属）能用就用它，调用方传来的值只在名片没选或用不了时才看。
+  - 这样自主醒来、朋友圈评论、基金、闹铃、提醒、定位、摄像头、礼物、英语角、记忆整理、人设演化、维修室、浮窗，凡是走 `aion_model_key` 的，都跟着名片走。
+  - 私聊恢复原来的 `private_model_key(conv["model"])` 写法（统一入口已经先看名片）。
+  - `test_model_defaults` 里「选了别的就照她选的」改成「只认名片」：在别处换模型会同步到名片，不会出现选了却不生效。
+  - 读 `conversations.model` 但没经过 `aion_model_key` 的：`theater.py` 是剧场自己选的模型，`monthly_chat_archive.py` 是归档时记录用的，这两处没动。
+- **M1 群聊实际用的 PATCH 房间设置漏了同步**：抽出 `_sync_model_cards(before, cfg)`，`PUT /config` 和 `PATCH /rooms/{id}/settings` 都在保存时调用它。
+- **M2 旧弹窗把旧模型写回去**：
+  - 服务器：`_sync_model_cards` 只在这次保存后的模型和保存前不一样时才同步名片。
+  - 前端：`crPopulateSettings` 把打开时的模型记在 `dataset.opened`；`saveSettings` 只有选择框和打开时不同才提交 `aion_model` / `connor_model`，保存后更新 `opened`。只改上下文条数时不带模型，旧值不会覆盖群聊设置，也不会进名片。
+- **L1 起止相同**：显示「开始和结束是同一个时间，等于没有设置静默时段」。
+- **测试**：
+  - `test_1103_fixes` 新加：名片是 New 时，`aion_model_key("Old")` 返回 New；`_sync_model_cards` 只在真的换了模型时同步；两个保存入口都调用它；前端只提交改过的模型；起止相同时的说明。
+  - 相关 410 项只有 2 项失败（`idle_autonomy` 的 friend_visit、`seat_chat` 的事务），改动前就有。
+  - 浮窗、闹铃、定位、基金、英语角、人设演化、礼物、维修室、剧场、摄像头等 27 个文件里有 3 项失败（英语角 2 项、剧场 1 项），单独在改动前的代码上也同样失败。

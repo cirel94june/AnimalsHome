@@ -322,6 +322,11 @@
     const toMin = v => { const [h, m] = String(v || '').split(':').map(Number); return h * 60 + m; };
     if (!enabled || !start || !end) { el.textContent = ''; el.classList.remove('warn'); return; }
     const a = toMin(start), b = toMin(end);
+    if (a === b) {  // 后端把起止相同当成不静默（Codex §132 L1）
+      el.textContent = '开始和结束是同一个时间，等于没有设置静默时段';
+      el.classList.remove('warn');
+      return;
+    }
     const minutes = a === b ? 0 : (b - a + 1440) % 1440;
     const hours = Math.round(minutes / 6) / 10;
     el.textContent = `从${clockSay(start)}到${b <= a ? '第二天' : ''}${clockSay(end)}，一共 ${hours} 小时`

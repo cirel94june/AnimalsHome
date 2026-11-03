@@ -34,11 +34,30 @@ class ModelSingleSourceTests(unittest.TestCase):
         self.assertEqual("新模型", saved["seats"]["aion"]["model"])
         self.assertNotIn("ai3", saved["seats"])
 
-    def test_private_chat_and_conversation_list_follow_the_ai_card(self):
+    def test_every_xiaoke_entry_follows_the_ai_card(self):
+        """Codex §132 M3：自主醒来、朋友圈、闹铃等都把窗口里的旧模型传给 aion_model_key，它原来照收。"""
+        import config
+        with patch.object(config, "aion_own_model", return_value="New"):
+            self.assertEqual("New", config.aion_model_key("Old"))
+            self.assertEqual("New", config.aion_model_key(""))
         source = (ROOT / "routes" / "chat.py").read_text(encoding="utf-8")
-        self.assertEqual(3, source.count('model_key = private_model_key(aion_own_model() or (conv["model"] if conv else ""))'))
-        self.assertIn('data["model"] = private_model_key(aion_own_model() or data.get("model"))', source)
         self.assertIn('actors.set_own_model_from_elsewhere("aion", model)', source)
+
+    def test_group_settings_sync_the_card_only_when_the_model_really_changed(self):
+        """Codex §132 M1、M2：PATCH 房间设置漏了同步；只改上下文条数时带回来的旧模型不能算换模型。"""
+        from routes import chatroom as routes
+        import actors
+        calls = []
+        with patch.object(actors, "set_own_model_from_elsewhere", side_effect=lambda a, m: calls.append((a, m))):
+            routes._sync_model_cards({"aion_model": "Old", "connor_model": "C"}, {"aion_model": "Old", "connor_model": "C"})
+            self.assertEqual([], calls)
+            routes._sync_model_cards({"aion_model": "Old", "connor_model": "C"}, {"aion_model": "New", "connor_model": "C"})
+            self.assertEqual([("aion", "New")], calls)
+        source = (ROOT / "routes" / "chatroom.py").read_text(encoding="utf-8")
+        self.assertEqual(2, source.count("_sync_model_cards(before, cfg)"))  # PUT /config 和 PATCH 房间设置都同步
+        js = (STATIC / "chatroom.js").read_text(encoding="utf-8")
+        self.assertIn("...(aionModelChanged ? { aion_model: nextAionModel } : {}),", js)
+        self.assertIn("document.getElementById('setAionModel').dataset.opened = chatroomModel || '';", js)
 
 
 class UnreadRefreshTests(unittest.TestCase):
@@ -67,10 +86,12 @@ class QuietSayTests(unittest.TestCase):
         script = html[start:end] + """
 const els = {}; const $ = id => (els[id] ||= { textContent: '', classList: { remove() {}, toggle(_, on) { els[id].warn = on; } } });
 quietSay('a', true, '11:00', '08:00'); quietSay('b', true, '23:00', '08:00'); quietSay('c', false, '23:00', '08:00');
-console.log(JSON.stringify([els.a.textContent, els.a.warn, els.b.textContent, els.b.warn, els.c.textContent]));
+quietSay('d', true, '08:00', '08:00');
+console.log(JSON.stringify([els.a.textContent, els.a.warn, els.b.textContent, els.b.warn, els.c.textContent, els.d.textContent]));
 """
         out = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", check=True).stdout
-        a, a_warn, b, b_warn, c = json.loads(out)
+        a, a_warn, b, b_warn, c, d = json.loads(out)
+        self.assertEqual("开始和结束是同一个时间，等于没有设置静默时段", d)  # Codex §132 L1
         self.assertEqual("从上午 11:00到第二天上午 8:00，一共 21 小时。这段比半天还长，确认一下上午下午没有选反？", a)
         self.assertTrue(a_warn)
         self.assertEqual("从深夜 11:00到第二天上午 8:00，一共 9 小时", b)

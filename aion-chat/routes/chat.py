@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Any
 
-from config import DEFAULT_MODEL, MODELS, aion_model_key as private_model_key, aion_own_model, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
+from config import DEFAULT_MODEL, MODELS, aion_model_key as private_model_key, load_worldbook, SETTINGS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, PUBLIC_DIR, resolve_model_key, resolve_model_transport_mode
 from database import get_db
 from ws import manager
 from reply_timing import model_started
@@ -429,7 +429,7 @@ def _is_ai_error_text(text: str) -> bool:
 
 def _conversation_dict(row) -> dict:
     data = dict(row)
-    data["model"] = private_model_key(aion_own_model() or data.get("model"))  # 页面上显示的也是小克现在真正用的
+    data["model"] = private_model_key(data.get("model"))  # 页面上显示的是小克现在真正用的（先看名片）
     return data
 
 
@@ -1352,8 +1352,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
         conv = await cur.fetchone()
-        # 小克的模型以名片上的为准（和群聊同一个设置）；窗口里存的旧模型只在名片没选时用（11-03）
-        model_key = private_model_key(aion_own_model() or (conv["model"] if conv else ""))
+        model_key = private_model_key(conv["model"] if conv else "")  # 先看名片上的（见 aion_model_key）
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
     merged = await fetch_merged_timeline("aion", body.context_limit, stable_window=True)  # 所有私聊窗口 + 群聊
@@ -1962,8 +1961,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
         conv = await cur.fetchone()
-        # 小克的模型以名片上的为准（和群聊同一个设置）；窗口里存的旧模型只在名片没选时用（11-03）
-        model_key = private_model_key(aion_own_model() or (conv["model"] if conv else ""))
+        model_key = private_model_key(conv["model"] if conv else "")  # 先看名片上的（见 aion_model_key）
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
     merged = await fetch_merged_timeline("aion", body.context_limit, stable_window=True)  # 所有私聊窗口 + 群聊
@@ -3465,8 +3463,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         db.row_factory = __import__('aiosqlite').Row
         cur = await db.execute("SELECT model FROM conversations WHERE id=?", (conv_id,))
         conv = await cur.fetchone()
-        # 小克的模型以名片上的为准（和群聊同一个设置）；窗口里存的旧模型只在名片没选时用（11-03）
-        model_key = private_model_key(aion_own_model() or (conv["model"] if conv else ""))
+        model_key = private_model_key(conv["model"] if conv else "")  # 先看名片上的（见 aion_model_key）
 
     # ── 合并私聊 + 群聊消息为统一时间线 ──
     merged = await fetch_merged_timeline("aion", context_limit, stable_window=True)  # 所有私聊窗口 + 群聊

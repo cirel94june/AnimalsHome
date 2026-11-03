@@ -717,14 +717,19 @@ def aion_own_model() -> str:
 
 
 def aion_model_key(model_key: str | None) -> str:
-    """小克用的模型（私聊、群聊、自主活动）。选了、还在、不是 Codex、不是别人专属线路的就用它；
-    没选 / 已不存在 / 是 Codex（只给 Lucien）时，先用小克自己的模型（名片里选的），再退到默认模型；
+    """小克用的模型（私聊、群聊、自主活动、朋友圈、闹铃、定位、日记……所有小克说话的地方）。
+    11-03 起只认一个设置：名片上「TA 自己的模型」能用就用它，调用方传来的（窗口里存的、页面带来的）不再优先。
+    私聊页、群聊设置里换模型都会同步到名片（小猫：名片里换了模型，开着的群聊、私聊、自主醒来还在用旧的）。
+    名片没选或用不了时，才看调用方传来的（还在、不是 Codex、不是别人专属线路），再退到默认模型；
     都没有时返回空，调用时提示去接线路。"""
+    own = aion_own_model()
+    if own:
+        return own
     key = _clean_text(model_key)
     if (key in MODELS and not is_model_deprecated(key) and not codex_forbidden("aion", key)
             and not others_private_route("aion", key)):
         return key
-    return aion_own_model() or default_model_key()
+    return default_model_key()
 
 
 def resolve_model_key(model_key: str | None) -> str:

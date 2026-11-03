@@ -4387,6 +4387,9 @@ function crPopulateSettings(room, cfg = {}) {
   document.getElementById('setConnorModel').innerHTML = renderModelOptions(chatroomConnorModel);
   document.getElementById('setAionModel').value = chatroomModel || '';
   document.getElementById('setConnorModel').value = chatroomConnorModel || 'Codex';
+  // 记下打开时的模型：保存时只有真的换了才提交（Codex §132 M2）
+  document.getElementById('setAionModel').dataset.opened = chatroomModel || '';
+  document.getElementById('setConnorModel').dataset.opened = chatroomConnorModel || 'Codex';
 
   document.getElementById('optAion').textContent = `${crAiName} 优先`;
   document.getElementById('optConnor').textContent = `${crConnorName} 优先`;
@@ -4976,11 +4979,13 @@ async function saveSettings() {
   const nextAionModel = document.getElementById('setAionModel')?.value || chatroomModel;
   const nextConnorModel = document.getElementById('setConnorModel')?.value || chatroomConnorModel || 'Codex';
   const ambient = crAmbientReadInputs();
+  const aionModelChanged = nextAionModel !== (document.getElementById('setAionModel')?.dataset.opened ?? nextAionModel);
+  const connorModelChanged = nextConnorModel !== (document.getElementById('setConnorModel')?.dataset.opened ?? nextConnorModel);
   const payload = {
       context_limit: parseInt(document.getElementById('setContextLimit').value) || 30,
       ai_chat_rounds: parseInt(document.getElementById('setAiRounds').value) || 1,
-      aion_model: nextAionModel,
-      connor_model: nextConnorModel,
+      ...(aionModelChanged ? { aion_model: nextAionModel } : {}),
+      ...(connorModelChanged ? { connor_model: nextConnorModel } : {}),
       tts_enabled: !!document.getElementById('setTtsEnabled').checked,
       tts_aion_voice: document.getElementById('setTtsAionVoice').value,
       tts_connor_voice: document.getElementById('setTtsConnorVoice').value,
@@ -5007,6 +5012,8 @@ async function saveSettings() {
 
     chatroomModel = result.config?.aion_model || nextAionModel;
     chatroomConnorModel = result.config?.connor_model || nextConnorModel;
+    if (document.getElementById('setAionModel')) document.getElementById('setAionModel').dataset.opened = chatroomModel;
+    if (document.getElementById('setConnorModel')) document.getElementById('setConnorModel').dataset.opened = chatroomConnorModel;
     crTtsEnabled = !!(result.config?.tts_enabled ?? payload.tts_enabled);
     crTtsAionVoice = result.config?.tts_aion_voice ?? payload.tts_aion_voice;
     crTtsConnorVoice = result.config?.tts_connor_voice ?? payload.tts_connor_voice;
