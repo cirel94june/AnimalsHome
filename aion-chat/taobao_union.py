@@ -33,9 +33,10 @@ _ITEM_ID = re.compile(r"[0-9A-Za-z_-]{5,80}")  # 淘宝客现在给的多是加�
 class UnionError(RuntimeError):
     """淘宝联盟接口报错（说明里不含钥匙）。"""
 
-    def __init__(self, message: str, *, permission: bool = False):
+    def __init__(self, message: str, *, permission: bool = False, no_result: bool = False):
         super().__init__(message)
         self.permission = permission
+        self.no_result = no_result  # 接口用报错表示「这个词没搜到东西」（code 15 + 无结果），不是故障
 
 
 def valid_app_key(value: str) -> bool:
@@ -111,7 +112,8 @@ async def call(method: str, biz: dict, *, app_key: str, timeout: float = 20.0) -
         sub = str(error.get("sub_code") or "")
         text = "；".join(str(x) for x in (error.get("msg"), error.get("sub_msg")) if x)
         permission = code == "11" or "permission" in (text + sub).lower()
-        raise UnionError(f"淘宝联盟接口报错 {code}：{text}"[:300], permission=permission)
+        no_result = "无结果" in text or "no-result" in sub.lower() or "no_result" in sub.lower()
+        raise UnionError(f"淘宝联盟接口报错 {code}：{text}"[:300], permission=permission, no_result=no_result)
     return data
 
 
@@ -206,12 +208,17 @@ async def search(keyword: str, *, app_key: str, adzone_id: str, page_size: int =
         raise UnionError("淘宝联盟的 AppKey 或推广位 ID 还没填好")
     biz = {"q": keyword, "adzone_id": adzone_id, "page_size": page_size, "page_no": 1}
     try:
-        data, method = await call(METHOD_UPGRADE, biz, app_key=app_key), METHOD_UPGRADE
+        try:
+            data, method = await call(METHOD_UPGRADE, biz, app_key=app_key), METHOD_UPGRADE
+        except UnionError as exc:
+            if not exc.permission:
+                raise
+            # 新版还没批下来：用已经批了的旧版「物料搜索」
+            data, method = await call(METHOD_LEGACY, biz, app_key=app_key), METHOD_LEGACY
     except UnionError as exc:
-        if not exc.permission:
-            raise
-        # 新版还没批下来：用已经批了的旧版「物料搜索」
-        data, method = await call(METHOD_LEGACY, biz, app_key=app_key), METHOD_LEGACY
+        if exc.no_result:  # 11-05：词太细搜不到时接口报「无结果」，当成空列表，由上层换个宽一点的词
+            return {"products": [], "skipped": 0, "method": METHOD_UPGRADE}
+        raise
     raw_items = _map_data(data)
     products = []
     for raw in raw_items:
@@ -222,3 +229,17 @@ async def search(keyword: str, *, app_key: str, adzone_id: str, page_size: int =
         if product:
             products.append(product)
     return {"products": products, "skipped": len(raw_items) - len(products), "method": method}
+
+
+async def search_broadening(keyword: str, *, app_key: str, adzone_id: str, page_size: int = 20,
+                            max_drops: int = 2) -> dict:
+    """搜不到就去掉最后一个词再搜，最多放宽 max_drops 次（11-05：「仓鼠亚克力观景台 磁吸 可拆洗」整句没结果）。
+    返回 search 的结果，另加 keyword_used（最后实际搜的词）。"""
+    tried = keyword.strip()
+    for attempt in range(max_drops + 1):
+        result = await search(tried, app_key=app_key, adzone_id=adzone_id, page_size=page_size)
+        words = tried.split()
+        if result["products"] or result["skipped"] or len(words) < 2 or attempt == max_drops:
+            break
+        tried = " ".join(words[:-1])
+    return {**result, "keyword_used": tried}

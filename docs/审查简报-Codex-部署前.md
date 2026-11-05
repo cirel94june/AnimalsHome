@@ -2644,3 +2644,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 改法：先查 `res.ok`，再查 `content-type`（没有就看 blob.type）以 `image/` 开头且非空；不满足就抛错，落到「图片保存失败」提示，原生保存和浏览器下载都不走。
 - 测试 +1（共 4 项）。本机预览实测（假的 AionImageSaver）：真图片存了 1 次；404 地址、HTML 页面各提示一次「图片保存失败」，没有调用保存。
 - 狐狸说 bot 那边看的还是旧提交：§166 的三个新提交 cloudy `977d4d2`、Lucien `cae72c4`、Jasper `10697c2` 已在 GitHub 分支上（`git ls-remote` 确认）。
+
+## 168. 淘宝联盟：词太细搜不到时不再算失败，自动放宽
+
+- 小猫 11-05：27939 批下来后，Lucien（connor）逛淘宝失败，记录里的错误是 `淘宝联盟接口报错 15：Remote service error；无结果`，当时的搜索词是「仓鼠亚克力观景台 磁吸 可拆洗」。新版接口用报错来表示「这个词没结果」。
+- 改法：
+  - `taobao_union.call`：`UnionError` 加 `no_result`（错误文字里有「无结果」，或 sub_code 含 no-result / no_result）。
+  - `search`：新旧接口任一处报 `no_result` 都返回空列表；其他错误照旧抛出（code 15 + 别的 sub_msg 仍算失败）。
+  - 新增 `search_broadening`：没结果、也没有被跳过的商品、词数 ≥ 2 时去掉最后一个词再搜，最多放宽 2 次（一次逛最多 3 次请求）。返回值加 `keyword_used`。
+  - `taobao_shopping.search_and_record`（联盟分支）和 `outing_tools`（bot 借淘宝）都改用它。记录里存的是实际搜的词；没结果时提示「淘宝联盟没搜到「…」相关的商品（已经把词放宽过）」，不再说「页面尚未就绪」。
+- 测试 +4：`无结果` 当作空列表；code 15 的其他错误仍然失败；放宽顺序依次是整句、去掉末词、再去掉一个；一个词不放宽；最多放宽两次。淘宝联盟和借工具测试全过。`test_taobao_native_mcp` 有 4 项失败，改之前就失败（本机路径问题），和这次无关。

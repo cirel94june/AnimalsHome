@@ -106,6 +106,45 @@ class UnionApiTests(unittest.TestCase):
                 asyncio.run(taobao_union.search("x", app_key="12345678", adzone_id="1111111"))
         self.assertEqual(1, len(calls))
 
+    def test_no_result_error_is_an_empty_list_not_a_failure(self):
+        """11-05：Lucien 逛「仓鼠亚克力观景台 磁吸 可拆洗」，接口回 code 15「无结果」，原来整次逛街算失败。"""
+        calls = []
+        answers = [{"error_response": {"code": 15, "msg": "Remote service error", "sub_msg": "无结果"}}]
+        with patch.object(taobao_union, "_client", fake_client(answers, calls)):
+            result = asyncio.run(taobao_union.search("仓鼠", app_key="12345678", adzone_id="1111111"))
+        self.assertEqual([], result["products"])
+        self.assertEqual(0, result["skipped"])
+
+    def test_other_code_15_errors_still_fail(self):
+        answers = [{"error_response": {"code": 15, "msg": "Remote service error", "sub_msg": "服务繁忙"}}]
+        with patch.object(taobao_union, "_client", fake_client(answers, [])):
+            with self.assertRaises(taobao_union.UnionError):
+                asyncio.run(taobao_union.search("仓鼠", app_key="12345678", adzone_id="1111111"))
+
+    def test_broadening_drops_last_words_until_something_is_found(self):
+        calls = []
+        no = {"error_response": {"code": 15, "msg": "Remote service error", "sub_msg": "无结果"}}
+        answers = [no, no, {"tbk_dg_material_optional_upgrade_response": {"result_list": {"map_data": [UPGRADE_ITEM]}}}]
+        with patch.object(taobao_union, "_client", fake_client(answers, calls)):
+            result = asyncio.run(taobao_union.search_broadening("仓鼠亚克力观景台 磁吸 可拆洗",
+                                                                app_key="12345678", adzone_id="1111111"))
+        self.assertEqual(["仓鼠亚克力观景台 磁吸 可拆洗", "仓鼠亚克力观景台 磁吸", "仓鼠亚克力观景台"], [c["q"] for c in calls])
+        self.assertEqual("仓鼠亚克力观景台", result["keyword_used"])
+        self.assertEqual(1, len(result["products"]))
+
+    def test_broadening_stops_at_one_word_and_at_most_two_drops(self):
+        calls = []
+        no = {"error_response": {"code": 15, "sub_msg": "无结果"}}
+        with patch.object(taobao_union, "_client", fake_client([no], calls)):
+            result = asyncio.run(taobao_union.search_broadening("仓鼠", app_key="12345678", adzone_id="1111111"))
+        self.assertEqual(1, len(calls))
+        self.assertEqual("仓鼠", result["keyword_used"])
+        calls = []
+        with patch.object(taobao_union, "_client", fake_client([no, no, no], calls)):
+            result = asyncio.run(taobao_union.search_broadening("a b c d e", app_key="12345678", adzone_id="1111111"))
+        self.assertEqual(["a b c d e", "a b c d", "a b c"], [c["q"] for c in calls])
+        self.assertEqual([], result["products"])
+
 
 class UnionSettingsTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

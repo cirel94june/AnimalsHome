@@ -232,8 +232,8 @@ async def run_tool(tool: str, args: dict[str, Any]) -> str:
         from taobao_shopping import get_store
         keyword = _arg(args, "keyword", 60)
         settings = await (await get_store()).settings()
-        result = await taobao_union.search(keyword, app_key=settings.get("union_app_key", ""),
-                                           adzone_id=settings.get("union_adzone_id", ""), page_size=5)
+        result = await taobao_union.search_broadening(keyword, app_key=settings.get("union_app_key", ""),
+                                                      adzone_id=settings.get("union_adzone_id", ""), page_size=5)
         lines = [f"- {p['title']}｜{p.get('price') or '价格未知'}｜{p.get('shop') or ''}｜{p['url']}"
                  for p in result["products"][:5]]
         return "\n".join(lines) if lines else "淘宝上没找到合适的"

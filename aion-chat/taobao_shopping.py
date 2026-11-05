@@ -329,12 +329,14 @@ async def search_and_record(store: TaobaoStore, keyword: str):
     settings = await store.settings()
     if settings["transport"] == "union":
         import taobao_union
-        try:
-            result = await taobao_union.search(keyword, app_key=settings["union_app_key"],
-                                               adzone_id=settings["union_adzone_id"])
+        try:  # 词太细搜不到时会自动去掉最后的词再搜
+            result = await taobao_union.search_broadening(keyword, app_key=settings["union_app_key"],
+                                                          adzone_id=settings["union_adzone_id"])
         except taobao_union.UnionError as exc:
             raise RuntimeError("淘宝联盟搜索失败：" + str(exc)) from None
-        return await store.record_search(keyword, result["products"], "union", skipped=result["skipped"])
+        found = await store.record_search(result["keyword_used"], result["products"], "union", skipped=result["skipped"])
+        found["keyword_used"] = result["keyword_used"]
+        return found
     payload = await mcp_search(keyword, settings)
     # Retry only a genuinely empty response, not rejected links or MCP errors.
     if not payload["products"]:
@@ -405,6 +407,8 @@ async def _roam(actor: str, store: TaobaoStore, trip_id: str):
     if not candidates:
         if result["skipped"]:
             message = f"淘宝返回了 {result['skipped']} 件商品，但均未通过商品 ID 或链接校验，没有新增收藏。"
+        elif result.get("keyword_used") is not None:
+            message = f"淘宝联盟没搜到「{result['keyword_used']}」相关的商品（已经把词放宽过），没有新增收藏。"
         else:
             message = "淘宝搜索返回空商品列表，稍等后重试一次仍为空，没有新增收藏。可能是页面尚未就绪，也可能确实没有搜索结果。"
         await store.update_trip(trip_id, summary=message)
