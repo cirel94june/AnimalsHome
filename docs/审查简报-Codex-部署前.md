@@ -2616,3 +2616,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
     - 正文给了一个字节就停住，结果是「太久没回」，0.8 秒内退出；声明 100 字节只给 5 个就断开，结果是「没连上」。
   - 原来的滴数据、超大回应用例照旧通过。小克 115、Lucien 141、狗蛋 143 项全过。
   - https 在服务器上实测：google.com 正常读到 405；github.com 首页太大，被截断（`_TooLarge`）；家里 `/api/outing/tool` 不带钥匙时回 302（Cloudflare 要登录），bot 会说「家里这次没办成」。本机连外网的 TLS 握手本身会超时，所以 https 只在服务器上测了。
+
+## 165. 朋友圈点开大图黑屏
+
+- 小猫 11-05 报：朋友圈发了图，点开想看大图就黑屏。
+- 原因：`static/moments.html` 的 `openMomentImage` 是 `window.open(url, '_blank')`。手机 App 的 WebView 里会开一个空白新窗口，没有返回键，看起来就是黑屏。
+- 改法（只改这一页）：
+  - `openMomentImage` 改成在本页盖一层看图（`.moment-viewer`，fixed、z-index 10000）：图片按屏幕缩放，右上角 ×、底部「保存图片」「关闭」；点空白处或图片本身、按 Esc 都能关。
+  - 用 DOM 赋值建元素（`img.src = url`、`textContent`），不把地址拼进 innerHTML。
+  - 「保存图片」照聊天页的做法：有 `AionImageSaver`（本页、parent、top）就转 base64 交给 App 存相册，否则浏览器下载；失败只弹「图片保存失败」，不再退回开新窗口。
+- 测试 `test_moments_image_viewer.py` 3 项：看图和保存都不开新窗口、不用 innerHTML、能用 Esc 关。本机手机尺寸预览实测：盖层出现、图片显示、「关闭」和 Esc 都能关。
