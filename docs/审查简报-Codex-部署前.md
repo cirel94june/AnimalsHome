@@ -2317,3 +2317,11 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
     - Lucien 的开关 404 晚回来时已切到小克，不写小克的世界书；
     - 保存 Lucien 期间切到 Jasper 并改了 Jasper 的名字栏，名字仍只写给 Lucien（connor_name）。
   - `test_1103_fixes` 新加 1 项源码检查，14 项全过。
+
+
+## 152. 修 §151 余项：复盘开关按人记保存状态，读取失败保持禁用
+
+- 全局的 `personaEvolutionConfigSaving` 换成按人记的 `evolutionSavingFor`（Set），`isEvolutionConfigSaving` / `setEvolutionConfigSaving` 都带上人。
+- `refreshEvolutionForPerson`：只有这位的设置读成功、并且这位没在保存时才放开开关；读取失败就显示「复盘开关读取失败，先不能改（刷新页面再试）」，开关保持禁用，不读记录。成功读出的人记在 `toggle.dataset.loadedFor`；初始化时记为小克。
+- `savePersonaEvolutionToggle`：如果这位还在保存，或者开关不是这位读出来的，就把这次点击还原并提示，不再悄悄什么都不做。保存状态在发出时按人加上，`finally` 里按人去掉；只有仍是这个人、并且是这个人读出来的开关，才重新放开。
+- 验证：本机浏览器用真实页面函数重放。Lucien 的开关保存还没完成就切到 Jasper，Jasper 的开关可以点，也真的发出了 `seat/ai3/config` 的保存；Jasper 读取失败时开关禁用并显示提示。`test_1103_fixes` 新加 1 项，15 项全过。

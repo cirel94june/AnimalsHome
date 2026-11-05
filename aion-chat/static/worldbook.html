@@ -462,15 +462,19 @@ async function refreshEvolutionForPerson() {
   personaEvolutionRuns = [];
   const toggle = $("wbPersonaEvolutionEnabled");
   toggle.disabled = true;
+  let loaded = false;
   try {
     const cfg = await api("GET", `/api/persona-evolution/${evolutionEndpoint(id)}/config`);
     if (samePerson(id, gen)) toggle.checked = !!cfg.enabled;
+    loaded = true;
   } catch (e) {
     console.warn("读取复盘开关失败", e);
-  } finally {
-    if (samePerson(id, gen)) toggle.disabled = false;
+    if (samePerson(id, gen)) $("wbEvolutionLatest").textContent = "复盘开关读取失败，先不能改（刷新页面再试）";
   }
-  if (samePerson(id, gen)) await loadPersonaEvolutionRuns("ai");
+  if (!samePerson(id, gen)) return;
+  toggle.dataset.loadedFor = loaded ? id : "";
+  toggle.disabled = !loaded || isEvolutionConfigSaving("ai", id);  // 这位的开关还在保存：存完再放开
+  if (loaded) await loadPersonaEvolutionRuns("ai");
 }
 
 async function selectPerson(id) {
@@ -1055,13 +1059,15 @@ function setupEvolutionDateInput(id = "wbEvolutionDate") {
   if (!input.value) input.value = current;
 }
 
-let personaEvolutionConfigSaving = false;
-function isEvolutionConfigSaving(actor = "ai") {
-  return personaEvolutionConfigSaving;
+// 每个人各记各的「开关正在保存」（Codex §151 余项：原来是全局一个，切到别人后开关看着能点、点了没反应）
+const evolutionSavingFor = new Set();
+function isEvolutionConfigSaving(actor = "ai", person = wbPerson) {
+  return evolutionSavingFor.has(person);
 }
 
-function setEvolutionConfigSaving(actor, saving) {
-  personaEvolutionConfigSaving = saving;
+function setEvolutionConfigSaving(actor, saving, person = wbPerson) {
+  if (saving) evolutionSavingFor.add(person);
+  else evolutionSavingFor.delete(person);
 }
 
 async function persistPersonaEvolutionEnabled(enabled, actor = "ai", person = wbPerson) {
@@ -1098,11 +1104,15 @@ async function persistPersonaEvolutionEnabled(enabled, actor = "ai", person = wb
 }
 
 async function savePersonaEvolutionToggle(actor = "ai") {
-  if (isEvolutionConfigSaving(actor)) return;
   const input = $(evolutionUi(actor).toggleId);
-  const enabled = !!input.checked;
   const id = wbPerson, gen = wbPersonGen, name = personName(id);
-  setEvolutionConfigSaving(actor, true);
+  if (isEvolutionConfigSaving(actor, id) || input.dataset.loadedFor !== id) {
+    input.checked = !input.checked;  // 这次点击不算：还在保存，或者这位的开关没读出来
+    showToast(isEvolutionConfigSaving(actor, id) ? "上一次还在保存，稍等一下" : "复盘开关还没读出来，先不能改");
+    return;
+  }
+  const enabled = !!input.checked;
+  setEvolutionConfigSaving(actor, true, id);
   input.disabled = true;
   try {
     await persistPersonaEvolutionEnabled(enabled, actor, id);
@@ -1112,8 +1122,8 @@ async function savePersonaEvolutionToggle(actor = "ai") {
     if (samePerson(id, gen)) input.checked = !enabled;
     showToast(e.message || "开关保存失败");
   } finally {
-    if (samePerson(id, gen)) input.disabled = false;
-    setEvolutionConfigSaving(actor, false);
+    setEvolutionConfigSaving(actor, false, id);
+    if (samePerson(id, gen) && input.dataset.loadedFor === id) input.disabled = false;
   }
 }
 
@@ -1169,6 +1179,7 @@ async function init() {
   $("wbUserName").value = wb.user_name || "";
   $("wbSystemPromptEnabled").checked = wb.system_prompt_enabled !== false;
   $("wbPersonaEvolutionEnabled").checked = !!wb.persona_evolution_enabled;
+  $("wbPersonaEvolutionEnabled").dataset.loadedFor = "aion";
 
   const aiSections = normalizeAiSections(wb);
   const userSections = normalizeUserSections(wb);

@@ -206,3 +206,14 @@ class WorldbookRaceTests(unittest.TestCase):
         self.assertIn("await persistPersonaEvolutionEnabled(enabled, actor, id);", html)
         self.assertLess(html.index("const oldName = "),
                         html.index("{ sections });"))  # 名字、人设在第一个等待之前就固定
+
+
+class WorldbookToggleTests(unittest.TestCase):
+    def test_toggle_saving_is_per_person_and_load_failure_keeps_it_disabled(self):
+        """Codex §151 余项：保存状态是全局一个；读取失败时还留着上一人的值并且能点。"""
+        html = (STATIC / "worldbook.html").read_text(encoding="utf-8")
+        self.assertIn("const evolutionSavingFor = new Set();", html)
+        self.assertIn('toggle.disabled = !loaded || isEvolutionConfigSaving("ai", id);', html)
+        self.assertIn("复盘开关读取失败，先不能改", html)
+        self.assertIn("input.dataset.loadedFor !== id", html)
+        self.assertNotIn("personaEvolutionConfigSaving", html)
