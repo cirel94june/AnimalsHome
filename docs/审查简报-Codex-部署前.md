@@ -2520,3 +2520,41 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - bot 那边（三只一起写，见下一节）；
   - 设置页面；
   - Cloudflare 上建借工具应用和服务钥匙（要小猫点）。
+
+
+## 162. bot 出门第 1 步（三只 bot）：回家借工具
+
+三个 bot 仓库各推了一个分支 `claude/frontend-memory-integration-ke0lpe`，**没有动 main**。Render / Fly 从 main 自动部署，所以正在跑的 bot 不受影响。
+
+| 仓库 | 提交 |
+|---|---|
+| cirel94june/cloudy-telegram-bot | 84eb896 |
+| cirel94june/Lucien-Telegram-bot | 1b64efd |
+| cirel94june/Jasper-telegrambot | 7a41121 |
+
+三只改动完全相同：
+- **新增 `home_tools.py`**（三份一字不差）：
+  - 识别 `[回家:搜索 / 读网页 / 淘宝:…]`，最多 2 个，去重；
+  - `borrow` 带 bot 钥匙和 Cloudflare 服务钥匙（`CF-Access-Client-Id` / `CF-Access-Client-Secret`）请求 `POST {AIONSHOME_URL}/api/outing/tool`；超时 40 秒，`allow_redirects=False`，每次一个新的 `request_id`；
+  - 任何失败都变成一句「（没借成：原因）」，不抛异常，不带家里的内部报错；
+  - 四个环境变量都填了才开。没开时提示词不提，回复里的 `[回家:…]` 只删掉。
+- **`bot.py`**（每只约 20 行）：
+  - 提示词加 `home_tools.prompt_hint`；
+  - `process_message_background` 拿到第一次回复后：有 `[回家:…]` 就先不发，借完把结果拼进 memory（系统提示里的背景），用同样的输入再调一次 `call_claude`，发第二次的回复。第二次为空时，退回第一次去掉指令后的文字；再为空，就说「我回家查了一下，但这会儿没弄好」。
+  - `owner_asked` = 当前这条消息的 `sender_id` 等于 `CECI_ID`；
+  - `chat_type` 换算：private / small_group / big_group → private / private_group / public_group。
+- **测试**：每只新增 `tests/test_home_tools.py` 8 项：
+  - 开关、找指令、换算；
+  - 两把钥匙和请求体；
+  - 5 种失败；
+  - 整条回复流程：先借再问一次、结果进第二次的背景、发出的文字里没有指令；
+  - 大群里别人发的消息 `owner_asked=False`；
+  - 没开时只删指令。
+  - 小克 107 项、Lucien 133 项、狗蛋 135 项全过。
+- **说明**：每只加了 `HOME_TOOLS.md`；小克的 `env.example` 加了四个变量。
+
+上线顺序（狐狸审过后）：
+1. 本地窗口部署 AionsHome；
+2. 小猫按 docs/施工方案-bot出门.md「第 0 步」配钥匙；
+3. 把小克的分支合进 main（Render 自动部署），TG 私聊试一次；
+4. 没问题再合 Lucien 和狗蛋。

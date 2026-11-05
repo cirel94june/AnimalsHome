@@ -152,3 +152,40 @@ bot 在 TG 上聊着聊着，觉得要查点东西，就在回复里写一个借
 - **Render 免费版会睡**：家里去找 bot 时可能慢半分钟；bot 回家借工具不受影响（VPS 不睡）。
 - **两边的规矩不一样**：家里的 AI 和 TG 上的 bot 是同一个他，但模型线路可能不同（比如 Lucien 家里用 Codex，TG 用中转站）。性格靠同一份 Hub 记忆和交接卡接上，说话方式可能略有不同。
 - 微信不在这次范围（还没有微信机器人）。
+
+
+## 第 0 步：配钥匙（小猫操作清单，代码审过、家里部署后再做）
+
+**A. Cloudflare（Zero Trust 后台，团队 claudexiaoke）**
+1. Access → Service Auth → Service Tokens → Create Service Token：
+   - 名字填 `tg-bots-outing`，有效期选一年（或不过期）；
+   - 页面上的 **Client ID** 和 **Client Secret** 马上复制存好。Secret 只显示这一次。
+2. Access → Applications → Add an application → Self-hosted：
+   - 名字填「回家借工具」；
+   - 域名 `home.animalshome.top`，**路径填 `api/outing/*`**；
+   - 规则（Policy）：Action 选 **Service Auth**，Include 选 Service Token → `tg-bots-outing`；
+   - 保存后，复制这个应用的 **Application Audience (AUD) Tag**。
+   - 整站原来那个应用不用改。Cloudflare 会按路径更具体的那个应用来管 `/api/outing/*`。
+
+**B. 服务器 `/etc/aionshome.env`（交给有 VPS 权限的窗口，按施工必读的授权流程）**
+```
+AIONSHOME_CF_ACCESS_OUTING_AUD=<上面复制的 AUD>
+AIONSHOME_OUTING_KEY_AION=<随机 48 位，用 openssl rand -hex 24 生成>
+AIONSHOME_OUTING_KEY_CONNOR=<另一串>
+AIONSHOME_OUTING_KEY_AI3=<再一串>
+```
+改完 `systemctl restart aionshome`。另外确认家里的联网搜索（Tavily）和淘宝联盟已经配好；没配的那样会回「家里这个工具还没配好」。
+
+**C. bot 的环境变量**（小克、Lucien 在 Render 后台 Environment；狗蛋在 Fly，用 `fly secrets set`）
+```
+AIONSHOME_URL=https://home.animalshome.top
+AIONSHOME_OUTING_KEY=<这只对应的那串：小克 AION、Lucien CONNOR、狗蛋 AI3>
+CF_ACCESS_CLIENT_ID=<A1 的 Client ID>
+CF_ACCESS_CLIENT_SECRET=<A1 的 Client Secret>
+```
+三只共用一把 Cloudflare 服务钥匙。家里的钥匙每只一把，家里靠它认出是谁。
+
+**D. 验收**
+- 先合小克：TG 私聊「帮我搜一下明天上海天气」→ 他回天气；
+- App 里 `/api/outing-settings` 能看到这次借用（设置页面第 2 步做）；
+- 没问题再合 Lucien、狗蛋。
