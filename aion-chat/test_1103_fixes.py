@@ -179,3 +179,16 @@ class Time24Tests(unittest.TestCase):
         self.assertIn("for (let h = 0; h < 24; h++)", js)
         self.assertIn("input.dispatchEvent(new Event('change', { bubbles: true }));", js)
         self.assertIn("Object.defineProperty(input, 'value'", js)  # 页面代码赋值时下拉框跟着变
+
+
+class WorldbookEveryoneTests(unittest.TestCase):
+    def test_evolution_panel_and_name_follow_the_selected_ai(self):
+        """11-05 小猫：世界书里只有小克的复盘、自动进化开关和名字。后台三位都支持，页面切到谁就是谁的。"""
+        html = (STATIC / "worldbook.html").read_text(encoding="utf-8")
+        self.assertLess(html.index('class="wb-evolution-panel"'), html.index('id="aionPersona"'))  # 不再藏在小克那块里
+        self.assertIn('if (id === "connor") return "connor";', html)
+        self.assertIn("return `seat/${encodeURIComponent(id)}`;", html)
+        self.assertIn("get endpoint() { return evolutionEndpoint(); },", html)
+        self.assertIn('id="otherName"', html)
+        self.assertIn('await api("PUT", "/api/chatroom/config", { connor_name: name });', html)
+        self.assertIn("refreshEvolutionForPerson();", html)

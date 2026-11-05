@@ -2270,3 +2270,16 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `_apply_analysis`：upsert 已有条目时，如果没给正文，就沿用原正文（只改状态等字段）。新条目照旧必须有 1～600 字正文。
 - **测试**：`test_post_sentinel` 新加 2 项：只改状态的条目保留原文且不报错，新条目没正文仍报错；旧失败在后来有成功后不再显示。共 29 项全过。
 - **没改的**：「近期待办需要 review」是原设计：待办不能由 AI 自动收尾，要小猫确认完成或取消。
+
+
+## 149. 世界书：每位 AI 的复盘、自动进化和名字都在这里
+
+- **小猫反映**：世界书里只找到小克的复盘和自动进化开关，其他 AI 的没有；名字也只有小克的。
+- **现状**：后台三位都支持（`/api/persona-evolution/main-ai`、`/connor`、`/seat/{actor}` 的 config / runs / run-test）。页面上本来就能切到别的 AI 改人设（`wbPeople` + `/api/actors/{id}/persona`），但复盘面板放在 `#aionPersona` 里，只对小克生效；Lucien 的开关藏在群聊页人设设置里，座位的页面上没有。
+- **改动**（`static/worldbook.html`）：
+  - 复盘面板挪到人员切换下面，所有人共用。`evolutionEndpoint(id)` 按当前选中的人返回 main-ai / connor / `seat/{id}`；`EVOLUTION_ACTOR_UI.ai.endpoint` 改成 getter，原有的开关、立即复盘、记录等函数不用改。
+  - `refreshEvolutionForPerson()`：切人时读这位的复盘开关（GET config）、最近复盘和记录，标题用这位的名字。`persistPersonaEvolutionEnabled` 里旧的 404 兼容只在小克时走。
+  - 其他人的人设上方加「名字」栏：Lucien 保存到群聊设置的 `connor_name`，座位保存到名片（`PUT /api/actors/{id}`）。和人设一起点保存，存完刷新人员按钮和标题。
+  - 说明文字写清复盘做什么：北京时间 05:00，看前一天她对这位消息的点评，改人设里标着「可进化」的几段；没有点评就跳过。
+- **验证**：本机浏览器切到第二位和 Jasper 时，标题、名字、接口（connor / seat/ai3）、复盘记录都对得上，控制台无报错（截图因为窗口不在前台没截成）。`test_1103_fixes` 新加 1 项源码检查；世界书、座位复盘相关 24 项全过。
+- **另记**：小猫说她很少用点评，所以按现在的规矩基本不会进化。要不要改成没有点评时按当天记忆小步调整，等她决定。

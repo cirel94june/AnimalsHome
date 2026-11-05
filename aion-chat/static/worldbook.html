@@ -155,6 +155,7 @@ body { background: var(--bg); }
 .wb-evolution-change-title { color:var(--text); font-size:12px; font-weight:700; }
 .wb-evolution-change { color:var(--text2); font-size:12px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
 .wb-evolution-change b { color:var(--text); }
+.wb-other-name { max-width:320px; margin-bottom:10px; }
 .wb-preview {
   width:100%; min-height:320px; box-sizing:border-box; border:1px solid var(--border); border-radius:8px;
   background:var(--surface2); color:var(--text); padding:10px; font-size:13px; line-height:1.65;
@@ -217,12 +218,12 @@ body[data-theme="dark"] .wb-fixed-head { background:rgba(5, 9, 35, .96); }
   <div class="page-content wb-shell">
     <section class="wb-panel active" id="panelAi">
       <div class="wb-people" id="wbPeople" role="group" aria-label="谁的人设"></div>
-      <div id="aionPersona">
+      <!-- 11-05 小猫：复盘和自动进化原来只有小克的；后台三位都支持，现在切到谁就显示谁的 -->
       <div class="wb-evolution-panel">
         <div class="wb-evolution-head">
           <div>
             <div class="wb-system-title" id="wbEvolutionTitle">AI 自动进化</div>
-            <div class="wb-system-sub">北京时间 05:00 复盘；没有点评会跳过</div>
+            <div class="wb-system-sub">北京时间 05:00 复盘：看前一天你对 TA 消息的点评，改 TA 人设里标着「可进化」的几段；没有点评会跳过</div>
           </div>
           <div class="wb-evolution-controls">
             <input class="wb-date-input" type="date" id="wbEvolutionDate" title="手动复盘日期">
@@ -238,9 +239,14 @@ body[data-theme="dark"] .wb-fixed-head { background:rgba(5, 9, 35, .96); }
           <button class="wb-small-btn" type="button" id="wbEvolutionHistoryBtn" onclick="openPersonaEvolutionHistory()">查看记录</button>
         </div>
       </div>
+      <div id="aionPersona">
       <div class="wb-section-grid" id="aiSections"></div>
       </div>
       <div id="otherPersona" hidden>
+        <div class="wb-field-block wb-other-name">
+          <label class="form-label" for="otherName">名字</label>
+          <input class="form-input" type="text" id="otherName" maxlength="40" autocomplete="off">
+        </div>
         <p class="wb-other-hint" id="otherPersonaHint"></p>
         <div class="wb-section-grid" id="otherSections"></div>
         <div class="wb-other-actions">
@@ -444,14 +450,33 @@ async function renderPeople() {
   }));
 }
 
+async function refreshEvolutionForPerson() {
+  const id = wbPerson;
+  $("wbEvolutionTitle").textContent = `${personName(id)} 自动进化`;
+  $("wbEvolutionLatest").textContent = "最近复盘：读取中…";
+  const toggle = $("wbPersonaEvolutionEnabled");
+  toggle.disabled = true;
+  try {
+    const cfg = await api("GET", `/api/persona-evolution/${evolutionEndpoint(id)}/config`);
+    if (wbPerson === id) toggle.checked = !!cfg.enabled;
+  } catch (e) {
+    console.warn("读取复盘开关失败", e);
+  } finally {
+    if (wbPerson === id) toggle.disabled = false;
+  }
+  if (wbPerson === id) await loadPersonaEvolutionRuns("ai");
+}
+
 async function selectPerson(id) {
   wbPerson = id;
   renderPeople();
   const isAion = id === "aion";
   $("aionPersona").hidden = !isAion;
   $("otherPersona").hidden = isAion;
+  refreshEvolutionForPerson();
   if (isAion) return;
   const seat = wbSeats.find(s => s.id === id) || { name: id };
+  $("otherName").value = seat.name || "";
   $("otherPersonaHint").textContent = `${seat.name} 的人设（保存后下一句话就生效）`;
   $("otherPersonaSave").textContent = `保存 ${seat.name} 的人设`;
   $("otherPersonaStatus").textContent = "正在读取…";
@@ -483,6 +508,17 @@ async function saveOtherPersona() {
   $("otherPersonaStatus").textContent = "正在保存…";
   try {
     await api("PUT", `/api/actors/${encodeURIComponent(id)}/persona`, { sections: collectSections("other", AI_SECTIONS) });
+    // 名字：Lucien 的存在群聊设置里，座位的存在 TA 的名片里（11-05 小猫：世界书里只有小克的名字）
+    const name = ($("otherName").value || "").trim();
+    const seat = wbSeats.find(s => s.id === id) || {};
+    if (name && name !== seat.name) {
+      if (id === "connor") await api("PUT", "/api/chatroom/config", { connor_name: name });
+      else await api("PUT", `/api/actors/${encodeURIComponent(id)}`, { name });
+      await renderPeople();
+      $("otherPersonaHint").textContent = `${name} 的人设（保存后下一句话就生效）`;
+      $("otherPersonaSave").textContent = `保存 ${name} 的人设`;
+      if (wbPerson === id) $("wbEvolutionTitle").textContent = `${name} 自动进化`;
+    }
     if (wbPerson === id) $("otherPersonaStatus").textContent = "已保存";
     return true;
   } catch (e) {
@@ -684,8 +720,8 @@ function syncNameLabels() {
   const userName = currentUserName();
   $("tabAiLabel").textContent = `${aiName} 人设`;
   $("tabUserLabel").textContent = `${userName} 信息`;
-  $("wbEvolutionTitle").textContent = `${aiName} 自动进化`;
-  $("wbEvolutionHistoryTitle").textContent = `${aiName} 自动进化记录`;
+  $("wbEvolutionTitle").textContent = `${personName()} 自动进化`;
+  $("wbEvolutionHistoryTitle").textContent = `${personName()} 自动进化记录`;
   document.title = `世界书 - ${aiName}`;
 }
 
@@ -719,14 +755,25 @@ function syncPreview() {
 let personaEvolutionRuns = [];
 let selectedEvolutionRunIndex = -1;
 
+function evolutionEndpoint(id = wbPerson) {
+  if (id === "aion") return "main-ai";
+  if (id === "connor") return "connor";
+  return `seat/${encodeURIComponent(id)}`;
+}
+
+function personName(id = wbPerson) {
+  if (id === "aion") return currentAiName();
+  return (wbSeats.find(seat => seat.id === id) || {}).name || id;
+}
+
 const EVOLUTION_ACTOR_UI = {
   ai: {
-    endpoint: "main-ai",
+    get endpoint() { return evolutionEndpoint(); },
     latestId: "wbEvolutionLatest",
     dateId: "wbEvolutionDate",
     toggleId: "wbPersonaEvolutionEnabled",
     testBtnId: "wbEvolutionTestBtn",
-    historyTitle: () => `${currentAiName()} 自动进化记录`
+    historyTitle: () => `${personName()} 自动进化记录`
   }
 };
 
@@ -1011,7 +1058,7 @@ async function persistPersonaEvolutionEnabled(enabled, actor = "ai") {
     body: JSON.stringify({ enabled }),
     keepalive: true
   });
-  if (res.status === 404 && actor === "ai") {
+  if (res.status === 404 && wbPerson === "aion") {
     const currentRes = await fetch("/api/worldbook", { cache: "no-store" });
     const current = await currentRes.json();
     current.persona_evolution_enabled = enabled;
