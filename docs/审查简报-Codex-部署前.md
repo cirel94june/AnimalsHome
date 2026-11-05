@@ -2447,3 +2447,29 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - **M2**：排队后关开关，同一位 AI 的群聊记录照常发出，朋友圈仍是 pending；重新打开后发出。
   - **M3**：用 SQLite 触发器让登记去重失败，outbox 同时回滚为 0 条；改身份映射后再扫两次，只有一条，身份是新的。
   - 朋友圈 10 项、Hub 相关 229 项全过。
+
+
+## 159. 修 §157 的 R1：关掉后旧状态把「想开着」又写回来
+
+- **狐狸的反例**：小猫点关 → 关之前发出的查询晚回来，返回 `armed=true`，把 `_phoneWantOn` 改回 true → 新查询返回 false，按钮仍显示开 → 改镜头设置时调了 `bridge.arm()`，又开了。
+- **改动**（`static/camera.html`）：
+  - 把两件事分开记：
+    - `_phoneIntent`：小猫在本页点过的开 / 关。`null` 表示本页还没点过，跟着服务器。只有她点按钮才会改。
+    - `_phoneServerArmed`：服务器最近一次确认的状态。
+  - `_phoneOpGen`：每点一次加一。`syncCamModalState` 发查询前先记下 `phoneGen`，结果回来交给 `applyPhoneServerState(status, phoneGen)`。编号对不上（点击之前发出的查询）直接丢掉。
+  - 按钮显示：她点过就按她点的，没点过就按服务器。点击时把 `_phoneServerArmed` 清空，点之前的确认不算数。
+  - 她点了关、服务器（新的回应）还说开着：按钮保持关，下面一行写「正在断开…」。
+  - `phoneCameraSettingChanged` 只在「显示为开」且她没点过关时才重新 `arm`。
+  - 原来的 `updatePhoneArmState` 拆成 `setPhoneArmIntent`（点击）、`applyPhoneServerState`（服务器回应）、`renderPhoneArmState`（画按钮）。
+- **验证**：本机真实页面加桥接桩重放 12 种情况，全对，没有报错：
+  - 服务器开着时打开页面，显示开、已接通；
+  - 狐狸的反例：点关 → 旧的 `armed=true` 被丢掉 → 新的 false 仍是关 → 改镜头设置**没有**调 `arm`；
+  - 点关后，新的回应说开着：按钮仍是关，写「正在断开…」；
+  - 点开后旧的 false 被丢掉；新的 false 在 10 秒内是「正在接通」，过了 10 秒是「没接通」，true 是「已接通」；
+  - 开着时改镜头设置，照常重新 `arm`。
+- `test_1105_fixes` 新增 1 项源码检查，守住编号核对和关闭意愿；摄像头相关 78 项全过。
+
+另：施工方案 docs/施工方案-bot出门.md 按狐狸的三条建议补齐，还没写代码：
+- 服务钥匙只开 `/api/outing/*`，后端再拦一次；
+- 借用有总超时、每只和全家的并发上限，额度先认领，日志带 `request_id`、错误脱敏；
+- `/outreach` 有持久的幂等编号，收件人只限小猫私聊和已批准的朋友群，额度认领持久化。

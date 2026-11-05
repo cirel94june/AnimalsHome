@@ -301,6 +301,7 @@ window.onAionSubPageVisibilityChanged = function(visible) {
 async function syncCamModalState() {
   try {
     const gen = _monitorToggleGen;
+    const phoneGen = _phoneOpGen;
     const status = await api("GET", "/api/cam/status");
     _activeSource = status.active_source || "local";
     updateSourceTabs(_activeSource);
@@ -321,7 +322,7 @@ async function syncCamModalState() {
     $("camOpenBtn").className = status.camera_open ? "cam-btn danger" : "cam-btn";
     const bridgeEl = $("esp32BridgeStatus");
     if (bridgeEl) bridgeEl.style.display = (status.esp32_bridge_active && _activeSource === "esp32") ? "" : "none";
-    updatePhoneArmState(status.phone_camera || {}, { fromServer: true });
+    applyPhoneServerState(status.phone_camera || {}, phoneGen);
     updateCamStatusText(status, gen);
     await hideUnavailableSources(status);
     if (_activeSource === "local") await camRefreshList2();
@@ -523,26 +524,37 @@ function savePhoneCameraConfig() {
 
 // 「让大家能看到」：手机这边点开 → 服务器确认接通后，AI 想看时才能拍一张。
 // 按钮写当前是开还是关；下面一行写有没有真的接通服务器（10-27 待办：原来叫「开始外出监控」容易误会）
-let _phoneWantOn = false;       // 小猫想开着（点开以后、点关之前）
+// 两样分开记（狐狸 §157 R1）：
+//   _phoneIntent：小猫在本页点过的开 / 关（null = 本页还没点过，跟着服务器）；只有她点按钮才会改。
+//   _phoneServerArmed：服务器最近一次确认的状态。
+// _phoneOpGen：每点一次加一。点之前发出的状态查询晚回来，直接丢掉，不能改按钮。
+let _phoneIntent = null;
+let _phoneServerArmed = null;
+let _phoneOpGen = 0;
 let _phoneArmedAt = 0;          // 点开的时间：之后 10 秒内服务器还没确认，算「正在接通」
 const PHONE_LINK_GRACE_MS = 10000;
 
 function phoneLinkPending() {
-  return _phoneWantOn && Date.now() - _phoneArmedAt < PHONE_LINK_GRACE_MS;
+  return _phoneIntent === true && Date.now() - _phoneArmedAt < PHONE_LINK_GRACE_MS;
 }
 
-function updatePhoneLinkStatus(serverArmed) {
+function updatePhoneLinkStatus() {
   const el = $("phoneLinkStatus");
   if (!el) return;
   let text;
   let state;
   if (!_phoneArmed) {
-    text = "已关：大家看不到你这边";
-    state = "off";
-  } else if (serverArmed === true) {
+    if (_phoneServerArmed === true && _phoneIntent === false) {
+      text = "正在断开…";
+      state = "pending";
+    } else {
+      text = "已关：大家看不到你这边";
+      state = "off";
+    }
+  } else if (_phoneServerArmed === true) {
     text = "✅ 已接通：大家想看你这边时，能拍一张看看";
     state = "ok";
-  } else if (serverArmed === false && !phoneLinkPending()) {
+  } else if (_phoneServerArmed === false && !phoneLinkPending()) {
     text = "⚠️ 没接通服务器：确认网络 / VPN 连上后，先关再开一次";
     state = "warn";
   } else {
@@ -553,25 +565,34 @@ function updatePhoneLinkStatus(serverArmed) {
   el.dataset.state = state;
 }
 
-function updatePhoneArmState(status, { fromServer = false } = {}) {
+function renderPhoneArmState() {
   const btn = $("phoneArmBtn");
   if (!btn) return;
-  if (fromServer) {
-    // 服务器说开着就以它为准；说没开时，如果小猫想开着，按钮保持「开」并提示没接通，不悄悄变回「关」
-    if (status.armed) _phoneWantOn = true;
-    else if (phoneLinkPending()) setTimeout(syncCamModalState, 3000);  // 还在等手机连上：过一会儿再查
-    _phoneArmed = !!status.armed || _phoneWantOn;
-  } else {
-    _phoneArmed = !!status.armed;
-    _phoneWantOn = _phoneArmed;
-    _phoneArmedAt = _phoneArmed ? Date.now() : 0;
-  }
+  // 小猫点过就按她点的；没点过就跟着服务器
+  _phoneArmed = _phoneIntent === null ? _phoneServerArmed === true : _phoneIntent;
   btn.textContent = _phoneArmed ? "👀 让大家能看到：开" : "👀 让大家能看到：关";
   btn.className = "cam-btn phone-arm-btn" + (_phoneArmed ? " armed" : "");
-  updatePhoneLinkStatus(fromServer ? !!status.armed : undefined);
+  updatePhoneLinkStatus();
   $("phoneCameraNote").textContent = _phoneArmed
     ? "本页仍可本地预览和调整；离开本页或锁屏后释放预览，只在 AI 想看或三类监控事件触发时拍一张上传。"
     : "预览只在本页打开时本地显示，不上传服务器；离开本页会立即释放摄像头。";
+}
+
+// 小猫点了开 / 关
+function setPhoneArmIntent(on) {
+  _phoneOpGen++;
+  _phoneIntent = !!on;
+  _phoneArmedAt = on ? Date.now() : 0;
+  _phoneServerArmed = null;  // 点之前的确认不算数，等新的
+  renderPhoneArmState();
+}
+
+// 服务器状态回来了；gen 是发查询时的点击编号
+function applyPhoneServerState(status, gen) {
+  if (gen !== _phoneOpGen) return;  // 点击之前发出的查询：丢掉
+  _phoneServerArmed = !!(status && status.armed);
+  if (_phoneServerArmed === false && phoneLinkPending()) setTimeout(syncCamModalState, 3000);  // 还在等手机连上
+  renderPhoneArmState();
 }
 
 function loadPhoneCameraCapabilities(serverStatus = {}) {
@@ -615,7 +636,7 @@ function phoneCameraSettingChanged() {
   savePhoneCameraConfig();
   stopPhonePreview();
   const bridge = phoneBridge();
-  if (_phoneArmed && bridge) {
+  if (_phoneArmed && _phoneIntent !== false && bridge) {
     const facing = $("phoneFacing").value;
     const zoom = parseFloat($("phoneZoom").value) || 1;
     if (bridge.arm(facing, zoom)) {
@@ -814,7 +835,7 @@ async function togglePhoneCameraArm() {
   }
   if (_phoneArmed) {
     bridge.disarm();
-    updatePhoneArmState({ armed:false });
+    setPhoneArmIntent(false);
     showToast("已关：大家看不到你这边了");
     setTimeout(syncCamModalState, 600);
     return;
@@ -826,7 +847,7 @@ async function togglePhoneCameraArm() {
     showToast("没有摄像头权限，请先在系统设置中允许");
     return;
   }
-  updatePhoneArmState({ armed:true });
+  setPhoneArmIntent(true);
   showToast("已打开，正在接通服务器…");
   reconcilePhonePreview();
   setTimeout(syncCamModalState, 900);
