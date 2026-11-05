@@ -156,5 +156,12 @@ def test_real_tools_format_results(monkeypatch):
     assert "正文内容" in asyncio.run(outing_tools.run_tool("read", {"url": "https://w.example/sh"}))
     assert asyncio.run(outing_tools.run_tool("taobao", {"keyword": "猫抓板"})) \
         == "- 猫抓板｜19.9｜猫店｜https://item.taobao.com/item.htm?id=1"
+    # 狐狸 §168 Low：放宽过的词要告诉 bot
+    async def broadened(keyword, **kw):
+        return {"products": [{"title": "仓鼠笼", "price": "9", "shop": "店", "url": "https://item.taobao.com/item.htm?id=2"}],
+                "skipped": 0, "keyword_used": "仓鼠"}
+    monkeypatch.setattr(taobao_union, "search_broadening", broadened)
+    out = asyncio.run(outing_tools.run_tool("taobao", {"keyword": "仓鼠 磁吸"}))
+    assert out.startswith("原词「仓鼠 磁吸」没搜到，下面是放宽成「仓鼠」搜到的")
     with pytest.raises(outing_tools.OutingRefused):
         asyncio.run(outing_tools.run_tool("read", {"url": "file:///etc/passwd"}))

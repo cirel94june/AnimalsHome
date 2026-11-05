@@ -112,7 +112,8 @@ async def call(method: str, biz: dict, *, app_key: str, timeout: float = 20.0) -
         sub = str(error.get("sub_code") or "")
         text = "；".join(str(x) for x in (error.get("msg"), error.get("sub_msg")) if x)
         permission = code == "11" or "permission" in (text + sub).lower()
-        no_result = "无结果" in text or "no-result" in sub.lower() or "no_result" in sub.lower()
+        # 只认已确认的「没结果」：code 15 且写着无结果（狐狸 §168 Low：限流之类的错误不能伪装成搜不到）
+        no_result = code == "15" and ("无结果" in text or "no-result" in sub.lower() or "no_result" in sub.lower())
         raise UnionError(f"淘宝联盟接口报错 {code}：{text}"[:300], permission=permission, no_result=no_result)
     return data
 

@@ -121,6 +121,22 @@ class UnionApiTests(unittest.TestCase):
             with self.assertRaises(taobao_union.UnionError):
                 asyncio.run(taobao_union.search("仓鼠", app_key="12345678", adzone_id="1111111"))
 
+    def test_no_result_text_under_another_code_still_fails(self):
+        """狐狸 §168 Low：限流错误里碰巧写着「无结果」，不能吞成空列表。"""
+        answers = [{"error_response": {"code": 7, "msg": "App Call Limited", "sub_msg": "调用受限，查询无结果"}}]
+        with patch.object(taobao_union, "_client", fake_client(answers, [])):
+            with self.assertRaises(taobao_union.UnionError):
+                asyncio.run(taobao_union.search("仓鼠", app_key="12345678", adzone_id="1111111"))
+
+    def test_selection_prompt_says_when_the_words_were_broadened(self):
+        """狐狸 §168 Low：放宽以后要同时告诉模型原词和实际搜的词。"""
+        self.assertEqual("搜索词：仓鼠", taobao_shopping._search_words_note("仓鼠", "仓鼠"))
+        self.assertEqual("搜索词：仓鼠", taobao_shopping._search_words_note("仓鼠", None))
+        note = taobao_shopping._search_words_note("仓鼠 磁吸 可拆洗", "仓鼠")
+        self.assertIn("原本想搜：仓鼠 磁吸 可拆洗", note)
+        self.assertIn("实际搜的是放宽后的：仓鼠", note)
+        self.assertIn("不一定符合", note)
+
     def test_broadening_drops_last_words_until_something_is_found(self):
         calls = []
         no = {"error_response": {"code": 15, "msg": "Remote service error", "sub_msg": "无结果"}}
