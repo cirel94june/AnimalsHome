@@ -669,17 +669,21 @@ OWNER_PLATFORMS = ("aionshome", "aionshome-group")
 _warned_no_owner_key = False
 
 
+def _rest_base(cfg: dict[str, Any]) -> str:
+    base = str(cfg.get("url") or "").rstrip("/")
+    if base.endswith("/mcp"):
+        base = base[: -len("/mcp")]
+    return base
+
+
 def _owner_rest(cfg: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
     """Hub 的 REST 地址和带主人钥匙的请求头；没配主人钥匙时返回 None。
     主人钥匙只在服务器这里用来标「这句是小猫说的」，不进任何 AI 能调的工具、不写日志。"""
     owner = os.environ.get("MEMORY_HUB_OWNER_SECRET", "").strip()
     if not owner:
         return None
-    base = str(cfg.get("url") or "").rstrip("/")
-    if base.endswith("/mcp"):
-        base = base[: -len("/mcp")]
     headers = {k: v for k, v in (cfg.get("headers") or {}).items() if str(k).lower() != "authorization"}
-    return base, _headers({**cfg, "token": owner, "headers": headers})
+    return _rest_base(cfg), _headers({**cfg, "token": owner, "headers": headers})
 
 
 def _http_client(timeout: float):
@@ -708,10 +712,16 @@ async def _send_owner_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[st
         "event_id": row["event_id"],
         "sender_type": "owner",
     }
+    return await _post_capture_rest(cfg, base, headers, body)
+
+
+async def _post_capture_rest(cfg: dict[str, Any], base: str, headers: dict[str, str],
+                             body: dict[str, Any]) -> tuple[str, str] | None:
+    """POST /api/capture/log 一次。返回 (outcome, 说明)；钥匙被拒（401/403）返回 None，由调用方决定退路。"""
     timeout = float(cfg.get("capture_timeout_seconds") or 20.0)
 
     async def _post() -> tuple[int, str]:
-        # 不跟随跳转（httpx 默认）：带着主人钥匙跳去别的地址不安全
+        # 不跟随跳转（httpx 默认）：带着钥匙跳去别的地址不安全
         async with _http_client(timeout) as client:
             response = await client.post(f"{base}/api/capture/log", json=body, headers=headers)
             return response.status_code, response.text[:200]
@@ -726,7 +736,7 @@ async def _send_owner_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[st
         # 带 event_id：可能已经送到也没关系，重发时 Hub 会去重
         return "uncertain", type(error).__name__
     if status in (401, 403):
-        log.warning("[MemoryHub] 主人钥匙被 Hub 拒绝（%s），这条改走共用钥匙，Hub 认不出是小猫", status)
+        log.warning("[MemoryHub] 钥匙被 Hub 拒绝（%s）", status)
         return None
     if 200 <= status < 300:
         return "ok", ""
@@ -739,10 +749,57 @@ async def _send_owner_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[st
     return "rejected", f"Hub 拒收 {status}：{text}"
 
 
+MOMENTS_PLATFORM = "aionshome-moments"
+
+
+def enqueue_moment(body: dict[str, Any], *, from_owner: bool) -> bool:
+    """朋友圈 / 评论排进待发队列（Hub #136）。body 是完整的 /api/capture/log 请求体（不含 sender_type），
+    event_id 由调用方按朋友圈和评论编号算好，重发时原样重发。返回是否排上（队列满返回 False）。"""
+    global _dropped
+    cfg = load_config()
+    with closing(_outbox()) as conn, conn:
+        (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
+        if pending >= OUTBOX_MAX:
+            _dropped += 1
+            log.warning("[MemoryHub] 待补传队列已满（%s 条），朋友圈稍后再送", OUTBOX_MAX)
+            return False
+        conn.execute(
+            "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
+            " source_ai, platform, hub, chat_id, sender_type, kind, payload) VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?)",
+            ("moments", str(body.get("user_message") or ""), str(body.get("ai_response") or ""), "private_group",
+             time.time(), body["event_id"], body["ai_id"], MOMENTS_PLATFORM, hub_id(cfg), body["chat_id"],
+             "owner" if from_owner else "", "moment", json.dumps(body, ensure_ascii=False)),
+        )
+    return True
+
+
+async def _send_moment(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
+    """朋友圈的一轮：走 REST。小猫写的用主人钥匙 + sender_type=owner；AI 写的用共用钥匙。
+    没配主人钥匙或主人钥匙被拒时，小猫那轮也用共用钥匙照常送（Hub 认不出是她，但不丢）。"""
+    try:
+        body = json.loads(row["payload"] or "{}")
+    except ValueError:
+        return "rejected", "朋友圈内容损坏"
+    body.pop("sender_type", None)
+    if row["sender_type"] == "owner":
+        rest = _owner_rest(cfg)
+        if rest is not None:
+            result = await _post_capture_rest(cfg, rest[0], rest[1], {**body, "sender_type": "owner"})
+            if result is not None:
+                return result
+            log.warning("[MemoryHub] 主人钥匙被拒，这条朋友圈改用共用钥匙，Hub 认不出是小猫")
+    result = await _post_capture_rest(cfg, _rest_base(cfg), _headers(cfg), body)
+    if result is None:
+        return "not_sent", "Hub 不认共用钥匙（401/403），请检查 MEMORY_HUB_TOKEN"
+    return result
+
+
 async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
     """只用入队时的快照发送。返回 ("ok"|"not_sent"|"uncertain", 错误说明)。"""
     if row["kind"] == "remember":
         return await _send_remember(cfg, row)
+    if row["kind"] == "moment":
+        return await _send_moment(cfg, row)
     if (row["sender_type"] == "owner" and row["chat_type"] != "private" and row["platform"] in OWNER_PLATFORMS
             and row["event_id"] and row["chat_id"]):
         result = await _send_owner_capture(cfg, row)

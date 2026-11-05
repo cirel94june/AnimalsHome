@@ -2332,3 +2332,31 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `savePersonaEvolutionToggle` 的 `finally`：先按人去掉保存状态；如果此时选中的还是这个人（中途切走又切回来也算），就调 `refreshEvolutionForPerson()`，按当前序号重读服务器上的值，再决定开关值、能不能点。保存成功、失败都走这一步。
 - `refreshEvolutionForPerson` 加 `wbEvolutionLoad`：每次读取加一，只认最后一次（同时还核对人和序号）。切回来时那次「保存中读到的旧值」晚回来，也盖不掉保存后的重读。
 - 验证：本机浏览器用真实页面函数重放。Lucien 的开关保存（延迟 500ms）期间切到 Jasper 再切回：保存中开关禁用；保存成功后恢复可点，显示新值（开）；保存失败后恢复可点，显示服务器上的值（关）。`test_1103_fixes` 新加 1 项，16 项全过。
+
+
+## 154. 朋友圈进 Hub（接 Hub #136）
+
+- **小猫要的**：朋友圈「全部都送」。Hub #136 已上线，格式按 Hub 仓库 docs/给AionsHome的接口说明.md 优先级 1 第 5 项。
+- **做法**：家里有 8 处会写朋友圈和评论（朋友圈页、日记、座位日记、自主醒来、私聊、群聊等）。没有在每处都插一段，而是新增 `moments_hub_sync.py`，每分钟扫一次新增的朋友圈和评论，排进 `memory_hub_bridge` 原有的待发队列（outbox）。以后新加的发朋友圈入口也不会漏。
+  - 第一次运行只记下起点，**不补送旧朋友圈**。之后每次往回多看 10 分钟，防止同一时刻写进库、时间稍早的那条被漏掉。已排过的记在 `moment_hub_synced` 表里，不会重复排。
+  - 每条一轮 `POST /api/capture/log`：`platform=aionshome-moments`、`chat_type=private_group`、`chat_id=moment:<编号>`、`event_id=aionshome-moments-<朋友圈编号>-<评论编号或 post>`。
+  - **小猫写的**：主人钥匙 + `sender_type=owner`，内容放 `user_message`；`ai_id` 填这条朋友圈作者的 AI，朋友圈本身是她发的就填 claude（取 `source_ai_for("aion")`）。
+  - **AI 写的**：共用钥匙，内容放 `ai_response`，`ai_id` 填作者本人。没接 Hub 的空位座位跳过。
+  - `reply_to_id`：回复某条评论填那条的 `event_id`；直接评论朋友圈的填朋友圈本身的 `event_id`；朋友圈本身不填。
+  - 只有图没有字的填「[图片]」。不填 `sender_id`。
+- **发送**（`memory_hub_bridge.py`）：
+  - outbox 新增 `kind='moment'`，`payload` 存完整请求体。重发时原样重发，`ai_id`、`chat_id`、`event_id` 都不变。
+  - `_send_moment`：没配主人钥匙或主人钥匙被拒（401/403）时，小猫那轮改用共用钥匙、去掉 `sender_type` 照常送（Hub 认不出是她，但不丢）。
+  - 原来群聊主人钥匙那段发 REST 的代码抽成 `_post_capture_rest`，两边共用；结果判定不变：2xx 算送到，3xx 不重发留着，408/429/5xx 用同一个 `event_id` 退避重发。
+  - 新增 `_rest_base`。
+- **开关**：`data/memory_hub.json` 里 `moments_enabled`（默认开）；Hub 没启用或 `capture_enabled` 关着时也不送。
+- **没做的**：编辑 / 删除不同步（接口说明这一版也不要求）；没调可选的 MCP flush（不调最晚当晚处理）。
+- **测试**：新增 `test_moments_hub_sync.py` 7 项：
+  - 第一次运行不补送；
+  - 小猫发的朋友圈、Lucien 的评论、小猫回 Lucien，三轮的每个字段和钥匙都核对；
+  - 小猫评论狗蛋的朋友圈时 `ai_id=jasper`，空位跳过；
+  - Hub 500 后原样重发；
+  - 没主人钥匙改用共用钥匙；
+  - 开关关掉不送；
+  - 回看窗口不漏。
+  - Hub 相关 226 项全过；本机真启动一次，`/ops/healthz` 正常。

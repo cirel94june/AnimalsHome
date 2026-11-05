@@ -227,6 +227,8 @@ async def lifespan(app: FastAPI):
     seat_persona_evolution_task = asyncio.create_task(seat_persona_evolution_loop())  # 狗蛋等座位的人格成长
     memory_hub_outbox_task = asyncio.create_task(memory_hub_bridge.outbox_worker())
     memory_hub_jobs_task = asyncio.create_task(memory_hub_jobs.jobs_worker())
+    import moments_hub_sync
+    moments_hub_task = asyncio.create_task(moments_hub_sync.sync_loop())  # 新朋友圈和评论送进 Hub
     import seat_diary
     seat_diary_task = asyncio.create_task(seat_diary.seat_diary_loop())  # 狗蛋等座位写日记
     import patrol_control
@@ -248,10 +250,11 @@ async def lifespan(app: FastAPI):
         # Memory Hub 的两个后台任务：先取消并等它们收尾（关连接），不受下面其他服务停止失败的影响
         memory_hub_outbox_task.cancel()
         memory_hub_jobs_task.cancel()
+        moments_hub_task.cancel()
         seat_diary_task.cancel()
         seat_persona_evolution_task.cancel()
         patrol_resume_task.cancel()
-        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, seat_diary_task,
+        await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, moments_hub_task, seat_diary_task,
                              seat_persona_evolution_task, patrol_resume_task, return_exceptions=True)
         await post_sentinel.stop()
         try:
