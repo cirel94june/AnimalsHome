@@ -162,6 +162,35 @@ class ProactiveCompanionshipTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("你睡了吗", event["data"]["content"])  # 指令照样去掉
         self.assertEqual([], [row for row in await self._active_timers() if row["origin"] == "aion"])
 
+    async def _insert(self, *rows):
+        async with aiosqlite.connect(self.db_path) as db:
+            for row in rows:
+                await db.execute("INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)", row)
+            await db.commit()
+
+    async def _aion_timer_after(self, msg_id, content, created_at):
+        await pc.process_visible_message_event({"type": "msg_created", "data": {
+            "id": msg_id, "conv_id": "conv", "role": "assistant", "content": content, "created_at": created_at}})
+        return [row for row in await self._active_timers() if row["origin"] == "aion"]
+
+    async def test_same_second_later_rows_are_not_the_previous_line(self):
+        """Codex §146 M1：同一秒里后写进来的消息，不能被当成「前一句」。"""
+        t = 1_800_000_000.0
+        # 自己找上门的那条之后，她同一秒回了一句：那条仍不是在回她，不约
+        await self._insert(("a0", "conv", "assistant", "上次说的", t - 100), ("a1", "conv", "assistant", "在吗[NEXT_CHAT:20]", t),
+                           ("u1", "conv", "user", "在", t))
+        self.assertEqual([], await self._aion_timer_after("a1", "在吗[NEXT_CHAT:20]", t))
+
+    async def test_same_second_own_follow_up_does_not_cancel_a_real_reply(self):
+        t = 1_800_000_000.0
+        # 回她的那条之后，自己同一秒又补了一条：前一条仍算在回她，照常约
+        await self._insert(("u1", "conv", "user", "我去洗澡", t - 30), ("a1", "conv", "assistant", "去吧[NEXT_CHAT:20]", t),
+                           ("a2", "conv", "assistant", "别着凉", t))
+        self.assertEqual(1, len(await self._aion_timer_after("a1", "去吧[NEXT_CHAT:20]", t)))
+
+    async def test_message_not_in_the_database_books_nothing(self):
+        self.assertEqual([], await self._aion_timer_after("ghost", "嗨[NEXT_CHAT:20]", 1_800_000_000.0))
+
     async def test_claim_removes_timer_once(self):
         await self._seed_timer("aion", "due-a", "2000-01-01 00:00:00")
 

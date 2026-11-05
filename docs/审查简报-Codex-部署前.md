@@ -2243,3 +2243,16 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `test_proactive_companionship`：在回她时照常约，按 12 分钟；新加「她没回、自己找上门的那条不约」；最短 10 分钟；提示词检查。
   - `test_seat_proactive`：座位同样两种情况；新加静默时段到点不开口，计时器也用掉。
   - 主动关心和日程相关 49 项全过。
+
+
+## 147. 修 §146 的 M1、M2
+
+- **M1 同一秒后写进来的消息被当成「前一句」**：`_is_replying_to_her` 先从库里取这条消息自己的 `created_at` 和 `rowid`，库里没有就不约；然后只看严格排在它前面的（`created_at < t`，或者 `created_at = t 且 rowid 更小`）。私聊、聊天室用同一套写法。
+- **M2 准备期间进了静默仍调模型**：新增 `schedule._proactive_quiet_now()`。`_proactive_switched_off` 改成「开关关了，或者现在是静默时段」都算。这个函数原来就在两条到点路径、四处生成器的模型调用前复查，所以都覆盖到了。座位的 `proceed_check` 也加上 `and not _proactive_quiet_now()`。两处认领后的静默检查改用同一个函数。计时器已认领，仍然不补发。
+- **测试**：
+  - 新加 4 项，其中 3 项在 e0cac12 上失败：
+    - 自己找上门那条之后她同一秒回了，仍不约；
+    - 回她的那条之后自己同一秒补了一条，仍照常约；
+    - 库里没有这条消息时不约（新加，旧代码也通过）；
+    - 准备期间进入静默时 `_proactive_switched_off` 为真，闹铃不受影响，座位的 `proceed_check` 也检查静默。
+  - 主动关心和日程相关 53 项全过。

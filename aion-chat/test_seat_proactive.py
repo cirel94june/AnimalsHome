@@ -135,6 +135,20 @@ def test_due_timer_during_quiet_hours_does_not_wake_anyone(db, monkeypatch):
     assert _timers(db) == []  # 计时器用掉了，不会出了静默再补一次
 
 
+def test_quiet_hours_starting_while_preparing_also_stop_the_model(monkeypatch):
+    """Codex §146 M2：认领时还没静默，截图、取记忆期间进了静默，模型调用前的复查也要拦下。"""
+    import autonomy
+    monkeypatch.setitem(pc.SETTINGS, "proactive_companionship_aion_enabled", True)
+    item = {"type": "proactive", "origin": "aion"}
+    monkeypatch.setattr(autonomy, "get_wake_quiet_hours", lambda: {"enabled": False, "start": "00:00", "end": "23:59"})
+    assert schedule._proactive_switched_off(item) is False
+    monkeypatch.setattr(autonomy, "get_wake_quiet_hours", lambda: {"enabled": True, "start": "00:00", "end": "23:59"})
+    assert schedule._proactive_switched_off(item) is True
+    assert schedule._proactive_switched_off({"type": "alarm", "origin": "aion"}) is False  # 闹铃照常
+    import inspect
+    assert "and not _proactive_quiet_now()" in inspect.getsource(schedule.ScheduleManager._fire_seat_alarm)  # 座位的 proceed_check
+
+
 def test_seat_prompt_includes_next_chat_when_enabled(monkeypatch):
     import seat_chat
     monkeypatch.setitem(pc.SETTINGS, "proactive_companionship_ai3_enabled", True)

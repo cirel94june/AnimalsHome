@@ -104,28 +104,29 @@ def _message_actor(event: dict) -> str | None:
 async def _is_replying_to_her(db, event_type: str | None, data: dict, actor: str) -> bool:
     """这条 AI 消息是不是在回小猫：同一个窗口里，往前找小猫和这位最近说的一句，是小猫的才算。
     她没回、这位自己找上门的那条（主动关心到点、自己醒来说的话）不算，不能接着再约下一次。"""
+    # 以库里这条消息自己的时间和 rowid 为界，只看严格排在它前面的；同一秒后写进来的不算「前一句」（Codex §146 M1）。
+    # 库里找不到这条消息就不约
     msg_id = str(data.get("id") or "")
     if event_type == "msg_created":
-        conv_id = str(data.get("conv_id") or "")
-        if not conv_id:
-            return False
-        cur = await db.execute(
-            "SELECT role FROM messages WHERE conv_id=? AND id!=? AND role IN ('user','assistant') "
-            "AND created_at <= ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-            (conv_id, msg_id, float(data.get("created_at") or time.time())),
-        )
-        row = await cur.fetchone()
-        return bool(row and row[0] == "user")
-    room_id = str(data.get("room_id") or "")
-    if not room_id:
+        table, scope_col, scope = "messages", "conv_id", str(data.get("conv_id") or "")
+        who_col, her, me = "role", "user", "assistant"
+    else:
+        table, scope_col, scope = "chatroom_messages", "room_id", str(data.get("room_id") or "")
+        who_col, her, me = "sender", "user", actor
+    if not scope or not msg_id:
+        return False
+    cur = await db.execute(f"SELECT created_at, rowid FROM {table} WHERE id=? AND {scope_col}=?", (msg_id, scope))
+    own = await cur.fetchone()
+    if not own:
         return False
     cur = await db.execute(
-        "SELECT sender FROM chatroom_messages WHERE room_id=? AND id!=? AND sender IN ('user', ?) "
-        "AND created_at <= ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
-        (room_id, msg_id, actor, float(data.get("created_at") or time.time())),
+        f"SELECT {who_col} FROM {table} WHERE {scope_col}=? AND {who_col} IN (?, ?) "
+        "AND (created_at < ? OR (created_at = ? AND rowid < ?)) "
+        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (scope, her, me, own[0], own[0], own[1]),
     )
     row = await cur.fetchone()
-    return bool(row and row[0] == "user")
+    return bool(row and row[0] == her)
 
 
 async def process_visible_message_event(event: dict) -> tuple[dict, bool]:

@@ -269,12 +269,20 @@ def _is_schedule_time_stale(dt_text: str, *, grace_seconds: int = 90) -> bool:
 
 
 # ── ScheduleManager ───────────────────────────────
+def _proactive_quiet_now() -> bool:
+    """现在是不是「自己醒来」的静默时段（主动关心也照这个不来，11-05 小猫）。"""
+    import quiet_hours
+    from autonomy import get_wake_quiet_hours
+    return quiet_hours.is_quiet(get_wake_quiet_hours(), time.time())
+
+
 def _proactive_switched_off(item: dict) -> bool:
-    """主动陪伴计时器已认领、正在准备开口时，这位 AI 的开关被关掉了。"""
+    """主动陪伴计时器已认领、正在准备开口时：这位 AI 的开关被关掉了，或者已经进了静默时段
+    （截图、取记忆、拼上下文要一阵子，Codex §146 M2）。是就不调模型；计时器已用掉，不补发。"""
     if item.get("type") != PROACTIVE_TYPE:
         return False
     from proactive_companionship import is_proactive_enabled
-    return not is_proactive_enabled(item.get("origin", "aion"))
+    return not is_proactive_enabled(item.get("origin", "aion")) or _proactive_quiet_now()
 
 
 class ScheduleManager:
@@ -603,7 +611,7 @@ class ScheduleManager:
         proceed_check = None
         if item.get("type") == PROACTIVE_TYPE:  # 等上下文期间开关被关了，也不开口
             from proactive_companionship import is_proactive_enabled
-            proceed_check = lambda: is_proactive_enabled(origin)  # noqa: E731
+            proceed_check = lambda: is_proactive_enabled(origin) and not _proactive_quiet_now()  # noqa: E731
         await chatroom_routes._generate_seat_reply(room_id, {"actor": origin}, [], asyncio.Queue(), 30,
                                                    proceed_check=proceed_check, extra_attachments=attachments,
                                                    actor=origin, group=room_type == "group", extra_prompt=prompt)
@@ -631,9 +639,7 @@ class ScheduleManager:
             if not is_proactive_enabled(origin):  # 计时器排好后开关被关了：不开口
                 return
             # 静默时段里到点的不来（11-05 小猫；和「自己醒来」用同一个静默时段）
-            import quiet_hours
-            from autonomy import get_wake_quiet_hours
-            if quiet_hours.is_quiet(get_wake_quiet_hours(), time.time()):
+            if _proactive_quiet_now():
                 log.info("proactive timer %s skipped: quiet hours", sid)
                 return
         elif not is_app_checkpoint:
@@ -989,9 +995,7 @@ class ScheduleManager:
             if not is_proactive_enabled(origin):  # 计时器排好后开关被关了：不开口
                 return
             # 静默时段里到点的不来（11-05 小猫；和「自己醒来」用同一个静默时段）
-            import quiet_hours
-            from autonomy import get_wake_quiet_hours
-            if quiet_hours.is_quiet(get_wake_quiet_hours(), time.time()):
+            if _proactive_quiet_now():
                 log.info("proactive timer %s skipped: quiet hours", sid)
                 return
             if origin in ("ai3", "ai4", "ai5", "ai6"):  # 座位的主动陪伴：TA 自己回到原来的房间开口
