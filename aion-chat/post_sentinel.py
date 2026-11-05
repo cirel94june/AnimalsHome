@@ -98,8 +98,10 @@ async def snapshot():
         pending = (await (await db.execute(
             "SELECT count(*) FROM post_sentinel_jobs WHERE status IN ('pending','running')"
         )).fetchone())[0]
+        # 只显示比最近一次成功还新的报错：11-05 小猫看到 11-03 的「Codex 额度用完」一直挂着，其实早就恢复了
         errors = await (await db.execute(
             "SELECT error FROM post_sentinel_jobs WHERE error!='' AND status IN ('pending','failed') "
+            "AND source_ts > COALESCE((SELECT MAX(source_ts) FROM post_sentinel_jobs WHERE status='done'), 0) "
             'ORDER BY source_ts DESC LIMIT 1'
         )).fetchone()
         failed = (await (await db.execute("SELECT count(*) FROM post_sentinel_jobs WHERE status='failed'")).fetchone())[0]
@@ -417,7 +419,12 @@ def _apply_analysis(document, parsed, sources, job):
             if item.get('op', 'upsert') != 'upsert':
                 raise ValueError('未知画像操作')
             key = old.get('key') or 'fact.' + uuid.uuid4().hex
-            _, cat, content = _entry({'key': key, 'category': cat, 'content': item.get('content')})
+            # 整理时模型常常只改状态（比如标成已结束）不重写正文：已有的条目沿用原正文，
+            # 原来会整条报「每条画像请填写 1–600 字」，长期画像一直整理不进去（11-05）
+            given = item.get('content')
+            if (not isinstance(given, str) or not given.strip()) and old.get('content'):
+                given = old['content']
+            _, cat, content = _entry({'key': key, 'category': cat, 'content': given})
             content = personalize_text(content, user_name)
             if len(content) > 600:
                 raise ValueError('使用配置姓名后的画像正文最多600字，请简写或省略主语')

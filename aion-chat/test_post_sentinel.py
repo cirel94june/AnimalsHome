@@ -330,6 +330,37 @@ class PostSentinelTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data['entries'][0]['status'], 'done')
         self.assertNotIn('取药', await self.service.build_context())
 
+    async def test_status_only_update_keeps_the_old_text(self):
+        """11-05：整理时模型只把一条标成已结束、没重写正文，原来整条报「每条画像请填写 1–600 字」。"""
+        document = {'entries': {}, 'current_state': None}
+        self.service._apply_analysis(document, {'updates': [{'category': 'recent', 'topic': '看展', 'kind': 'context',
+                                                             'content': '周末想去看展', 'sources': ['U1']}], 'state': None},
+                                     {'U1': 'private:one'}, {'source_ts': time.time() - 10})
+        key = next(iter(document['entries']))
+        self.service._apply_analysis(document, {'updates': [{'key': key, 'status': 'retired'}], 'state': None},
+                                     {}, {'source_ts': time.time(), 'consolidation': True})
+        entry = document['entries'][key]
+        self.assertEqual(('周末想去看展', 'retired'), (entry['content'], entry['status']))
+        self.assertFalse(document.get('_analysis_errors'))
+        # 新条目还是必须有正文
+        self.service._apply_analysis(document, {'updates': [{'category': 'recent', 'topic': '空的', 'sources': ['U1']}],
+                                                'state': None}, {'U1': 'private:one'}, {'source_ts': time.time()})
+        self.assertTrue(any('1–600' in e for e in document.get('_analysis_errors', [])))
+
+    async def test_old_failures_stop_showing_once_a_later_job_succeeds(self):
+        """11-05：11-03 的「Codex 额度用完」一直挂在画像页上，其实后来都成功了。"""
+        now = time.time()
+        async with self.connect() as db:
+            await db.execute("INSERT INTO post_sentinel_jobs (source_id,scope,parent_id,message_id,source_ts,content,epoch,status,error) "
+                             "VALUES ('private:old','private','room','old',?,'x',0,'failed','usage limit')", (now - 7200,))
+            await db.commit()
+        self.assertIn('usage limit', (await self.service.snapshot())['last_error'])
+        async with self.connect() as db:
+            await db.execute("INSERT INTO post_sentinel_jobs (source_id,scope,parent_id,message_id,source_ts,content,epoch,status,error) "
+                             "VALUES ('private:new','private','room','new',?,'y',0,'done','')", (now - 60,))
+            await db.commit()
+        self.assertNotIn('usage limit', (await self.service.snapshot())['last_error'])
+
     async def test_prompt_budget_and_project_decay_without_losing_tasks(self):
         now = time.time()
         values = {
