@@ -234,6 +234,12 @@ let _camBusy = false;
 let countdownTimer = null;
 let _activeSource = "local";
 let _phoneArmed = false;
+// 「让大家能看到」的状态：页面一打开 init() 就会读，必须写在 init() 之前（狐狸 §159 R2）
+let _phoneIntent = null;
+let _phoneServerArmed = null;
+let _phoneOpGen = 0;
+let _phoneArmedAt = 0;          // 点开的时间：之后 10 秒内服务器还没确认，算「正在接通」
+const PHONE_LINK_GRACE_MS = 10000;
 let _phoneCapabilities = {};
 let _phonePreviewRequestedAt = 0;
 let _phonePreviewStartedAt = 0;
@@ -528,11 +534,6 @@ function savePhoneCameraConfig() {
 //   _phoneIntent：小猫在本页点过的开 / 关（null = 本页还没点过，跟着服务器）；只有她点按钮才会改。
 //   _phoneServerArmed：服务器最近一次确认的状态。
 // _phoneOpGen：每点一次加一。点之前发出的状态查询晚回来，直接丢掉，不能改按钮。
-let _phoneIntent = null;
-let _phoneServerArmed = null;
-let _phoneOpGen = 0;
-let _phoneArmedAt = 0;          // 点开的时间：之后 10 秒内服务器还没确认，算「正在接通」
-const PHONE_LINK_GRACE_MS = 10000;
 
 function phoneLinkPending() {
   return _phoneIntent === true && Date.now() - _phoneArmedAt < PHONE_LINK_GRACE_MS;

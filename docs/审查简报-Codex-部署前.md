@@ -2473,3 +2473,16 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 服务钥匙只开 `/api/outing/*`，后端再拦一次；
 - 借用有总超时、每只和全家的并发上限，额度先认领，日志带 `request_id`、错误脱敏；
 - `/outreach` 有持久的幂等编号，收件人只限小猫私聊和已批准的朋友群，额度认领持久化。
+
+
+## 160. 修 §159 的 R2：摄像头页首次加载读不到状态
+
+- **原因**：§159 把 `_phoneOpGen` 等手机状态变量写在脚本中段（原第 533 行）。`init()` 先调 `syncCamModalState()`，它一开头就读 `_phoneOpGen`，这时变量还没初始化，抛出 TDZ 异常；异常被捕获后显示「获取状态失败」，第一次 `/api/cam/status` 根本没发出。
+- **改动**（`static/camera.html`）：`_phoneIntent`、`_phoneServerArmed`、`_phoneOpGen`、`_phoneArmedAt`、`PHONE_LINK_GRACE_MS` 挪到 `let _phoneArmed = false;` 后面，和其他页面状态变量放在一起，在 `init()` 之前。逻辑一行没改。
+- **验证**：
+  - `test_patrol_control.py::test_camera_page_first_load_reads_status_in_real_order` 通过，`test_patrol_control` 加 `test_1105_fixes` 共 37 项全过；
+  - 本机真实浏览器打开 /camera：页面一加载就发出 `/api/cam/status`，没有「获取状态失败」；
+  - §159 的 12 种重放仍全对。
+- **教训**：上一轮只在页面加载完以后手动调函数重放，没看加载过程本身。以后改页面脚本都先打开一次页面，看首次加载有没有报错。
+
+另：施工方案 `/outreach` 按狐狸复审补充：bot **发送前**先持久认领编号，认领成功才发；认领后没发出的，宁可漏一条也不重复。
