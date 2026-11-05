@@ -520,7 +520,12 @@ function momentImageSaver() {
 async function saveMomentImage(url) {
   const name = (url.split('?')[0].split('/').pop()) || 'image.png';
   try {
-    const blob = await (await fetch(url)).blob();
+    // 先确认真拿到了图片：404、报错页之类不能当图片存进相册（狐狸 §165 Low）
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('status ' + res.status);
+    const blob = await res.blob();
+    const type = (res.headers.get('content-type') || blob.type || '').toLowerCase();
+    if (!type.startsWith('image/') || !blob.size) throw new Error('not an image');
     const saver = momentImageSaver();
     if (saver) {  // 手机 App：交给原生保存到相册
       const data = await new Promise((resolve, reject) => {

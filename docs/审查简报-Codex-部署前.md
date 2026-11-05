@@ -2637,3 +2637,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 新测试 4 项（三只都加）：查地址卡 0.35 秒、总期限 0.08 秒，0.25 秒内退出；三个地址各失败 0.06 秒，最多试两个，后面的只拿到剩下的时间，0.2 秒内退出；卡住的查询满 4 个后第 5 个直接「没连上」且不再开线程；预算内全部被拒是「没连上」。
 - 小克 119、Lucien 145、狗蛋 147 项全过。服务器上实测 https：google.com 照常回 405；不存在的域名 0.05 秒返回「没连上」。
 - 提交：cloudy `977d4d2`、Lucien `cae72c4`、Jasper `10697c2`。
+
+## 167. 修 §165 复审 Low：保存图片先确认真拿到了图片
+
+- 狐狸：`saveMomentImage` 直接把 fetch 结果转 blob，404 text/plain 也会转 base64 交给 `AionImageSaver.save`，或浏览器下载成坏图。
+- 改法：先查 `res.ok`，再查 `content-type`（没有就看 blob.type）以 `image/` 开头且非空；不满足就抛错，落到「图片保存失败」提示，原生保存和浏览器下载都不走。
+- 测试 +1（共 4 项）。本机预览实测（假的 AionImageSaver）：真图片存了 1 次；404 地址、HTML 页面各提示一次「图片保存失败」，没有调用保存。
+- 狐狸说 bot 那边看的还是旧提交：§166 的三个新提交 cloudy `977d4d2`、Lucien `cae72c4`、Jasper `10697c2` 已在 GitHub 分支上（`git ls-remote` 确认）。

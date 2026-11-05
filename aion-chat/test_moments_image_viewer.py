@@ -27,3 +27,12 @@ def test_viewer_can_be_closed_and_saving_never_opens_a_window():
     assert "key === 'Escape'" in PAGE
     assert "window.open" not in _func("saveMomentImage")
     assert ".moment-viewer {" in PAGE and "position:fixed" in PAGE
+
+
+def test_saving_checks_it_really_got_an_image():
+    """狐狸 §165 Low：404 或不是图片时不能交给相册保存。"""
+    body = _func("saveMomentImage")
+    assert "res.ok" in body
+    assert "startsWith('image/')" in body
+    assert body.index("res.ok") < body.index("saver.save") and body.index("image/") < body.index("saver.save")
+    assert "图片保存失败" in body
