@@ -429,6 +429,8 @@ from actors import router as actors_router
 from desk_notes import router as desk_notes_router
 app.include_router(actors_router)
 app.include_router(desk_notes_router)
+from outing_tools import router as outing_tools_router
+app.include_router(outing_tools_router)  # TG 上的 bot 回家借工具
 from routes.mcp_tools import router as mcp_tools_router
 app.include_router(mcp_tools_router)
 from routes.travel import router as travel_router

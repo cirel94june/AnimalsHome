@@ -2486,3 +2486,37 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - **教训**：上一轮只在页面加载完以后手动调函数重放，没看加载过程本身。以后改页面脚本都先打开一次页面，看首次加载有没有报错。
 
 另：施工方案 `/outreach` 按狐狸复审补充：bot **发送前**先持久认领编号，认领成功才发；认领后没发出的，宁可漏一条也不重复。
+
+
+## 161. bot 出门第 1 步（家里这边）：回家借工具的入口 + 门锁只给服务钥匙开这一扇门
+
+方案：docs/施工方案-bot出门.md（狐狸已认可方向）。11-05 小猫定了：大群里她开口才借；三只一起做；出门记录页显示朋友群。
+
+- **新增 `outing_tools.py`**：`POST /api/outing/tool`，body 为 `{tool, args, request_id, chat_type, owner_asked}`。
+  - **钥匙**：每个座位一把，放在 `/etc/aionshome.env` 的 `AIONSHOME_OUTING_KEY_<座位>`（如 `_AION` / `_CONNOR` / `_AI3`），少于 24 位当没配。逐个用 sha256 + `hmac.compare_digest` 比对，不提前退出。
+  - **工具**：`search`（Tavily 搜索）、`read`（Tavily 读网页，只认 http / https）、`taobao`（淘宝联盟，取 5 件：标题｜价格｜店｜链接）。结果最多 3000 字。
+  - **检查顺序**：
+    1. 钥匙；
+    2. 格式（`request_id` 8～120 位、`chat_type` 三选一）；
+    3. 总开关、这位的开关、这位能借的工具；
+    4. 大群（`public_group`）要 `owner_asked=true`；
+    5. 并发名额（每只 2、全家 4，满了直接 429，不排队）；
+    6. 认领额度：SQLite 的 `BEGIN IMMEDIATE` 里查重 `request_id`（重复回 409）、数这一小时次数（超了回 429）、登记为 running；
+    7. 干活（总超时 30 秒）；
+    8. 收尾：记成 ok / timeout / failed / refused。
+  - **错误**：只回分类，用 §156 的 `describe_failure`；工具没配好时回「家里这个工具还没配好」。日志和数据库只记座位、工具、`chat_type`、时间、状态、分类，不记搜索词和结果。
+  - **小猫用的接口**：`GET` / `PUT /api/outing-settings`（总开关、每只的开关、工具、每小时次数，外加最近 30 次借用记录）。页面还没做，放到第 2 步和开关总览一起做。
+- **`cf_access.py` 门锁**（两个方向都拦）：
+  - 新增 `verify_claims`，返回凭证内容；`verify` 改成包它。修掉了改写时漏下的一处 `return False`：那里应返回 None，否则会把格式不对的凭证当成通过。补了专门的测试。
+  - `/api/outing/*` 只认借工具应用（`AIONSHOME_CF_ACCESS_OUTING_AUD`）签发的服务钥匙凭证：有 `common_name`、没有 `email`。小猫的登录也进不来；没配这个 AUD 时一律拒绝。
+  - 其他路径只认整站应用的凭证，服务钥匙一律不认（哪怕是整站应用签的）。
+  - 路径里有 `..` 段的，经 Cloudflare 来时一律拒绝。
+  - `/api/outing-settings` 不算借工具的门，只给小猫的登录。
+- **测试**：
+  - `test_cf_access.py` 新增 11 项：9 种「哪把钥匙进哪扇门」、没配 AUD 时关门、payload 不是对象时拒绝。原有 32 项照过。
+  - 新增 `test_outing_tools.py` 16 项：钥匙对错、太短的钥匙、同一编号只办一次、额度先认领、大群要她开口、开关和工具名单、失败只回分类且不漏钥匙、超时释放名额、两种并发上限、坏请求、三样工具的结果格式（含拒绝 `file://`）。
+  - 本机真启动：钥匙不对 401；钥匙对但没配 Tavily 时回「家里这个工具还没配好」；设置接口正常。
+- **还没做**：
+  - bot 那边（三只一起写，见下一节）；
+  - 设置页面；
+  - Cloudflare 上建借工具应用和服务钥匙（要小猫点）。

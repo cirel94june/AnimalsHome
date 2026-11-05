@@ -13,6 +13,15 @@
   AIONSHOME_CF_ACCESS_TEAM=claudexiaoke          # 团队名，登录页是 <团队>.cloudflareaccess.com
   AIONSHOME_CF_ACCESS_AUD=<应用的 AUD 标签>
   AIONSHOME_PUBLIC_HOST=home.animalshome.top
+  AIONSHOME_CF_ACCESS_OUTING_AUD=<「回家借工具」那个 Access 应用的 AUD 标签>   # 可选，见下
+
+回家借工具（TG 上的 bot 来借，docs/施工方案-bot出门.md）：
+- Cloudflare 上单独建一个 Access 应用，只管 home.animalshome.top/api/outing/*，策略只认 bot 的服务钥匙；
+  整站那个应用仍只认小猫的邮箱。
+- 这里再拦一次，两个方向都拦：
+  * /api/outing/* 只认「借工具应用」签发的、服务钥匙的凭证（有 common_name、没有 email），小猫的登录也进不来；
+  * 其他路径只认整站应用的凭证，并且服务钥匙的凭证一律不认，免得服务钥匙进到别的地方。
+- 没配 AIONSHOME_CF_ACCESS_OUTING_AUD 时，经 Cloudflare 来的 /api/outing/* 一律拒绝。
 """
 
 from __future__ import annotations
@@ -38,13 +47,27 @@ CLOCK_SKEW_SECONDS = 60
 _CF_HEADERS = ("cf-ray", "cf-connecting-ip", "cf-access-jwt-assertion", "cdn-loop")
 
 
+OUTING_PREFIX = "/api/outing/"
+
+
 def settings() -> dict | None:
     team = os.environ.get("AIONSHOME_CF_ACCESS_TEAM", "").strip()
     aud = os.environ.get("AIONSHOME_CF_ACCESS_AUD", "").strip()
     host = os.environ.get("AIONSHOME_PUBLIC_HOST", "").strip().lower()
     if not (team and aud and host):
         return None
-    return {"team": team, "aud": aud, "host": host, "issuer": f"https://{team}.cloudflareaccess.com"}
+    return {"team": team, "aud": aud, "host": host, "issuer": f"https://{team}.cloudflareaccess.com",
+            "outing_aud": os.environ.get("AIONSHOME_CF_ACCESS_OUTING_AUD", "").strip()}
+
+
+def is_outing_path(path: str) -> bool:
+    """借工具那扇门。路径里带 .. 的一律不算（也不放进别处），由调用方拒绝。"""
+    return path == OUTING_PREFIX.rstrip("/") or path.startswith(OUTING_PREFIX)
+
+
+def is_service_token(claims: dict) -> bool:
+    """Cloudflare 服务钥匙签发的凭证：有 common_name（服务钥匙的 Client ID），没有登录人的 email。"""
+    return bool(claims.get("common_name")) and not claims.get("email")
 
 
 def _b64url(value: str) -> bytes:
@@ -103,34 +126,43 @@ _CERTS = _Certs()
 
 async def verify(token: str, cfg: dict, *, now: float | None = None, certs: _Certs | None = None) -> bool:
     """验 Cloudflare Access 的登录凭证（RS256）。任何一项不对都返回 False。"""
+    return await verify_claims(token, cfg, now=now, certs=certs) is not None
+
+
+async def verify_claims(token: str, cfg: dict, *, aud: str | None = None, now: float | None = None,
+                        certs: _Certs | None = None) -> dict | None:
+    """验凭证并返回里面的内容；任何一项不对返回 None。aud 默认是整站应用的。"""
+    expected_aud = cfg["aud"] if aud is None else aud
+    if not expected_aud:
+        return None
     try:
-        header_b64, payload_b64, signature_b64 = token.split(".")
+        header_b64, payload_b64, signature_b64 = str(token or "").split(".")
         header = json.loads(_b64url(header_b64))
         payload = json.loads(_b64url(payload_b64))
         if not isinstance(header, dict) or not isinstance(payload, dict):
-            return False
+            return None
         if header.get("alg") != "RS256" or not isinstance(header.get("kid"), str) or not header["kid"]:
-            return False
+            return None
         key = await (certs or _CERTS).get(cfg["issuer"], header["kid"])
         if key is None:
-            return False
+            return None
         key.verify(_b64url(signature_b64), f"{header_b64}.{payload_b64}".encode("ascii"),
                    padding.PKCS1v15(), hashes.SHA256())
     except (ValueError, InvalidSignature, TypeError, UnicodeError, json.JSONDecodeError):
-        return False
+        return None
     now = time.time() if now is None else now
-    aud = payload.get("aud")
-    auds = aud if isinstance(aud, list) else [aud]
-    if cfg["aud"] not in auds or payload.get("iss") != cfg["issuer"]:
-        return False
+    token_aud = payload.get("aud")
+    auds = token_aud if isinstance(token_aud, list) else [token_aud]
+    if expected_aud not in auds or payload.get("iss") != cfg["issuer"]:
+        return None
     exp = payload.get("exp")
     if not _finite_number(exp) or now > exp + CLOCK_SKEW_SECONDS:
-        return False
+        return None
     if "nbf" in payload:  # 有 nbf 就必须是正常的数字
         nbf = payload["nbf"]
         if not _finite_number(nbf) or now + CLOCK_SKEW_SECONDS < nbf:
-            return False
-    return True
+            return None
+    return payload
 
 
 def _finite_number(value) -> bool:
@@ -168,7 +200,18 @@ class CloudflareAccessMiddleware:
                    for name, value in scope.get("headers", [])}
         if via_cloudflare(headers, cfg):
             token = _token_from(headers)
-            if not token or not await verify(token, cfg):
+            path = str(scope.get("path") or "")
+            if ".." in path.split("/"):
+                allowed = False
+            elif is_outing_path(path):
+                # 借工具那扇门：只认借工具应用签发的服务钥匙凭证
+                claims = await verify_claims(token, cfg, aud=cfg.get("outing_aud") or "") if token else None
+                allowed = claims is not None and is_service_token(claims)
+            else:
+                # 别的地方：只认整站应用的凭证，服务钥匙一律不认
+                claims = await verify_claims(token, cfg) if token else None
+                allowed = claims is not None and not is_service_token(claims)
+            if not allowed:
                 if scope["type"] == "websocket":
                     await send({"type": "websocket.close", "code": 1008, "reason": "login required"})
                 else:

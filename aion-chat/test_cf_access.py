@@ -187,3 +187,50 @@ def test_malformed_header_is_a_clean_rejection(configured, header):
 ])
 def test_time_claims_must_be_finite_numbers(configured, claims):
     assert asyncio.run(cf_access.verify(token(**claims), cf_access.settings())) is False
+
+
+# ── 回家借工具那扇门（docs/施工方案-bot出门.md） ──
+OUTING_AUD = "outing-app-aud"
+
+
+def _outing_scope(path, **headers):
+    scope = _scope(**headers)
+    scope["path"] = path
+    return scope
+
+
+def service_token(**claims):
+    base = {"aud": [OUTING_AUD], "email": None, "common_name": "client-id.access"}
+    base.update(claims)
+    return token(**base)
+
+
+@pytest.mark.parametrize("path, make, passes", [
+    ("/api/outing/tool", lambda: service_token(), True),                    # 服务钥匙进借工具的门
+    ("/api/outing/tool", lambda: token(), False),                           # 小猫的登录进不了借工具的门
+    ("/api/outing/tool", lambda: token(aud=[OUTING_AUD]), False),           # 借工具应用的凭证但不是服务钥匙
+    ("/api/outing/tool", lambda: service_token(aud=[AUD]), False),          # 整站应用签的服务钥匙也不行
+    ("/api/chat", lambda: service_token(), False),                          # 服务钥匙进不了别的地方
+    ("/api/chat", lambda: service_token(aud=[AUD]), False),                 # 哪怕是整站应用签的
+    ("/api/chat", lambda: token(), True),                                   # 小猫照常
+    ("/api/outing-settings", lambda: service_token(), False),               # 设置页不算借工具的门
+    ("/api/outing/../chat", lambda: service_token(), False),               # 带 .. 的一律不放
+])
+def test_outing_door_only_takes_service_tokens_and_service_tokens_only_open_it(configured, monkeypatch,
+                                                                               path, make, passes):
+    monkeypatch.setenv("AIONSHOME_CF_ACCESS_OUTING_AUD", OUTING_AUD)
+    claims_token = make()
+    calls, sent = _run(_outing_scope(path, host=HOST, cf_access_jwt_assertion=claims_token))
+    assert (calls == [path]) is passes, (path, sent)
+
+
+def test_outing_door_is_shut_when_not_configured(configured):
+    calls, _ = _run(_outing_scope("/api/outing/tool", host=HOST, cf_access_jwt_assertion=service_token()))
+    assert calls == []
+
+
+def test_non_dict_payload_is_rejected(configured):
+    head = _b64(json.dumps({"alg": "RS256", "kid": "k1"}).encode())
+    body = _b64(json.dumps([1, 2]).encode())
+    sig = KEY.sign(f"{head}.{body}".encode(), padding.PKCS1v15(), hashes.SHA256())
+    assert asyncio.run(cf_access.verify(f"{head}.{body}.{_b64(sig)}", cf_access.settings())) is False
