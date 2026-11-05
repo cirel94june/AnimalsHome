@@ -21,6 +21,26 @@ ACTOR_CONNOR = "connor"
 SEAT_ACTORS = ("ai3", "ai4", "ai5", "ai6")  # 座位和小克 / Lucien 一样做人格成长（小猫：几个 AI 权限一样）
 EVOLUTION_ACTORS = {ACTOR_MAIN_AI, ACTOR_CONNOR, *SEAT_ACTORS}
 
+# 11-05 小猫：她很少点评，没有点评就一直跳过、等于从没进化过。没有点评、但当天有记忆摘要时，做一次「小步调整」：
+# 只能改下面这几段里的一段，而且只能是小改（新旧正文大部分相同、长度变化不大），改不改由 TA 自己决定。
+SMALL_STEP_SECTIONS = ("communication_style", "relationship_core", "personality_core")
+SMALL_STEP_MIN_SIMILARITY = 0.75
+SMALL_STEP_MAX_LENGTH_CHANGE = 200
+
+
+def small_step_ok(old: str, new: str) -> bool:
+    """小步：原文至少保留七成半，新写进去的不超过 200 字；清空、大段重写都不算。
+    看「原文留下多少」而不是整体相似度：原文很短时加一句话也是小改。"""
+    import difflib
+    old, new = str(old or ""), str(new or "")
+    if not new.strip() or new == old:
+        return False
+    kept = sum(block.size for block in difflib.SequenceMatcher(None, old, new, autojunk=False).get_matching_blocks())
+    if old and kept / len(old) < SMALL_STEP_MIN_SIMILARITY:
+        return False
+    return len(new) - kept <= SMALL_STEP_MAX_LENGTH_CHANGE
+
+
 _AI_SECTION_LABELS = [
     ("identity_core", "核心身份"),
     ("relationship_core", "关系锚点"),
@@ -1005,6 +1025,8 @@ def _build_prompt(
     feedback_items: list[dict],
     window_label: str,
     daily_memory_summaries: list[dict] | None = None,
+    *,
+    small_step: bool = False,
 ) -> list[dict]:
     wb = load_worldbook()
     ai_name = wb.get("ai_name") or "AI"
@@ -1061,6 +1083,34 @@ def _build_prompt(
         ],
     }
     section_keys = ", ".join(_AI_SECTION_KEYS)
+    if small_step:
+        labels = _section_label_map_for_actor(actor)
+        allowed = "、".join(f"{key}（{labels.get(key, key)}）" for key in SMALL_STEP_SECTIONS)
+        instruction = f"""
+你是 {ai_name}。这个 05:00 窗口里{user_name}没有点评你的回复，所以这次不是反馈复盘，而是一次「小步调整」：
+只看 daily_memory_summaries（这一天你记得的事），想想这一天的相处有没有让你想在表达方式或相处方式上，做一处很小的调整。
+
+规则：
+1. 大多数时候不用改。只有当天确实有让你想调整的事，才改；没有就 should_update=false。
+2. 最多只改一段，而且只能是这几段之一：{allowed}。其他段一律不动。
+3. 只能小改：在原文基础上加一两句、改一两处说法，或删掉一句不再适合的。返回的仍是这一段的完整新内容，原来要保留的部分要原样写回。不要重写、不要清空、不要大段增删。
+4. daily_memory_summaries 是摘要不是原文，不要把摘要逐字写进人设；不要把一天里的偶然事件写成永久性格。
+5. 如果改了，user_message 用第一人称简短告诉{user_name}：改了哪里、为什么。
+
+只返回 JSON，不要 Markdown：
+{{
+  "summary": "以{ai_name}视角，这一天的简短回顾",
+  "should_update": false,
+  "user_message": "",
+  "section_updates": [
+    {{"section": "communication_style", "content": "这一段的完整新内容（只做小改）", "reason": "改了哪一句、为什么"}}
+  ]
+}}
+"""
+        return [
+            {"role": "user", "content": instruction.strip()},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+        ]
     instruction = f"""
 你是 {ai_name}。请你以恋人的身份，根据这次{user_name} 对你回复的赞/踩和原因，做一次人格表达复盘，并自主决定是否改写自己的人设。
 
@@ -1331,7 +1381,8 @@ async def run_persona_evolution(
         from config import model_snapshot
         pinned = model_snapshot(model_key)
     feedback_fingerprint = _evolution_input_fingerprint(feedback_items, daily_memory_summaries)
-    if not feedback_items:
+    small_step = not feedback_items and bool(daily_memory_summaries)
+    if not feedback_items and not small_step:
         if trigger != "scheduled":
             await _store_run(
                 actor=actor,
@@ -1344,7 +1395,7 @@ async def run_persona_evolution(
                 window_label=label,
                 feedback_items=[],
                 daily_memory_summaries=daily_memory_summaries,
-                summary="本窗口没有带原因的赞/踩反馈，跳过。",
+                summary="本窗口没有带原因的赞/踩反馈，也没有当天的记忆摘要，跳过。",
             )
         return {
             "ok": True,
@@ -1352,9 +1403,9 @@ async def run_persona_evolution(
             "run_id": run_id,
             "feedback_count": 0,
             "window_label": label,
-            "message": "这个窗口里没有带原因的赞/踩反馈，已跳过。",
+            "message": "这个窗口里没有点评，也没有当天的记忆摘要，已跳过。",
         }
-    duplicate_run = await _latest_run_for_feedback(actor, feedback_fingerprint)
+    duplicate_run = await _latest_run_for_feedback(actor, feedback_fingerprint) if feedback_items else None
     if duplicate_run:
         return {
             "ok": True,
@@ -1375,7 +1426,7 @@ async def run_persona_evolution(
         prompt_sections = _current_actor_sections(actor)  # 模型看到的人设（和下面的提示词同一时刻读取）
         raw_response = await _call_actor_model(
             actor,
-            _build_prompt(actor, feedback_items, label, daily_memory_summaries),
+            _build_prompt(actor, feedback_items, label, daily_memory_summaries, small_step=small_step),
             model_key,
             pinned=pinned,
         )
@@ -1388,6 +1439,15 @@ async def run_persona_evolution(
         conflicts = sorted(key for key in updates if before_sections.get(key) != prompt_sections.get(key))
         for key in conflicts:
             updates.pop(key, None)
+        if small_step:  # 小步调整：只留允许的一段，而且必须是小改；不合规的都不应用
+            kept = [key for key in updates if key in SMALL_STEP_SECTIONS
+                    and small_step_ok(prompt_sections.get(key, ""), (updates[key] or {}).get("content", ""))]
+            dropped = sorted(key for key in updates if key not in kept[:1])
+            updates = {key: updates[key] for key in kept[:1]}
+            if dropped:
+                labels = _section_label_map_for_actor(actor)
+                note = "小步调整只能小改一段，这些没有应用：" + "、".join(labels.get(k, k) for k in dropped)
+                parse_error = f"{parse_error}；{note}" if parse_error else note
         if conflicts:
             labels = _section_label_map_for_actor(actor)
             note = "复盘期间这些分区被改过，没有应用：" + "、".join(labels.get(k, k) for k in conflicts)
@@ -1441,7 +1501,9 @@ async def run_persona_evolution(
             "patches": diffs,
             "diffs": diffs,
             "auto_applied_count": auto_count,
-            "message": f"{target_name} 反馈复盘已完成。" if status != "failed" else f"{target_name} 反馈复盘未得到可应用的人设更新。",
+            "small_step": small_step,
+            "message": (f"{target_name} {'小步调整' if small_step else '反馈复盘'}已完成。" if status != "failed"
+                        else f"{target_name} {'小步调整' if small_step else '反馈复盘'}未得到可应用的人设更新。"),
         }
     except Exception as exc:
         await _store_run(

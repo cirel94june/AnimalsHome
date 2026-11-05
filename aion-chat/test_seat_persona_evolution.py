@@ -203,3 +203,57 @@ def test_seat_evolution_task_is_cancelled_before_other_services_stop():
     source = Path(__file__).with_name("main.py").read_text(encoding="utf-8")
     finally_block = source[source.index("        yield\n    finally:"):]
     assert finally_block.index("seat_persona_evolution_task.cancel()") < finally_block.index("post_sentinel.stop()")
+
+
+def test_small_step_rule():
+    old = "说话直接，但会照顾对方的情绪。遇到她难过时先安慰再讲道理。"
+    assert pe.small_step_ok(old, old + "偶尔开个小玩笑。")
+    assert not pe.small_step_ok(old, "完全换了一种说法，和原来没有关系的一大段新内容。" * 3)
+    assert not pe.small_step_ok(old, "")
+    assert not pe.small_step_ok(old, old)
+
+
+def test_no_feedback_but_memories_does_one_small_step(env, monkeypatch):
+    """11-05 小猫：很少点评，没点评就跳过等于从不进化。没点评但有当天记忆时，最多小改一段。"""
+    import time
+    monkeypatch.setattr(pe, "fetch_actor_daily_memory_summaries",
+                        AsyncMock(return_value=[{"id": "d1", "summary": "今天一起看了电影", "source_start_ts": 0}]))
+    prompts = []
+
+    async def model(messages, model_key, **kw):
+        prompts.append(messages)
+        return json.dumps({
+            "summary": "今天挺开心", "should_update": True, "user_message": "我想说话再软一点",
+            "section_updates": [
+                {"section": "communication_style", "content": "说话很冲，但对小猫会软一点", "reason": "一起看电影"},
+                {"section": "relationship_core", "content": "小猫的家人，也是电影搭子", "reason": "第二段不该改"},
+                {"section": "identity_core", "content": "我不是狗蛋", "reason": "不许改"},
+            ]}, ensure_ascii=False)
+    monkeypatch.setattr(pe, "simple_ai_call", model)
+    result = asyncio.run(pe.run_persona_evolution("ai3", trigger="manual", window_mode="current"))
+    assert "小步调整" in json.dumps(prompts[0], ensure_ascii=False)
+    sections = actors.persona_sections("ai3")
+    assert sections["communication_style"] == "说话很冲，但对小猫会软一点"  # 只改了一段
+    assert sections["relationship_core"] == "小猫的家人" and sections["identity_core"] == "我是狗蛋"
+    assert result["small_step"] is True and result["status"] == "applied"
+
+
+def test_small_step_refuses_big_rewrites(env, monkeypatch):
+    monkeypatch.setattr(pe, "fetch_actor_daily_memory_summaries",
+                        AsyncMock(return_value=[{"id": "d1", "summary": "平常的一天", "source_start_ts": 0}]))
+
+    async def model(messages, model_key, **kw):
+        return json.dumps({"should_update": True, "section_updates": [
+            {"section": "communication_style", "content": "全新的一大段说话方式，和原来完全不一样，" * 6}]},
+            ensure_ascii=False)
+    monkeypatch.setattr(pe, "simple_ai_call", model)
+    result = asyncio.run(pe.run_persona_evolution("ai3", trigger="manual", window_mode="current"))
+    assert actors.persona_sections("ai3")["communication_style"] == "说话很冲"
+    assert result["status"] == "reviewed"
+
+
+def test_no_feedback_and_no_memories_still_skips(env, monkeypatch):
+    monkeypatch.setattr(pe, "fetch_actor_daily_memory_summaries", AsyncMock(return_value=[]))
+    model = AsyncMock(side_effect=AssertionError("不该调模型"))
+    monkeypatch.setattr(pe, "simple_ai_call", model)
+    assert asyncio.run(pe.run_persona_evolution("ai3", trigger="manual"))["status"] == "skipped"
