@@ -14,6 +14,11 @@ from config import DB_PATH, SETTINGS, save_settings
 
 
 PROACTIVE_TYPE = "proactive"
+# 11-05 小猫：开了主动关心以后，三位风吹草动就来找她（两天里 70 次左右没等她回就又来）。现在的规矩：
+#   1. 只有在回她的话时才能约下次：她没回、自己找上门的那条（主动关心、自己醒来说的话）不再约，不会一直追；
+#   2. 提示词改成「有理由才约，大多数时候不用」，最短 10 分钟；
+#   3. 到点时在静默时段里就不来（和「自己醒来」同一个静默时段，在 schedule 里判断）。
+MIN_NEXT_CHAT_MINUTES = 10
 NO_DECISION = object()
 _NEXT_CHAT_RE = re.compile(
     r"[\[［]\s*NEXT_CHAT\s*[:：]\s*([^\]］]+?)\s*[\]］]",
@@ -47,10 +52,11 @@ def proactive_ability_text(actor: str) -> str:
     if not is_proactive_enabled(actor):
         return ""
     return (
-        "【高优先级要求】请根据当前对话和情境，决定是否需要在短时间无新消息后再次主动联系用户，"
-        "在适合延续当前话题时尽量主动安排。"
-        "需要时输出 [NEXT_CHAT:x]，x 为 1～60 的整数分钟；"
-        "不需要时输出 [NEXT_CHAT:NONE]。每次回复必须输出其中一种决定。"
+        "【主动关心】每次回复末尾决定：她一段时间没回时，要不要再主动来找她一次。"
+        "只在真有理由时才安排——话说到一半想接着聊、她说了要去做某件事想过后问问结果、或者担心她现在的状态；"
+        "大多数时候不需要，她会自己回来。不要为了显得关心而安排。"
+        "需要时输出 [NEXT_CHAT:x]，x 为 10～60 的整数分钟；不需要时输出 [NEXT_CHAT:NONE]。"
+        "每次回复都要输出其中一种。"
     )
 
 
@@ -76,7 +82,7 @@ def extract_next_chat_decision(text: str) -> tuple[str, int | None | object]:
         if raw.isdigit():
             minutes = int(raw)
             if 1 <= minutes <= 60:
-                decision = minutes
+                decision = max(MIN_NEXT_CHAT_MINUTES, minutes)  # 最短 10 分钟
     return _NEXT_CHAT_RE.sub("", source).strip(), decision
 
 
@@ -93,6 +99,33 @@ def _message_actor(event: dict) -> str | None:
         if sender in ("user", "aion", "connor", *SEATS):
             return sender
     return None
+
+
+async def _is_replying_to_her(db, event_type: str | None, data: dict, actor: str) -> bool:
+    """这条 AI 消息是不是在回小猫：同一个窗口里，往前找小猫和这位最近说的一句，是小猫的才算。
+    她没回、这位自己找上门的那条（主动关心到点、自己醒来说的话）不算，不能接着再约下一次。"""
+    msg_id = str(data.get("id") or "")
+    if event_type == "msg_created":
+        conv_id = str(data.get("conv_id") or "")
+        if not conv_id:
+            return False
+        cur = await db.execute(
+            "SELECT role FROM messages WHERE conv_id=? AND id!=? AND role IN ('user','assistant') "
+            "AND created_at <= ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            (conv_id, msg_id, float(data.get("created_at") or time.time())),
+        )
+        row = await cur.fetchone()
+        return bool(row and row[0] == "user")
+    room_id = str(data.get("room_id") or "")
+    if not room_id:
+        return False
+    cur = await db.execute(
+        "SELECT sender FROM chatroom_messages WHERE room_id=? AND id!=? AND sender IN ('user', ?) "
+        "AND created_at <= ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        (room_id, msg_id, actor, float(data.get("created_at") or time.time())),
+    )
+    row = await cur.fetchone()
+    return bool(row and row[0] == "user")
 
 
 async def process_visible_message_event(event: dict) -> tuple[dict, bool]:
@@ -127,7 +160,9 @@ async def process_visible_message_event(event: dict) -> tuple[dict, bool]:
                 (clean_text, str(data.get("id") or "")),
             )
 
-            if decision is not NO_DECISION and decision is not None and is_proactive_enabled(actor):
+            replying = await _is_replying_to_her(db, updated.get("type"), data, actor)
+            if (decision is not NO_DECISION and decision is not None and is_proactive_enabled(actor)
+                    and replying):
                 created_at = float(data.get("created_at") or time.time())
                 trigger_at = datetime.fromtimestamp(created_at + decision * 60).strftime(
                     "%Y-%m-%d %H:%M:%S"

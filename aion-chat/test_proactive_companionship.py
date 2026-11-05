@@ -65,7 +65,7 @@ class ProactiveCompanionshipTests(unittest.IsolatedAsyncioTestCase):
             "先歇一会儿 [NEXT_CHAT:5] 后面改成 [NEXT_CHAT: 7 ]"
         )
         self.assertEqual(clean, "先歇一会儿  后面改成")
-        self.assertEqual(decision, 7)
+        self.assertEqual(decision, 10)  # 11-05 起最短 10 分钟
 
         clean, decision = pc.extract_next_chat_decision("好呀[NEXT_CHAT:NONE]")
         self.assertEqual(clean, "好呀")
@@ -111,9 +111,13 @@ class ProactiveCompanionshipTests(unittest.IsolatedAsyncioTestCase):
         await self._seed_timer("connor", "old-c")
         created_at = 1_800_000_000.0
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(  # 她先说了一句，这条是在回她（11-05：没在回她的不约下次）
+                "INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)",
+                ("u1", "conv", "user", "我去洗个澡", created_at - 60),
+            )
             await db.execute(
                 "INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)",
-                ("a1", "conv", "assistant", "我过会儿再来[NEXT_CHAT:7]", created_at),
+                ("a1", "conv", "assistant", "我过会儿再来[NEXT_CHAT:12]", created_at),
             )
             await db.commit()
 
@@ -123,7 +127,7 @@ class ProactiveCompanionshipTests(unittest.IsolatedAsyncioTestCase):
                 "id": "a1",
                 "conv_id": "conv",
                 "role": "assistant",
-                "content": "我过会儿再来[NEXT_CHAT:7]",
+                "content": "我过会儿再来[NEXT_CHAT:12]",
                 "created_at": created_at,
             },
         })
@@ -133,13 +137,30 @@ class ProactiveCompanionshipTests(unittest.IsolatedAsyncioTestCase):
         timers = await self._active_timers()
         self.assertEqual([row["origin"] for row in timers], ["aion", "connor"])
         aion_timer = next(row for row in timers if row["origin"] == "aion")
-        expected = datetime.fromtimestamp(created_at + 7 * 60).strftime("%Y-%m-%d %H:%M:%S")
+        expected = datetime.fromtimestamp(created_at + 12 * 60).strftime("%Y-%m-%d %H:%M:%S")
         self.assertEqual(aion_timer["trigger_at"], expected)
         self.assertEqual(next(row for row in timers if row["origin"] == "connor")["id"], "old-c")
 
         async with aiosqlite.connect(self.db_path) as db:
             cur = await db.execute("SELECT content FROM messages WHERE id='a1'")
             self.assertEqual((await cur.fetchone())[0], "我过会儿再来")
+
+    async def test_unprompted_message_does_not_book_another_visit(self):
+        """11-05 小猫：她没回，这位自己找上门的那条（主动关心、自己醒来）不能再约下一次，免得一直追。"""
+        created_at = 1_800_000_000.0
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)",
+                             ("u1", "conv", "user", "晚安", created_at - 3600))
+            await db.execute("INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)",
+                             ("a0", "conv", "assistant", "晚安呀[NEXT_CHAT:30]", created_at - 3500))
+            await db.execute("INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)",
+                             ("a1", "conv", "assistant", "你睡了吗[NEXT_CHAT:20]", created_at))
+            await db.commit()
+        event, _ = await pc.process_visible_message_event({"type": "msg_created", "data": {
+            "id": "a1", "conv_id": "conv", "role": "assistant", "content": "你睡了吗[NEXT_CHAT:20]",
+            "created_at": created_at}})
+        self.assertEqual("你睡了吗", event["data"]["content"])  # 指令照样去掉
+        self.assertEqual([], [row for row in await self._active_timers() if row["origin"] == "aion"])
 
     async def test_claim_removes_timer_once(self):
         await self._seed_timer("aion", "due-a", "2000-01-01 00:00:00")
@@ -170,7 +191,8 @@ class ProactiveCompanionshipTests(unittest.IsolatedAsyncioTestCase):
     def test_shared_prompt_is_role_gated_and_does_not_expose_old_timer(self):
         text = pc.proactive_ability_text("aion")
         self.assertIn("[NEXT_CHAT:x]", text)
-        self.assertIn("1～60", text)
+        self.assertIn("10～60", text)
+        self.assertIn("大多数时候不需要", text)
         self.assertNotIn("当前计时", text)
         pc.SETTINGS["proactive_companionship_aion_enabled"] = False
         self.assertEqual(pc.proactive_ability_text("aion"), "")

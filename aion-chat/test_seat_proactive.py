@@ -24,6 +24,7 @@ def db(tmp_path, monkeypatch):
                                "created_at REAL, attachments TEXT)")
             await conn.execute("CREATE TABLE chatroom_rooms (id TEXT PRIMARY KEY, type TEXT, actor TEXT DEFAULT '')")
             await conn.execute("INSERT INTO chatroom_rooms VALUES ('s3', 'seat_1v1', 'ai3')")
+            await conn.execute("INSERT INTO chatroom_messages VALUES ('u1', 's3', 'user', '我去忙一下', 990, '[]')")
             await conn.execute("INSERT INTO chatroom_messages VALUES ('m1', 's3', 'ai3', '回头再聊[NEXT_CHAT:5]', 1000, '[]')")
             await conn.commit()
     asyncio.run(setup())
@@ -52,6 +53,21 @@ def test_seat_next_chat_sets_its_own_timer_in_its_room(db, monkeypatch):
     updated, changed = asyncio.run(pc.process_visible_message_event(_event()))
     assert changed and updated["data"]["content"] == "回头再聊"
     assert _timers(db) == [("ai3", "s3")]
+
+
+def test_seat_without_her_reply_does_not_book_again(db, monkeypatch):
+    """11-05：她还没回，座位自己又说了一句，不能再约。"""
+    monkeypatch.setitem(pc.SETTINGS, "proactive_companionship_ai3_enabled", True)
+
+    async def add():
+        async with aiosqlite.connect(db) as conn:
+            await conn.execute("INSERT INTO chatroom_messages VALUES ('m2', 's3', 'ai3', '在吗[NEXT_CHAT:20]', 2000, '[]')")
+            await conn.commit()
+    asyncio.run(add())
+    event = {"type": "chatroom_msg_created",
+             "data": {"id": "m2", "room_id": "s3", "sender": "ai3", "content": "在吗[NEXT_CHAT:20]", "created_at": 2000}}
+    updated, _ = asyncio.run(pc.process_visible_message_event(event))
+    assert updated["data"]["content"] == "在吗" and _timers(db) == []
 
 
 def test_seat_switch_off_means_no_timer(db, monkeypatch):
@@ -97,6 +113,26 @@ def test_due_seat_timer_wakes_the_seat_in_its_room(db, monkeypatch):
     reply.reset_mock()
     asyncio.run(schedule.ScheduleManager()._fire_monitor(item))  # 重复触发不再开口
     reply.assert_not_called()
+
+
+def test_due_timer_during_quiet_hours_does_not_wake_anyone(db, monkeypatch):
+    """11-05 小猫：静默时段里到点的主动关心不来（和「自己醒来」同一个静默时段）。"""
+    async def add():
+        async with aiosqlite.connect(db) as conn:
+            await conn.execute("INSERT INTO schedules (id, type, trigger_at, content, created_at, origin, origin_room_id) "
+                               "VALUES ('pc9', 'proactive', '2000-01-01 08:00:00', '', 0, 'ai3', 's3')")
+            await conn.commit()
+    asyncio.run(add())
+    monkeypatch.setitem(pc.SETTINGS, "proactive_companionship_ai3_enabled", True)
+    import autonomy
+    monkeypatch.setattr(autonomy, "get_wake_quiet_hours", lambda: {"enabled": True, "start": "00:00", "end": "23:59"})
+    reply = AsyncMock()
+    monkeypatch.setattr(chatroom_routes, "_generate_seat_reply", reply)
+    item = {"id": "pc9", "type": "proactive", "trigger_at": "2000-01-01 08:00:00", "content": "",
+            "origin": "ai3", "origin_room_id": "s3"}
+    asyncio.run(schedule.ScheduleManager()._fire_monitor(item))
+    reply.assert_not_called()
+    assert _timers(db) == []  # 计时器用掉了，不会出了静默再补一次
 
 
 def test_seat_prompt_includes_next_chat_when_enabled(monkeypatch):

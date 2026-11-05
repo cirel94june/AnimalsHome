@@ -630,6 +630,12 @@ class ScheduleManager:
             from proactive_companionship import is_proactive_enabled
             if not is_proactive_enabled(origin):  # 计时器排好后开关被关了：不开口
                 return
+            # 静默时段里到点的不来（11-05 小猫；和「自己醒来」用同一个静默时段）
+            import quiet_hours
+            from autonomy import get_wake_quiet_hours
+            if quiet_hours.is_quiet(get_wake_quiet_hours(), time.time()):
+                log.info("proactive timer %s skipped: quiet hours", sid)
+                return
         elif not is_app_checkpoint:
             async with aiosqlite.connect(DB_PATH) as db:
                 changed = await finish_schedule(db, sid, "triggered")
@@ -981,6 +987,12 @@ class ScheduleManager:
                 return
             from proactive_companionship import is_proactive_enabled
             if not is_proactive_enabled(origin):  # 计时器排好后开关被关了：不开口
+                return
+            # 静默时段里到点的不来（11-05 小猫；和「自己醒来」用同一个静默时段）
+            import quiet_hours
+            from autonomy import get_wake_quiet_hours
+            if quiet_hours.is_quiet(get_wake_quiet_hours(), time.time()):
+                log.info("proactive timer %s skipped: quiet hours", sid)
                 return
             if origin in ("ai3", "ai4", "ai5", "ai6"):  # 座位的主动陪伴：TA 自己回到原来的房间开口
                 await self._fire_seat_alarm(item)
