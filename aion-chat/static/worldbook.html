@@ -427,6 +427,11 @@ function renderSections(prefix, containerId, sections) {
 let wbPerson = "aion";
 let wbSeats = [];
 let wbPersonaLoad = 0;        // 每次读取的序号：只认最新一次
+let wbPersonGen = 0;          // 每次切人加一：异步结果回来时核对「人＋序号」，对不上就不用（Codex §149：切人太快会串人）
+
+function samePerson(id, gen) {
+  return wbPerson === id && wbPersonGen === gen;
+}
 let wbPersonaLoaded = false;  // 这位的人设读到了才能改、才能存（避免空表单把原来的分区覆盖掉）
 
 function setOtherPersonaEditable(editable) {
@@ -451,24 +456,26 @@ async function renderPeople() {
 }
 
 async function refreshEvolutionForPerson() {
-  const id = wbPerson;
+  const id = wbPerson, gen = wbPersonGen;
   $("wbEvolutionTitle").textContent = `${personName(id)} 自动进化`;
   $("wbEvolutionLatest").textContent = "最近复盘：读取中…";
+  personaEvolutionRuns = [];
   const toggle = $("wbPersonaEvolutionEnabled");
   toggle.disabled = true;
   try {
     const cfg = await api("GET", `/api/persona-evolution/${evolutionEndpoint(id)}/config`);
-    if (wbPerson === id) toggle.checked = !!cfg.enabled;
+    if (samePerson(id, gen)) toggle.checked = !!cfg.enabled;
   } catch (e) {
     console.warn("读取复盘开关失败", e);
   } finally {
-    if (wbPerson === id) toggle.disabled = false;
+    if (samePerson(id, gen)) toggle.disabled = false;
   }
-  if (wbPerson === id) await loadPersonaEvolutionRuns("ai");
+  if (samePerson(id, gen)) await loadPersonaEvolutionRuns("ai");
 }
 
 async function selectPerson(id) {
   wbPerson = id;
+  wbPersonGen += 1;
   renderPeople();
   const isAion = id === "aion";
   $("aionPersona").hidden = !isAion;
@@ -506,23 +513,28 @@ async function saveOtherPersona() {
     return false;
   }
   $("otherPersonaStatus").textContent = "正在保存…";
+  // 第一个等待之前就固定：是谁、人设内容、名字（Codex §149 M2：等待期间切人，名字会写给另一位）
+  const gen = wbPersonGen;
+  const sections = collectSections("other", AI_SECTIONS);
+  const name = ($("otherName").value || "").trim();
+  const oldName = (wbSeats.find(s => s.id === id) || {}).name;
   try {
-    await api("PUT", `/api/actors/${encodeURIComponent(id)}/persona`, { sections: collectSections("other", AI_SECTIONS) });
+    await api("PUT", `/api/actors/${encodeURIComponent(id)}/persona`, { sections });
     // 名字：Lucien 的存在群聊设置里，座位的存在 TA 的名片里（11-05 小猫：世界书里只有小克的名字）
-    const name = ($("otherName").value || "").trim();
-    const seat = wbSeats.find(s => s.id === id) || {};
-    if (name && name !== seat.name) {
+    if (name && name !== oldName) {
       if (id === "connor") await api("PUT", "/api/chatroom/config", { connor_name: name });
       else await api("PUT", `/api/actors/${encodeURIComponent(id)}`, { name });
       await renderPeople();
-      $("otherPersonaHint").textContent = `${name} 的人设（保存后下一句话就生效）`;
-      $("otherPersonaSave").textContent = `保存 ${name} 的人设`;
-      if (wbPerson === id) $("wbEvolutionTitle").textContent = `${name} 自动进化`;
+      if (samePerson(id, gen)) {
+        $("otherPersonaHint").textContent = `${name} 的人设（保存后下一句话就生效）`;
+        $("otherPersonaSave").textContent = `保存 ${name} 的人设`;
+        $("wbEvolutionTitle").textContent = `${name} 自动进化`;
+      }
     }
-    if (wbPerson === id) $("otherPersonaStatus").textContent = "已保存";
+    if (samePerson(id, gen)) $("otherPersonaStatus").textContent = "已保存";
     return true;
   } catch (e) {
-    if (wbPerson === id) $("otherPersonaStatus").textContent = "保存失败：" + (e.message || e);
+    if (samePerson(id, gen)) $("otherPersonaStatus").textContent = "保存失败：" + (e.message || e);
     return false;
   }
 }
@@ -966,8 +978,10 @@ async function deleteEvolutionRun(event, index, actor = "ai") {
 }
 
 async function loadPersonaEvolutionRuns(actor = "ai") {
+  const id = wbPerson, gen = wbPersonGen;
   try {
-    const data = await api("GET", `/api/persona-evolution/${evolutionUi(actor).endpoint}/runs?limit=50`);
+    const data = await api("GET", `/api/persona-evolution/${evolutionEndpoint(id)}/runs?limit=50`);
+    if (!samePerson(id, gen)) return;  // 已经切到别人了：这份记录不是现在这位的
     const runs = data.runs || [];
     setEvolutionRuns(actor, runs);
     renderEvolutionLatest(runs[0] || null, actor);
@@ -1050,15 +1064,15 @@ function setEvolutionConfigSaving(actor, saving) {
   personaEvolutionConfigSaving = saving;
 }
 
-async function persistPersonaEvolutionEnabled(enabled, actor = "ai") {
-  const endpoint = evolutionUi(actor).endpoint;
+async function persistPersonaEvolutionEnabled(enabled, actor = "ai", person = wbPerson) {
+  const endpoint = evolutionEndpoint(person);  // 发出时固定是谁，回来以后不再看 wbPerson（Codex §149 M3）
   const res = await fetch(`/api/persona-evolution/${endpoint}/config`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled }),
     keepalive: true
   });
-  if (res.status === 404 && wbPerson === "aion") {
+  if (res.status === 404 && person === "aion") {
     const currentRes = await fetch("/api/worldbook", { cache: "no-store" });
     const current = await currentRes.json();
     current.persona_evolution_enabled = enabled;
@@ -1087,17 +1101,18 @@ async function savePersonaEvolutionToggle(actor = "ai") {
   if (isEvolutionConfigSaving(actor)) return;
   const input = $(evolutionUi(actor).toggleId);
   const enabled = !!input.checked;
+  const id = wbPerson, gen = wbPersonGen, name = personName(id);
   setEvolutionConfigSaving(actor, true);
   input.disabled = true;
   try {
-    await persistPersonaEvolutionEnabled(enabled, actor);
-    showToast(enabled ? "每日复盘已开启" : "每日复盘已关闭");
+    await persistPersonaEvolutionEnabled(enabled, actor, id);
+    showToast(`${name} 的每日复盘已${enabled ? "开启" : "关闭"}`);
   } catch (e) {
     console.error(e);
-    input.checked = !enabled;
+    if (samePerson(id, gen)) input.checked = !enabled;
     showToast(e.message || "开关保存失败");
   } finally {
-    input.disabled = false;
+    if (samePerson(id, gen)) input.disabled = false;
     setEvolutionConfigSaving(actor, false);
   }
 }
@@ -1106,20 +1121,25 @@ async function runPersonaEvolutionTest(actor = "ai") {
   const ui = evolutionUi(actor);
   const btn = $(ui.testBtnId);
   const reviewDate = $(ui.dateId)?.value || currentReviewDateString();
+  const id = wbPerson, gen = wbPersonGen, name = personName(id);
   btn.disabled = true;
   btn.textContent = "复盘中";
   try {
-    const result = await api("POST", `/api/persona-evolution/${ui.endpoint}/run-test`, { date: reviewDate });
+    const result = await api("POST", `/api/persona-evolution/${evolutionEndpoint(id)}/run-test`, { date: reviewDate });
     if (result?.detail) throw new Error(result.detail);
-    setSelectedEvolutionIndex(actor, -1);
-    renderEvolutionResult(result, actor);
-    await loadPersonaEvolutionRuns(actor);
-    if (result?.ok === false) showToast("复盘失败");
-    else showToast("复盘已完成");
+    if (samePerson(id, gen)) {
+      setSelectedEvolutionIndex(actor, -1);
+      renderEvolutionResult(result, actor);
+      await loadPersonaEvolutionRuns(actor);
+    }
+    if (result?.ok === false) showToast(`${name} 复盘失败`);
+    else showToast(`${name} 复盘已完成`);
   } catch (e) {
     console.error(e);
-    renderEvolutionResult({ status: "failed", message: "测试复盘失败", error: e.message || String(e) }, actor);
-    showToast("复盘失败");
+    if (samePerson(id, gen)) {
+      renderEvolutionResult({ status: "failed", message: "测试复盘失败", error: e.message || String(e) }, actor);
+    }
+    showToast(`${name} 复盘失败`);
   } finally {
     btn.disabled = false;
     btn.textContent = "立即复盘";

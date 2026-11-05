@@ -192,3 +192,17 @@ class WorldbookEveryoneTests(unittest.TestCase):
         self.assertIn('id="otherName"', html)
         self.assertIn('await api("PUT", "/api/chatroom/config", { connor_name: name });', html)
         self.assertIn("refreshEvolutionForPerson();", html)
+
+
+class WorldbookRaceTests(unittest.TestCase):
+    def test_async_results_are_checked_against_person_and_generation(self):
+        """Codex §149 M1–M3：切人太快时，记录、开关、名字、404 回退都不能串到别人身上。"""
+        html = (STATIC / "worldbook.html").read_text(encoding="utf-8")
+        self.assertIn("return wbPerson === id && wbPersonGen === gen;", html)
+        self.assertIn("wbPersonGen += 1;", html)
+        self.assertIn("if (!samePerson(id, gen)) return;  // 已经切到别人了", html)              # 记录
+        self.assertIn("if (samePerson(id, gen)) toggle.checked = !!cfg.enabled;", html)         # 开关
+        self.assertIn("if (res.status === 404 && person === \"aion\") {", html)               # 404 回退按发出时的人
+        self.assertIn("await persistPersonaEvolutionEnabled(enabled, actor, id);", html)
+        self.assertLess(html.index("const oldName = "),
+                        html.index("{ sections });"))  # 名字、人设在第一个等待之前就固定

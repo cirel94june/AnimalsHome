@@ -2300,3 +2300,20 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 大段重写不应用，状态是 reviewed；
   - 点评和记忆都没有时仍跳过，不调模型。
   - 人设和世界书相关 33 项里只有改动前就有的 chatroom 缓存号用例失败。
+
+
+## 151. 修 §149 的 M1–M3：世界书切人太快时不串人
+
+- 新增 `wbPersonGen`（每次 `selectPerson` 加一）和 `samePerson(id, gen)`。所有异步结果回来时都核对「人 + 序号」，对不上就丢掉。
+- **M1**：
+  - `refreshEvolutionForPerson` 读开关后、`loadPersonaEvolutionRuns` 读记录后，都先核对再写界面；切人时先清空旧记录。
+  - `loadPersonaEvolutionRuns` 的接口按发出时的人固定（`evolutionEndpoint(id)`）。
+  - `runPersonaEvolutionTest`：接口按发出时的人固定；结果和报错只在仍是这个人时才显示，提示里带上名字。
+- **M2**：`saveOtherPersona` 在第一个等待之前就固定人、序号、人设内容、名字和原名字。返回后的界面更新只在仍是这个人时才做。改名仍走原来的接口。
+- **M3**：`persistPersonaEvolutionEnabled(enabled, actor, person)` 按发出时固定的人选接口，404 兼容回退只在发出时是小克才走。`savePersonaEvolutionToggle` 失败回滚开关、解除禁用，也只在仍是这个人时才做。
+- **验证**：
+  - 本机浏览器用真实页面函数，加上人为让请求变慢的假接口，重放三种情况：
+    - Lucien 的记录和开关晚回来，切到 Jasper 后显示的仍是 Jasper 的；
+    - Lucien 的开关 404 晚回来时已切到小克，不写小克的世界书；
+    - 保存 Lucien 期间切到 Jasper 并改了 Jasper 的名字栏，名字仍只写给 Lucien（connor_name）。
+  - `test_1103_fixes` 新加 1 项源码检查，14 项全过。
