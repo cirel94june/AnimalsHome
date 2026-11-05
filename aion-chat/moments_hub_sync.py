@@ -134,27 +134,37 @@ async def sync_new(now: float | None = None) -> int:
         return 0
     now = time.time() if now is None else now
     with closing(_state()) as conn:
-        row = conn.execute("SELECT value FROM moment_hub_state WHERE key='watermark'").fetchone()
-        if row is None:
+        state = dict(conn.execute("SELECT key, value FROM moment_hub_state").fetchall())
+        if "start" not in state:
+            # 开启的那一刻：只送它之后（严格晚于）写进库的；这个起点以后永远不往前挪（狐狸 §154 M1）
             with conn:
-                conn.execute("INSERT INTO moment_hub_state (key, value) VALUES ('watermark', ?)", (now,))
-            log.info("[MemoryHub] 朋友圈进 Hub 开始：只送从现在起新发的")
-            return 0
-        watermark = float(row[0])
-    moment_rows, comment_rows = await _new_rows(watermark - LOOKBACK_SECONDS)
+                conn.execute("INSERT OR REPLACE INTO moment_hub_state (key, value) VALUES ('start', ?)",
+                             (state.get("watermark", now),))
+                conn.execute("INSERT OR IGNORE INTO moment_hub_state (key, value) VALUES ('watermark', ?)", (now,))
+            if "watermark" not in state:
+                log.info("[MemoryHub] 朋友圈进 Hub 开始：只送从现在起新发的")
+                return 0
+            state = dict(conn.execute("SELECT key, value FROM moment_hub_state").fetchall())
+        start = float(state["start"])
+        watermark = float(state["watermark"])
+    # 往回多看一段防漏，但不早于开启时的起点
+    moment_rows, comment_rows = await _new_rows(max(start, watermark - LOOKBACK_SECONDS))
     queued = 0
     newest = watermark
     with closing(_state()) as conn:
         for created_at, event_id, body, by_owner in _plan(moment_rows, comment_rows, cfg):
+            if created_at <= start:
+                continue
             if conn.execute("SELECT 1 FROM moment_hub_synced WHERE event_id=?", (event_id,)).fetchone():
                 newest = max(newest, created_at)
                 continue
-            if body is not None:
-                if not bridge.enqueue_moment(body, from_owner=by_owner):
-                    break  # 队列满了：这条和后面的下次再排，起点不往后挪
-                queued += 1
+            # 入队和去重登记同一个事务：要么都成，要么都不成（狐狸 §154 M3）
             with conn:
-                conn.execute("INSERT OR IGNORE INTO moment_hub_synced (event_id, created_at) VALUES (?,?)",
+                if body is not None:
+                    if not bridge.insert_moment(conn, body, from_owner=by_owner, cfg=cfg):
+                        break  # 队列满了：这条和后面的下次再排，起点不往后挪
+                    queued += 1
+                conn.execute("INSERT INTO moment_hub_synced (event_id, created_at) VALUES (?,?)",
                              (event_id, created_at))
             newest = max(newest, created_at)
         with conn:

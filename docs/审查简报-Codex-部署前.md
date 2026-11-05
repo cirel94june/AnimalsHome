@@ -2422,3 +2422,28 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 点关；
   - 服务器也是关。
 - 接口和手机 App 都没改。`test_1105_fixes` 加了 1 项源码检查；摄像头相关测试全过。
+
+
+## 158. 修 §154（2717144）的 M1–M3
+
+- **M1：首次回看会补送开启前的朋友圈**
+  - 原因：开启时只记了 watermark，第二次扫描用 `watermark − 600` 当下界，起点被往前挪了 10 分钟。
+  - 修法（`moments_hub_sync.py`）：
+    - 另存一个永不后退的 `start`（开启那一刻）；查询下界取 `max(start, watermark − 600)`。
+    - 逐条再判 `created_at <= start` 跳过，所以和开启同一时刻的那条也算开启前。
+    - 已经有 watermark、没有 start 的旧状态：start 取原来的 watermark（目前还没部署过，只防万一）。
+- **M2：关掉同步后，已入队的朋友圈仍会发送**
+  - 修法（`memory_hub_bridge.py`）：
+    - 新增 `moments_paused()`。
+    - `drain_outbox` 每取一条都重新读开关。关着时，`kind='moment'` 的记录原地暂停：不发、不改状态，也不算同一身份的队头，同一位 AI 的聊天记录照常发。
+    - 重新打开后，按原顺序接着发。
+- **M3：入队和登记去重不在同一事务**
+  - 修法：
+    - `enqueue_moment` 改成 `insert_moment(conn, …)`，由调用方传连接。
+    - `sync_new` 在同一个连接、同一个事务里写 outbox 和 `moment_hub_synced`，要么都成、要么都不成。同一件事的身份只定一次。
+    - 去重登记从 `INSERT OR IGNORE` 改成 `INSERT`：真重复时报错，整个事务回滚。
+- **测试**（`test_moments_hub_sync.py` 新增 3 项，按狐狸的重放写）：
+  - **M1**：1000 时开启，900 和 1000 那两条都不送，1001 的送一次；再扫 700 秒也不补送。
+  - **M2**：排队后关开关，同一位 AI 的群聊记录照常发出，朋友圈仍是 pending；重新打开后发出。
+  - **M3**：用 SQLite 触发器让登记去重失败，outbox 同时回滚为 0 条；改身份映射后再扫两次，只有一条，身份是新的。
+  - 朋友圈 10 项、Hub 相关 229 项全过。

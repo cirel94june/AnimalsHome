@@ -752,25 +752,33 @@ async def _post_capture_rest(cfg: dict[str, Any], base: str, headers: dict[str, 
 MOMENTS_PLATFORM = "aionshome-moments"
 
 
-def enqueue_moment(body: dict[str, Any], *, from_owner: bool) -> bool:
-    """朋友圈 / 评论排进待发队列（Hub #136）。body 是完整的 /api/capture/log 请求体（不含 sender_type），
-    event_id 由调用方按朋友圈和评论编号算好，重发时原样重发。返回是否排上（队列满返回 False）。"""
+def insert_moment(conn: sqlite3.Connection, body: dict[str, Any], *, from_owner: bool,
+                  cfg: dict[str, Any] | None = None) -> bool:
+    """在调用方的连接 / 事务里，把一轮朋友圈排进待发队列（Hub #136）。
+
+    body 是完整的 /api/capture/log 请求体（不含 sender_type），event_id 由调用方按朋友圈和评论编号算好，
+    重发时原样重发。调用方要把「去重登记」放进同一个事务：两件事要么都成、要么都不成，
+    同一件事的身份（ai_id）只定一次（狐狸 §154 M3）。返回是否排上（队列满返回 False）。"""
     global _dropped
-    cfg = load_config()
-    with closing(_outbox()) as conn, conn:
-        (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
-        if pending >= OUTBOX_MAX:
-            _dropped += 1
-            log.warning("[MemoryHub] 待补传队列已满（%s 条），朋友圈稍后再送", OUTBOX_MAX)
-            return False
-        conn.execute(
-            "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
-            " source_ai, platform, hub, chat_id, sender_type, kind, payload) VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?)",
-            ("moments", str(body.get("user_message") or ""), str(body.get("ai_response") or ""), "private_group",
-             time.time(), body["event_id"], body["ai_id"], MOMENTS_PLATFORM, hub_id(cfg), body["chat_id"],
-             "owner" if from_owner else "", "moment", json.dumps(body, ensure_ascii=False)),
-        )
+    cfg = cfg or load_config()
+    (pending,) = conn.execute("SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sending')").fetchone()
+    if pending >= OUTBOX_MAX:
+        _dropped += 1
+        log.warning("[MemoryHub] 待补传队列已满（%s 条），朋友圈稍后再送", OUTBOX_MAX)
+        return False
+    conn.execute(
+        "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
+        " source_ai, platform, hub, chat_id, sender_type, kind, payload) VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?)",
+        ("moments", str(body.get("user_message") or ""), str(body.get("ai_response") or ""), "private_group",
+         time.time(), body["event_id"], body["ai_id"], MOMENTS_PLATFORM, hub_id(cfg), body["chat_id"],
+         "owner" if from_owner else "", "moment", json.dumps(body, ensure_ascii=False)),
+    )
     return True
+
+
+def moments_paused(cfg: dict[str, Any] | None = None) -> bool:
+    """朋友圈同步关着：已经排队的朋友圈先不发，留在队列里，重新打开后接着发（狐狸 §154 M2）。"""
+    return not (cfg or load_config()).get("moments_enabled", True)
 
 
 async def _send_moment(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str]:
@@ -868,11 +876,14 @@ async def drain_outbox() -> int:
                 # 补传途中改了 Hub 地址：这一批立刻停，下一批用新配置重新判断
                 if hub_id(load_config()) != current_hub:
                     break
-                # 同一身份严格按入队顺序：只有每个身份最早的那条（队头）到了重试时间才发，后面的不能插队
+                # 同一身份严格按入队顺序：只有每个身份最早的那条（队头）到了重试时间才发，后面的不能插队。
+                # 朋友圈同步关着时，排队的朋友圈原地暂停（不发、不算队头），聊天记录照常发（狐狸 §154 M2）
+                moments_on = 0 if moments_paused() else 1
                 row = conn.execute(
-                    "SELECT * FROM outbox o WHERE state='pending' AND next_at<=? AND id = ("
-                    " SELECT MIN(id) FROM outbox o2 WHERE o2.source_ai=o.source_ai AND o2.state IN ('pending','sending'))"
-                    " ORDER BY id LIMIT 1", (time.time(),)
+                    "SELECT * FROM outbox o WHERE state='pending' AND next_at<=? AND (kind!='moment' OR ?) AND id = ("
+                    " SELECT MIN(id) FROM outbox o2 WHERE o2.source_ai=o.source_ai AND o2.state IN ('pending','sending')"
+                    " AND (o2.kind!='moment' OR ?))"
+                    " ORDER BY id LIMIT 1", (time.time(), moments_on, moments_on)
                 ).fetchone()
                 if not row:
                     break

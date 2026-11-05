@@ -177,3 +177,58 @@ def test_late_row_inside_lookback_is_not_missed(env):
     env["add_moment"]("m8", "user", "时间稍早但后写进库", 1090.0)
     assert _run(1120.0) == 1
     assert _sent(env)[-1][0]["event_id"] == "aionshome-moments-m8-post"
+
+
+def test_moments_written_before_switching_on_are_never_sent(env):
+    """狐狸 §154 M1：1000 时开启，900 和 1000 那两条都在开启前（含同一时刻），不能被回看补送。"""
+    env["add_moment"]("m_old", "user", "开启前的", 900.0)
+    env["add_moment"]("m_same", "user", "开启那一刻的", 1000.0)
+    _run(1000.0)
+    env["add_moment"]("m_new", "user", "开启后的", 1001.0)
+    assert _run(1005.0) == 1
+    assert [body["event_id"] for body, _ in _sent(env)] == ["aionshome-moments-m_new-post"]
+    assert _run(1700.0) == 0 and len(env["posts"]) == 1
+
+
+def test_switching_off_pauses_queued_moments_but_not_chat(env, monkeypatch):
+    """狐狸 §154 M2：排队后关掉开关，朋友圈原地暂停；同一位 AI 的聊天照常发；重新打开后接着发。"""
+    monkeypatch.setattr(bridge, "_kick_drain", lambda: None)  # 只排队，先不立刻发
+    _run(1000.0)
+    env["add_moment"]("m9", "aion", "排队中的", 1001.0)
+
+    async def queue_only():
+        return await sync.sync_new(now=1010.0)
+    assert asyncio.run(queue_only()) == 1  # 只排队，还没发
+
+    cfg = json.loads(env["cfg_path"].read_text(encoding="utf-8"))
+    env["cfg_path"].write_text(json.dumps({**cfg, "moments_enabled": False}), encoding="utf-8")
+    bridge._enqueue("aion", "在吗", "在呢", "group", chat_id="cr_1", from_owner=True)
+    asyncio.run(bridge.drain_outbox())
+    assert [body.get("platform") for _, body, _ in env["posts"]] == ["aionshome-group"]  # 聊天发了，朋友圈没发
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        assert conn.execute("SELECT state FROM outbox WHERE kind='moment'").fetchall() == [("pending",)]
+
+    env["cfg_path"].write_text(json.dumps(cfg), encoding="utf-8")
+    asyncio.run(bridge.drain_outbox())
+    assert env["posts"][-1][1]["event_id"] == "aionshome-moments-m9-post"
+
+
+def test_queue_and_dedupe_record_commit_together(env, monkeypatch):
+    """狐狸 §154 M3：登记去重失败时，入队也一起撤销；改了身份再扫，同一件事只排一次。"""
+    monkeypatch.setattr(bridge, "_kick_drain", lambda: None)  # 只看队列，不发
+    _run(1000.0)
+    env["add_moment"]("m10", "connor", "Lucien 发的", 1001.0)
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        conn.execute("CREATE TRIGGER boom BEFORE INSERT ON moment_hub_synced BEGIN SELECT RAISE(ABORT, 'disk'); END")
+    with pytest.raises(sqlite3.DatabaseError):
+        asyncio.run(sync.sync_new(now=1010.0))
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
+        conn.execute("DROP TRIGGER boom")
+    cfg = json.loads(env["cfg_path"].read_text(encoding="utf-8"))
+    cfg["actors"]["connor"] = "lucien2"
+    env["cfg_path"].write_text(json.dumps(cfg), encoding="utf-8")
+    asyncio.run(sync.sync_new(now=1020.0))
+    asyncio.run(sync.sync_new(now=1030.0))
+    with sqlite3.connect(bridge.OUTBOX_PATH) as conn:
+        assert conn.execute("SELECT source_ai FROM outbox").fetchall() == [("lucien2",)]
