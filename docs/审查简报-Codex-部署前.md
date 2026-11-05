@@ -2626,3 +2626,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 用 DOM 赋值建元素（`img.src = url`、`textContent`），不把地址拼进 innerHTML。
   - 「保存图片」照聊天页的做法：有 `AionImageSaver`（本页、parent、top）就转 base64 交给 App 存相册，否则浏览器下载；失败只弹「图片保存失败」，不再退回开新窗口。
 - 测试 `test_moments_image_viewer.py` 3 项：看图和保存都不开新窗口、不用 innerHTML、能用 Esc 关。本机手机尺寸预览实测：盖层出现、图片显示、「关闭」和 Esc 都能关。
+
+## 166. 三只 bot 借工具：连接阶段也算进总期限（§164 复审 Medium）
+
+- 狐狸复审：`socket.create_connection` 先同步 `getaddrinfo`，不受 timeout 限制；多个地址时每个都给满一份超时，不扣已用时间。
+- 改法（三份 `home_tools.py` 完全一致）：
+  - `_resolve`：查地址放到后台线程，最多等到总期限，超了算「太久没回」。同时挂着的查询最多 `MAX_PENDING_LOOKUPS = 4` 个（非阻塞 BoundedSemaphore，线程结束时归还）；满了新请求直接算「没连上」，不再开线程。
+  - `_connect`：逐个地址连，每个之前重新算剩余时间，超时取 `min(CONNECT_TIMEOUT_SECONDS, 剩余)`；用完预算算「太久没回」，全部被拒且没超时算「没连上」。
+  - `_post` 改用 `_connect`，其余不变。
+- 新测试 4 项（三只都加）：查地址卡 0.35 秒、总期限 0.08 秒，0.25 秒内退出；三个地址各失败 0.06 秒，最多试两个，后面的只拿到剩下的时间，0.2 秒内退出；卡住的查询满 4 个后第 5 个直接「没连上」且不再开线程；预算内全部被拒是「没连上」。
+- 小克 119、Lucien 145、狗蛋 147 项全过。服务器上实测 https：google.com 照常回 405；不存在的域名 0.05 秒返回「没连上」。
+- 提交：cloudy `977d4d2`、Lucien `cae72c4`、Jasper `10697c2`。
