@@ -182,7 +182,7 @@ class ChatroomStreamSafetyTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(
                 _chatroom_reply_failure_text("aion", "connection reset"),
-                "测试角色 本次回复失败：connection reset",
+                "测试角色 本次回复失败：连不上线路（中转站或网络连不通）（connection reset）",
             )
 
     async def test_failure_notice_is_persisted_without_tts_and_sent_to_client(self):

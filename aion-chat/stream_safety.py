@@ -55,6 +55,42 @@ _STOP_NOTICES = {
     "total_timeout": "回复生成超时，已自动停止生成。",
     "transport": "回复连接中断，已自动停止生成。",
 }
+# 回复失败时按原因说清楚（验收清单 A6）：不再一律写「连接中断」。顺序有讲究：先认「没有线路」，再认 HTTP 状态码。
+_FAILURE_RULES: tuple[tuple[re.Pattern, str], ...] = tuple((re.compile(p, re.I), text) for p, text in (
+    (r"还没有能用的线路|未知模型|未知 provider|线路已停用|no route|model not found|model_not_found|does not exist",
+     "没有可用的线路（这位 AI 没选模型，或选的线路已停用 / 不存在）"),
+    (r"\b40[13]\b|unauthori[sz]ed|forbidden|invalid[ _-]?api[ _-]?key|incorrect api key|authentication|鉴权|无效的令牌|令牌|余额不足|insufficient[ _-]?(?:balance|quota)",
+     "线路拒绝了请求（钥匙无效、没权限或余额不足）"),
+    (r"\b429\b|rate[ _-]?limit|too many requests|usage limit|quota|限流|频率",
+     "线路限流或额度用完了，稍后再试"),
+    (r"\brefusal\b|refused to (?:answer|respond|comply|help)|content[ _-]?(?:filter|policy)|\bsafety\b|prohibited|moderation|违规|敏感|拒绝回答",
+     "模型拒绝回答（触发了线路或模型的内容限制）"),
+    (r"\b5\d\d\b|bad gateway|service unavailable|overloaded|internal server error|upstream",
+     "线路那边出错了（中转站或模型服务暂时不可用）"),
+    (r"timeout|timed out|超时",
+     "线路太久没有回应"),
+    (r"connect|connection|refused|unreachable|name or service|getaddrinfo|dns|ssl|certificate|disconnected|"
+     r"peer closed|remoteprotocol|readerror|network|网络|无法连接|连接",
+     "连不上线路（中转站或网络连不通）"),
+))
+_SECRET = re.compile(r"(?i)(sk-[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+|(bearer\s+)[^\s\"']+")
+
+
+def describe_failure(detail: str | None) -> str:
+    """把模型线路返回的错误归成几类人能看懂的原因；认不出就返回空串。"""
+    text = str(detail or "")
+    for pattern, reason in _FAILURE_RULES:
+        if pattern.search(text):
+            return reason
+    return ""
+
+
+def failure_detail_snippet(detail: str | None, limit: int = 80) -> str:
+    """原始错误的短摘录（遮住钥匙），附在原因后面方便排查。"""
+    text = _SECRET.sub(lambda m: (m.group(1) or m.group(2) or "") + "…", " ".join(str(detail or "").split()))
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 _DISALLOWED_CONTROL = re.compile(
     "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x84\x86-\x9f]"
 )
@@ -265,9 +301,13 @@ async def consume_safe_stream(
     if result.stop_reason:
         await _close_async_iterator(iterator, source)
 
+    notice = result.notice
+    if result.stop_reason == "transport":
+        reason = describe_failure(diagnostic_error) or "连接中断"
+        notice = f"回复失败：{reason}，已自动停止生成。"
     return StreamSafetyResult(
         committed_text="".join(committed_parts),
         stop_reason=result.stop_reason,
-        notice=result.notice,
+        notice=notice,
         diagnostic_error=diagnostic_error,
     )

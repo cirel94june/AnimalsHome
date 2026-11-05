@@ -180,7 +180,7 @@ class ChatRegenerateTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             visible_chunks,
-            ["\n\n[回复连接中断，已自动停止生成。]"],
+            ["\n\n[回复失败：连不上线路（中转站或网络连不通），已自动停止生成。]"],
         )
         self.assertNotIn("regenerated partial", "".join(visible_chunks))
         self.assertEqual(

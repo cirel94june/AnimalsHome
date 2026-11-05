@@ -66,6 +66,8 @@ from song_gen import clean_song_visible_reply
 from stream_reply import resolve_stream_failure
 from widget_control import process_widget_control_commands
 from stream_safety import (
+    describe_failure,
+    failure_detail_snippet,
     CHAT_STREAM_POLICY,
     StreamSafetyResult,
     consume_safe_stream,
@@ -303,12 +305,17 @@ def _chatroom_reply_failure_text(sender: str, reason: str | None = None) -> str:
     if "timeout" in lowered or "timed out" in lowered or "超时" in detail:
         if lowered in {"timeout", "request timeout", "idle_timeout", "total_timeout"}:
             return f"{label} 本次回复超时，请重试。"
-        return f"{label} 本次回复超时：{detail}"
+        return f"{label} 本次回复超时：{failure_detail_snippet(detail)}"
     if not detail or lowered in {"empty", "empty_response", "no_content"}:
         return f"{label} 本次没有成功返回回复，请重试。"
-    detail = {"transport": "连接中断", "quality": "返回内容异常，回复已停止",
-              "length": "回复超过长度限制"}.get(lowered, detail)
-    return f"{label} 本次回复失败：{detail}"
+    fixed = {"transport": "连接中断", "quality": "返回内容异常，回复已停止",
+             "length": "回复超过长度限制"}.get(lowered)
+    if fixed:
+        return f"{label} 本次回复失败：{fixed}"
+    reason = describe_failure(detail)
+    if reason:
+        return f"{label} 本次回复失败：{reason}（{failure_detail_snippet(detail)}）"
+    return f"{label} 本次回复失败：{failure_detail_snippet(detail, 160)}"
 
 
 async def _save_chatroom_reply_failure(

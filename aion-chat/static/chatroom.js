@@ -3784,6 +3784,13 @@ let pendingStreamId = null;
 
 function startStreamingBubble(sender, id) {
   streamingText = '';
+  // 整段一次到的回复（Lucien 常这样）：保存后的「新消息」广播可能比流式文字先到，这条已经显示了，
+  // 就不再新建流式气泡，否则同一条会显示两遍（重新打开只剩一条）
+  if (id && messagesEl.querySelector(`[data-msg-id="${id}"]`)) {
+    streamingBubble = null;
+    messagesEl.querySelectorAll('.typing-indicator').forEach(el => el.remove());
+    return;
+  }
   const name = crName(sender);
   const avatar = AVATARS[sender] || AVATARS.user;
   const liveContentClass = sender === 'user' ? 'bubble markdown-body' : 'ai-message-content markdown-body';

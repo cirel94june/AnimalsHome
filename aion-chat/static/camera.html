@@ -47,7 +47,9 @@
 .phone-camera-panel.active { display:block; }
 .phone-camera-note { font-size:11px; line-height:1.5; color:var(--text3); margin-top:5px; }
 .phone-arm-btn { flex:1; justify-content:center; padding:9px 14px; font-weight:600; }
-.phone-arm-btn.armed { background:var(--danger); border-color:var(--danger); color:#fff; }
+.phone-arm-btn.armed { background:var(--accent, #4f7cff); border-color:var(--accent, #4f7cff); color:#fff; }
+.phone-link-status[data-state="ok"] { color:var(--success, #2e9d5b); }
+.phone-link-status[data-state="warn"] { color:var(--danger, #d9534f); }
 .cam-settings-grid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:10px; }
 .cam-field { min-width:0; padding:10px; border-radius:14px; background:var(--surface2); }
 .cam-field-label { display:block; margin-bottom:7px; font-size:11px; color:var(--text3); }
@@ -132,8 +134,9 @@
         </div>
         <div class="cam-controls">
           <button class="cam-btn" onclick="phonePreviewNow()">📐 刷新预览</button>
-          <button class="cam-btn phone-arm-btn" id="phoneArmBtn" onclick="togglePhoneCameraArm()">开始外出监控</button>
+          <button class="cam-btn phone-arm-btn" id="phoneArmBtn" onclick="togglePhoneCameraArm()">👀 让大家能看到：关</button>
         </div>
+        <div class="phone-camera-note phone-link-status" id="phoneLinkStatus">已关：大家看不到你这边</div>
         <button class="cam-btn" id="phonePermBtn" style="display:none;margin-top:8px" onclick="askCameraPermissionAgain()">重新允许相机</button>
         <div class="phone-camera-note" id="phoneCameraNote">
           预览只在本页打开时本地实时刷新，不会上传；离开本页或锁屏后会立即释放摄像头，监控事件触发时才拍摄并上传一张。
@@ -318,7 +321,7 @@ async function syncCamModalState() {
     $("camOpenBtn").className = status.camera_open ? "cam-btn danger" : "cam-btn";
     const bridgeEl = $("esp32BridgeStatus");
     if (bridgeEl) bridgeEl.style.display = (status.esp32_bridge_active && _activeSource === "esp32") ? "" : "none";
-    updatePhoneArmState(status.phone_camera || {});
+    updatePhoneArmState(status.phone_camera || {}, { fromServer: true });
     updateCamStatusText(status, gen);
     await hideUnavailableSources(status);
     if (_activeSource === "local") await camRefreshList2();
@@ -518,14 +521,56 @@ function savePhoneCameraConfig() {
   } catch(e) {}
 }
 
-function updatePhoneArmState(status) {
-  _phoneArmed = !!status.armed;
+// 「让大家能看到」：手机这边点开 → 服务器确认接通后，AI 想看时才能拍一张。
+// 按钮写当前是开还是关；下面一行写有没有真的接通服务器（10-27 待办：原来叫「开始外出监控」容易误会）
+let _phoneWantOn = false;       // 小猫想开着（点开以后、点关之前）
+let _phoneArmedAt = 0;          // 点开的时间：之后 10 秒内服务器还没确认，算「正在接通」
+const PHONE_LINK_GRACE_MS = 10000;
+
+function phoneLinkPending() {
+  return _phoneWantOn && Date.now() - _phoneArmedAt < PHONE_LINK_GRACE_MS;
+}
+
+function updatePhoneLinkStatus(serverArmed) {
+  const el = $("phoneLinkStatus");
+  if (!el) return;
+  let text;
+  let state;
+  if (!_phoneArmed) {
+    text = "已关：大家看不到你这边";
+    state = "off";
+  } else if (serverArmed === true) {
+    text = "✅ 已接通：大家想看你这边时，能拍一张看看";
+    state = "ok";
+  } else if (serverArmed === false && !phoneLinkPending()) {
+    text = "⚠️ 没接通服务器：确认网络 / VPN 连上后，先关再开一次";
+    state = "warn";
+  } else {
+    text = "正在接通服务器…";
+    state = "pending";
+  }
+  el.textContent = text;
+  el.dataset.state = state;
+}
+
+function updatePhoneArmState(status, { fromServer = false } = {}) {
   const btn = $("phoneArmBtn");
   if (!btn) return;
-  btn.textContent = _phoneArmed ? "停止外出监控" : "开始外出监控";
+  if (fromServer) {
+    // 服务器说开着就以它为准；说没开时，如果小猫想开着，按钮保持「开」并提示没接通，不悄悄变回「关」
+    if (status.armed) _phoneWantOn = true;
+    else if (phoneLinkPending()) setTimeout(syncCamModalState, 3000);  // 还在等手机连上：过一会儿再查
+    _phoneArmed = !!status.armed || _phoneWantOn;
+  } else {
+    _phoneArmed = !!status.armed;
+    _phoneWantOn = _phoneArmed;
+    _phoneArmedAt = _phoneArmed ? Date.now() : 0;
+  }
+  btn.textContent = _phoneArmed ? "👀 让大家能看到：开" : "👀 让大家能看到：关";
   btn.className = "cam-btn phone-arm-btn" + (_phoneArmed ? " armed" : "");
+  updatePhoneLinkStatus(fromServer ? !!status.armed : undefined);
   $("phoneCameraNote").textContent = _phoneArmed
-    ? "外出监控已开始。本页仍可本地预览和调整；离开本页或锁屏后释放预览，仅在三类监控事件触发时拍摄并上传一张。"
+    ? "本页仍可本地预览和调整；离开本页或锁屏后释放预览，只在 AI 想看或三类监控事件触发时拍一张上传。"
     : "预览只在本页打开时本地显示，不上传服务器；离开本页会立即释放摄像头。";
 }
 
@@ -574,7 +619,7 @@ function phoneCameraSettingChanged() {
     const facing = $("phoneFacing").value;
     const zoom = parseFloat($("phoneZoom").value) || 1;
     if (bridge.arm(facing, zoom)) {
-      showToast("镜头设置已同步，外出监控保持开启");
+      showToast("镜头设置已同步，仍然开着");
     }
   }
   _phonePreviewRequestedAt = 0;
@@ -764,13 +809,13 @@ function refreshPhonePreview(img, noSig, overlay) {
 async function togglePhoneCameraArm() {
   const bridge = phoneBridge();
   if (!bridge) {
-    showToast("请在 Android App 内开启外出监控");
+    showToast("请在手机 App 里打开这一页再开");
     return;
   }
   if (_phoneArmed) {
     bridge.disarm();
     updatePhoneArmState({ armed:false });
-    showToast("外出监控已停止");
+    showToast("已关：大家看不到你这边了");
     setTimeout(syncCamModalState, 600);
     return;
   }
@@ -782,7 +827,7 @@ async function togglePhoneCameraArm() {
     return;
   }
   updatePhoneArmState({ armed:true });
-  showToast("外出监控已开始，本页可继续预览调整");
+  showToast("已打开，正在接通服务器…");
   reconcilePhonePreview();
   setTimeout(syncCamModalState, 900);
 }
