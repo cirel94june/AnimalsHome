@@ -2593,3 +2593,26 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - `call_claude(external_data=True)` 不调 `_hub_process_capabilities`，返回里 [记住:] 已删；不带这个参数时照常调。
   - 带 `-W error::ResourceWarning` 跑，没有连接泄漏。
   - 全套：小克 112 项、Lucien 138 项、狗蛋 140 项全过。
+
+
+## 164. 三只 bot 借工具：修 §163 复审的三处超时问题（M2 余项和两处新问题）
+
+三份 `home_tools.py`、`tests/test_home_tools.py` 仍然一字不差。分支 `claude/frontend-memory-integration-ke0lpe`：cloudy **893ea9e**、Lucien **3da81bb**、Jasper **2e5da3a**。main 没动。
+
+- **M2 余项：总期限没覆盖接收响应头**。借工具这一次请求不再用 requests，改成自己发（`_post`）：
+  - `socket.create_connection` 连接超时取 `min(5 秒, 剩余总期限)`；https 用 `ssl` 加 certifi 证书库（和 requests 同一份，没有就用系统的）；握手、发送前都按剩余总期限设超时。
+  - 读响应走 `_DeadlineReader`：每次 `recv_into` 之前都先看总期限，过了就抛 `_TooSlow`。响应头一行一行慢慢滴，也会在总期限到点时断开。`http.client.HTTPResponse` 用它解析状态行、响应头和正文（Content-Length 和 chunked 都支持）。
+  - 不跟随跳转；`Connection: close`；函数结束时一定关掉 socket。正文超过 `MAX_RESPONSE_BYTES` 抛 `_TooLarge`。
+- **新问题：等响应头超过 2 秒就失败**：`_DeadlineReader.stall` 在收完响应头之后才设成 `READ_STALL_SECONDS`。等响应头时用剩余的全部总期限（家里要等工具办完才回）；读正文时，每次等待取 `min(停顿上限, 剩余总期限)`。
+- **新问题：底层读取异常绕过兜底**：
+  - `_post` 里除了 `_TooSlow` / `_TooLarge`，其余异常（连不上、TLS 出错、`http.client` 的各种异常、对方中途断开）一律转成 `_Unreachable`。
+  - 声明了长度却没收齐就断开时，`response.read(amt)` 不会报错，所以读完后看 `response.length` 是否还有剩余，有就算 `_Unreachable`。
+  - `borrow` 最外层再兜一层 `except Exception` →「家里没连上」，不会跳出借工具流程。
+- **接口**：`borrow` / `borrow_all` 的测试注入参数从 `session` 改成 `transport`（签名为 `(url, payload, headers, deadline) -> (status, body)`）。bot.py 本来没传它，不用改。bot 的依赖不变（certifi 随 requests 装）。
+- **测试**：
+  - 原来用假会话的两项改成假的 transport。新加 3 项，在本机回环 HTTP 上真实发请求：
+    - 响应头每 0.02 秒滴一行，总期限 0.08 秒，0.3 秒内退出，结果是「太久没回」；
+    - 家里 0.2 秒后才正常回，总期限 1 秒、停顿上限 0.05 秒，照常拿到结果；
+    - 正文给了一个字节就停住，结果是「太久没回」，0.8 秒内退出；声明 100 字节只给 5 个就断开，结果是「没连上」。
+  - 原来的滴数据、超大回应用例照旧通过。小克 115、Lucien 141、狗蛋 143 项全过。
+  - https 在服务器上实测：google.com 正常读到 405；github.com 首页太大，被截断（`_TooLarge`）；家里 `/api/outing/tool` 不带钥匙时回 302（Cloudflare 要登录），bot 会说「家里这次没办成」。本机连外网的 TLS 握手本身会超时，所以 https 只在服务器上测了。
