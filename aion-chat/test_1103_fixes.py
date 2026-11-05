@@ -217,3 +217,12 @@ class WorldbookToggleTests(unittest.TestCase):
         self.assertIn("复盘开关读取失败，先不能改", html)
         self.assertIn("input.dataset.loadedFor !== id", html)
         self.assertNotIn("personaEvolutionConfigSaving", html)
+
+
+class WorldbookToggleRestoreTests(unittest.TestCase):
+    def test_coming_back_after_saving_rereads_the_real_value(self):
+        """Codex §152 余项：保存中途切走又切回来，存完后开关一直锁着、可能还显示旧值。"""
+        html = (STATIC / "worldbook.html").read_text(encoding="utf-8")
+        self.assertIn("if (wbPerson === id) refreshEvolutionForPerson();", html)
+        self.assertIn("const current = () => samePerson(id, gen) && load === wbEvolutionLoad;", html)
+        self.assertIn("load = ++wbEvolutionLoad;", html)

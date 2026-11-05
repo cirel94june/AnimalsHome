@@ -2325,3 +2325,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `refreshEvolutionForPerson`：只有这位的设置读成功、并且这位没在保存时才放开开关；读取失败就显示「复盘开关读取失败，先不能改（刷新页面再试）」，开关保持禁用，不读记录。成功读出的人记在 `toggle.dataset.loadedFor`；初始化时记为小克。
 - `savePersonaEvolutionToggle`：如果这位还在保存，或者开关不是这位读出来的，就把这次点击还原并提示，不再悄悄什么都不做。保存状态在发出时按人加上，`finally` 里按人去掉；只有仍是这个人、并且是这个人读出来的开关，才重新放开。
 - 验证：本机浏览器用真实页面函数重放。Lucien 的开关保存还没完成就切到 Jasper，Jasper 的开关可以点，也真的发出了 `seat/ai3/config` 的保存；Jasper 读取失败时开关禁用并显示提示。`test_1103_fixes` 新加 1 项，15 项全过。
+
+
+## 153. 修 §152 余项：保存中途切走再切回来，存完后重读开关
+
+- `savePersonaEvolutionToggle` 的 `finally`：先按人去掉保存状态；如果此时选中的还是这个人（中途切走又切回来也算），就调 `refreshEvolutionForPerson()`，按当前序号重读服务器上的值，再决定开关值、能不能点。保存成功、失败都走这一步。
+- `refreshEvolutionForPerson` 加 `wbEvolutionLoad`：每次读取加一，只认最后一次（同时还核对人和序号）。切回来时那次「保存中读到的旧值」晚回来，也盖不掉保存后的重读。
+- 验证：本机浏览器用真实页面函数重放。Lucien 的开关保存（延迟 500ms）期间切到 Jasper 再切回：保存中开关禁用；保存成功后恢复可点，显示新值（开）；保存失败后恢复可点，显示服务器上的值（关）。`test_1103_fixes` 新加 1 项，16 项全过。

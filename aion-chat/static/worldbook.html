@@ -427,7 +427,8 @@ function renderSections(prefix, containerId, sections) {
 let wbPerson = "aion";
 let wbSeats = [];
 let wbPersonaLoad = 0;        // 每次读取的序号：只认最新一次
-let wbPersonGen = 0;          // 每次切人加一：异步结果回来时核对「人＋序号」，对不上就不用（Codex §149：切人太快会串人）
+let wbPersonGen = 0;
+let wbEvolutionLoad = 0;      // 复盘开关每次读取的序号：只认最后一次（保存后重读不被更早的读取覆盖）          // 每次切人加一：异步结果回来时核对「人＋序号」，对不上就不用（Codex §149：切人太快会串人）
 
 function samePerson(id, gen) {
   return wbPerson === id && wbPersonGen === gen;
@@ -456,7 +457,8 @@ async function renderPeople() {
 }
 
 async function refreshEvolutionForPerson() {
-  const id = wbPerson, gen = wbPersonGen;
+  const id = wbPerson, gen = wbPersonGen, load = ++wbEvolutionLoad;
+  const current = () => samePerson(id, gen) && load === wbEvolutionLoad;
   $("wbEvolutionTitle").textContent = `${personName(id)} 自动进化`;
   $("wbEvolutionLatest").textContent = "最近复盘：读取中…";
   personaEvolutionRuns = [];
@@ -465,13 +467,13 @@ async function refreshEvolutionForPerson() {
   let loaded = false;
   try {
     const cfg = await api("GET", `/api/persona-evolution/${evolutionEndpoint(id)}/config`);
-    if (samePerson(id, gen)) toggle.checked = !!cfg.enabled;
+    if (current()) toggle.checked = !!cfg.enabled;
     loaded = true;
   } catch (e) {
     console.warn("读取复盘开关失败", e);
-    if (samePerson(id, gen)) $("wbEvolutionLatest").textContent = "复盘开关读取失败，先不能改（刷新页面再试）";
+    if (current()) $("wbEvolutionLatest").textContent = "复盘开关读取失败，先不能改（刷新页面再试）";
   }
-  if (!samePerson(id, gen)) return;
+  if (!current()) return;
   toggle.dataset.loadedFor = loaded ? id : "";
   toggle.disabled = !loaded || isEvolutionConfigSaving("ai", id);  // 这位的开关还在保存：存完再放开
   if (loaded) await loadPersonaEvolutionRuns("ai");
@@ -1123,7 +1125,8 @@ async function savePersonaEvolutionToggle(actor = "ai") {
     showToast(e.message || "开关保存失败");
   } finally {
     setEvolutionConfigSaving(actor, false, id);
-    if (samePerson(id, gen) && input.dataset.loadedFor === id) input.disabled = false;
+    // 存完时选中的还是这位（中途切走又切回来也算）：重读一次服务器上的值再决定开关（Codex §152 余项）
+    if (wbPerson === id) refreshEvolutionForPerson();
   }
 }
 
