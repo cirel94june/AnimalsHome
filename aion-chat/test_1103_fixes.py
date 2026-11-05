@@ -201,7 +201,7 @@ class WorldbookRaceTests(unittest.TestCase):
         self.assertIn("return wbPerson === id && wbPersonGen === gen;", html)
         self.assertIn("wbPersonGen += 1;", html)
         self.assertIn("if (!samePerson(id, gen)) return;  // 已经切到别人了", html)              # 记录
-        self.assertIn("if (samePerson(id, gen)) toggle.checked = !!cfg.enabled;", html)         # 开关
+        self.assertIn("if (current()) toggle.checked = !!cfg.enabled;", html)                   # 开关（人＋序号＋最后一次读取）
         self.assertIn("if (res.status === 404 && person === \"aion\") {", html)               # 404 回退按发出时的人
         self.assertIn("await persistPersonaEvolutionEnabled(enabled, actor, id);", html)
         self.assertLess(html.index("const oldName = "),
