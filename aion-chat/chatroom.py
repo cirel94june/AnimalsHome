@@ -930,12 +930,15 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                 context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
             context_text = "\n".join(context_lines)
             time_str = now_text()
+            from hub_day import day_text  # 这位 AI 今天在别处（群里、TG）的经历
+            hub_day_block = await day_text("connor", user_name)
             diary_prompt = (
                 f"{persona_block}"
                 f"当前时间：{time_str}\n\n"
                 f"你是{connor_name}。你刚刚整理了和{user_name}今天的聊天记忆，以下是你整理出的摘要：\n"
                 f"{summaries_text}\n\n"
                 f"【最近上下文】\n{context_text}\n\n"
+                f"{hub_day_block}"
                 f"请从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
                 f"日记可以记录你对这段记忆的感想，只写值得记录或有感触的事，不用每件事都提起，不要记流水账。语气必须符合你的人设。"
                 f"你可以自行决定是否发布一次朋友圈，朋友圈不用每次都发，有想吐槽或者感慨，或者搞笑的事情，或者用朋友圈隔空向对方喊话。\n"

@@ -68,10 +68,11 @@ async def _recent_messages(seat: str, anchor: float, last_ts: float) -> list[dic
     return [{"sender": r[0], "content": r[1] or "", "created_at": float(r[2])} for r in reversed(rows)]
 
 
-def _diary_prompt(name: str, user_name: str, context_text: str) -> str:
+def _diary_prompt(name: str, user_name: str, context_text: str, hub_day_block: str = "") -> str:
     return (
         f"当前时间：{now_text()}\n\n"
         f"【最近上下文】\n{context_text}\n\n"
+        f"{hub_day_block}"
         f"请以{name}的身份、从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
         "日记可以记录你对这段时间的感想，只写值得记录或有感触的事，不用每件事都提起，不要记流水账。语气必须符合你的人设。"
         "你可以自行决定是否发布一次朋友圈，朋友圈不用每次都发，有想吐槽或者感慨，或者搞笑的事情，或者用朋友圈隔空向别人喊话。"
@@ -143,10 +144,12 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
         f"[{datetime.fromtimestamp(m['created_at']).strftime('%m-%d %H:%M')}]"
         f"【{seat_chat._speaker_name(m['sender'], user_name)}】{m['content']}" for m in recent if m["content"].strip()
     )
+    from hub_day import day_text  # 这位 AI 今天在别处（群里、TG）的经历
+    hub_day_block = await day_text(seat, user_name)
     messages = [
         {"role": "user", "content": f"[你的角色设定]\n你是{name}。\n\n{seat_chat._persona_text(seat)}"},
         {"role": "assistant", "content": "收到，我会按照设定做自己。"},
-        {"role": "user", "content": _diary_prompt(name, user_name, context_text)},
+        {"role": "user", "content": _diary_prompt(name, user_name, context_text, hub_day_block)},
     ]
     # 开口前再确认一次：仍启用、有人设、所选模型和线路都没变；之后到发请求之间没有 await。
     # 设置变了算跳过（下次再写），不算「写不出来」
