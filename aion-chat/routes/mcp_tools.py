@@ -81,15 +81,15 @@ async def api_test(name: str):
         return {"ok": False, "error": mcp_outings.redact_everything(str(error))[:300] or type(error).__name__}
 
 
-async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto") -> dict:
-    """出门逛一趟：见闻发到 TA 的私聊，并记一条自主活动日志。
+async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto", reply_room: str = "") -> dict:
+    """出门逛一趟：见闻发到 TA 的私聊（群里叫去的回那个群），并记一条自主活动日志。
     页面、聊天、自主活动都走这里：同一位 AI 同时只能出门一趟，锁放在这一层。"""
     if actor in _out_now:
         return {"ok": False, "error": "TA 已经在外面了"}
     _out_now.add(actor)
     trip = mcp_outings.trip_started(actor, name, source)
     try:
-        result = await _go_out(actor, name, purpose)
+        result = await _go_out(actor, name, purpose, reply_room)
         mcp_outings.trip_finished(trip, "ok" if result.get("ok") else "failed", result.get("counts"))
         return result
     except BaseException:
@@ -99,7 +99,19 @@ async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto")
         _out_now.discard(actor)
 
 
-async def _go_out(actor: str, name: str, purpose: str) -> dict:
+async def _say_it(actor: str, text: str, reply_room: str) -> dict | None:
+    """群里叫去的回群里说（11-06 小猫）。群没了或发不出去，退回私聊，话不能丢。"""
+    import autonomy
+    if reply_room:
+        try:
+            from routes.chatroom import _save_msg
+            return await _save_msg(reply_room, actor, text, auto_tts=False)
+        except Exception as error:
+            log.warning("[MCP] %s 回群里没发出去，改发私聊：%s", actor, type(error).__name__)
+    return await autonomy._save_private_message(actor, text, force_private=True)
+
+
+async def _go_out(actor: str, name: str, purpose: str, reply_room: str = "") -> dict:
     import autonomy
     label = autonomy._actor_label(actor)
     try:
@@ -112,7 +124,7 @@ async def _go_out(actor: str, name: str, purpose: str) -> dict:
             target_type="mcp", target_id=name,
         )
         return {"ok": False, "error": reason, "event": event}
-    message = await autonomy._save_private_message(actor, result["summary"], force_private=True)
+    message = await _say_it(actor, result["summary"], reply_room)
     event = await autonomy.append_idle_event(
         actor, "mcp_outing", f"{label}去「{name}」逛了一趟", result["summary"][:300],
         target_type="mcp", target_id=name,
@@ -122,7 +134,7 @@ async def _go_out(actor: str, name: str, purpose: str) -> dict:
     return {"ok": True, "message": message, "event": event, "counts": result.get("counts")}
 
 
-def start_outing(actor: str, name: str, purpose: str, source: str) -> bool:
+def start_outing(actor: str, name: str, purpose: str, source: str, reply_room: str = "") -> bool:
     """放到后台去，不占着聊天。TA 已经在外面就返回 False。"""
     if actor in _out_now or any(key[0] == actor for key in _running):
         return False
@@ -131,9 +143,9 @@ def start_outing(actor: str, name: str, purpose: str, source: str) -> bool:
 
     async def run():
         try:
-            result = await go_out(actor, name, purpose, source=source)
+            result = await go_out(actor, name, purpose, source=source, reply_room=reply_room)
             if source == "chat" and not result.get("ok"):
-                await _tell_she_did_not_make_it(actor, name, result.get("error") or "")
+                await _tell_she_did_not_make_it(actor, name, result.get("error") or "", reply_room)
         finally:
             _running.discard(key)
 
@@ -143,16 +155,15 @@ def start_outing(actor: str, name: str, purpose: str, source: str) -> bool:
     return True
 
 
-async def _tell_she_did_not_make_it(actor: str, name: str, reason: str) -> None:
+async def _tell_she_did_not_make_it(actor: str, name: str, reason: str, reply_room: str = "") -> None:
     """聊天里说了要去，没去成要说一声：原来只写自主活动记录，她看不到。"""
-    import autonomy
     try:
-        await autonomy._save_private_message(actor, f"（我想去「{name}」，但没去成：{reason[:120]}）", force_private=True)
+        await _say_it(actor, f"（我想去「{name}」，但没去成：{reason[:120]}）", reply_room)
     except Exception as error:
         log.warning("[MCP] %s 没去成的提示没发出去：%s", actor, type(error).__name__)
 
 
-async def process_outing_commands(text: str, actor: str, *, allowed: bool = True, notify=None) -> str:
+async def process_outing_commands(text: str, actor: str, *, allowed: bool = True, notify=None, reply_room: str = "") -> str:
     """从正式回复里取出 [出门:地方:想做什么]，从正文去掉，开始出门。一条回复最多一个。
     allowed=False（系统叫醒、环境音、AI 之间接话）只清除不执行。"""
     if not text or "出门" not in text:
@@ -164,7 +175,7 @@ async def process_outing_commands(text: str, actor: str, *, allowed: bool = True
     from capabilities import is_capability_enabled
     if not allowed or not is_capability_enabled("mcp_chat"):
         return clean
-    message = _begin_outing(actor, match.group(1), match.group(2) or "")
+    message = _begin_outing(actor, match.group(1), match.group(2) or "", reply_room)
     if notify and message:
         try:
             await notify(message)
@@ -173,7 +184,7 @@ async def process_outing_commands(text: str, actor: str, *, allowed: bool = True
     return clean
 
 
-def _begin_outing(actor: str, wanted: str, purpose: str) -> str:
+def _begin_outing(actor: str, wanted: str, purpose: str, reply_room: str = "") -> str:
     import autonomy
     label = autonomy._actor_label(actor)
     def same(name) -> str:
@@ -183,9 +194,9 @@ def _begin_outing(actor: str, wanted: str, purpose: str) -> str:
         return f"{label}想出门，但不认识「{wanted[:40]}」这个地方"
     if not mcp_outings.tool_model_for(actor):
         return f"{label}想去「{place}」，但还没有能出门的模型"
-    if not start_outing(actor, place, purpose[:200], "chat"):
+    if not start_outing(actor, place, purpose[:200], "chat", reply_room):
         return f"{label}已经在外面了，这次没去「{place}」"
-    return f"🚪 {label}去「{place}」了，回来会在私聊里讲"
+    return f"🚪 {label}去「{place}」了，回来会在{'这里' if reply_room else '私聊里'}讲"
 
 
 @router.post("/api/mcp-tools/{name}/outing")

@@ -665,7 +665,7 @@ def mcp_chat_ability_text(user_name: str, actor: str) -> str:
     lines = [f"- {p['name']}" + (f"：{' '.join(str(p.get('description')).split())[:80]}" if p.get("description") else "") for p in places]
     return (
         f"[出门:地方名:想做什么] — {user_name}叫你去，或你真的想去外面逛逛时用。写了就是真的去，不要只说不写，也不要没去说去过。"
-        "去了要一会儿才回来，不耽误聊天，回来会在你们的私聊里讲见闻。在外面发帖是公开的。不用每次都去。\n能去的地方：\n"
+        "去了要一会儿才回来，不耽误聊天，回来会讲见闻（在哪儿叫的就回哪儿说，别人也看得到）。在外面发帖是公开的。不用每次都去。\n能去的地方：\n"
         + "\n".join(lines)
     )
 

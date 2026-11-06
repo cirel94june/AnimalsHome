@@ -615,7 +615,7 @@ def test_same_ai_goes_out_once_across_all_entrances(env, tmp_path, monkeypatch):
     async def scenario():
         gate = asyncio.Event()
 
-        async def slow(actor, name, purpose):
+        async def slow(actor, name, purpose, reply_room=""):
             await gate.wait()
             return {"ok": True, "counts": {"calls": 2, "writes": 1, "unclassified": ["x"]}}
         monkeypatch.setattr(mcp_tools, "_go_out", slow)

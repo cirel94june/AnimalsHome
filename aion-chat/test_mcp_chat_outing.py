@@ -34,6 +34,9 @@ def test_hidden_everywhere():
     assert stream.feed("等我[出") + stream.feed("门:花园:看看]好") + stream.flush() == "等我好"
 
 
+gone_rooms_box = []
+
+
 @pytest.fixture
 def out(env, monkeypatch):  # noqa: F811
     import autonomy
@@ -43,9 +46,13 @@ def out(env, monkeypatch):  # noqa: F811
     mcp_outings.save_tool({"name": "别人的", "url": "https://b.example/mcp", "actors": ["aion"]})
     gone = []
 
-    async def fake_go_out(actor, name, purpose="", source="auto"):
+    async def fake_go_out(actor, name, purpose="", source="auto", reply_room=""):
         gone.append((actor, name, purpose, source))
+        gone_rooms.append(reply_room)
         return {"ok": True}
+    gone_rooms = []
+    gone_rooms_box.clear()
+    gone_rooms_box.append(gone_rooms)
     monkeypatch.setattr(mcp_tools, "go_out", fake_go_out)
     monkeypatch.setattr(mcp_tools, "_running", set())
     monkeypatch.setattr(mcp_tools, "_out_now", set())
@@ -71,6 +78,59 @@ def test_goes_out_in_the_background_and_tells_her(out):
     assert clean == "我去看看等我"
     assert out == [("ai3", "花园  论坛", "看看新帖", "chat")]
     assert "去「花园  论坛」了" in told[0]
+
+
+def test_called_in_a_group_comes_back_to_that_group(out):
+    _, told = _process("[出门:花园 论坛:看看]", reply_room="group-1")
+    assert gone_rooms_box[0] == ["group-1"] and "回来会在这里讲" in told[0]
+
+
+def test_called_in_private_comes_back_to_private(out):
+    _, told = _process("[出门:花园 论坛:看看]")
+    assert gone_rooms_box[0] == [""] and "私聊" in told[0]
+
+
+def _summary_trip(monkeypatch, reply_room, save_group):
+    import autonomy
+    from routes import chatroom
+    private = AsyncMock(return_value={"id": "p"})
+    monkeypatch.setattr(autonomy, "_save_private_message", private)
+    monkeypatch.setattr(autonomy, "_actor_label", lambda a: "狗蛋")
+    monkeypatch.setattr(autonomy, "append_idle_event", AsyncMock(return_value={}))
+    monkeypatch.setattr(chatroom, "_save_msg", save_group)
+
+    async def fake_run(actor, name, purpose=""):
+        return {"summary": "我回来了", "actions": [], "model": "m", "counts": {}}
+    monkeypatch.setattr(mcp_outings, "run_outing", fake_run)
+    asyncio.run(mcp_tools._go_out("ai3", "甲", "", reply_room))
+    return private
+
+
+def test_group_trip_says_it_in_the_group(monkeypatch):
+    group = AsyncMock(return_value={"id": "g"})
+    private = _summary_trip(monkeypatch, "group-1", group)
+    assert group.await_args.args[:3] == ("group-1", "ai3", "我回来了") and group.await_args.kwargs["auto_tts"] is False
+    private.assert_not_called()
+
+
+def test_private_trip_says_it_in_private(monkeypatch):
+    group = AsyncMock()
+    private = _summary_trip(monkeypatch, "", group)
+    group.assert_not_called()
+    assert private.await_args.args[:2] == ("ai3", "我回来了")
+
+
+def test_if_the_group_is_gone_the_story_is_not_lost(monkeypatch):
+    private = _summary_trip(monkeypatch, "group-1", AsyncMock(side_effect=RuntimeError("群没了")))
+    assert private.await_args.args[:2] == ("ai3", "我回来了")
+
+
+def test_failure_in_a_group_is_said_in_the_group(monkeypatch):
+    from routes import chatroom
+    group = AsyncMock(return_value={"id": "g"})
+    monkeypatch.setattr(chatroom, "_save_msg", group)
+    asyncio.run(mcp_tools._tell_she_did_not_make_it("ai3", "甲", "连不上", "group-1"))
+    assert "没去成：连不上" in group.await_args.args[2]
 
 
 def test_only_one_trip_per_reply(out):

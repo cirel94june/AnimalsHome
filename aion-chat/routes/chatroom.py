@@ -826,7 +826,16 @@ async def _process_outing(text: str, actor: str, room_id: str, queue, msg_id: st
 
     async def notify(message: str) -> None:
         await _chatroom_sys_msg(room_id, message, queue, after_msg_id=msg_id)
-    return await process_outing_commands(text, actor, allowed=allowed, notify=notify)
+    if not text or "出门" not in text:
+        return text
+    reply_room = ""  # 群里叫去的回群里讲；私聊房间走 go_out 原来的私聊
+    try:
+        async with get_db() as db:
+            row = await (await db.execute("SELECT type FROM chatroom_rooms WHERE id=?", (room_id,))).fetchone()
+        reply_room = room_id if row and row[0] == "group" else ""
+    except Exception as error:
+        print(f"[CHATROOM] 出门：读房间类型失败，回来发私聊: {type(error).__name__}")
+    return await process_outing_commands(text, actor, allowed=allowed, notify=notify, reply_room=reply_room)
 
 
 async def _process_chatroom_commands(

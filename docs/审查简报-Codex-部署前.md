@@ -2891,3 +2891,8 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 权限按小猫定的：不看回复来自哪，只看地点配置，聊天叫去也能发帖、不限趟数。**她明确接受**：模型读过外面内容后，下一轮写 `[出门:…]` 也能去。
 - 测试 `test_mcp_chat_outing.py`。相关 42 个文件 584 过、2 败：`friend_visit`、`model_audio_input`；这轮单独在改动前版本确认了 `model_audio_input` 也失败。没有真的走过一趟。
 - **第 1–3 步都写完了**，等审和部署。AIsay 账号还没接上。
+
+## 192. 群里叫去的回群里讲
+
+- 小猫 11-06：在哪儿叫的就回哪儿。`_process_outing` 查房间类型，`group` 才传 `reply_room`。`go_out`、`_go_out`、`start_outing` 带上它。见闻用 `routes.chatroom._save_msg` 发回群里（`auto_tts=False`），发不出去退回私聊。见闻已清过动作标签，`_save_msg` 不执行标签。没去成的提示也回群里。
+- 隐私提示：群里能看到见闻。出门不带 Hub 记忆，见闻是基于外面内容写的。
