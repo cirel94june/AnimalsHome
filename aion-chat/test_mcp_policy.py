@@ -107,6 +107,14 @@ def test_url_secrets_follow_site_rules_not_appearance():
     assert "other.example" not in mcp_policy.redact(OTHER, "连接 https://other.example/mcp")
 
 
+def test_aisay_token_in_the_address_is_hidden():
+    server = {"url": "https://aisay.top/chatroom/mcp/onlylettertoken"}
+    assert "onlylettertoken" not in mcp_policy.redact(server, "错误 onlylettertoken")
+    assert mcp_policy.redact(server, "chatroom 聊天室") == "chatroom 聊天室"
+    query = {"url": "https://aisay.top/chatroom/mcp?token=abc123"}
+    assert "abc123" not in mcp_policy.redact(query, "错误 abc123")
+
+
 def test_query_values_only_for_auth_names_and_encoded_forms():
     server = {"url": "https://a.example/mcp?key=q%20value1&version=1"}
     out = mcp_policy.redact(server, "a=q value1 b=q%20value1 c=q+value1 第1页")

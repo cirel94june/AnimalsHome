@@ -52,7 +52,7 @@ _LOOKS_LIKE_ERROR = re.compile(r"internal server error|bad gateway|service unava
 _VOLATILE_KEYS = {"timestamp", "ts", "time", "now", "server_time", "servertime", "generated_at", "request_id",
                   "requestid", "trace_id", "traceid", "elapsed", "elapsed_ms", "latency", "latency_ms", "duration_ms"}
 # 路径里的钥匙按站点规则取，不靠「长得像不像钥匙」猜（狐狸方案审查）
-_PATH_KEY_SITES = {"toy.cedarstar.org"}
+_PATH_KEY_SITES = {"toy.cedarstar.org", "aisay.top"}  # AIsay 的 auto_login_url 可能把 token 放进地址
 _NOT_STATE_TOOLS = {"get_guide", "list_games", "get_tool_schema", "help"}
 _NOT_A_KEY_SEGMENT = {"mcp", "sse", "api", "chatroom"}
 _QUERY_KEY_NAMES = re.compile(r"^(?:key|api_?key|token|access_?token|auth|authorization|secret|password|pwd)$", re.I)
