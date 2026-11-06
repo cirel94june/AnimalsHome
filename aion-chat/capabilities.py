@@ -624,10 +624,11 @@ def poi_search_ability_text(user_name: str) -> str:
 
 
 def desk_note_ability_text(user_name: str) -> str:
+    import desk_notes
     return (
         f"[NOTE:内容] — 在{user_name}手机桌面的便笺上留一句短短的话（一两句以内），"
         "比如提醒、惦记、晚安或想到对方的小事。它会以你的名义贴在桌面上，不出现在聊天正文里。"
-        "不必每次都用，真的有话想留在桌面上时再写。"
+        "不必每次都用，真的有话想留在桌面上时再写。\n" + desk_notes.visible_notes_text(user_name)
     )
 
 
