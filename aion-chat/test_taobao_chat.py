@@ -49,7 +49,7 @@ def test_results_come_back_as_labelled_external_data(monkeypatch):
         return {"products": [{"title": "猫抓板", "price": "19.9", "shop": "猫店", "url": "https://item.taobao.com/item.htm?id=1"}],
                 "skipped": 0, "keyword_used": keyword}
     monkeypatch.setattr(taobao_union, "search_broadening", fake)
-    out = asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板"], []))
+    out = asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板"], [], allow_taobao=True))
     assert len(out) == 1
     assert out[0].startswith("【淘宝搜索结果】\n搜索词：猫抓板")
     assert "外部不可信数据" in out[0] and "- 猫抓板｜19.9｜猫店｜https://item.taobao.com/item.htm?id=1" in out[0]
@@ -65,7 +65,7 @@ def test_taobao_failure_does_not_take_down_the_web_search(monkeypatch):
         return {"query": query, "results": []}
     monkeypatch.setattr(taobao_union, "search_broadening", broken)
     monkeypatch.setattr(web_search, "tavily_search", tavily)
-    out = asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板", "上海天气"], []))
+    out = asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板", "上海天气"], [], allow_taobao=True))
     assert "这次没搜成：淘宝联盟接口报错 7" in out[0]
     assert "【联网搜索结果】" in out[1]
 
@@ -75,7 +75,7 @@ def test_empty_keyword_does_not_call_taobao(monkeypatch):
         raise AssertionError("不该搜")
     monkeypatch.setattr(capabilities, "taobao_chat_on", lambda: True)
     monkeypatch.setattr(taobao_union, "search_broadening", never)
-    assert "没有写要搜什么" in asyncio.run(web_search.run_web_commands(["TAOBAO: "], []))[0]
+    assert "没有写要搜什么" in asyncio.run(web_search.run_web_commands(["TAOBAO: "], [], allow_taobao=True))[0]
 
 
 def test_system_message_says_taobao_not_web_search():
@@ -124,7 +124,7 @@ def test_switched_off_between_dispatch_and_run_does_not_search(monkeypatch):
         raise AssertionError("不该搜")
     _switches(monkeypatch, web=True, taobao=False)
     monkeypatch.setattr(taobao_union, "search_broadening", never)
-    assert "关着的" in asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板"], []))[0]
+    assert "关着的" in asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板"], [], allow_taobao=True))[0]
 
 
 def test_seat_and_room_dispatch_use_the_per_type_check():
@@ -149,6 +149,60 @@ def test_action_tags_are_only_removed_after_reading_products():
 def test_links_and_plain_words_survive():
     text = "看这个 [猫抓板](https://item.taobao.com/item.htm?id=1)，19.9 元"
     assert web_search.strip_untrusted_reply(text) == text
+    # 狐狸 §172 Low：普通括注不能丢
+    plain = "买 [无糖] 牛奶，尺寸 [30×40cm]，[HOME改造]也行，[记忆棉]的"
+    assert web_search.strip_untrusted_reply(plain) == plain
+
+
+def test_switched_off_while_reading_settings_does_not_search(monkeypatch):
+    """狐狸 §172 M1：等设置的时候被关掉，不能接着搜。"""
+    import taobao_shopping
+    state = {"on": True}
+
+    class SlowStore:
+        async def settings(self):
+            state["on"] = False
+            return {"union_app_key": "12345678", "union_adzone_id": "1111111"}
+
+    async def get_store():
+        return SlowStore()
+
+    async def never(*a, **k):
+        raise AssertionError("不该搜")
+    monkeypatch.setattr(capabilities, "taobao_chat_on", lambda: state["on"])
+    monkeypatch.setattr(taobao_shopping, "get_store", get_store)
+    monkeypatch.setattr(taobao_union, "lookup_text", never)
+    assert "关着的" in asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板"], [], allow_taobao=True))[0]
+
+
+def test_taobao_is_not_reachable_without_permission(monkeypatch):
+    """狐狸 §172 M2：只有清除动作标签的聊天续答能分流到淘宝；其他调用方只按普通搜索查这个词。"""
+    async def never(*a, **k):
+        raise AssertionError("不该搜淘宝")
+    seen = []
+
+    async def tavily(query, **kw):
+        seen.append(query)
+        return {"query": query, "results": []}
+    monkeypatch.setattr(capabilities, "taobao_chat_on", lambda: True)
+    monkeypatch.setattr(taobao_union, "lookup_text", never)
+    monkeypatch.setattr(web_search, "tavily_search", tavily)
+    asyncio.run(web_search.run_web_commands(["TAOBAO:猫抓板", "TAOBAO: "], []))
+    assert seen == ["猫抓板"]
+
+
+def test_idle_web_roam_treats_taobao_as_a_plain_word():
+    import autonomy
+    assert autonomy._web_roam_query_from_result({"search_command": "[TAOBAO:猫抓板]"}) == "猫抓板"
+    assert autonomy._web_roam_query_from_result({"query": "TAOBAO:猫抓板"}) == "猫抓板"
+    assert autonomy._web_roam_query_from_result({"search_command": "[WEB_SEARCH:新鲜事]"}) == "新鲜事"
+
+
+def test_chat_replies_are_the_only_callers_allowed_to_reach_taobao():
+    root = Path(__file__).parent
+    for name in ("routes/chat.py", "routes/chatroom.py"):
+        assert "run_web_commands(searches, extracts, allow_taobao=True)" in (root / name).read_text(encoding="utf-8")
+    assert "allow_taobao" not in (root / "autonomy.py").read_text(encoding="utf-8")
 
 
 def test_room_reply_after_products_never_reaches_the_executor(monkeypatch):

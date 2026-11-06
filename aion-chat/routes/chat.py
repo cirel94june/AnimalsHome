@@ -3073,7 +3073,7 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
         return
 
     try:
-        context_items = await run_web_commands(searches, extracts)
+        context_items = await run_web_commands(searches, extracts, allow_taobao=True)
         web_context = "\n\n".join(item for item in context_items if item.strip()).strip()
     except Exception as e:
         web_context = f"【联网搜索结果】\n系统搜索失败：{e}"

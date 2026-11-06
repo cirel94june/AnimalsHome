@@ -18,7 +18,7 @@ from link_preview import build_link_preview_attachments, strip_urls_for_message
 from lounge_friends import LoungeFriend, redact_visitor_key
 from lounge_visit_reporting import publish_outbound_report
 from tts import synthesize_message_tts_later
-from web_search import WEB_SEARCH_CMD_PATTERN, clean_web_command_text, is_web_search_available, run_web_commands
+from web_search import WEB_SEARCH_CMD_PATTERN, clean_web_command_text, is_web_search_available, run_web_commands, taobao_keyword
 from ws import manager
 from autonomy_state import (
     ACTOR_IDS,
@@ -926,10 +926,12 @@ def _web_roam_query_from_result(result: dict) -> str:
     command = str(result.get("search_command") or "").strip()
     matches = WEB_SEARCH_CMD_PATTERN.findall(command)
     if matches:
-        return _clip(matches[0].strip(), 140)
-    query = str(result.get("query") or command or "").strip()
-    query = clean_web_command_text(query).strip() or query
-    return _clip(query, 140)
+        query = matches[0].strip()
+    else:
+        query = str(result.get("query") or command or "").strip()
+        query = clean_web_command_text(query).strip() or query
+    keyword = taobao_keyword(query)  # 自主冲浪只支持联网搜索，写了淘宝也只查这个词（狐狸 §172 M2）
+    return _clip(query if keyword is None else keyword, 140)
 
 
 async def _web_roam_link_previews(reply: str, web_context: str) -> list[dict]:

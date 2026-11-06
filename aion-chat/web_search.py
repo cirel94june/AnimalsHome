@@ -113,6 +113,8 @@ async def _taobao_context(keyword: str) -> str:
         return "【淘宝搜索结果】\n没有写要搜什么。"
     try:
         settings = await (await get_store()).settings()
+        if not taobao_chat_on():  # 读设置要等一下，等的时候可能刚被关掉（狐狸 §172 M1）：查完直接调用，中间不再等
+            return "【淘宝搜索结果】\n聊天里搜淘宝现在是关着的，这次没有搜。"
         body = await taobao_union.lookup_text(keyword, app_key=settings.get("union_app_key", ""),
                                               adzone_id=settings.get("union_adzone_id", ""))
     except taobao_union.UnionError as exc:
@@ -138,16 +140,26 @@ def allowed_web_commands(searches: list[str], extracts: list[str]) -> tuple[list
     return kept, (list(extracts) if web_on else [])
 
 
-_ANY_BRACKET_TAG = re.compile(r"[\[［][^\]］\n]{0,1000}[\]］](?!\()")
+def _action_tag_pattern() -> re.Pattern:
+    from safe_live_stream import _BRACKET_COMMAND_PREFIXES
+    names = [item[1:] for item in _BRACKET_COMMAND_PREFIXES] + ["巡逻"]
+    parts = []
+    for name in sorted(set(names), key=len, reverse=True):
+        # 名字后面要紧跟冒号、空白、分隔或结束，免得 [HOME 改造清单] 之外的普通括注被当成指令
+        parts.append(re.escape(name) + ("" if name[-1] in "_:：" else r"(?=[\s:：|｜_\]］】])"))
+    return re.compile(r"[\[［【]\s*(?:" + "|".join(parts) + r")[^\]］】\n]{0,1000}[\]］】]", re.IGNORECASE)
+
+
 _FULLWIDTH_ACTION_TAG = re.compile(r"【(?:小组件|横幅)[^】\n]{0,1000}】")
 
 
 def strip_untrusted_reply(text: str) -> str:
-    """这一轮读过外部商品资料：回复里的动作标签一律只清除、不执行（狐狸 §171 M2，和 bot 借工具一样）。
-    不逐个列举标签：方括号都去掉，只留 markdown 链接 [标题](地址)。调用方不再把它交给任何执行入口。"""
+    """这一轮读过外部商品资料：动作标签只清除、不执行（狐狸 §171 M2，和 bot 借工具一样）。
+    只删已知的动作标签，[无糖]、[30×40cm] 这样的普通括注留着（狐狸 §172 Low）。
+    真正的保护是调用方不把它交给任何执行入口：漏清的标签只会显示出来，不会被执行。"""
     from context_builder import strip_tool_commands
     cleaned = strip_tool_commands(clean_web_command_text(text))
-    cleaned = _ANY_BRACKET_TAG.sub("", cleaned)
+    cleaned = _action_tag_pattern().sub("", cleaned)
     return _FULLWIDTH_ACTION_TAG.sub("", cleaned).strip()
 
 
@@ -206,13 +218,19 @@ async def tavily_extract(url: str, *, query: str = "", timeout: float = 30.0) ->
     return await _post_tavily(TAVILY_EXTRACT_URL, key, payload, timeout=timeout + 5)
 
 
-async def run_web_commands(searches: list[str], extracts: list[str]) -> list[str]:
+async def run_web_commands(searches: list[str], extracts: list[str], *, allow_taobao: bool = False) -> list[str]:
+    """allow_taobao 只有聊天的续答才给：它们会在保存前清除动作标签（狐狸 §172 M2）。
+    其他调用方（自主冲浪）写了 [TAOBAO:词] 也只按普通联网搜索查这个词。"""
     contexts: list[str] = []
     for query in [item.strip() for item in searches if item.strip()][:_MAX_QUERIES]:
         keyword = taobao_keyword(query)
-        if keyword is not None:
+        if keyword is not None and allow_taobao:
             contexts.append(await _taobao_context(keyword))
             continue
+        if keyword is not None:
+            if not keyword:
+                continue
+            query = keyword
         payload = await tavily_search(query)
         contexts.append(format_tavily_context(payload, kind="search"))
     for url in [item.strip() for item in extracts if item.strip()][:_MAX_EXTRACT_URLS]:

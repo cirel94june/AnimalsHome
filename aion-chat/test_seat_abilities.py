@@ -152,7 +152,7 @@ def test_search_followup_stops_if_the_seats_line_changes_meanwhile(monkeypatch):
     monkeypatch.setattr(config, "MODELS", {**config.MODELS, "seat-key": {"provider": "custom_openai", "model": "m"}})
     pinned = config.model_snapshot("seat-key")
 
-    async def search(*a):
+    async def search(*a, **k):
         config.MODELS.pop("seat-key")  # 搜索的时候线路被删了
         return ["【联网搜索结果】晴"]
     monkeypatch.setattr(chatroom_routes, "run_web_commands", search)
