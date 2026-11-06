@@ -1001,14 +1001,22 @@ def paired_user_message(history: list[dict], sender: str) -> str:
     如果在它之后该 AI 已经说过话（主动消息、工具后续、失败提示、上一次回复），
     就说明这条用户发言已经配过对，返回空串、不录入。
     """
+    msg = pending_user_turn(history, sender)
+    if not msg:
+        return ""
+    text = str(msg.get("content") or "").strip()
+    return text or ("[图片]" if msg.get("attachments") else "")
+
+
+def pending_user_turn(history: list[dict], sender: str) -> dict | None:
+    """这位 AI 还没回应的、她最后说的那条消息；这位 AI 在那之后已经说过话就是 None。"""
     for msg in reversed(history or []):
         who = msg.get("sender")
         if who == sender:
-            return ""
+            return None
         if who == "user":
-            text = str(msg.get("content") or "").strip()
-            return text or ("[图片]" if msg.get("attachments") else "")
-    return ""
+            return msg
+    return None
 
 
 def schedule_chatroom_capture(sender: str, user_message: str, ai_response: str, room_type: str,

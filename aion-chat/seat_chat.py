@@ -136,16 +136,25 @@ def _history(actor_id: str, msgs: list[dict], limit: int, *, group: bool = False
     return out
 
 
+def hub_query_for(actor_id: str, room_msgs: list[dict], *, system_wake: bool = False, her_turn: bool = True) -> str:
+    """这一轮该告诉 Hub 的那句话。不从合并时间线猜：历史里的旧问题不等于她现在在问（狐狸 §175 M1）。
+    - 系统叫醒（闹铃、监控、主动陪伴）：空。她没在说话，旧的「昨晚梦到什么」不能算这轮在问梦；
+    - AI 之间自主接话：还是用房间最后一句来想相关的事，和原来一样；
+    - 她说话：这位 AI 还没回应的她的那句原话（语音带转写）。群里轮到 TA 时最后一条常是别的 AI 说的。"""
+    if system_wake:
+        return ""
+    if not her_turn:
+        last = room_msgs[-1] if room_msgs else {}
+        return memory_hub_bridge.spoken_text(last.get("content"), last.get("attachments"))
+    turn = memory_hub_bridge.pending_user_turn(room_msgs, actor_id)
+    return memory_hub_bridge.spoken_text(turn.get("content"), turn.get("attachments")) if turn else ""
+
+
 async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int = 30, chat_id: str = "",
-                        group: bool = False) -> list[dict]:
+                        group: bool = False, query_text: str = "") -> list[dict]:
     actor = actors.get_actor(actor_id) or {"name": actor_id}
     wb = load_worldbook()
     user_name = (wb.get("user_name") or "").strip() or "用户"
-    # 她这一轮说的话，不是时间线最后一条：群里轮到 TA 时，最后一条常是别的 AI 刚说的，
-    # Hub 就认不出她在问梦（Hub #145）。这段记录里没有她的话时才用最后一条。
-    heard = next((m for m in reversed(msgs or []) if m.get("sender") == "user"), None) or (msgs[-1] if msgs else {})
-    query_text = memory_hub_bridge.spoken_text(heard.get("content"), heard.get("attachments"))
-
     # 新对话开头的交接卡由 context_block 自己判断并附上
     hub_task = asyncio.create_task(memory_hub_bridge.context_block(
         actor_id, query_text, chat_id, "private_group" if group else "private"))

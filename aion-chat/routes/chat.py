@@ -3494,6 +3494,11 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
     lounge_request_text = (
         history[last_user_idx].get("content", "") if last_user_idx >= 0 else ""
     )
+    # 下一行转换前固定：语音的话这时还在附件里（狐狸 §175 M2：重新生成时 Hub 收到的是空的）
+    hub_query_text = (
+        memory_hub_bridge.spoken_text(history[last_user_idx].get("content"), history[last_user_idx].get("attachments"))
+        if last_user_idx >= 0 else ""
+    )
     _process_voice_attachments_in_history(history, keep_idx=last_user_idx)
 
     # 本地前置路由：取最近实际对话用于记忆查询
@@ -3551,7 +3556,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         inject_offset += 2
     else:
         # ── 正常模式：本地路由 + 完整 RAG 流程 ──
-        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", lounge_request_text, conv_id))
+        hub_task = asyncio.create_task(memory_hub_bridge.context_block("aion", hub_query_text, conv_id))
         digest_result = await instant_digest(actual_recent)
         recall_keywords = digest_result.get("keywords", [])
         recall_keywords_str = "、".join(recall_keywords) if recall_keywords else ""

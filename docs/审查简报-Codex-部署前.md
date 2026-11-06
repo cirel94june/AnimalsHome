@@ -2735,3 +2735,15 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `60f0d03` 部署后在服务器上连真 Hub 试（只看条数）：三位都读通了，一页读完，提示词约 2000 字。
 - 但真 Hub 的 `chats[].chat_type` 是 `big_group` / `small_group`，不是接口说明推断的 private_group / public_group，所以提示词里都显示「别处」，大群小群分不出来。`speaker_hint` 和「大群半公开」那句提示还在，影响是模型分不清这条是大群的。
 - 改 `CHAT_LABELS`，两种写法都认。测试 +1。
+
+## 177. 修 §175 复审的两项 Medium
+
+- M1 系统唤醒误判问梦：`seat_chat.build_context` 不再从合并时间线猜，改成显式收 `query_text`。`seat_chat.hub_query_for(actor, 房间这一轮的 msgs, system_wake=, her_turn=)` 决定传什么：
+  - 系统叫醒（`extra_prompt` 非空：闹铃、监控、主动陪伴）传空串；
+  - 她说话：`memory_hub_bridge.pending_user_turn` 取这位 AI 还没回应的她那句（语音带转写），已回应过就是空串；
+  - AI 之间自主接话（`capture_user_turn=False`）：用房间最后一句，和 §175 之前一样，用来想相关的事。这句如果带「梦」字 Hub 也会当作在问，但她没在问，影响是多带一次真梦，没有动。
+  - `paired_user_message` 改为基于 `pending_user_turn`，行为不变。
+  - Hub 的 `context` 允许空 message，系统叫醒仍能拿到记忆块（相关度可能差一点）。
+- M2 小克重新生成：`_process_voice_attachments_in_history` 之前用 `spoken_text` 固定 `hub_query_text`，`context_block` 改用它。
+- 没改、要提醒的：同一入口的 `schedule_capture("aion", lounge_request_text, ...)` 也用转换前的文字，语音消息重新生成时是空串，这一轮不记入 Hub。发送入口不受影响。这是老问题，不在这次范围。
+- 测试 `test_hub_dream_inputs.py` 改写：群里听她的、语音、系统叫醒不算问梦、已回应不算、AI 接话、`build_context` 不猜、入口传参和重新生成顺序（后两项是源码断言）。

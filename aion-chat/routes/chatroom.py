@@ -4501,8 +4501,10 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
             except Exception as exc:  # 读不出合并记录时退回本房间的记录，不耽误回复
                 print(f"[SEAT] 合并时间线读取失败，只用本房间记录: {type(exc).__name__}")
                 merged = []
-            messages = await seat_chat.build_context(actor_id, merged or msgs, context_limit=context_limit,
-                                                     chat_id=room_id, group=group)
+            messages = await seat_chat.build_context(
+                actor_id, merged or msgs, context_limit=context_limit, chat_id=room_id, group=group,
+                query_text=seat_chat.hub_query_for(actor_id, msgs, system_wake=bool(extra_prompt),
+                                                   her_turn=capture_user_turn))
             if extra_prompt:  # 系统叫 TA 来说话（比如闹铃到点），不是有人发了消息
                 trigger_msg = {"role": "user", "content": extra_prompt}
                 if extra_attachments:  # 定时监督到点时的摄像头截图
