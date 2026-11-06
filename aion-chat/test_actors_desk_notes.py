@@ -51,6 +51,27 @@ def test_update_rules(tmp_path, monkeypatch):
     assert actors.memory_hub_id("ai4") == "newfriend"
 
 
+def test_hub_identity_cannot_be_someone_elses(tmp_path, monkeypatch):
+    """Hub 11-06：填了别人的身份就会读到别人的私人记忆。别名和大小写都算。"""
+    client = _client(tmp_path, monkeypatch)
+    for taken in ("claude", "CLAUDE", " Claude ", "cloudy", "Cloudy", "lucien", "gpt", "GPT", "jasper", "gemini"):
+        response = client.put("/api/actors/ai4", json={"enabled": True, "name": "新朋友", "memory_hub": taken})
+        assert response.status_code == 400, taken
+        assert "已经在用了" in response.json()["detail"]
+    assert client.put("/api/actors/ai4", json={"memory_hub": "Deepseek"}).json()["memory_hub"] == "Deepseek"
+    # 另一个座位也不能撞（大小写不同也算同一个）
+    assert client.put("/api/actors/ai5", json={"memory_hub": "deepseek"}).status_code == 400
+    assert client.put("/api/actors/ai5", json={"memory_hub": ""}).status_code == 200  # 留空永远可以
+    assert client.put("/api/actors/ai5", json={"memory_hub": "qwen"}).json()["memory_hub"] == "qwen"
+
+
+def test_saving_your_own_hub_identity_again_is_fine(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    assert client.put("/api/actors/ai3", json={"memory_hub": "jasper"}).status_code == 200
+    assert client.put("/api/actors/ai3", json={"memory_hub": "Gemini"}).status_code == 200  # 自己的别名
+    assert client.put("/api/actors/aion", json={"memory_hub": "claude"}).status_code == 200
+
+
 def test_avatar_upload(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     png = b"\x89PNG\r\n\x1a\n" + b"1" * 32

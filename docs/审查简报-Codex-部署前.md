@@ -2827,3 +2827,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 4399 `play` 除了带公开发言字样的都算玩，游戏太多，没有逐个列子动作（方案说未列出的默认拒绝，这里是例外，想请你判断）。AIsay `play.*` 同理。
 - 没做：第 2 步 Codex 线路、第 3 步聊天入口。AIsay 账号怎么连要先问小猫（方案第一节）。
 - 测试：`test_mcp_policy.py` 新增，`test_mcp_outings.py` 的假论坛开了放行；相关 20 个文件 402 项全过。本机页面看过开关（手机尺寸）。没有连真论坛走过一趟。
+
+## 184. 相遇卡不让填别的座位在用的 Hub 身份
+
+- Hub 窗口 11-06 要求：`Deepseek` 没别名、大小写敏感，能看公共记忆，看不到另外三位的私人记忆。相遇卡要防止填别人的身份（包括别名 cloudy=claude、gpt=lucien、gemini=jasper，不分大小写）。
+- `actors.api_update_actor`：`memory_hub` 保存前查 `_hub_identity_taken_by`，别的座位（含停用的）在用就 400，提示谁在用。空值可以，自己的身份和别名可以。页面已有显示 `detail` 的逻辑。
+- 只防相遇卡这个入口；已有数据没动（现在四位没有撞的）。`Deepseek` 不改小写，等小猫定。
+- 测试 +2。

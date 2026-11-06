@@ -244,6 +244,26 @@ async def api_list_actors():
             "actors": list_actors()}
 
 
+# Hub 那边的别名（大小写不敏感）。Hub 窗口 11-06 给的
+HUB_ALIASES = {"cloudy": "claude", "gpt": "lucien", "gemini": "jasper"}
+
+
+def _hub_identity(value: str) -> str:
+    text = str(value or "").strip().lower()
+    return HUB_ALIASES.get(text, text)
+
+
+def _hub_identity_taken_by(actor_id: str, value: str) -> str:
+    """这个身份别的座位是不是在用（含停用的座位）。填了别人的身份就会读到别人的私人记忆。"""
+    wanted = _hub_identity(value)
+    if not wanted:
+        return ""
+    for other in list_actors(include_disabled=True):
+        if other["id"] != actor_id and _hub_identity(other.get("memory_hub")) == wanted:
+            return other.get("name") or other["id"]
+    return ""
+
+
 @router.put("/api/actors/{actor_id}")
 async def api_update_actor(actor_id: str, request: Request):
     if actor_id not in SEAT_IDS:
@@ -277,6 +297,12 @@ async def api_update_actor(actor_id: str, request: Request):
             value = str(value or "").strip()
             if value and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
                 raise HTTPException(400, "颜色格式应为 #RRGGBB")
+            updates[key] = value
+        elif key == "memory_hub":
+            value = str(value or "").strip()[:200]
+            taken_by = _hub_identity_taken_by(actor_id, value)
+            if taken_by:
+                raise HTTPException(400, f"这个 Memory Hub 身份 {taken_by} 已经在用了，换一个，或者留空")
             updates[key] = value
         elif key in ("model", "background_model"):
             from config import MODELS
