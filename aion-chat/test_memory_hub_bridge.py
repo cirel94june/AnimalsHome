@@ -273,7 +273,7 @@ def test_syslog_counts_the_handoff_card_too(fake_hub, isolated_config, monkeypat
     """Codex §122 L2：交接卡取到了、incremental 为空，原来显示成「没有相关 / 0 字」。"""
     _write(isolated_config, enabled=True, url=fake_hub, context_timeout_seconds=4)
 
-    async def empty_incremental(cfg, actor, message, chat_id="", chat_type="private"):
+    async def empty_incremental(cfg, actor, message, chat_id="", chat_type="private", **kw):
         bridge._note_read(actor, chat_id, "empty", started=time.monotonic())
         return ""
 
@@ -783,7 +783,7 @@ def test_read_log_is_written_once_after_the_handoff_card_is_merged(fake_hub, iso
     import logging
     _write(isolated_config, enabled=True, url=fake_hub, context_timeout_seconds=4)
 
-    async def empty_incremental(cfg, actor, message, chat_id="", chat_type="private"):
+    async def empty_incremental(cfg, actor, message, chat_id="", chat_type="private", **kw):
         bridge._note_read(actor, chat_id, "empty", started=time.monotonic())
         return ""
 

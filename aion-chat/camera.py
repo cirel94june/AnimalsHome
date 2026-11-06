@@ -2003,6 +2003,7 @@ class CameraMonitor:
                 [],
                 query_text=core_prompt,
                 include_image_attachments=False,
+                memory_hub_background=True,
             )
         else:
             messages, digest_result = await build_connor_group_context(
@@ -2010,6 +2011,7 @@ class CameraMonitor:
                 [],
                 query_text=core_prompt,
                 include_image_attachments=False,
+                memory_hub_background=True,
             )
 
         fresh_fname = ""

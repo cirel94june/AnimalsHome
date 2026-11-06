@@ -873,11 +873,11 @@ async def _ask_ai(state: dict, player: str, moves: Optional[list[dict]] = None) 
     query = "斗地主牌局 JSON 决策"
     if player == "aion":
         messages, _ = await build_aion_group_context(
-            room_id, msgs, room.get("context_minutes", 30), query,
+            room_id, msgs, room.get("context_minutes", 30), query, memory_hub_chat_id="doudizhu",
         )
     else:
         messages, _ = await build_connor_group_context(
-            room_id, msgs, room.get("context_minutes", 30), query,
+            room_id, msgs, room.get("context_minutes", 30), query, memory_hub_chat_id="doudizhu",
         )
     messages.append({"role": "user", "content": _game_prompt(state, player, moves)})
 

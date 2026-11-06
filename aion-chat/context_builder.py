@@ -372,6 +372,7 @@ async def build_memory_blocks(
     memory_hub_actor: str = "",
     memory_hub_chat_id: str = "",
     memory_hub_chat_type: str = "private",
+    memory_hub_background: bool = False,
 ) -> dict:
     """
     执行 instant_digest + 记忆召回，返回注入用的文本块和调试信息。
@@ -401,8 +402,9 @@ async def build_memory_blocks(
     hub_task = None
     if memory_hub_actor:
         import memory_hub_bridge
+        hub_extra = {"background": True} if memory_hub_background else {}
         hub_task = asyncio.create_task(memory_hub_bridge.context_block(memory_hub_actor, query_text, memory_hub_chat_id,
-                                                                       memory_hub_chat_type))
+                                                                       memory_hub_chat_type, **hub_extra))
 
     async def _with_hub(block: str) -> str:
         hub_block = await hub_task if hub_task else ""

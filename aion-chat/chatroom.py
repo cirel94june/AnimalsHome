@@ -1088,6 +1088,8 @@ async def build_aion_group_context(
     include_image_attachments: bool = True,
     digest_result: dict = None,
     whisper_mode: bool = False,
+    memory_hub_background: bool = False,
+    memory_hub_chat_id: str = "",
 ) -> list[dict]:
     """为 Aion 在群聊中构建完整上下文（含系统能力、记忆召回、时间感知）。
     room_messages 仅用于提取 recent_for_digest，实际消息历史由统一时间线构建。"""
@@ -1143,8 +1145,9 @@ async def build_aion_group_context(
         digest_result=digest_result,
         always_include_recalled=True,
         memory_hub_actor="aion",
-        memory_hub_chat_id=room_id,
+        memory_hub_chat_id=memory_hub_chat_id or room_id,
         memory_hub_chat_type="private_group",
+        memory_hub_background=memory_hub_background,
     )
 
     history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
@@ -1186,6 +1189,8 @@ async def build_connor_group_context(
     include_image_attachments: bool = True,
     digest_result: dict = None,
     whisper_mode: bool = False,
+    memory_hub_background: bool = False,
+    memory_hub_chat_id: str = "",
 ) -> list[dict]:
     """为 Connor 在群聊中构建完整上下文（含系统能力、记忆召回、时间感知）。
     room_messages 仅用于提取 recent_for_digest，实际消息历史由统一时间线构建。
@@ -1253,8 +1258,9 @@ async def build_connor_group_context(
         digest_result=digest_result,
         always_include_recalled=True,
         memory_hub_actor="connor",
-        memory_hub_chat_id=room_id,
+        memory_hub_chat_id=memory_hub_chat_id or room_id,
         memory_hub_chat_type="private_group",
+        memory_hub_background=memory_hub_background,
     )
 
     history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
@@ -1297,6 +1303,7 @@ async def build_connor_1v1_context(
     include_image_attachments: bool = True,
     digest_result: dict = None,
     whisper_mode: bool = False,
+    memory_hub_background: bool = False,
 ) -> tuple[list[dict], dict]:
     """为 Connor 1v1 聊天构建 messages 列表（含本地路由、背景浮现、原文追溯、附件图片）。
     返回 (messages, digest_result)。"""
@@ -1361,6 +1368,7 @@ async def build_connor_1v1_context(
         memory_hub_actor="connor",
         memory_hub_chat_id=room_id,
         memory_hub_chat_type="private",
+        memory_hub_background=memory_hub_background,
     )
 
     messages.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})

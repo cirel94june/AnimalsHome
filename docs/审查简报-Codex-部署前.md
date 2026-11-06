@@ -2749,3 +2749,19 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 测试 `test_hub_dream_inputs.py` 改写：群里听她的、语音、系统叫醒不算问梦、已回应不算、AI 接话、`build_context` 不猜、入口传参和重新生成顺序（后两项是源码断言）。
 
 - §175–§177 狐狸通过，11-06 已部署 fc5aa41。
+
+## 178. Hub：background=true；斗地主单独 chat_id（**等 Hub 上线才能部署**）
+
+- Hub 定了：
+  - 斗地主改 `chat_id="doudizhu"`，Hub 已按朋友圈的方式排除；
+  - 闹铃、主动关心、监控叫醒、自主活动群里接话、环境音发言，`context` 传 `background=true`（不带梦、不占提醒次数，以后审批提醒也用它）；
+  - 闹铃这类不带梦，不用补写回。真实聊天不传。
+- **部署顺序**：Hub 这个参数还没上线，现在传可能报错。报错不只是这一轮：`_incremental_block` 失败会触发全局读取冷却，真实聊天也读不到。**小猫告诉我 Hub 已上线前不部署。** 斗地主的 chat_id 可以先上，但和这批一起。
+- 改法：
+  - `context_block(..., background=False)`，只在 True 时才带这个参数；`_incremental_block` 和 `handoff_block` 都带（两个都是 context 调用）。
+  - `build_memory_blocks`、`build_aion_group_context`、`build_connor_group_context`、`build_connor_1v1_context` 加 `memory_hub_background`；两个群聊的加 `memory_hub_chat_id` 覆盖房间 id。
+  - 标 background：`schedule.py` 4 处、`camera.py` 2 处（Lucien）；`_reply_aion`、`_reply_connor` 在 `ambient_context` 或 `capture_user_turn=False` 时；座位在 `extra_prompt` 或 `capture_user_turn=False` 时。
+  - 斗地主两处传 `memory_hub_chat_id="doudizhu"`，不标 background（Hub 靠 chat_id 排除）。
+- 没动的：Hub 说系统唤醒传空查询。座位已经是空的（§177）。Lucien 的闹铃、监控仍传提醒内容，这样能想起相关的事；有 background 就不会带梦，也不会误判问梦。已告诉 Hub。
+- 01d21fd 的两条 Medium 已在 §177 修好、已部署 fc5aa41，不用再做。
+- 测试 `test_hub_background.py`。没连真 Hub。

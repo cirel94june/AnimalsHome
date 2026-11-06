@@ -151,13 +151,14 @@ def hub_query_for(actor_id: str, room_msgs: list[dict], *, system_wake: bool = F
 
 
 async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int = 30, chat_id: str = "",
-                        group: bool = False, query_text: str = "") -> list[dict]:
+                        group: bool = False, query_text: str = "", background: bool = False) -> list[dict]:
     actor = actors.get_actor(actor_id) or {"name": actor_id}
     wb = load_worldbook()
     user_name = (wb.get("user_name") or "").strip() or "用户"
     # 新对话开头的交接卡由 context_block 自己判断并附上
     hub_task = asyncio.create_task(memory_hub_bridge.context_block(
-        actor_id, query_text, chat_id, "private_group" if group else "private"))
+        actor_id, query_text, chat_id, "private_group" if group else "private",
+        **({"background": True} if background else {})))
 
     messages: list[dict] = [
         {"role": "user", "content": f"[你的角色设定]\n你是{actor['name']}。\n\n{_persona_text(actor_id)}"},

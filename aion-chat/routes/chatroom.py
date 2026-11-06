@@ -4504,7 +4504,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
             messages = await seat_chat.build_context(
                 actor_id, merged or msgs, context_limit=context_limit, chat_id=room_id, group=group,
                 query_text=seat_chat.hub_query_for(actor_id, msgs, system_wake=bool(extra_prompt),
-                                                   her_turn=capture_user_turn))
+                                                   her_turn=capture_user_turn),
+                background=bool(extra_prompt) or not capture_user_turn)
             if extra_prompt:  # 系统叫 TA 来说话（比如闹铃到点），不是有人发了消息
                 trigger_msg = {"role": "user", "content": extra_prompt}
                 if extra_attachments:  # 定时监督到点时的摄像头截图
@@ -4824,6 +4825,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
         include_image_attachments=not bool(ambient_context),
         digest_result=digest_result,
         whisper_mode=whisper_mode,
+        memory_hub_background=bool(ambient_context) or not capture_user_turn,  # 不是她在说话
     )
     if ambient_context:
         aion_history.append({"role": "user", "content": append_message_meta(ambient_context, time.time(), "环境语音")})
@@ -4966,6 +4968,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         include_image_attachments=not bool(ambient_context),
         digest_result=digest_result,
         whisper_mode=whisper_mode,
+        memory_hub_background=bool(ambient_context) or not capture_user_turn,  # 不是她在说话
     )
     if ambient_context:
         connor_history.append({"role": "user", "content": append_message_meta(ambient_context, time.time(), "环境语音")})

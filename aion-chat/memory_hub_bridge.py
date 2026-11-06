@@ -265,13 +265,17 @@ def spoken_text(content: Any, attachments: Any = None) -> str:
     return "\n".join(part for part in [*spoken, str(content or "").strip()] if part)
 
 
-async def context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private") -> str:
-    result = await _context_block(actor, message, chat_id, chat_type)
+async def context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private",
+                        *, background: bool = False) -> str:
+    """background=True：这一轮不是小猫在说话（闹铃、主动关心、监控叫醒、自主接话、环境音）。
+    Hub 收到后不带梦、不占当天提醒次数，以后的审批提醒也靠它排除。真实聊天不传。"""
+    result = await _context_block(actor, message, chat_id, chat_type, background=background)
     _log_read(actor, chat_id)
     return result
 
 
-async def _context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private") -> str:
+async def _context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private",
+                         *, background: bool = False) -> str:
     """生成前调用：返回可直接拼进背景注入的文本块；不可用时返回空串。
 
     chat_id：对话 / 房间编号，同一个对话保持不变。Hub 据此做「三轮内想起过的只提一句」
@@ -290,9 +294,10 @@ async def _context_block(actor: str, message: str, chat_id: str = "", chat_type:
         return ""
     chat_type = _chat_type(chat_type)
     if chat_type != "private" or not is_new_session(last_activity(actor)):
-        return await _incremental_block(cfg, actor, message, chat_id, chat_type)
-    handoff, incremental = await asyncio.gather(handoff_block(actor, chat_type),
-                                                _incremental_block(cfg, actor, message, chat_id, chat_type))
+        return await _incremental_block(cfg, actor, message, chat_id, chat_type, background=background)
+    handoff, incremental = await asyncio.gather(
+        handoff_block(actor, chat_type, background=background),
+        _incremental_block(cfg, actor, message, chat_id, chat_type, background=background))
     result = "\n\n".join(block for block in (handoff, incremental) if block)
     status = last_read_status.get((actor, chat_id or ""))
     if handoff and status is not None:
@@ -306,7 +311,7 @@ async def _context_block(actor: str, message: str, chat_id: str = "", chat_type:
 
 
 async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat_id: str = "",
-                             chat_type: str = "private") -> str:
+                             chat_type: str = "private", *, background: bool = False) -> str:
     source_ai = source_ai_for(actor, cfg)
     arguments = {
         "source_ai": source_ai,
@@ -317,6 +322,8 @@ async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat
     }
     if chat_id:
         arguments["chat_id"] = str(chat_id)[:200]
+    if background:
+        arguments["background"] = True
     started = time.monotonic()
     try:
         raw = await asyncio.wait_for(
@@ -353,7 +360,7 @@ def is_new_session(previous_ts: float | None, now: float | None = None) -> bool:
     return (now or time.time()) - float(previous_ts) >= NEW_SESSION_GAP_SECONDS
 
 
-async def handoff_block(actor: str, chat_type: str = "private") -> str:
+async def handoff_block(actor: str, chat_type: str = "private", *, background: bool = False) -> str:
     """新对话开头调用一次：读该 AI 的交接卡。不可用或没有卡时返回空串。
     只要 AI 自己写的主观那一半（include_objective=False）：原话由 incremental 的接续块给。"""
     cfg = load_config()
@@ -364,6 +371,8 @@ async def handoff_block(actor: str, chat_type: str = "private") -> str:
         return ""
     arguments = {"source_ai": source_ai, "mode": "handoff", "max_chars": int(cfg.get("handoff_max_chars") or 1500),
                  "chat_type": _chat_type(chat_type), "include_objective": False}
+    if background:
+        arguments["background"] = True
     try:
         raw = await asyncio.wait_for(
             _call_tool(cfg, "context", arguments),

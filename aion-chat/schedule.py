@@ -719,6 +719,7 @@ class ScheduleManager:
                     [],
                     query_text=content,
                     include_image_attachments=False,
+                    memory_hub_background=True,
                 )
             else:
                 messages_ctx, _ = await build_connor_group_context(
@@ -726,6 +727,7 @@ class ScheduleManager:
                     [],
                     query_text=content,
                     include_image_attachments=False,
+                    memory_hub_background=True,
                 )
 
             now_str = now_text()
@@ -1125,6 +1127,7 @@ class ScheduleManager:
                     [],
                     query_text=content,
                     include_image_attachments=False,
+                    memory_hub_background=True,
                 )
             else:
                 messages_ctx, _ = await build_connor_group_context(
@@ -1132,6 +1135,7 @@ class ScheduleManager:
                     [],
                     query_text=content,
                     include_image_attachments=False,
+                    memory_hub_background=True,
                 )
 
             trigger_msg = {"role": "user", "content": trigger_prompt}
