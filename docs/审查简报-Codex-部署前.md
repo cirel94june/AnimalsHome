@@ -2855,3 +2855,15 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ## 187. AIsay 的 token 可能在地址里
 
 - 公开页面写着注册后推荐「替换地址为 auto_login_url」，token 在 AI 的工具配置里。所以 `_PATH_KEY_SITES` 加 `aisay.top`，路径段除 `chatroom`、`mcp` 外当钥匙遮。实际地址形式要等小猫找到那条地址才能确认（她不用发给我，我只看形式）。
+
+## 188. 修 §185 复审的 High 和三项 Medium（`527e7ca`）
+
+- High：日志防重入改成 `threading.local`；重入时用已缓存的钥匙遮，不读配置。加并发测试。
+- M 字典键：`redact_deep` 也遮键；`names_contain_secret` 查工具名和任何一层的键名，带钥匙的整个工具不展示（遮了就调不了）。
+- M 解锁：解除「不确定的玩」要 `is_trusted_state`：能解析的 JSON 对象，没说失败，且顶层或第二层有回合、版本、余额这类字段。错误页、纯文字、看不懂的都不算。没有这些字段的游戏就一直解除不了，但只拦这一个操作，其他操作不受影响。
+- M 成功证据：
+  - 写要肯定证据：`ok` / `success` 为真、正面 status，或有 `id`、`thread_id`、`reply_id`、`post_id`、`message_id`、`floor_number`、`write_confirmation_code`。`pending` 类、`denied` 类都不算成功。
+  - 看和纯文字：像报错的页面（500、502、限流、权限）不算成功。
+  - 新状态 `UNVERIFIED`：小猫放行的新站，收到回应但不知道成没成。不确认、不清零、不算错；同一个操作结果一样时第三次拦。
+  - **玩没有要求肯定证据**：结构化或纯文字没说失败、不是 pending 就算走了这一步。这是我的取舍：游戏回执各不相同，要求证据会把正常玩拦住。后果只影响「重复同一步的拦截」和错误计数，想请你看。
+- **真实站点的成功回执字段我没见过（还没真发过帖）**，要第一次真机对照 `_WRITE_EVIDENCE_KEYS`。对不上时算不确定，这趟不再发，不会重复发。

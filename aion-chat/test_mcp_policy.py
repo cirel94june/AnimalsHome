@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -150,29 +151,75 @@ def test_child_logger_records_and_tracebacks_are_redacted(env):  # noqa: F811
     assert len(seen) == 2 and key not in "\n".join(seen)
 
 
+def test_logs_from_another_thread_are_still_redacted(env, monkeypatch):  # noqa: F811
+    """狐狸 527e7ca High：A 线程正在读钥匙时，B 线程的日志原来会原样输出。"""
+    key = "abcDEF1234567890"
+    mcp_outings.save_tool({"name": "钥匙站", "url": f"https://x.example/mcp?token={key}"})
+    mcp_outings._all_secrets()  # 先有缓存
+    original = mcp_outings._all_secrets
+    reading, release = threading.Event(), threading.Event()
+
+    def slow():
+        if threading.current_thread().name == "reader":
+            reading.set()
+            release.wait(2)
+        return original()
+    monkeypatch.setattr(mcp_outings, "_all_secrets", slow)
+    seen = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            seen.append(self.format(record))
+    handler = Keep()
+    logger = logging.getLogger("mcp_tools")
+    logger.addHandler(handler)
+    try:
+        reader = threading.Thread(target=lambda: logger.warning("甲 %s", key), name="reader")
+        reader.start()
+        assert reading.wait(2)
+        other = threading.Thread(target=lambda: logger.warning("乙 %s", key), name="other")
+        other.start()
+        other.join(2)
+        release.set()
+        reader.join(2)
+    finally:
+        logger.removeHandler(handler)
+    assert len(seen) == 2 and key not in "\n".join(seen)
+
+
 # ── 结果 ──
 
 def test_outcomes():
     assert outcome(GARDEN, WRITE, '{"ok":true,"id":5}', False) == mcp_policy.OK
+    assert outcome(GARDEN, WRITE, '{"thread_id":5}', False) == mcp_policy.OK
     assert outcome(GARDEN, WRITE, '{"write_confirmation_code":"c"}', False) == mcp_policy.OK
+    # 狐狸 527e7ca：结构化不等于成功
+    assert outcome(GARDEN, WRITE, '{"status":"pending","request_id":"q1"}', False) == mcp_policy.UNKNOWN
+    assert outcome(GARDEN, WRITE, '{"status":"denied","message":"permission denied"}', False) == mcp_policy.UNKNOWN
+    assert outcome(GARDEN, WRITE, '{"message":"收到"}', False) == mcp_policy.UNKNOWN
     assert outcome(GARDEN, WRITE, '{"ok":false,"error":"内容涉及隐私，请修改"}', False) == mcp_policy.REJECTED
     assert outcome(GARDEN, WRITE, '{"ok":false,"code":"moderation_rejected"}', False) == mcp_policy.REJECTED
-    assert outcome(GARDEN, WRITE, "审核未通过", True) == mcp_policy.UNKNOWN            # 没结构，不敢信
+    assert outcome(GARDEN, WRITE, "审核未通过", True) == mcp_policy.UNKNOWN
     assert outcome(GARDEN, WRITE, "Internal Server Error", True) == mcp_policy.UNKNOWN
-    assert outcome(GARDEN, WRITE, "Internal Server Error", False) == mcp_policy.UNKNOWN  # isError 是假的也不算成功
-    assert outcome(GARDEN, WRITE, "好的", False) == mcp_policy.UNKNOWN                  # 写操作的纯文字确认不了
+    assert outcome(GARDEN, WRITE, "Internal Server Error", False) == mcp_policy.UNKNOWN
+    assert outcome(GARDEN, WRITE, "好的", False) == mcp_policy.UNKNOWN
     assert outcome(GARDEN, WRITE, '{"ok":true,"id":', False) == mcp_policy.UNKNOWN
     assert outcome(OTHER, WRITE, '{"ok":false,"error":"违规"}', False) == mcp_policy.UNKNOWN
-    # 帖子已保存、后续失败，错误里碰巧有审核字样：不能算没生效
     assert outcome(GARDEN, WRITE, '{"ok":false,"error":"moderation notify failed, post saved"}', False) == mcp_policy.UNKNOWN
     assert outcome(GARDEN, SEE, "出错了", True) == mcp_policy.FAILED
+    assert outcome(GARDEN, SEE, "Bad Gateway", False) == mcp_policy.FAILED
     assert outcome(GARDEN, SEE, "一段文字", False) == mcp_policy.OK
     assert outcome(TOY, PLAY, '{"error":"余额不足"}', False) == mcp_policy.UNKNOWN
-    assert outcome(TOY, PLAY, "你甩出鱼竿，水面泛起涟漪。", False) == mcp_policy.OK     # 很多游戏就回一段场景
+    assert outcome(TOY, PLAY, '{"status":"pending"}', False) == mcp_policy.UNKNOWN
+    assert outcome(TOY, PLAY, "你甩出鱼竿，水面泛起涟漪。", False) == mcp_policy.OK
+    assert outcome(TOY, PLAY, '{"scene":"湖边"}', False) == mcp_policy.OK
     assert outcome(TOY, PLAY, "Internal Server Error", False) == mcp_policy.UNKNOWN
-    # 小猫放行的新站：纯文字不像报错算成功，像报错还是不确定
-    assert outcome(OTHER, WRITE, "帖子列表：1、2、3", False, plain_text_ok=True) == mcp_policy.OK
-    assert outcome(OTHER, WRITE, "Internal Server Error", False, plain_text_ok=True) == mcp_policy.UNKNOWN
+    # 小猫放行的新站：纯文字只算收到回应
+    assert outcome(OTHER, WRITE, "帖子列表：1、2、3", False, unclassified=True) == mcp_policy.UNVERIFIED
+    assert outcome(OTHER, WRITE, '{"items":[1]}', False, unclassified=True) == mcp_policy.UNVERIFIED
+    assert outcome(OTHER, WRITE, '{"ok":true}', False, unclassified=True) == mcp_policy.OK
+    assert outcome(OTHER, WRITE, "Too Many Requests; try again later", False, unclassified=True) == mcp_policy.UNKNOWN
+    assert outcome(OTHER, WRITE, "Internal Server Error", False, unclassified=True) == mcp_policy.UNKNOWN
 
 
 def test_reading_a_trusted_new_site_does_not_stop_it():
@@ -180,6 +227,18 @@ def test_reading_a_trusted_new_site_does_not_stop_it():
     assert _attempt(guard, "read_posts", {}, "帖子列表：1、2、3") is None
     assert not guard.writes_stopped and guard.confirmed == []
     assert guard.before("reply", {"text": "嗨"}) is None
+
+
+def test_unverified_answers_neither_reset_nor_count_errors_and_cannot_repeat_forever():
+    guard = TripGuard(OTHER, allow_unknown=True)
+    guard.consecutive_errors = 1
+    before = guard.consecutive_errors
+    assert before == 1
+    assert _attempt(guard, "ping", {"a": 1}, "收到") is None
+    assert guard.consecutive_errors == before  # 不清零，也不加
+    assert _attempt(guard, "ping", {"a": 1}, "收到") is None
+    assert "没有进展" in guard.before("ping", {"a": 1})  # 同一个没确认的操作不一直重复
+    assert guard.confirmed == []
 
 
 def test_fingerprint_ignores_only_known_volatile_fields():
@@ -307,7 +366,28 @@ def test_uncertain_play_is_released_only_by_the_same_games_status():
     assert "不确定" in guard.before("play", MOVE)  # 第一次查，没有可比的
     _attempt(guard, "play", STATUS, '{"coins":4}')
     assert guard.before("play", MOVE) is None
-    assert guard.writes_stopped is False
+
+
+def test_error_pages_and_unreadable_status_do_not_release_it():
+    """狐狸 527e7ca：同一游戏的 status 先回 500 再回 502，文字变了，原来就放开了。"""
+    guard = _uncertain_move()
+    _attempt(guard, "play", STATUS, "Internal Server Error")
+    _attempt(guard, "play", STATUS, "Bad Gateway")
+    assert "不确定" in guard.before("play", MOVE)
+    guard = _uncertain_move()
+    _attempt(guard, "play", STATUS, "今天天气不错")
+    _attempt(guard, "play", STATUS, "今天天气很好")
+    assert "不确定" in guard.before("play", MOVE)
+    guard = _uncertain_move()
+    _attempt(guard, "play", STATUS, '{"tip":"a"}')
+    _attempt(guard, "play", STATUS, '{"tip":"b"}')
+    assert "不确定" in guard.before("play", MOVE)
+
+
+def test_nested_state_counts():
+    assert mcp_policy.is_trusted_state('{"data":{"turn":3}}')
+    assert not mcp_policy.is_trusted_state('{"ok":false,"turn":3}')
+
 
 
 def test_queries_without_a_game_never_release_it():
@@ -427,6 +507,27 @@ def test_unclassified_site_without_the_switch_does_nothing(env, forum):  # noqa:
     model, seen = _script([("reply", {"post_id": 1, "text": "嗨"})])
     result = asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
     assert POSTS == [] and seen[0]["tools"] == [] and result["counts"]["refused"] == 1
+
+
+def test_parameter_names_with_keys_hide_the_whole_tool(env):  # noqa: F811
+    """狐狸 527e7ca：字典键里的钥匙原来遮不到。"""
+    key = "abcDEF1234567890"
+    mcp_outings.save_tool({"name": "小论坛", "url": f"https://a.example/mcp?token={key}", "allow_unknown": True})
+
+    class Session(_FakeSession):
+        tools = [
+            {"type": "function", "function": {"name": "good", "description": "", "parameters": {"properties": {"a": {}}}}},
+            {"type": "function", "function": {"name": "bad", "description": "", "parameters": {"properties": {key: {"type": "string"}}}}},
+        ]
+    model, seen = _script()
+    with patch.object(mcp_outings, "_Session", Session):
+        asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
+    assert [t["function"]["name"] for t in seen[0]["tools"]] == ["good"]
+    assert key not in json.dumps(seen[0], ensure_ascii=False)
+
+
+def test_redact_deep_covers_dict_keys():
+    assert mcp_policy.redact_deep(["KEY1"], {"KEY1": "a", "b": ["KEY1"]}) == {"***": "a", "b": ["***"]}
 
 
 def test_tool_descriptions_and_names_with_keys_never_reach_the_model(env):  # noqa: F811

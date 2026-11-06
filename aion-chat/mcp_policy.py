@@ -48,7 +48,15 @@ _ARG_DEPENDENT = {("aisay.top", "cli"), ("galatea.abysslumina.com", "nostos_act"
 _REJECT_SITES = {"galatea.abysslumina.com", "aisay.top"}
 _REJECT_WORDS = re.compile(r"审核|违规|违禁|敏感|隐私|不合规|不允许|禁止|moderat|forbidden|not allowed|policy|invalid_|参数", re.I)
 _PARTIAL_WORDS = re.compile(r"已保存|已发布|已发送|已经发|saved|published|posted|created|but ", re.I)
-_LOOKS_LIKE_ERROR = re.compile(r"internal server error|bad gateway|service unavailable|traceback|exception|\berror\b|\bfailed\b|报错|出错|失败|错误", re.I)
+_LOOKS_LIKE_ERROR = re.compile(r"internal server error|bad gateway|service unavailable|gateway timeout|too many requests"
+                               r"|rate limit|try again later|permission denied|forbidden|unauthorized|traceback|exception"
+                               r"|\berror\b|\bfailed\b|报错|出错|失败|错误|稍后再试|没有权限", re.I)
+_NEGATIVE_STATUS = {"error", "failed", "failure", "denied", "rejected", "forbidden", "unauthorized"}
+_PENDING_STATUS = {"pending", "queued", "processing", "accepted", "in_progress"}
+_POSITIVE_STATUS = {"ok", "success", "succeeded", "created", "published", "posted", "done"}
+_WRITE_EVIDENCE_KEYS = ("id", "thread_id", "reply_id", "post_id", "message_id", "floor_number", "write_confirmation_code")
+_STATE_KEYS = ("turn", "round", "revision", "version", "state_version", "tick", "day", "step", "balance", "coins",
+               "inventory", "action_log", "history", "last_action")
 _VOLATILE_KEYS = {"timestamp", "ts", "time", "now", "server_time", "servertime", "generated_at", "request_id",
                   "requestid", "trace_id", "traceid", "elapsed", "elapsed_ms", "latency", "latency_ms", "duration_ms"}
 # 路径里的钥匙按站点规则取，不靠「长得像不像钥匙」猜（狐狸方案审查）
@@ -190,15 +198,29 @@ def redact_deep(secrets: list[str], value: Any) -> Any:
     if isinstance(value, str):
         return redact_with(secrets, value)
     if isinstance(value, dict):
-        return {k: redact_deep(secrets, v) for k, v in value.items()}
+        return {redact_with(secrets, k) if isinstance(k, str) else k: redact_deep(secrets, v) for k, v in value.items()}
     if isinstance(value, list):
         return [redact_deep(secrets, v) for v in value]
     return value
 
 
+def names_contain_secret(secrets: list[str], function: dict[str, Any]) -> bool:
+    """工具名或任何一层的键名带钥匙。这些不能只遮：调用时要用原名，所以整个工具不展示。"""
+    def keys_of(value: Any):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield str(key)
+                yield from keys_of(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from keys_of(item)
+    names = [str(function.get("name") or ""), *keys_of(function.get("parameters"))]
+    return any(secret and secret in name for name in names for secret in secrets)
+
+
 # ── 结果 ──
 
-OK, REJECTED, FAILED, UNKNOWN = "ok", "rejected", "failed", "unknown"
+OK, REJECTED, FAILED, UNKNOWN, UNVERIFIED = "ok", "rejected", "failed", "unknown", "unverified"
 
 
 def _strip_volatile(value: Any) -> Any:
@@ -217,8 +239,9 @@ def fingerprint(text: str) -> str:
         return str(text).strip()
 
 
-def outcome(server: dict[str, Any], kind: str, text: str, is_error: bool, *, plain_text_ok: bool = False) -> str:
-    """HTTP 状态和 isError 只是判断材料。写和玩：确认成功才算成功，看不懂一律不确定（狐狸 a4fd66d M3）。"""
+def outcome(server: dict[str, Any], kind: str, text: str, is_error: bool, *, unclassified: bool = False) -> str:
+    """HTTP 状态和 isError 只是判断材料。写：要有肯定证据才算成功（狐狸 527e7ca）。
+    UNVERIFIED 只用于小猫放行的新站：收到回应，不知道成没成，不确认、不清零、也不算错。"""
     stripped = str(text or "").strip()
     parsed: Any = None
     broken = False
@@ -227,23 +250,47 @@ def outcome(server: dict[str, Any], kind: str, text: str, is_error: bool, *, pla
             parsed = json.loads(stripped)
         except ValueError:
             broken = True
-    said_no = False
+    said_no = pending = False
     if isinstance(parsed, dict):
         flag = parsed.get("ok", parsed.get("success"))
-        said_no = flag is False or bool(parsed.get("error")) or parsed.get("status") in ("error", "failed")
+        status = str(parsed.get("status") or "").strip().lower()
+        said_no = flag is False or bool(parsed.get("error")) or status in _NEGATIVE_STATUS
+        pending = status in _PENDING_STATUS
+    looks_bad = not isinstance(parsed, (dict, list)) and bool(_LOOKS_LIKE_ERROR.search(stripped))
     if kind not in (WRITE, PLAY):
-        return FAILED if is_error or said_no or broken else OK
-    if broken:
+        return FAILED if is_error or said_no or broken or looks_bad else OK
+    if broken or looks_bad or pending:
         return UNKNOWN
     if said_no or is_error:
         return REJECTED if _clearly_rejected(server, parsed) else UNKNOWN
-    if isinstance(parsed, (dict, list)) and parsed:
-        return OK  # 结构化的回复，又没说失败
-    # 纯文字：写操作确认不了发没发出去。玩的时候很多游戏就是回一段场景，不像报错就算成功
-    # plain_text_ok：小猫放行的新站，工具不分读写，很多只回纯文字，不能读一次就判成「写入不确定」
-    if (kind == PLAY or plain_text_ok) and stripped and not _LOOKS_LIKE_ERROR.search(stripped):
+    if _has_success_evidence(parsed):
         return OK
+    if unclassified:
+        return UNVERIFIED
+    if kind == PLAY and (parsed or stripped):
+        return OK  # 游戏回的场景、状态各不相同，没说失败就算走了这一步；只影响重复同一步的拦截
     return UNKNOWN
+
+
+def _has_success_evidence(parsed: Any) -> bool:
+    if not isinstance(parsed, dict):
+        return False
+    flag = parsed.get("ok", parsed.get("success"))
+    if flag is True or str(parsed.get("status") or "").strip().lower() in _POSITIVE_STATUS:
+        return True
+    return any(parsed.get(key) not in (None, "") for key in _WRITE_EVIDENCE_KEYS)
+
+
+def is_trusted_state(text: str) -> bool:
+    """解除「不确定的玩」要比普通读取更严：要是能看懂的状态，有回合、版本这类字段。错误页、看不懂的都不算。"""
+    try:
+        parsed = json.loads(str(text or ""))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict) or parsed.get("error") or parsed.get("ok") is False or parsed.get("success") is False:
+        return False
+    holders = [parsed] + [v for v in parsed.values() if isinstance(v, dict)]
+    return any(key in holder for holder in holders for key in _STATE_KEYS)
 
 
 def _clearly_rejected(server: dict[str, Any], parsed: Any) -> bool:
@@ -330,7 +377,7 @@ class TripGuard:
         self.writes += kind == WRITE
         self.plays += kind == PLAY
         unclassified = classify(self.server, tool, args) == NEW
-        result = outcome(self.server, kind, text, is_error, plain_text_ok=unclassified)
+        result = outcome(self.server, kind, text, is_error, unclassified=unclassified)
         self._note_progress(kind, tool, args, text, result)
         if result == OK:
             self.consecutive_errors = 0  # 业务成功才重置，HTTP 200 不算
@@ -381,7 +428,7 @@ class TripGuard:
             self._streak.clear()
             scope = _scope_of(tool, args)
             # 不确定的玩：只认同一局的状态查询。指南在 SEE 里但不算状态，没有局的查询什么都解除不了
-            if scope and tool not in _NOT_STATE_TOOLS:
+            if scope and tool not in _NOT_STATE_TOOLS and is_trusted_state(text):
                 self._held_plays = {op: g for op, g in self._held_plays.items() if g != scope}
         elif kind == PLAY:
             self._streak.clear()

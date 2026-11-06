@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import time
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable
@@ -79,19 +80,17 @@ def redact_everything(text: Any) -> str:
 
 
 _previous_record_factory = logging.getLogRecordFactory()
-_redacting_record = False
+_log_state = threading.local()  # 每个线程自己一份：全局标记会让别的线程趁机漏过去（狐狸 527e7ca High）
 
 
 def _redacting_record_factory(*args, **kwargs):
-    """所有日志记录创建时就遮（狐狸 a4fd66d High）：挂在 logger 上的过滤器管不到子 logger（httpcore.http11），
-    也管不到异常堆栈。这里两个都管，读配置时打出来的日志不再进来。"""
-    global _redacting_record
+    """所有日志记录创建时就遮：挂在 logger 上的过滤器管不到子 logger（httpcore.http11），也管不到异常堆栈。
+    读配置时自己打出来的日志，用已缓存的钥匙遮，不再去读配置。"""
     record = _previous_record_factory(*args, **kwargs)
-    if _redacting_record:
-        return record
-    _redacting_record = True
+    reentered = getattr(_log_state, "busy", False)
+    _log_state.busy = True
     try:
-        secrets = _all_secrets()
+        secrets = _secret_cache[1] if reentered else _all_secrets()
         if secrets:
             message = record.getMessage()
             clean = mcp_policy.redact_with(secrets, message)
@@ -102,7 +101,7 @@ def _redacting_record_factory(*args, **kwargs):
     except Exception:
         pass
     finally:
-        _redacting_record = False
+        _log_state.busy = reentered
     return record
 
 
@@ -468,9 +467,9 @@ async def run_outing(
     async def loop():
         async with _Session(server) as session:
             secrets = mcp_policy.known_secrets(server)
-            # 工具名里带钥匙的不展示（调用要用原名，遮了也调不了）；说明和参数说明遮掉
+            # 工具名、参数名里带钥匙的不展示（调用要用原名，遮了就调不了）；说明遮掉
             tools = [mcp_policy.redact_deep(secrets, t) for t in session.tools
-                     if mcp_policy.redact_with(secrets, t["function"]["name"]) == t["function"]["name"]
+                     if not mcp_policy.names_contain_secret(secrets, t["function"])
                      and mcp_policy.visible_to_model(server, t["function"]["name"], can_write=guard.can_write,
                                                      allow_unknown=guard.allow_unknown)]
             for round_no in range(MAX_ROUNDS):
