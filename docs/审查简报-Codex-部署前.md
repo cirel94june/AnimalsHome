@@ -2786,5 +2786,5 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 行为变化：`test_seat_location` 三项钉的是旧规则（只有户外、丢掉不认识的词），已按新规则改。
 - 新增 POI 能力在家也会注入，多占一点提示词。
 - 没改、要提醒的：POI 结果里的店名来自商家，续答（`perform_poi_check`、`_chatroom_poi_check`）仍进 `_process_background_reply_commands`。和 §171 M2、联网搜索是同一类老问题，这次没动。
-- 测试 `test_poi_search.py` 11 项。相关 105 个文件 1062 过、8 败；这 8 项放到改动前的版本上同样失败（聊天室系统提示样式 2、手环 2、friend_visit 1、米环健康 1、triggered reasoning 2）。全量没跑。没有真的让 AI 搜过。
+- 测试 `test_poi_search.py` 10 项。相关 105 个文件 1062 过、8 败；这 8 项放到改动前的版本上同样失败（聊天室系统提示样式 2、手环 2、friend_visit 1、米环健康 1、triggered reasoning 2）。全量没跑。没有真的让 AI 搜过。
 - **部署**：这个提交在 §178 之后，要等 Hub 的 background 上线才能一起部署。
