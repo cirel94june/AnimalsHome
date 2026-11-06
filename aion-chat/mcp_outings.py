@@ -78,22 +78,35 @@ def redact_everything(text: Any) -> str:
     return mcp_policy.redact_with(_all_secrets(), text)
 
 
-class _RedactLogs(logging.Filter):
-    """httpx、mcp 自己的日志也可能打出完整地址。"""
+_previous_record_factory = logging.getLogRecordFactory()
+_redacting_record = False
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
+
+def _redacting_record_factory(*args, **kwargs):
+    """所有日志记录创建时就遮（狐狸 a4fd66d High）：挂在 logger 上的过滤器管不到子 logger（httpcore.http11），
+    也管不到异常堆栈。这里两个都管，读配置时打出来的日志不再进来。"""
+    global _redacting_record
+    record = _previous_record_factory(*args, **kwargs)
+    if _redacting_record:
+        return record
+    _redacting_record = True
+    try:
+        secrets = _all_secrets()
+        if secrets:
             message = record.getMessage()
-            clean = redact_everything(message)
+            clean = mcp_policy.redact_with(secrets, message)
             if clean != message:
                 record.msg, record.args = clean, ()
-        except Exception:
-            pass
-        return True
+            if record.exc_info:
+                record.exc_text = mcp_policy.redact_with(secrets, logging.Formatter().formatException(record.exc_info))
+    except Exception:
+        pass
+    finally:
+        _redacting_record = False
+    return record
 
 
-for _name in ("httpx", "httpcore", "mcp", "mcp.client.streamable_http", "mcp.client.sse", "mcp_outings", "mcp_tools"):
-    logging.getLogger(_name).addFilter(_RedactLogs())
+logging.setLogRecordFactory(_redacting_record_factory)
 
 
 def list_tools() -> list[dict[str, Any]]:
@@ -366,6 +379,7 @@ async def test_tool(name: str) -> dict[str, Any]:
 
 def _compact(messages: list[dict], guard: mcp_policy.TripGuard) -> list[dict]:
     """给模型的那份：旧的长篇工具结果截短，加上账本。原始记录不动。"""
+    secrets = mcp_policy.known_secrets(guard.server)
     keep_from = max(1, len(messages) - FULL_HISTORY_MESSAGES)
     out = []
     for index, message in enumerate(messages):
@@ -375,7 +389,7 @@ def _compact(messages: list[dict], guard: mcp_policy.TripGuard) -> list[dict]:
     ledger = guard.ledger()
     if ledger and out and out[0].get("role") == "system":
         out[0] = {**out[0], "content": f"{out[0]['content']}\n\n{ledger}"}
-    return out
+    return mcp_policy.redact_deep(secrets, out)  # 真实调用用的是模型给的参数，不走这份
 
 
 def _system_prompt(actor_name: str, user_name: str, server: dict[str, Any], purpose: str) -> str:
@@ -453,9 +467,12 @@ async def run_outing(
 
     async def loop():
         async with _Session(server) as session:
-            tools = [t for t in session.tools
-                     if mcp_policy.visible_to_model(server, t["function"]["name"], can_write=guard.can_write,
-                                                    allow_unknown=guard.allow_unknown)]
+            secrets = mcp_policy.known_secrets(server)
+            # 工具名里带钥匙的不展示（调用要用原名，遮了也调不了）；说明和参数说明遮掉
+            tools = [mcp_policy.redact_deep(secrets, t) for t in session.tools
+                     if mcp_policy.redact_with(secrets, t["function"]["name"]) == t["function"]["name"]
+                     and mcp_policy.visible_to_model(server, t["function"]["name"], can_write=guard.can_write,
+                                                     allow_unknown=guard.allow_unknown)]
             for round_no in range(MAX_ROUNDS):
                 result = await model_call(model_key, _compact(messages, guard), tools)
                 calls = result.get("tool_calls") or []
@@ -476,7 +493,7 @@ async def run_outing(
                         text = f"一轮最多做 {mcp_policy.MAX_CALLS_PER_ROUND} 件事，这个没有执行。"
                     else:
                         text = await one_call(session, name, args)
-                    actions.append(f"{name} → {text[:120]}")
+                    actions.append(mcp_policy.redact(server, f"{name} → {text}")[:160])
                     messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": text[:4000]})
                 if guard.should_stop:
                     return  # 连续出错太多次：回家，不接着烧额度
@@ -502,4 +519,5 @@ async def run_outing(
     summary = strip_untrusted_reply(mcp_policy.redact(server, final.get("content") or "")).strip()[:SUMMARY_MAX_CHARS]
     if not summary:
         raise RuntimeError("模型没有返回见闻")
-    return {"summary": summary, "actions": actions, "model": model_key, "counts": guard.counts()}
+    return {"summary": summary, "actions": mcp_policy.redact_deep(mcp_policy.known_secrets(server), actions),
+            "model": model_key, "counts": guard.counts()}

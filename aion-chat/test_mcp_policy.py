@@ -32,8 +32,12 @@ OTHER = {"url": "https://other.example/mcp"}
     (GARDEN, "interact", {"action": "delete"}, BAN),
     (GARDEN, "brand_new_tool", {}, NEW),
     (TOY, "play", {"game": "fishing", "action": "cast"}, PLAY),
-    (TOY, "play", {"game": "x", "action": "send_message"}, WRITE),  # 游戏里的公开发言算写
-    (TOY, "play", {"action": "rotate_token"}, BAN),
+    (TOY, "play", {"game": "fishing", "action": "status"}, SEE),
+    (TOY, "play", {"game": "fishing", "action": "send_message"}, WRITE),  # 游戏里的公开发言算写
+    (TOY, "play", {"game": "fishing", "params": {"command": "post hello"}}, WRITE),
+    (TOY, "play", {"game": "duel", "action": "move"}, NEW),               # 棋牌和多人的没列
+    (TOY, "play", {"action": "cast"}, NEW),                               # 不知道哪个游戏
+    (TOY, "play", {"game": "fishing", "action": "rotate_token"}, BAN),
     (TOY, "account", {"action": "login"}, BAN),
     (TOY, "get_guide", {}, SEE),
     (AISAY, "cli", {"command": "help", "args": {"path": "account.login"}}, SEE),
@@ -42,6 +46,12 @@ OTHER = {"url": "https://other.example/mcp"}
     (AISAY, "cli", {"command": "chat.send", "args": {"content": "嗨"}}, WRITE),
     (AISAY, "cli", {"command": "chat.send", "args": {"action": "retract"}}, BAN),
     (AISAY, "cli", {"command": "play.linkgame.move"}, PLAY),
+    (AISAY, "cli", {"command": "play.anything"}, NEW),
+    # 狐狸 a4fd66d M1 的反例
+    (AISAY, "cli", {"command": "play.linkgame.move", "args": {"action": "chat.send"}}, WRITE),
+    (AISAY, "cli", {"command": "play.anything", "args": {"action": "rotate_token"}}, BAN),
+    (AISAY, "cli", {"command": "play.anything", "action": "chat.send"}, NEW),
+    (GARDEN, "nostos_act", {"command": {"id": "delete_account"}}, BAN),
     (AISAY, "cli", {"command": "account.login"}, BAN),
     (AISAY, "cli", {"command": "account.rotate_token"}, BAN),
     (AISAY, "cli", {"command": "stall.buy"}, NEW),
@@ -90,7 +100,8 @@ def test_url_secrets_follow_site_rules_not_appearance():
     assert "onlylettersisakey" not in mcp_policy.redact(token_site, token_site["url"])
     # 没规则的站：长得像钥匙的资源 ID 不误伤
     assert mcp_policy.redact(OTHER, "帖子 abc123def456ghi789jkl") == "帖子 abc123def456ghi789jkl"
-    assert mcp_policy.redact(AISAY, "连接 https://aisay.top/chatroom/mcp") == "连接 https://aisay.top/chatroom/mcp"
+    assert mcp_policy.redact(AISAY, "连接 https://aisay.top/chatroom/mcp") == "连接 ***"  # 完整地址一律遮
+    assert "other.example" not in mcp_policy.redact(OTHER, "连接 https://other.example/mcp")
 
 
 def test_query_values_only_for_auth_names_and_encoded_forms():
@@ -100,24 +111,64 @@ def test_query_values_only_for_auth_names_and_encoded_forms():
     assert "https://a.example" not in mcp_policy.redact(server, server["url"])
 
 
-def test_log_records_are_redacted(env):  # noqa: F811
-    mcp_outings.save_tool({"name": "钥匙站", "url": "https://x.example/mcp?token=abcDEF1234567890"})
-    record = logging.LogRecord("httpx", logging.INFO, "", 0, "HTTP Request: POST %s", ("https://x.example/mcp?token=abcDEF1234567890",), None)
-    assert mcp_outings._RedactLogs().filter(record)
-    assert "abcDEF1234567890" not in record.getMessage()
+def test_child_logger_records_and_tracebacks_are_redacted(env):  # noqa: F811
+    """狐狸 a4fd66d High：httpcore.http11 这种子 logger 原来管不到。"""
+    key = "abcDEF1234567890"
+    mcp_outings.save_tool({"name": "钥匙站", "url": f"https://x.example/mcp?token={key}"})
+    seen = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            seen.append(self.format(record))
+    handler = Keep()
+    child = logging.getLogger("httpcore.http11")
+    child.addHandler(handler)
+    previous = child.level
+    child.setLevel(logging.INFO)
+    try:
+        child.info("send %s", f"https://x.example/mcp?token={key}")
+        try:
+            raise RuntimeError(f"连不上 token={key}")
+        except RuntimeError:
+            logging.getLogger("mcp_tools").addHandler(handler)
+            logging.getLogger("mcp_tools").exception("出错")
+            logging.getLogger("mcp_tools").removeHandler(handler)
+    finally:
+        child.removeHandler(handler)
+        child.setLevel(previous)
+    assert len(seen) == 2 and key not in "\n".join(seen)
 
 
 # ── 结果 ──
 
 def test_outcomes():
     assert outcome(GARDEN, WRITE, '{"ok":true,"id":5}', False) == mcp_policy.OK
+    assert outcome(GARDEN, WRITE, '{"write_confirmation_code":"c"}', False) == mcp_policy.OK
     assert outcome(GARDEN, WRITE, '{"ok":false,"error":"内容涉及隐私，请修改"}', False) == mcp_policy.REJECTED
-    assert outcome(GARDEN, WRITE, "审核未通过", True) == mcp_policy.REJECTED
+    assert outcome(GARDEN, WRITE, '{"ok":false,"code":"moderation_rejected"}', False) == mcp_policy.REJECTED
+    assert outcome(GARDEN, WRITE, "审核未通过", True) == mcp_policy.UNKNOWN            # 没结构，不敢信
     assert outcome(GARDEN, WRITE, "Internal Server Error", True) == mcp_policy.UNKNOWN
-    assert outcome(GARDEN, WRITE, '{"ok":true,"id":', False) == mcp_policy.UNKNOWN   # 损坏的 JSON 不算没发出去
-    assert outcome(OTHER, WRITE, '{"ok":false,"error":"违规"}', False) == mcp_policy.UNKNOWN  # 没见过的站不敢信
+    assert outcome(GARDEN, WRITE, "Internal Server Error", False) == mcp_policy.UNKNOWN  # isError 是假的也不算成功
+    assert outcome(GARDEN, WRITE, "好的", False) == mcp_policy.UNKNOWN                  # 写操作的纯文字确认不了
+    assert outcome(GARDEN, WRITE, '{"ok":true,"id":', False) == mcp_policy.UNKNOWN
+    assert outcome(OTHER, WRITE, '{"ok":false,"error":"违规"}', False) == mcp_policy.UNKNOWN
+    # 帖子已保存、后续失败，错误里碰巧有审核字样：不能算没生效
+    assert outcome(GARDEN, WRITE, '{"ok":false,"error":"moderation notify failed, post saved"}', False) == mcp_policy.UNKNOWN
     assert outcome(GARDEN, SEE, "出错了", True) == mcp_policy.FAILED
+    assert outcome(GARDEN, SEE, "一段文字", False) == mcp_policy.OK
     assert outcome(TOY, PLAY, '{"error":"余额不足"}', False) == mcp_policy.UNKNOWN
+    assert outcome(TOY, PLAY, "你甩出鱼竿，水面泛起涟漪。", False) == mcp_policy.OK     # 很多游戏就回一段场景
+    assert outcome(TOY, PLAY, "Internal Server Error", False) == mcp_policy.UNKNOWN
+    # 小猫放行的新站：纯文字不像报错算成功，像报错还是不确定
+    assert outcome(OTHER, WRITE, "帖子列表：1、2、3", False, plain_text_ok=True) == mcp_policy.OK
+    assert outcome(OTHER, WRITE, "Internal Server Error", False, plain_text_ok=True) == mcp_policy.UNKNOWN
+
+
+def test_reading_a_trusted_new_site_does_not_stop_it():
+    guard = TripGuard(OTHER, allow_unknown=True)
+    assert _attempt(guard, "read_posts", {}, "帖子列表：1、2、3") is None
+    assert not guard.writes_stopped and guard.confirmed == []
+    assert guard.before("reply", {"text": "嗨"}) is None
 
 
 def test_fingerprint_ignores_only_known_volatile_fields():
@@ -130,7 +181,7 @@ def test_fingerprint_ignores_only_known_volatile_fields():
 
 # ── 打转 ──
 
-MOVE = {"game": "x", "action": "click"}
+MOVE = {"game": "fishing", "action": "click"}
 MISS = '{"ok":false,"error":"没点中","timestamp":%d}'
 
 
@@ -223,23 +274,48 @@ def test_500_and_broken_json_after_a_post_count_as_uncertain(server_error):
     assert guard.writes_stopped
 
 
-def test_uncertain_play_holds_that_move_until_related_state_changes():
+STATUS = {"game": "fishing", "action": "status"}
+
+
+def _uncertain_move():
     guard = TripGuard(TOY)
     guard.before("play", MOVE)
     guard.after_exception("play", MOVE)
+    return guard
+
+
+def test_uncertain_play_is_released_only_by_the_same_games_status():
+    guard = _uncertain_move()
     assert "不确定" in guard.before("play", MOVE)
-    assert guard.before("play", {"game": "x", "action": "look"}) is None  # 别的操作照常
-    # 别的游戏的状态变了，不解除
-    other = {"game": "y"}
-    _attempt(guard, "get_guide", other, '{"coins":5}')
-    _attempt(guard, "get_guide", other, '{"coins":4}')
-    assert "不确定" in guard.before("play", MOVE)
-    # 同一个游戏的状态变了才解除
-    same = {"game": "x"}
-    _attempt(guard, "get_guide", same, '{"coins":5}')
-    _attempt(guard, "get_guide", same, '{"coins":4}')
+    assert guard.before("play", {"game": "fishing", "action": "look_around"}) is None  # 别的操作照常
+    other = {"game": "leek", "action": "status"}
+    _attempt(guard, "play", other, '{"coins":5}')
+    _attempt(guard, "play", other, '{"coins":4}')
+    assert "不确定" in guard.before("play", MOVE)  # 别的游戏变了，不解除
+    _attempt(guard, "play", STATUS, '{"coins":5}')
+    assert "不确定" in guard.before("play", MOVE)  # 第一次查，没有可比的
+    _attempt(guard, "play", STATUS, '{"coins":4}')
     assert guard.before("play", MOVE) is None
     assert guard.writes_stopped is False
+
+
+def test_queries_without_a_game_never_release_it():
+    """狐狸 a4fd66d M2：买东西超时后，两次 list_games 不一样，原来就放开了。"""
+    guard = _uncertain_move()
+    _attempt(guard, "list_games", {}, '{"games":[1]}')
+    _attempt(guard, "list_games", {}, '{"games":[1,2]}')
+    assert "不确定" in guard.before("play", MOVE)
+
+
+def test_guide_changes_and_error_text_do_not_release_it():
+    guard = _uncertain_move()
+    guide = {"game": "fishing"}
+    _attempt(guard, "get_guide", guide, '{"guide":"a"}')
+    _attempt(guard, "get_guide", guide, '{"guide":"b"}')
+    assert "不确定" in guard.before("play", MOVE)
+    _attempt(guard, "play", STATUS, '{"ok":false,"error":"忙"}')
+    _attempt(guard, "play", STATUS, '{"ok":false,"error":"很忙"}')
+    assert "不确定" in guard.before("play", MOVE)
 
 
 def test_eight_errors_in_a_row_end_the_trip_and_a_success_resets():
@@ -340,6 +416,26 @@ def test_unclassified_site_without_the_switch_does_nothing(env, forum):  # noqa:
     model, seen = _script([("reply", {"post_id": 1, "text": "嗨"})])
     result = asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
     assert POSTS == [] and seen[0]["tools"] == [] and result["counts"]["refused"] == 1
+
+
+def test_tool_descriptions_and_names_with_keys_never_reach_the_model(env):  # noqa: F811
+    """狐狸 a4fd66d High。"""
+    key = "abcDEF1234567890"
+    mcp_outings.save_tool({"name": "小论坛", "url": f"https://a.example/mcp?token={key}", "allow_unknown": True})
+
+    class Session(_FakeSession):
+        tools = [
+            {"type": "function", "function": {"name": "read_posts", "description": f"连 {key}",
+                                              "parameters": {"properties": {"a": {"description": f"钥匙 {key}"}}}}},
+            {"type": "function", "function": {"name": f"tool_{key}", "description": "", "parameters": {}}},
+        ]
+    model, seen = _script([(f"tool_{key}", {})])
+    with patch.object(mcp_outings, "_Session", Session):
+        result = asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
+    assert key not in json.dumps(seen[0], ensure_ascii=False)
+    assert [t["function"]["name"] for t in seen[0]["tools"]] == ["read_posts"]
+    assert key not in json.dumps({k: result[k] for k in ("actions", "counts")}, ensure_ascii=False)
+    assert key not in json.dumps(seen[1]["messages"], ensure_ascii=False)
 
 
 def test_summary_has_no_action_tags_or_keys(env):  # noqa: F811

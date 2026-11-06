@@ -23,6 +23,7 @@ _BAN_WORD = re.compile(r"delete|remove|withdraw|retract|revoke|recall|update_pro
                        r"|rotate|token|password|credential", re.I)
 _BAN_ACTIONS = {"delete", "remove", "withdraw", "retract", "revoke", "recall", "edit"}
 _PUBLIC_WORD = re.compile(r"chat|say|post|comment|publish|message|send|share|reply", re.I)  # 游戏里的公开发言算写
+_STATUS_WORD = re.compile(r"^(?:status|state|look|view|info|my_status|my_saves)$", re.I)     # 查状态，算看
 
 # 已知站点。没写在这里的工具算没分类，默认拒绝。
 _GALATEA = {
@@ -39,16 +40,27 @@ KNOWN_SITES = {"galatea.abysslumina.com": _GALATEA, "toy.cedarstar.org": _TOY}
 _NOSTOS_ACTIONS = {"start", "buy", "sell", "drink", "eat", "resume"}  # 工具说明里写明的，都是游戏内部的
 _AISAY_SEE = {"help", "chat.read", "chat.wait", "account.whoami"}
 _AISAY_WRITE = {"chat.send", "chat.upload_image"}
+_AISAY_PLAY_GROUPS = ("play.linkgame", "play.horror")  # 只列说明里见过的；其他的算没分类
+# 4399 里一个人玩、不和别人互动的。duel（棋牌）、turtle_soup、shared_craft 这类多人的没列
+_TOY_GAMES = {"tarot", "ai_life", "detroit", "fishing", "bar", "forest", "moonlit", "eco", "ciyuwu", "leek", "delve",
+              "nowhere", "travel", "arcade", "burger", "crucible_echoes", "imitator_td", "puzzle_box", "memoria",
+              "white_room", "candle", "market", "workkk", "garden_cat", "camping_plaza", "autochess",
+              "mbti", "enneagram", "dnd", "love", "ecr", "humanity", "sins_virtues", "bdsmtest", "bsfl", "bsr", "evs",
+              "ipip_adhd", "ipip_empathy", "ipip_need_for_cognition", "ipip_self_monitoring", "ipip_sociability",
+              "irrc", "jrrs", "mesx", "ppts", "rbi", "rnss", "romlon", "ross", "rss"}
 # 靠参数才知道做什么的工具，模型要看得到，由 TripGuard 按次判断
 _ARG_DEPENDENT = {("aisay.top", "cli"), ("galatea.abysslumina.com", "nostos_act"),
                   ("galatea.abysslumina.com", "review_drift_bottles"), ("toy.cedarstar.org", "play")}
 # 这些站明确拒绝时算「没生效」，可以改了再发。没写的站一律算不确定：宁可少发，不重复发
 _REJECT_SITES = {"galatea.abysslumina.com", "aisay.top"}
 _REJECT_WORDS = re.compile(r"审核|违规|违禁|敏感|隐私|不合规|不允许|禁止|moderat|forbidden|not allowed|policy|invalid_|参数", re.I)
+_PARTIAL_WORDS = re.compile(r"已保存|已发布|已发送|已经发|saved|published|posted|created|but ", re.I)
+_LOOKS_LIKE_ERROR = re.compile(r"internal server error|bad gateway|service unavailable|traceback|exception|\berror\b|\bfailed\b|报错|出错|失败|错误", re.I)
 _VOLATILE_KEYS = {"timestamp", "ts", "time", "now", "server_time", "servertime", "generated_at", "request_id",
                   "requestid", "trace_id", "traceid", "elapsed", "elapsed_ms", "latency", "latency_ms", "duration_ms"}
 # 路径里的钥匙按站点规则取，不靠「长得像不像钥匙」猜（狐狸方案审查）
 _PATH_KEY_SITES = {"toy.cedarstar.org"}
+_NOT_STATE_TOOLS = {"get_guide", "list_games", "get_tool_schema", "help"}
 _NOT_A_KEY_SEGMENT = {"mcp", "sse", "api", "chatroom"}
 _QUERY_KEY_NAMES = re.compile(r"^(?:key|api_?key|token|access_?token|auth|authorization|secret|password|pwd)$", re.I)
 
@@ -57,13 +69,29 @@ def site_of(server: dict[str, Any]) -> str:
     return (urlsplit(str(server.get("url") or "")).hostname or "").lower()
 
 
+def _sub_actions(args: dict[str, Any]) -> list[str]:
+    """这次调用实际要做的事：外层、args 里、params 里的 action / operation / command 都算。"""
+    found: list[str] = []
+    for holder in (args, args.get("args"), args.get("params")):
+        if not isinstance(holder, dict):
+            continue
+        for key in ("action", "operation", "command"):
+            value = holder.get(key)
+            if isinstance(value, dict):
+                value = value.get("id") or value.get("action")
+            if value:
+                found.append(str(value).strip().lower())
+    return found
+
+
 def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = None) -> str:
     args = args if isinstance(args, dict) else {}
     site = site_of(server)
-    action = str(args.get("action") or args.get("operation") or "").strip().lower()
+    subs = _sub_actions(args)
     if site == "aisay.top" and tool == "cli":
-        return _classify_aisay(str(args.get("command") or ""), args)
-    if action in _BAN_ACTIONS or _BAN_WORD.search(action):
+        return _classify_aisay(str(args.get("command") or ""), subs)
+    # 先统一查禁止项：放行和游戏都不能绕过（狐狸 a4fd66d M1：nostos_act 的 delete_account）
+    if any(sub in _BAN_ACTIONS or _BAN_WORD.search(sub) for sub in subs):
         return BAN
     if site == "galatea.abysslumina.com":
         if tool == "nostos_act":
@@ -72,7 +100,7 @@ def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = No
         if tool == "review_drift_bottles":
             return WRITE if args.get("decisions") else SEE  # 不传 decisions 只是读信
     if site == "toy.cedarstar.org" and tool == "play":
-        return WRITE if _PUBLIC_WORD.search(action) else PLAY
+        return _classify_toy_play(str(args.get("game") or ""), subs)
     table = KNOWN_SITES.get(site)
     if table:
         for kind in (BAN, SEE, PLAY, WRITE):
@@ -81,19 +109,31 @@ def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = No
     return BAN if _BAN_WORD.search(tool) else NEW
 
 
-def _classify_aisay(command: str, args: dict[str, Any]) -> str:
-    inner = args.get("args") if isinstance(args.get("args"), dict) else {}
-    action = str(inner.get("action") or "").strip().lower()
-    if action in _BAN_ACTIONS:
-        return BAN
-    if command in _AISAY_SEE:
+def _classify_toy_play(game: str, subs: list[str]) -> str:
+    """按游戏成组放行，不是「除了发言都算玩」：没列的游戏（棋牌、多人的）算没分类。"""
+    if game.lower() not in _TOY_GAMES and not game.lower().startswith("dt_"):
+        return NEW
+    if any(_PUBLIC_WORD.search(sub) for sub in subs):
+        return WRITE
+    if subs and all(_STATUS_WORD.match(sub) for sub in subs):
         return SEE
-    if command.startswith("account") or _BAN_WORD.search(command):
+    return PLAY
+
+
+def _classify_aisay(command: str, subs: list[str]) -> str:
+    if command == "help":
+        return SEE  # 读说明不会动账号，path 写什么都一样
+    if command in _AISAY_SEE and not any(sub in _BAN_ACTIONS for sub in subs[1:]):
+        return SEE
+    if any(sub in _BAN_ACTIONS or _BAN_WORD.search(sub) for sub in subs):
         return BAN
     if command in _AISAY_WRITE:
         return WRITE
-    if command.startswith("play."):
-        return WRITE if _PUBLIC_WORD.search(command) else PLAY
+    for group in _AISAY_PLAY_GROUPS:
+        if command.startswith(group + "."):
+            if any(_PUBLIC_WORD.search(sub) for sub in subs):
+                return WRITE
+            return SEE if _STATUS_WORD.match(command.rsplit(".", 1)[-1]) else PLAY
     return NEW
 
 
@@ -130,8 +170,8 @@ def known_secrets(server: dict[str, Any]) -> list[str]:
             in_url.add(value)
     if url.password:
         in_url.add(url.password)
-    if in_url:
-        in_url.add(raw)  # 完整连接串也遮
+    if raw:
+        in_url.add(raw)  # 完整连接串一律遮
     found |= in_url
     encoded = set()
     for value in found:
@@ -149,6 +189,17 @@ def redact_with(secrets: list[str], text: Any) -> str:
 
 def redact(server: dict[str, Any], text: Any) -> str:
     return redact_with(known_secrets(server), text)
+
+
+def redact_deep(secrets: list[str], value: Any) -> Any:
+    """一层层遮：工具说明、参数说明、消息、账本都走这里。"""
+    if isinstance(value, str):
+        return redact_with(secrets, value)
+    if isinstance(value, dict):
+        return {k: redact_deep(secrets, v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_deep(secrets, v) for v in value]
+    return value
 
 
 # ── 结果 ──
@@ -172,8 +223,8 @@ def fingerprint(text: str) -> str:
         return str(text).strip()
 
 
-def outcome(server: dict[str, Any], kind: str, text: str, is_error: bool) -> str:
-    """HTTP 状态和 isError 只是判断材料：写和玩报错不等于没生效。"""
+def outcome(server: dict[str, Any], kind: str, text: str, is_error: bool, *, plain_text_ok: bool = False) -> str:
+    """HTTP 状态和 isError 只是判断材料。写和玩：确认成功才算成功，看不懂一律不确定（狐狸 a4fd66d M3）。"""
     stripped = str(text or "").strip()
     parsed: Any = None
     broken = False
@@ -186,14 +237,29 @@ def outcome(server: dict[str, Any], kind: str, text: str, is_error: bool) -> str
     if isinstance(parsed, dict):
         flag = parsed.get("ok", parsed.get("success"))
         said_no = flag is False or bool(parsed.get("error")) or parsed.get("status") in ("error", "failed")
-    if not is_error and not said_no and not broken:
+    if kind not in (WRITE, PLAY):
+        return FAILED if is_error or said_no or broken else OK
+    if broken:
+        return UNKNOWN
+    if said_no or is_error:
+        return REJECTED if _clearly_rejected(server, parsed) else UNKNOWN
+    if isinstance(parsed, (dict, list)) and parsed:
+        return OK  # 结构化的回复，又没说失败
+    # 纯文字：写操作确认不了发没发出去。玩的时候很多游戏就是回一段场景，不像报错就算成功
+    # plain_text_ok：小猫放行的新站，工具不分读写，很多只回纯文字，不能读一次就判成「写入不确定」
+    if (kind == PLAY or plain_text_ok) and stripped and not _LOOKS_LIKE_ERROR.search(stripped):
         return OK
-    acting = kind in (WRITE, PLAY)
-    if not acting:
-        return FAILED
-    if not broken and site_of(server) in _REJECT_SITES and _REJECT_WORDS.search(stripped):
-        return REJECTED  # 对方明确说了不行：这句没生效，改了可以再发
     return UNKNOWN
+
+
+def _clearly_rejected(server: dict[str, Any], parsed: Any) -> bool:
+    """只认结构化的拒绝：已知站点、错误字段是拒绝类，且没提到已经部分完成。正文里碰巧有「审核」不算。"""
+    if site_of(server) not in _REJECT_SITES or not isinstance(parsed, dict):
+        return False
+    fields = " ".join(str(parsed.get(key) or "") for key in ("code", "error_code", "error", "reason", "type"))
+    if _PARTIAL_WORDS.search(json.dumps(parsed, ensure_ascii=False)):
+        return False
+    return bool(_REJECT_WORDS.search(fields))
 
 
 def _op_key(tool: str, args: dict[str, Any]) -> str:
@@ -203,8 +269,15 @@ def _op_key(tool: str, args: dict[str, Any]) -> str:
         return tool + "\n" + str(args)
 
 
-def _game_of(args: dict[str, Any]) -> str:
-    return str(args.get("game") or "") if isinstance(args, dict) else ""
+def _scope_of(tool: str, args: dict[str, Any]) -> str:
+    """这个操作属于哪一局。认不出就是空，空的不确定操作不会被任何查询解除（狐狸 a4fd66d M2）。"""
+    if not isinstance(args, dict):
+        return ""
+    if tool.startswith("nostos_"):
+        return "nostos"
+    if isinstance(args.get("command"), str) and args["command"].startswith("play."):
+        return ".".join(args["command"].split(".")[:2])
+    return str(args.get("game") or "")
 
 
 class TripGuard:
@@ -262,12 +335,14 @@ class TripGuard:
         self.calls += 1
         self.writes += kind == WRITE
         self.plays += kind == PLAY
-        result = outcome(self.server, kind, text, is_error)
+        unclassified = classify(self.server, tool, args) == NEW
+        result = outcome(self.server, kind, text, is_error, plain_text_ok=unclassified)
         self._note_progress(kind, tool, args, text, result)
         if result == OK:
             self.consecutive_errors = 0  # 业务成功才重置，HTTP 200 不算
             # 两步确认的第一步只拿到确认码，还没发出去
-            if kind == WRITE and "write_confirmation_code" not in str(text):
+            # 放行的新站分不清读写，也不记成「已发出」
+            if kind == WRITE and not unclassified and "write_confirmation_code" not in str(text):
                 self.confirmed.append(_label(tool, args))
         elif result in (FAILED, UNKNOWN):
             self.consecutive_errors += 1
@@ -289,7 +364,7 @@ class TripGuard:
         if kind == WRITE:
             self.writes_stopped = True
         else:
-            self._held_plays[_op_key(tool, args)] = _game_of(args)
+            self._held_plays[_op_key(tool, args)] = _scope_of(tool, args)
 
     def _note_progress(self, kind: str, tool: str, args: dict[str, Any], text: str, result: str) -> None:
         key = _op_key(tool, args)
@@ -306,11 +381,15 @@ class TripGuard:
             self._streak[key] = 1
         if not changed:
             return
-        if kind == SEE:  # 查到状态变了：「还没轮到你」可以再试；相关的不确定操作也放开
+        if result != OK:
+            return  # 错误文字变了不算状态变了
+        if kind == SEE:  # 查到状态变了：「还没轮到你」可以再试
             self._streak.clear()
-            game = _game_of(args)
-            self._held_plays = {op: g for op, g in self._held_plays.items() if g and game and g != game}
-        elif kind == PLAY and result == OK:
+            scope = _scope_of(tool, args)
+            # 不确定的玩：只认同一局的状态查询。指南在 SEE 里但不算状态，没有局的查询什么都解除不了
+            if scope and tool not in _NOT_STATE_TOOLS:
+                self._held_plays = {op: g for op, g in self._held_plays.items() if g != scope}
+        elif kind == PLAY:
             self._streak.clear()
 
     def ledger(self) -> str:
@@ -319,11 +398,11 @@ class TripGuard:
             parts.append("这趟已经确认发出的：" + "；".join(self.confirmed[-10:]))
         if self.unconfirmed:
             parts.append("这趟结果不确定、不要重复做的：" + "；".join(self.unconfirmed[-10:]))
-        return "\n".join(parts)
+        return redact(self.server, "\n".join(parts))
 
     def counts(self) -> dict[str, Any]:
         return {"calls": self.calls, "writes": self.writes, "plays": self.plays, "refused": self.refused,
-                "unclassified": sorted(set(self.unclassified))[:20]}
+                "unclassified": [redact(self.server, name) for name in sorted(set(self.unclassified))[:20]]}
 
 
 def _label(tool: str, args: dict[str, Any]) -> str:

@@ -2834,3 +2834,15 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `actors.api_update_actor`：`memory_hub` 保存前查 `_hub_identity_taken_by`，别的座位（含停用的）在用就 400，提示谁在用。空值可以，自己的身份和别名可以。页面已有显示 `detail` 的逻辑。
 - 只防相遇卡这个入口；已有数据没动（现在四位没有撞的）。`Deepseek` 不改小写，等小猫定。
 - 测试 +2。
+
+## 185. 修 §183 复审的 High 和三项 Medium（`a4fd66d`）
+
+- High 遮挡出口：
+  - 工具清单 `redact_deep`；工具名带钥匙的不展示。`_compact` 整段 `redact_deep`（真实调用用模型给的参数，不走这份）。账本、`counts`、`actions` 都遮。
+  - 日志改成 `setLogRecordFactory`，记录创建时遮，覆盖子 logger（`httpcore.http11`）和异常堆栈；原来 logger 上的过滤器去掉。这是全局的，每条日志多一次字符串替换，钥匙按配置文件修改时间缓存。
+  - `known_secrets` 无条件登记完整连接地址。
+- M1 分类绕过：`_sub_actions` 取 `action`、`operation`、`command`（含 `args.*`、`params.*`、dict 的 `id`），先统一查禁止项。AIsay `play.*` 只放行说明里见过的两组（`play.linkgame`、`play.horror`），其他算没分类。4399 `play` 不再是「除了发言都算玩」：只放行列出的单人游戏和 `dt_*`，`duel`、`turtle_soup`、`shared_craft` 等算没分类，游戏名来自 `list_games`，**各游戏说明我没逐个读**。
+- M2 不确定的玩：解除要同一局（`_scope_of`：4399 看 `game`，花园看 `nostos`，AIsay 看 `play.xxx`）的状态查询，查询成功且结果变了。`get_guide`、`list_games` 不算状态。认不出局的不解除。4399 没有独立的状态工具，用 `play` 带 `status` 这类子动作，**这些子动作名我没逐个核对**，核对前最坏是一直解除不了，不会误解除。
+- M3 结果判断：写和玩要结构化回复且没说失败才算成功；写的纯文字一律不确定；玩的纯文字不像报错算成功（很多游戏回一段场景）。明确拒绝只认结构化字段，且没提到已保存等。**小猫要的「被打回能改了再发」依赖真实错误格式，要第一次真机对照；对不上时会算不确定，这趟就不再发。** 花园的两步确认第一步不发帖，改稿在这一步不受影响。
+  - 例外：小猫开了放行的新站（`classify` 是 NEW），工具不分读写，很多只回纯文字。不像报错的纯文字算成功，否则读一次就判成「写入不确定」，这趟就废了；也不记成「已发出」。已知站点的写不变。这条放宽了 M3，因为是她明确放行的站，想请你看。
+- 测试见 `test_mcp_policy.py`。没有连真论坛。
