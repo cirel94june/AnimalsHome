@@ -122,7 +122,7 @@ def list_tools() -> list[dict[str, Any]]:
             "description": s.get("description", ""),
             "autonomy": bool(s.get("autonomy", False)),
             "can_write": bool(s.get("can_write", True)),
-            "allow_unknown": bool(s.get("allow_unknown", False)),
+            "allow_unknown": bool(s.get("allow_unknown", True)),
             "actors": list(s.get("actors") or []),
             "header_names": sorted((s.get("headers") or {}).keys()),
         })
@@ -174,7 +174,8 @@ def save_tool(data: dict[str, Any], *, original_name: str = "") -> dict[str, Any
         "description": str(data.get("description") or "").strip()[:500],
         "autonomy": bool(data.get("autonomy", False)),
         "can_write": bool(data.get("can_write", True)),
-        "allow_unknown": bool(data.get("allow_unknown", False)),
+        # 小猫 11-06：别的前端都是接上就玩。默认放行，想收紧再关；删除、账号类仍按字面禁止
+        "allow_unknown": bool(data.get("allow_unknown", True)),
         "actors": [a for a in actors if a][:6],
     }
     if old is not None:
@@ -443,7 +444,7 @@ async def run_outing(
     actions: list[str] = []
 
     guard = mcp_policy.TripGuard(server, can_write=bool(server.get("can_write", True)),
-                                 allow_unknown=bool(server.get("allow_unknown", False)))
+                                 allow_unknown=bool(server.get("allow_unknown", True)))
     deadline = time.monotonic() + OUTING_TIMEOUT_SECONDS
 
     async def one_call(session, name: str, args: dict[str, Any]) -> str:

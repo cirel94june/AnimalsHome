@@ -64,7 +64,6 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
         (t.enabled ? '' : '<span class="tag muted">已停用</span>') +
         (t.autonomy ? '<span class="tag">有空时可以自己去</span>' : '') +
         (t.can_write === false ? '<span class="tag">不能公开发言</span>' : '') +
-        (t.allow_unknown ? '<span class="tag">没见过的也放行</span>' : '') +
         '<span class="tag muted">' + esc(who) + '</span></h3>' +
         '<div class="url">' + esc(t.url) + (t.header_names.length ? ' · 请求头：' + esc(t.header_names.join('、')) : '') + '</div>' +
         (t.description ? '<div class="desc">' + esc(t.description) + '</div>' : '') +
@@ -84,7 +83,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
 
   function openEdit(t) {
     var isNew = !t;
-    t = t || { name: '', url: '', type: 'http', description: '', enabled: true, autonomy: true, can_write: true, allow_unknown: false, actors: [], header_names: [] };
+    t = t || { name: '', url: '', type: 'http', description: '', enabled: true, autonomy: true, can_write: true, allow_unknown: true, actors: [], header_names: [] };
     var s = sheet('<h3>' + (isNew ? '接一个 MCP' : esc(t.name)) + '</h3><div class="sec">' +
       '<label class="field">名字<input type="text" id="f-name" maxlength="40" placeholder="例如 小论坛"></label>' +
       '<label class="field">地址<input type="text" id="f-url" maxlength="500" placeholder="https://…/mcp"></label>' +
@@ -95,12 +94,12 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       '<div class="wrow"><span>启用</span><input type="checkbox" id="f-on" style="margin-left:auto"></div>' +
       '<div class="wrow"><span>有空时可以自己去</span><input type="checkbox" id="f-auto" style="margin-left:auto"></div>' +
       '<div class="wrow"><span>能发帖回帖（关掉后不能公开发言，游戏还能玩）</span><input type="checkbox" id="f-write" style="margin-left:auto"></div>' +
-      '<div class="wrow"><span>没见过的操作也放行（信任这个站才开：除删除和账号类外什么都能做，要「能发帖」也开着）</span><input type="checkbox" id="f-unknown" style="margin-left:auto"></div>' +
+      '<div class="wrow"><span>接上就能玩（默认开。关掉后只能用家里列过规则的操作）</span><input type="checkbox" id="f-unknown" style="margin-left:auto"></div>' +
       '<label class="field">哪些 AI 可以去（都不勾 = 所有 AI）</label><div class="checks" id="f-actors"></div>' +
       '</div><div class="acts">' + (isNew ? '' : '<button type="button" data-x="del">删除</button>') +
       '<button type="button" data-x="cancel">取消</button><button type="button" class="primary" data-x="save">保存</button></div>');
     s.$('#f-name').value = t.name; s.$('#f-url').value = t.url; s.$('#f-type').value = t.type;
-    s.$('#f-desc').value = t.description; s.$('#f-on').checked = t.enabled; s.$('#f-auto').checked = t.autonomy; s.$('#f-write').checked = t.can_write !== false; s.$('#f-unknown').checked = !!t.allow_unknown;
+    s.$('#f-desc').value = t.description; s.$('#f-on').checked = t.enabled; s.$('#f-auto').checked = t.autonomy; s.$('#f-write').checked = t.can_write !== false; s.$('#f-unknown').checked = t.allow_unknown !== false;
     s.$('#f-actors').innerHTML = data.actors.map(function (a) {
       return '<label><input type="checkbox" value="' + esc(a.id) + '"' + (t.actors.indexOf(a.id) >= 0 ? ' checked' : '') + '>' + esc(a.name) + '</label>';
     }).join('');

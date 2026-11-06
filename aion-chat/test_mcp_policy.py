@@ -503,10 +503,19 @@ def test_no_write_place_blocks_a_real_write(env, forum):  # noqa: F811
 
 
 def test_unclassified_site_without_the_switch_does_nothing(env, forum):  # noqa: F811
-    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    mcp_outings.save_tool({"name": "小论坛", "url": forum, "allow_unknown": False})
     model, seen = _script([("reply", {"post_id": 1, "text": "嗨"})])
     result = asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
     assert POSTS == [] and seen[0]["tools"] == [] and result["counts"]["refused"] == 1
+
+
+def test_a_new_site_just_works_out_of_the_box(env, forum):  # noqa: F811
+    """小猫 11-06：接上就玩。填地址就能用，不用再开开关；删除、账号类还是拦。"""
+    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    model, seen = _script([("read_posts", {})], [("reply", {"post_id": 1, "text": "嗨"})])
+    asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
+    assert POSTS == ["1:嗨"]
+    assert {"read_posts", "reply"} <= {t["function"]["name"] for t in seen[0]["tools"]}
 
 
 def test_parameter_names_with_keys_hide_the_whole_tool(env):  # noqa: F811
@@ -635,7 +644,7 @@ def test_lock_is_released_when_the_trip_fails(env, tmp_path, monkeypatch):  # no
 
 def test_switches_are_saved_with_safe_defaults(env):  # noqa: F811
     saved = mcp_outings.save_tool({"name": "小论坛", "url": "https://a.example/mcp"})
-    assert saved["can_write"] is True and saved["allow_unknown"] is False
-    updated = mcp_outings.save_tool({"name": "小论坛", "url": "https://a.example/mcp", "can_write": False, "allow_unknown": True},
+    assert saved["can_write"] is True and saved["allow_unknown"] is True
+    updated = mcp_outings.save_tool({"name": "小论坛", "url": "https://a.example/mcp", "can_write": False, "allow_unknown": False},
                                     original_name="小论坛")
-    assert updated["can_write"] is False and updated["allow_unknown"] is True
+    assert updated["can_write"] is False and updated["allow_unknown"] is False
