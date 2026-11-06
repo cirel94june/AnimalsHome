@@ -2747,3 +2747,5 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - M2 小克重新生成：`_process_voice_attachments_in_history` 之前用 `spoken_text` 固定 `hub_query_text`，`context_block` 改用它。
 - 没改、要提醒的：同一入口的 `schedule_capture("aion", lounge_request_text, ...)` 也用转换前的文字，语音消息重新生成时是空串，这一轮不记入 Hub。发送入口不受影响。这是老问题，不在这次范围。
 - 测试 `test_hub_dream_inputs.py` 改写：群里听她的、语音、系统叫醒不算问梦、已回应不算、AI 接话、`build_context` 不猜、入口传参和重新生成顺序（后两项是源码断言）。
+
+- §175–§177 狐狸通过，11-06 已部署 fc5aa41。
