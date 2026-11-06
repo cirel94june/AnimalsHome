@@ -156,6 +156,9 @@ def test_real_rejection_formats_are_recognised(text):
     RuntimeError("Unexpected keyword argument: background"),  # 不是工具或协议层的报错
     bridge.HubToolError("context 返回错误", "background job failed: unexpected token"),
     bridge.HubToolError("context 返回错误", "数据库忙"),
+    bridge.HubToolError("context 返回错误", "Unknown parameter: background_job"),  # 狐狸 Low：参数名要完整
+    bridge.HubToolError("context 返回错误",
+                        "Additional properties are not allowed ('message' was unexpected); request background=true"),
 ])
 def test_other_errors_are_not_mistaken_for_it(error):
     assert not bridge._background_rejected(error)

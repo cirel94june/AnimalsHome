@@ -14,6 +14,7 @@ from config import BASE_DIR
 router = APIRouter()
 log = logging.getLogger("mcp_tools")
 _running: set[tuple[str, str]] = set()
+_out_now: set[str] = set()  # 正在外面的 AI：页面、聊天、自主活动共用
 _tasks: set[asyncio.Task] = set()
 
 
@@ -75,31 +76,49 @@ async def api_test(name: str):
         return await mcp_outings.test_tool(name)
     except ValueError as error:
         raise HTTPException(404, str(error))
-    except Exception as error:  # 连不上：把原因告诉页面
-        return {"ok": False, "error": str(error)[:300] or type(error).__name__}
+    except Exception as error:  # 连不上：把原因告诉页面（test_tool 已遮过钥匙，这里再过一遍）
+        return {"ok": False, "error": mcp_outings.redact_everything(str(error))[:300] or type(error).__name__}
 
 
-async def go_out(actor: str, name: str, purpose: str = "") -> dict:
-    """出门逛一趟：见闻发到 TA 的私聊，并记一条自主活动日志。"""
+async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto") -> dict:
+    """出门逛一趟：见闻发到 TA 的私聊，并记一条自主活动日志。
+    页面、聊天、自主活动都走这里：同一位 AI 同时只能出门一趟，锁放在这一层。"""
+    if actor in _out_now:
+        return {"ok": False, "error": "TA 已经在外面了"}
+    _out_now.add(actor)
+    trip = mcp_outings.trip_started(actor, name, source)
+    try:
+        result = await _go_out(actor, name, purpose)
+        mcp_outings.trip_finished(trip, "ok" if result.get("ok") else "failed", result.get("counts"))
+        return result
+    except BaseException:
+        mcp_outings.trip_finished(trip, "cancelled")
+        raise
+    finally:
+        _out_now.discard(actor)
+
+
+async def _go_out(actor: str, name: str, purpose: str) -> dict:
     import autonomy
     label = autonomy._actor_label(actor)
     try:
         result = await mcp_outings.run_outing(actor, name, purpose=purpose)
     except Exception as error:
-        log.warning("[MCP] %s 去 %s 没成功：%s", actor, name, error)
+        reason = mcp_outings.redact_everything(str(error))[:300] or type(error).__name__  # 先遮后截
+        log.warning("[MCP] %s 去 %s 没成功：%s", actor, name, reason)
         event = await autonomy.append_idle_event(
-            actor, "mcp_outing", f"{label}想去「{name}」，但没去成", str(error)[:300],
+            actor, "mcp_outing", f"{label}想去「{name}」，但没去成", reason,
             target_type="mcp", target_id=name,
         )
-        return {"ok": False, "error": str(error)[:300], "event": event}
+        return {"ok": False, "error": reason, "event": event}
     message = await autonomy._save_private_message(actor, result["summary"], force_private=True)
     event = await autonomy.append_idle_event(
         actor, "mcp_outing", f"{label}去「{name}」逛了一趟", result["summary"][:300],
         target_type="mcp", target_id=name,
         result_type="message" if message else "", result_id=(message or {}).get("id", ""),
-        metadata={"actions": result["actions"][:12], "model": result["model"]},
+        metadata={"actions": result["actions"][:12], "model": result["model"], "counts": result.get("counts")},
     )
-    return {"ok": True, "message": message, "event": event}
+    return {"ok": True, "message": message, "event": event, "counts": result.get("counts")}
 
 
 @router.post("/api/mcp-tools/{name}/outing")
@@ -113,13 +132,13 @@ async def api_outing(name: str, request: Request):
     if not mcp_outings.tool_model_for(actor):
         raise HTTPException(400, "这位 AI 没有能调用工具的模型（相遇卡里选一条 API 线路）")
     key = (actor, name)
-    if key in _running:
-        raise HTTPException(409, "TA 已经在那里了")
+    if key in _running or actor in _out_now:
+        raise HTTPException(409, "TA 已经在外面了")
     _running.add(key)
 
     async def run():
         try:
-            await go_out(actor, name, str(data.get("purpose") or "")[:200])
+            await go_out(actor, name, str(data.get("purpose") or "")[:200], source="page")
         finally:
             _running.discard(key)
 

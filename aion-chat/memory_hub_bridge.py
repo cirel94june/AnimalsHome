@@ -200,12 +200,12 @@ class HubToolError(RuntimeError):
 
 # 只认「background 这个参数不被接受」的明确格式，不是文字里碰巧同时有两个词（狐狸 §180）
 _BACKGROUND_REJECTED = re.compile(
-    r"unexpected keyword argument\W{0,4}background"
-    r"|background\W[\s\S]{0,80}?(?:unexpected.keyword.argument|extra.(?:inputs?|fields?).{0,12}not.permitted|extra_forbidden)"
-    r"|unrecognized_keys[\s\S]{0,120}?\Wbackground\W"
-    r"|unrecognized.keys?\W{0,6}background"
-    r"|additional.propert(?:y|ies)[\s\S]{0,60}?\Wbackground\W"
-    r"|unknown.(?:argument|parameter|param|field|option|key)\W{0,4}background",
+    r"unexpected keyword argument\W{0,4}background\b"
+    r"|\bbackground\b[^;]{0,80}?(?:unexpected.keyword.argument|extra.(?:inputs?|fields?).{0,12}not.permitted|extra_forbidden)"
+    r'|"keys"\s*:\s*\[[^\]]*"background"'
+    r"|unrecognized.keys?\W{0,6}background\b"
+    r"|additional.propert(?:y|ies)[^;]{0,60}?'background'[^;]{0,20}unexpected"
+    r"|unknown.(?:argument|parameter|param|field|option|key)\W{0,4}background\b",
     re.IGNORECASE,
 )
 

@@ -116,7 +116,7 @@ def test_tool_model_needs_api_line(env):
 
 
 def test_outing_runs_tools_over_real_connection_and_reports(env, forum):
-    mcp_outings.save_tool({"name": "小论坛", "url": forum, "description": "大家聊天的地方", "autonomy": True})
+    mcp_outings.save_tool({"name": "小论坛", "url": forum, "description": "大家聊天的地方", "autonomy": True, "allow_unknown": True})
     calls = []
 
     async def fake_model(model_key, messages, tools):
@@ -143,7 +143,7 @@ def test_outing_runs_tools_over_real_connection_and_reports(env, forum):
 
 def test_outing_stops_after_max_rounds(env, forum, monkeypatch):
     monkeypatch.setattr(mcp_outings, "MAX_ROUNDS", 3)
-    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    mcp_outings.save_tool({"name": "小论坛", "url": forum, "allow_unknown": True})
     rounds = []
 
     async def greedy(model_key, messages, tools):
@@ -191,7 +191,7 @@ def test_half_open_connection_is_closed_when_setup_fails(env, monkeypatch):
 def test_summary_is_inside_the_overall_deadline(env, forum, monkeypatch):
     monkeypatch.setattr(mcp_outings, "OUTING_TIMEOUT_SECONDS", 1.6)
     monkeypatch.setattr(mcp_outings, "SUMMARY_RESERVE_SECONDS", 0.5)
-    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    mcp_outings.save_tool({"name": "小论坛", "url": forum, "allow_unknown": True})
 
     async def slow_summary(model_key, messages, tools):
         if tools is None:
@@ -205,7 +205,7 @@ def test_summary_is_inside_the_overall_deadline(env, forum, monkeypatch):
 
 
 def test_outing_stops_if_line_changes_midway(env, forum, monkeypatch):
-    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    mcp_outings.save_tool({"name": "小论坛", "url": forum, "allow_unknown": True})
     calls = []
 
     async def model(model_key, messages, tools):
@@ -222,5 +222,5 @@ def test_outing_stops_if_line_changes_midway(env, forum, monkeypatch):
 
 
 def test_test_connection_lists_tools(env, forum):
-    mcp_outings.save_tool({"name": "小论坛", "url": forum})
+    mcp_outings.save_tool({"name": "小论坛", "url": forum, "allow_unknown": True})
     assert asyncio.run(mcp_outings.test_tool("小论坛")) == {"ok": True, "tools": ["read_posts", "reply"]}

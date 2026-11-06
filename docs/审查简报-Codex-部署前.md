@@ -2805,3 +2805,25 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - §180 M：`_background_rejected` 原来只看文字里是否同时有 background 和任意关键词。`ConnectionError("background stream: unexpected EOF")` 被误判，`{"code":"unrecognized_keys","keys":["background"]}` 又漏判。改成：只看 `HubToolError` 和 `McpError`，连接、超时、其他异常不管文字写什么都不算；文字只认明确的格式（unexpected keyword argument、extra inputs not permitted、unrecognized_keys、additional properties、unknown argument，且紧贴 background）。
 - §179 M：`amap_regeo` 和 `amap_weather` 的异常也只记类型。全文件查过，高德请求的 print 都改了（哨兵那处不是高德请求，没动）。
 - §179 L：`tts._STRIP_PATTERNS` 的 POI 认全角冒号和大小写。
+
+## 182. 修 §181 复审的 Low 1：background 判断
+
+- 参数名完整匹配（`background_job` 不算）；文字格式限定在同一条说明内，不跨 `;` 到请求回显里找；结构化错误看 `"keys":[…"background"…]`。狐狸的两条反例加进测试。
+
+## 183. MCP 第 1 步：执行器（方案 v2.6 第二节）
+
+- 新模块 `mcp_policy.py`：`classify`（看、写、玩、禁、没分类）、`known_secrets` / `redact`、`outcome`、`fingerprint`、`TripGuard`。
+- `mcp_outings.run_outing` 接上执行器：
+  - 工具清单先过 `visible_to_model`；每次调用先 `guard.before`，再 `guard.after` / `after_exception`；工具结果先遮后截。
+  - 上限：40 轮、每轮 3 个调用（超出的回一句，不执行）、20 分钟。连续错 8 次回家。剩 5 轮或 3 分钟时提醒。
+  - `_compact`：近 12 条保留完整结果，更早的截 200 字，每次带账本。原始记录不动。
+  - 见闻：先遮挡，再 `strip_untrusted_reply`。
+- `routes/mcp_tools.py`：`go_out` 带 `source`，同一位 AI 的锁（`_out_now`）放在这里，页面和自主活动共用（聊天入口第 3 步接）。报错先遮后截。
+- `mcp_trips.db`：只记次数和状态，不记内容；`unclassified` 只记工具名和子命令名。
+- 工具页两个新开关：「能发帖回帖」默认开，「没见过的操作也放行」默认关。
+- 日志：`httpx`、`httpcore`、`mcp` 等的记录过 `_RedactLogs`。
+- **有改变现有行为的地方**：
+  - 上线后没分类的工具不能用。三个已知站按表走。花园和 4399 的表来自工具说明；AIsay 没登录只读到 `help`、`chat.*`、`account.*`。
+  - 4399 `play` 除了带公开发言字样的都算玩，游戏太多，没有逐个列子动作（方案说未列出的默认拒绝，这里是例外，想请你判断）。AIsay `play.*` 同理。
+- 没做：第 2 步 Codex 线路、第 3 步聊天入口。AIsay 账号怎么连要先问小猫（方案第一节）。
+- 测试：`test_mcp_policy.py` 新增，`test_mcp_outings.py` 的假论坛开了放行；相关 20 个文件 402 项全过。本机页面看过开关（手机尺寸）。没有连真论坛走过一趟。
