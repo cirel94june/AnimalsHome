@@ -2872,3 +2872,11 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 
 - 小猫 11-06：「我现在感觉要接一个 mcp 搞得太麻烦了，我在其他前端都是接上就玩来着」。`allow_unknown` 默认改成开，页面叫「接上就能玩」。关掉就回到只用已分类操作。
 - 这偏离了「未分类默认拒绝」的建议，是她的决定，不用再提。已知站点的表、禁止项、打转、写不确定不重复这些不变。
+
+## 190. MCP 第 2 步：Lucien 走 Codex
+
+- `tool_model_for` 认 `codex_cli`；`run_outing` 按线路选 `call_model` 或新的 `call_model_codex`。两条线路共用同一个执行器循环。
+- 文字协议：messages 拼成文字给 `call_codex_cli`（沙盒、只读、shell 关闭不变）。工具清单压缩（名字、描述前 160 字、类型、required、enum、嵌套）。回复整条是 `{"tool_calls":[…]}` 才算调用，其他都算逛完；不处理方括号标签。`[CodexCLI错误]` 抛错，不当见闻。用量记 `usage_log`。
+- `run_outing` 新增（两条线路都有）：只能调清单里的工具；调用前用 `jsonschema` 校验完整参数，不过就不发，把这个工具的完整说明（上限 3000 字）给模型。超时和一般失败不走这里。`jsonschema` 本机和服务器都已装（`mcp` 带的）。
+- 工具页文案不再说「没有能调用工具的模型」。
+- 压缩后的实际大小和整趟 token 开销，要真机量。测试 `test_mcp_codex_route.py`，用假 Codex，没有真的调过 Codex。

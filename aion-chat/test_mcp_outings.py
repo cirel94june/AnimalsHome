@@ -111,7 +111,7 @@ def test_places_respect_enabled_autonomy_and_actor_list(env):
 
 def test_tool_model_needs_api_line(env):
     assert mcp_outings.tool_model_for("ai3") == "relay-gemini"
-    assert mcp_outings.tool_model_for("connor") == ""  # Codex 不能走工具调用
+    assert mcp_outings.tool_model_for("connor") == "Codex-test"  # Codex 走文字协议
     assert mcp_outings.tool_model_for("aion") == ""  # 没选模型
 
 
@@ -158,8 +158,8 @@ def test_outing_stops_after_max_rounds(env, forum, monkeypatch):
 
 def test_outing_without_tool_model_is_refused(env):
     mcp_outings.save_tool({"name": "小论坛", "url": "https://a.example/mcp"})
-    with pytest.raises(ValueError, match="能调用工具的模型"):
-        asyncio.run(mcp_outings.run_outing("connor", "小论坛"))
+    with pytest.raises(ValueError, match="还没有能出门的模型"):
+        asyncio.run(mcp_outings.run_outing("aion", "小论坛"))
 
 
 def test_half_open_connection_is_closed_when_setup_fails(env, monkeypatch):

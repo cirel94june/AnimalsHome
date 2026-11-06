@@ -38,7 +38,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     <button type="button" class="add-btn" id="add-btn">＋ 接一个 MCP</button></div>
   <p class="intro">在这里接你想让 AI 去的地方：论坛、游戏、旅行、浏览器、GitHub……
     打开「有空时可以自己去」，AI 空闲时会自己挑地方逛，回来在你们的私聊里讲见闻。
-    去的 AI 需要在相遇卡里选一条 API 线路（能调用工具的那种）。</p>
+    去的 AI 需要在相遇卡里选好模型。</p>
   <div id="list"></div>
 </div>
 <script>
@@ -125,7 +125,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     var allowed = data.actors.filter(function (a) { return !t.actors.length || t.actors.indexOf(a.id) >= 0; });
     var s = sheet('<h3>让谁去「' + esc(t.name) + '」？</h3><div class="sec">' +
       '<label class="field">AI<select id="g-actor">' + allowed.map(function (a) {
-        return '<option value="' + esc(a.id) + '"' + (a.tool_model ? '' : ' disabled') + '>' + esc(a.name) + (a.tool_model ? '' : '（没有能调用工具的模型）') + '</option>';
+        return '<option value="' + esc(a.id) + '"' + (a.tool_model ? '' : ' disabled') + '>' + esc(a.name) + (a.tool_model ? '' : '（还没选模型）') + '</option>';
       }).join('') + '</select></label>' +
       '<label class="field">想让 TA 做点什么（可以不填，让 TA 自己决定）<input type="text" id="g-purpose" maxlength="200"></label>' +
       '<div class="hint">逛完后 TA 会在你们的私聊里讲见闻，一般要一两分钟。</div>' +

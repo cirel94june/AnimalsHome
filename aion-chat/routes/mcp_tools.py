@@ -130,7 +130,7 @@ async def api_outing(name: str, request: Request):
     if not any(p["name"] == name for p in mcp_outings.places_for(actor, autonomy_only=False)):
         raise HTTPException(400, "这位 AI 不能去这个地方（工具未启用或没勾选 TA）")
     if not mcp_outings.tool_model_for(actor):
-        raise HTTPException(400, "这位 AI 没有能调用工具的模型（相遇卡里选一条 API 线路）")
+        raise HTTPException(400, "这位 AI 还没有能出门的模型（相遇卡里选一条线路）")
     key = (actor, name)
     if key in _running or actor in _out_now:
         raise HTTPException(409, "TA 已经在外面了")
