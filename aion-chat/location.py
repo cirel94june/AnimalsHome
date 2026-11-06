@@ -238,13 +238,14 @@ async def amap_weather(adcode: str, key: str) -> dict:
     return result
 
 
-async def amap_poi_search(lng: float, lat: float, types: str, key: str, radius: int = 2000) -> list:
-    """周边 POI 搜索"""
+async def amap_poi_search(lng: float, lat: float, types: str, key: str, radius: int = 2000, *, keywords: str = "") -> list:
+    """周边 POI 搜索。types 是高德分类代码，keywords 是自由的词（比如「奶茶」），至少给一个。"""
     url = "https://restapi.amap.com/v3/place/around"
     params = {
         "key": key,
         "location": f"{lng},{lat}",
-        "types": types,
+        **({"types": types} if types else {}),
+        **({"keywords": keywords} if keywords else {}),
         "radius": radius,
         "offset": 10,
         "page": 1,
@@ -273,8 +274,10 @@ async def amap_poi_search(lng: float, lat: float, types: str, key: str, radius: 
                     }
                     for p in pois
                 ]
+            # 原来这里什么都不说，key 被限额、被停用时看起来就是「没结果」
+            print(f"[Location] POI搜索被拒: {data.get('info')} ({data.get('infocode')})")
     except Exception as e:
-        print(f"[Location] POI搜索失败: {e}")
+        print(f"[Location] POI搜索失败: {type(e).__name__}")  # 异常文字里可能带完整地址和 key
     return []
 
 
@@ -1022,6 +1025,10 @@ async def _call_core_location(
     await manager.broadcast({"type": "monitor_log", "data": core_log})
 
 
+MAX_POI_SEARCHES = 3
+POI_FAILED_TEXT = "系统这次没能搜到附近的结果。如实告诉她没查到，不要自己编地方。"
+
+
 async def search_nearby_pois_text(categories: list[str]) -> str:
     """按类型搜索她当前位置周边（取最新 GPS 坐标、刷新地址和缓存），返回给 AI 看的结果文字；
     没配高德 Key、没有坐标或一个类型都没搜成时返回空串。小克私聊和座位共用。"""
@@ -1046,16 +1053,18 @@ async def search_nearby_pois_text(categories: list[str]) -> str:
     # 3. 搜索用户指定的 POI 类别
     poi_types = cfg.get("poi_types", {})
     search_results = {}
-    for cat in categories:
-        cat = cat.strip()
+    for cat in [item.strip() for item in categories if item.strip()][:MAX_POI_SEARCHES]:
         type_code = poi_types.get(cat)
         if type_code:
             pois = await amap_poi_search(lng, lat, type_code, amap_key, cfg.get("poi_radius", 2000))
-            search_results[cat] = pois
-            # 更新缓存
+            # 更新缓存（只存四大类，位置页显示的是这些）
             if "nearby_pois" not in status:
                 status["nearby_pois"] = {}
             status["nearby_pois"][cat] = pois
+        else:
+            # 不是那四类：当关键词搜。原来写「奶茶」会被直接丢掉，AI 说了去查然后没下文（11-06 小猫：POI 一直没效果）
+            pois = await amap_poi_search(lng, lat, "", amap_key, cfg.get("poi_radius", 2000), keywords=cat[:40])
+        search_results[cat] = pois
 
     # 更新 last_api 坐标
     status["last_api_lng"] = lng

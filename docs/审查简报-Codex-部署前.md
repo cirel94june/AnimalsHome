@@ -2765,3 +2765,26 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 没动的：Hub 说系统唤醒传空查询。座位已经是空的（§177）。Lucien 的闹铃、监控仍传提醒内容，这样能想起相关的事；有 background 就不会带梦，也不会误判问梦。已告诉 Hub。
 - 01d21fd 的两条 Medium 已在 §177 修好、已部署 fc5aa41，不用再做。
 - 测试 `test_hub_background.py`。没连真 Hub。
+
+## 179. 高德 POI 一直没效果
+
+- 小猫 11-06：「高德的 poi 一直没有发挥效果」。
+- 查的结果（服务器上，只看条数）：key 正常，四个大类都能搜到结果；今天 POI 调用 0 次，`nearby_pois` 是空的。所以问题在我们怎么用：
+  1. 只有 `state == outside` 才告诉 AI 有这个能力，在家问「附近有什么吃的」时 AI 没有工具，只能凭印象说。
+  2. 只认四个大类。写「奶茶」会被直接丢掉，`search_nearby_pois_text` 返回空，调用方静默 return：AI 说了「我查查」，然后没下文。
+  3. 不认全角冒号：`[POI_SEARCH：奶茶]` 不触发，还会露在聊天里。
+  4. `amap_poi_search` 被高德拒绝时什么都不记，异常里还可能带 key。
+  5. `_chatroom_poi_check` 单独抄了一份搜索，同样的毛病。
+- 改法：
+  - 新增 `capabilities._is_location_known`（位置开启且有坐标），`poi_search` 的判断都换成它。
+  - 不在四大类里的词用高德 `keywords` 搜，一次最多 3 个。缓存只存四大类。
+  - 小克私聊和 Lucien 没搜到时不再静默，用 `POI_FAILED_TEXT` 接着说「没查到，不要编」。座位原来就有提示。
+  - 两处 pattern 认全角冒号，忽略大小写。
+  - 被拒记录 info 和 infocode，异常只记类型。
+  - `_chatroom_poi_check` 改用共用的 `search_nearby_pois_text`。
+  - 能力说明改成：她问附近的东西时先查，不要凭印象；可以写大类或具体的词。
+- 行为变化：`test_seat_location` 三项钉的是旧规则（只有户外、丢掉不认识的词），已按新规则改。
+- 新增 POI 能力在家也会注入，多占一点提示词。
+- 没改、要提醒的：POI 结果里的店名来自商家，续答（`perform_poi_check`、`_chatroom_poi_check`）仍进 `_process_background_reply_commands`。和 §171 M2、联网搜索是同一类老问题，这次没动。
+- 测试 `test_poi_search.py` 11 项。相关 105 个文件 1062 过、8 败；这 8 项放到改动前的版本上同样失败（聊天室系统提示样式 2、手环 2、friend_visit 1、米环健康 1、triggered reasoning 2）。全量没跑。没有真的让 AI 搜过。
+- **部署**：这个提交在 §178 之后，要等 Hub 的 background 上线才能一起部署。

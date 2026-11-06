@@ -1,4 +1,4 @@
-"""位置和周边：狗蛋等座位和小克一样看得到她的位置，在户外时能搜附近，由 TA 自己接着推荐。"""
+"""位置和周边：狗蛋等座位和小克一样看得到她的位置，位置开着、有坐标时能搜附近，由 TA 自己接着推荐。"""
 
 import asyncio
 from unittest.mock import AsyncMock
@@ -48,23 +48,23 @@ def _run(text):
     return asyncio.run(chatroom_routes._process_seat_commands(text, "s3", "ai3", "m1", asyncio.Queue()))
 
 
-def test_seat_searches_nearby_only_when_outside(room, monkeypatch):
-    monkeypatch.setattr(capabilities, "_is_outside_location", lambda: True)
+def test_seat_searches_nearby_only_when_location_is_known(room, monkeypatch):
+    monkeypatch.setattr(capabilities, "_is_location_known", lambda: True)
     text, triggered = _run("我帮你看看[POI_SEARCH:餐饮美食]")
     assert text == "我帮你看看" and triggered["poi_search"] == ["餐饮美食"]
     assert "📍 狗蛋搜了搜附近的餐饮美食" in room.await_args.args[1]
     room.reset_mock()
-    monkeypatch.setattr(capabilities, "_is_outside_location", lambda: False)
+    monkeypatch.setattr(capabilities, "_is_location_known", lambda: False)
     text, triggered = _run("嗯[POI_SEARCH:餐饮美食]")
     assert text == "嗯" and "poi_search" not in triggered
     room.assert_not_called()
 
 
-def test_prompt_offers_nearby_search_only_outside(monkeypatch):
+def test_prompt_offers_nearby_search_only_when_location_is_known(monkeypatch):
     monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name == "poi_search")
-    monkeypatch.setattr(capabilities, "_is_outside_location", lambda: True)
+    monkeypatch.setattr(capabilities, "_is_location_known", lambda: True)
     assert capabilities.poi_search_ability_text("小猫") in capabilities.seat_ability_texts("小猫")
-    monkeypatch.setattr(capabilities, "_is_outside_location", lambda: False)
+    monkeypatch.setattr(capabilities, "_is_location_known", lambda: False)
     assert not any(t.startswith("[POI_SEARCH") for t in capabilities.seat_ability_texts("小猫"))
 
 
@@ -127,7 +127,7 @@ def test_shared_nearby_search_formats_results_and_refreshes_cache(monkeypatch):
     monkeypatch.setattr(location, "amap_regeo", AsyncMock(return_value={"address": "西湖边", "adcode": "330106"}))
     search = AsyncMock(return_value=[{"name": "老王面馆", "distance": "300", "rating": "4.5", "cost": "[]", "address": "x路"}])
     monkeypatch.setattr(location, "amap_poi_search", search)
-    text = asyncio.run(location.search_nearby_pois_text(["餐饮美食", "不认识的类型"]))
+    text = asyncio.run(location.search_nearby_pois_text(["餐饮美食"]))
     assert text == "【餐饮美食】\n  - 老王面馆（300m） ⭐4.5 | x路"
     assert search.await_args.args == (120.1, 30.2, "050000", "k", 1500)
     assert saved[0]["address"] == "西湖边" and saved[0]["nearby_pois"]["餐饮美食"][0]["name"] == "老王面馆"

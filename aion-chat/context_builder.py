@@ -43,7 +43,7 @@ WISH_CMD_PATTERN = re.compile(r'\[\s*许愿\s*[：:]\s*([^\]]+)\]')
 ACTIVITY_CHECK_PATTERN = re.compile(r'\[查看动态:(\d+)\]')
 SELFIE_CMD_PATTERN = re.compile(r'\[SELFIE:\s*([^\]]+)\]')
 DRAW_CMD_PATTERN = re.compile(r'\[DRAW:\s*([^\]]+)\]')
-POI_SEARCH_PATTERN = re.compile(r'\[POI_SEARCH:([^\]]+)\]')
+POI_SEARCH_PATTERN = re.compile(r'\[POI_SEARCH\s*[:：]\s*([^\]]+)\]', re.IGNORECASE)
 TOY_CMD_PATTERN = re.compile(r'\[TOY:(\d|STOP)\]')
 from svakom_ai import DISPLAY_PATTERN as SVAKOM_CMD_PATTERN
 from ankni_ai import DISPLAY_PATTERN as ANKNI_CMD_PATTERN

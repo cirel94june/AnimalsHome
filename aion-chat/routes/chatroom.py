@@ -1695,65 +1695,11 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
 
 async def _chatroom_poi_check(room_id: str, sender: str, model_key: str, categories: list[str]):
     """聊天室版 POI 搜索：搜索周边 → AI 追加回复到聊天室"""
-    from location import (
-        load_location_config, load_location_status, save_location_status,
-        amap_poi_search, amap_regeo, format_location_for_prompt,
-    )
+    from location import POI_FAILED_TEXT, format_location_for_prompt, search_nearby_pois_text
     from config import load_worldbook, SETTINGS
 
-    cfg = load_location_config()
-    amap_key = cfg.get("amap_key", "")
-    if not amap_key:
-        return
-
-    status = load_location_status()
-    lng = status.get("lng", 0)
-    lat = status.get("lat", 0)
-    if not lng or not lat:
-        return
-
-    geo_info = await amap_regeo(lng, lat, amap_key)
-    if geo_info:
-        status["address"] = geo_info["address"]
-        status["adcode"] = geo_info["adcode"]
-
-    search_results = {}
-    poi_types = cfg.get("poi_types", {})
-    for cat in categories:
-        cat = cat.strip()
-        type_code = poi_types.get(cat)
-        if type_code:
-            pois = await amap_poi_search(lng, lat, type_code, amap_key, cfg.get("poi_radius", 2000))
-            search_results[cat] = pois
-            if "nearby_pois" not in status:
-                status["nearby_pois"] = {}
-            status["nearby_pois"][cat] = pois
-
-    status["last_api_lng"] = lng
-    status["last_api_lat"] = lat
-    save_location_status(status)
-
-    if not search_results:
-        return
-
-    result_lines = []
-    for cat, pois in search_results.items():
-        if not pois:
-            result_lines.append(f"【{cat}】附近暂无相关结果")
-            continue
-        result_lines.append(f"【{cat}】")
-        for p in pois[:10]:
-            entry = f"  - {p['name']}"
-            if p.get("distance"):
-                entry += f"（{int(p['distance'])}m）"
-            if p.get("rating") and p["rating"] != "[]":
-                entry += f" ⭐{p['rating']}"
-            if p.get("cost") and p["cost"] != "[]":
-                entry += f" 人均¥{p['cost']}"
-            if p.get("address") and p["address"] != "[]":
-                entry += f" | {p['address']}"
-            result_lines.append(entry)
-    poi_text = "\n".join(result_lines)
+    # 和小克私聊、座位用同一份搜索（原来这里单独抄了一份，也一样丢掉关键词）
+    poi_text = await search_nearby_pois_text(categories) or POI_FAILED_TEXT
 
     wb = load_worldbook()
     user_name = wb.get("user_name", "用户")
@@ -4143,8 +4089,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     poi_matches = [m.strip() for m in POI_SEARCH_PATTERN.findall(full_text) if m.strip()]
     if poi_matches:
         full_text = POI_SEARCH_PATTERN.sub("", full_text)
-        from capabilities import _is_outside_location
-        if is_capability_enabled("poi_search") and _is_outside_location():
+        from capabilities import _is_location_known
+        if is_capability_enabled("poi_search") and _is_location_known():
             await _chatroom_sys_msg(room_id, f"📍 {label}搜了搜附近的{'、'.join(poi_matches[:3])}", _q,
                                     after_msg_id=msg_id)
             triggered["poi_search"] = poi_matches[:3]

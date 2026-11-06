@@ -74,7 +74,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
     ),
     CapabilityDef("activity_check", "查看活动动态", "context", "注入 [查看动态:n]，让模型可以查看近期设备活动摘要。", runtime_note="还需要活动日志页的 AI 联动开启。"),
     CapabilityDef("location_context", "位置上下文", "context", "注入当前位置/天气等上下文信息。"),
-    CapabilityDef("poi_search", "周边 POI 搜索", "life", "注入 [POI_SEARCH:类型名]，仅在位置追踪开启且当前在户外时可用。", runtime_note="仅户外位置状态下注入。"),
+    CapabilityDef("poi_search", "周边 POI 搜索", "life", "注入 [POI_SEARCH:类型或关键词]，位置追踪开启且有坐标时可用，在家也能查。", runtime_note="位置开启且有坐标时注入。"),
     CapabilityDef("video_call", "发起视频通话", "core", "注入 [视频电话]，让模型可以主动发起视频通话。", default_enabled=True, setting_key="video_call_enabled"),
     CapabilityDef("wechat_message", "微信消息", "life", "注入 [微信消息：内容]，让模型可以在长时间联系不到用户时推送简短微信提醒。", runtime_note="需要配置微信发送出口后才会实际送达。"),
     CapabilityDef("image_gen", "生成图片/自拍", "media", "注入 [SELFIE:...] / [DRAW:...]，让模型可以生成图片。", default_enabled=False, setting_key="image_gen_enabled"),
@@ -411,6 +411,16 @@ def _is_outside_location() -> bool:
         return False
 
 
+def _is_location_known() -> bool:
+    """位置开着、也有坐标。在家也能查附近：她在家问「附近有什么吃的」很常见（11-06）。"""
+    try:
+        from location import load_location_config, load_location_status
+        status = load_location_status()
+        return bool(load_location_config().get("enabled") and status.get("lng") and status.get("lat"))
+    except Exception:
+        return False
+
+
 def _is_luckin_available() -> bool:
     return bool(SETTINGS.get("luckin_mcp_enabled", False))
 
@@ -432,7 +442,7 @@ def capability_available(key: str) -> tuple[bool, str]:
     checks: dict[str, Callable[[], bool]] = {
         "activity_check": is_activity_tracking_enabled,
         "location_context": _is_location_enabled,
-        "poi_search": _is_outside_location,
+        "poi_search": _is_location_known,
         "pet_action": _is_pet_available,
         "luckin": _is_luckin_available,
         "web_search": _is_web_search_available,
@@ -441,7 +451,7 @@ def capability_available(key: str) -> tuple[bool, str]:
     labels = {
         "activity_check": "活动日志 AI 联动未开启",
         "location_context": "位置追踪未开启",
-        "poi_search": "位置未开启或当前不在户外",
+        "poi_search": "位置未开启或还没有坐标",
         "pet_action": "桌宠未开启或不在线",
         "luckin": "瑞幸 MCP 未开启",
         "web_search": "Tavily API key 未配置",
@@ -635,10 +645,10 @@ def seat_memory_ability_text(user_name: str) -> str:
 
 def poi_search_ability_text(user_name: str) -> str:
     return (
-        f"[POI_SEARCH:类型名] — 搜索{user_name}当前位置周边的POI信息。"
-        "可用类型：餐饮美食、风景名胜、休闲娱乐、购物。"
-        f"使用后系统会自动搜索并将结果发给你，你再根据结果回答{user_name}。"
-        "一次只搜一个类型即可，搜索前不要编造内容。"
+        f"[POI_SEARCH:类型或关键词] — 查{user_name}现在位置附近真实的地方。"
+        f"{user_name}问附近有什么、想吃什么喝什么、想去哪、这附近哪里有某样东西时，先用它查，不要凭印象推荐。"
+        "可以写大类（餐饮美食、风景名胜、休闲娱乐、购物），也可以写具体的词（比如奶茶、药店、公园）。"
+        "系统搜完会把结果发给你，你再挑合适的说。一次搜一两个就好。没搜到就如实说，不要编地方。"
     )
 
 
@@ -683,7 +693,7 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(activity_check_ability_text(user_name))
     if is_capability_enabled("wechat_message"):
         texts.append(wechat_message_ability_text(user_name))
-    if is_capability_enabled("poi_search") and _is_outside_location():  # 和小克一样：在户外才给
+    if is_capability_enabled("poi_search") and _is_location_known():
         texts.append(poi_search_ability_text(user_name))
     if is_capability_enabled("desk_note"):  # 便笺指令座位回复里本来就会处理，这里把能力告诉 TA
         texts.append(desk_note_ability_text(user_name))
@@ -804,7 +814,7 @@ async def build_capability_prompt_items(
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
         abilities.append(activity_check_ability_text(user_name))
 
-    if is_capability_enabled("poi_search") and _is_outside_location():
+    if is_capability_enabled("poi_search") and _is_location_known():
         abilities.append(poi_search_ability_text(user_name))
 
     if is_capability_enabled("web_search") and _is_web_search_available():

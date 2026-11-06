@@ -209,7 +209,7 @@ import group_post
 
 router = APIRouter()
 
-POI_SEARCH_PATTERN = re.compile(r'\[POI_SEARCH:([^\]]+)\]')
+POI_SEARCH_PATTERN = re.compile(r'\[POI_SEARCH\s*[:：]\s*([^\]]+)\]', re.IGNORECASE)
 TOY_CMD_PATTERN = re.compile(r'\[TOY:(\d|STOP)\]')
 PET_CMD_PATTERN = re.compile(r'\[PET:([a-z_\-]+)\]', re.IGNORECASE)
 HOME_CMD_PATTERN = re.compile(r'\[HOME:([^\]]+)\]', re.IGNORECASE)
@@ -3199,11 +3199,10 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
 # ── 服务端 POI 搜索 + 自动追加 Core 回复 ─────────
 async def perform_poi_check(conv_id: str, model_key: str, categories: list[str]):
     """Core 主动搜索周边 POI：拿最新坐标 → 搜索 → 携带结果自动追加一轮 Core 回复"""
-    from location import format_location_for_prompt, search_nearby_pois_text
+    from location import POI_FAILED_TEXT, format_location_for_prompt, search_nearby_pois_text
 
-    poi_text = await search_nearby_pois_text(categories)
-    if not poi_text:
-        return
+    # 没搜到也要接着说：AI 已经说了「我查查」，没下文她只会觉得这功能没用
+    poi_text = await search_nearby_pois_text(categories) or POI_FAILED_TEXT
 
     # 5. 构建消息上下文，携带 POI 搜索结果，让 Core 追加一轮回复
     wb = load_worldbook()
