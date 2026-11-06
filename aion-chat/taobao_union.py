@@ -244,3 +244,16 @@ async def search_broadening(keyword: str, *, app_key: str, adzone_id: str, page_
             break
         tried = " ".join(words[:-1])
     return {**result, "keyword_used": tried}
+
+
+async def lookup_text(keyword: str, *, app_key: str, adzone_id: str, limit: int = 5) -> str:
+    """搜一次，返回给 AI 看的几行文字。放宽过词会写清楚。"""
+    result = await search_broadening(keyword, app_key=app_key, adzone_id=adzone_id, page_size=limit)
+    lines = [f"- {p['title']}｜{p.get('price') or '价格未知'}｜{p.get('shop') or ''}｜{p['url']}"
+             for p in result["products"][:limit]]
+    used = result.get("keyword_used") or keyword
+    if not lines:
+        return f"淘宝上没找到「{used}」相关的商品" + ("（原词没结果，已经放宽过）" if used != keyword else "")
+    head = (f"原词「{keyword}」没搜到，下面是放宽成「{used}」搜到的，不一定符合被去掉的条件：\n"
+            if used != keyword else "")
+    return head + "\n".join(lines)

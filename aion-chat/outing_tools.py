@@ -232,16 +232,8 @@ async def run_tool(tool: str, args: dict[str, Any]) -> str:
         from taobao_shopping import get_store
         keyword = _arg(args, "keyword", 60)
         settings = await (await get_store()).settings()
-        result = await taobao_union.search_broadening(keyword, app_key=settings.get("union_app_key", ""),
-                                                      adzone_id=settings.get("union_adzone_id", ""), page_size=5)
-        lines = [f"- {p['title']}｜{p.get('price') or '价格未知'}｜{p.get('shop') or ''}｜{p['url']}"
-                 for p in result["products"][:5]]
-        used = result.get("keyword_used") or keyword
-        if not lines:
-            return f"淘宝上没找到「{used}」相关的商品" + ("（原词没结果，已经放宽过）" if used != keyword else "")
-        head = (f"原词「{keyword}」没搜到，下面是放宽成「{used}」搜到的，不一定符合被去掉的条件：\n"
-                if used != keyword else "")
-        return head + "\n".join(lines)
+        return await taobao_union.lookup_text(keyword, app_key=settings.get("union_app_key", ""),
+                                              adzone_id=settings.get("union_adzone_id", ""))
     raise OutingRefused(400, "不认识的工具")
 
 

@@ -108,6 +108,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
     CapabilityDef("svakom", "SVAKOM SL278H · AI 循环编排", "life", "独立控制 SL278H 的主体模式、主体震动力度和小部件拍打；关闭会停止 AI 编排，不影响手动控制。", default_enabled=False, runtime_note="仅选用 SVAKOM 且开启时注入；不要求连接或密语模式，与玩具页开关同步。"),
     CapabilityDef("luckin", "瑞幸下单", "life", "注入 [LUCKIN:...]，让模型可以在明确要求时创建瑞幸订单。", runtime_note="还需要瑞幸 MCP 开启。"),
     CapabilityDef("health_context", "健康数据", "context", "注入近期健康摘要。", default_enabled=False, setting_key="health_share_enabled"),
+    CapabilityDef("taobao_chat", "聊天里搜淘宝", "context", "注入 [TAOBAO:关键词]，让模型在聊天里当场搜淘宝联盟的真实商品，再带着结果接着说。"),
     CapabilityDef("web_search", "联网搜索/网页读取", "context", "注入 [WEB_SEARCH:查询] / [WEB_EXTRACT:URL]，让模型可主动联网搜索或读取用户分享的网页。", default_enabled=True, setting_key="web_search_enabled", runtime_note="需要配置 Tavily API key。"),
     CapabilityDef(
         "english_corner_reminder",
@@ -418,6 +419,11 @@ def _is_web_search_available() -> bool:
     return bool((SETTINGS.get("tavily_api_key") or "").strip())
 
 
+def _is_taobao_chat_available() -> bool:
+    import taobao_union
+    return taobao_union.has_secret()
+
+
 def capability_available(key: str) -> tuple[bool, str]:
     checks: dict[str, Callable[[], bool]] = {
         "activity_check": is_activity_tracking_enabled,
@@ -426,6 +432,7 @@ def capability_available(key: str) -> tuple[bool, str]:
         "pet_action": _is_pet_available,
         "luckin": _is_luckin_available,
         "web_search": _is_web_search_available,
+        "taobao_chat": _is_taobao_chat_available,
     }
     labels = {
         "activity_check": "活动日志 AI 联动未开启",
@@ -434,6 +441,7 @@ def capability_available(key: str) -> tuple[bool, str]:
         "pet_action": "桌宠未开启或不在线",
         "luckin": "瑞幸 MCP 未开启",
         "web_search": "Tavily API key 未配置",
+        "taobao_chat": "逛淘宝页面里还没填淘宝联盟的钥匙",
     }
     check = checks.get(key)
     if not check:
@@ -567,6 +575,13 @@ def web_search_ability_text() -> str:
             "简单的常识问题，不需要联网搜索。")
 
 
+def taobao_chat_ability_text(user_name: str) -> str:
+    return (f"[TAOBAO:商品关键词] — 聊天时{user_name}想买什么、想看看某样东西，或你真心想让她看看某样东西时，当场去淘宝搜。"
+            "关键词写两三个词就好，别太细。系统会把真实商品（标题、价格、店铺、链接）作为下一条消息发给你，"
+            "你再挑一两件自然地说，链接原样给她。没搜过就不要说搜到了，不要编造商品、价格或链接，也不要说你买过、用过。"
+            "聊到东西不等于要搜，她没这个意思时别硬推荐。")
+
+
 def image_gen_ability_text(user_name: str) -> str:
     return (f"[SELFIE: 提示词] / [DRAW: 提示词] — 当{user_name}要求你发自拍照片"
             "或者生图画画时，使用这个指令进行图片生成。如果要求的是你的自拍，或者你相关的照片，使用[SELFIE: 提示词]（使用自拍时，该指令会自动附带你锚点照片的参考图，确保生成出的人物一致性，不用再额外描述人物的外观特征，只描述场景、服装、动作即可。），"
@@ -646,6 +661,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(music_ability_text())
     if is_capability_enabled("web_search") and _is_web_search_available():
         texts.append(web_search_ability_text())
+    if is_capability_enabled("taobao_chat") and _is_taobao_chat_available():
+        texts.append(taobao_chat_ability_text(user_name))
     if is_capability_enabled("image_gen"):
         texts.append(image_gen_ability_text(user_name))
     if is_capability_enabled("wish"):
@@ -788,6 +805,9 @@ async def build_capability_prompt_items(
 
     if is_capability_enabled("web_search") and _is_web_search_available():
         abilities.append(web_search_ability_text())
+
+    if is_capability_enabled("taobao_chat") and _is_taobao_chat_available():
+        abilities.append(taobao_chat_ability_text(user_name))
 
     if toy_profiles.active() == "sosexy" and whisper_mode and is_capability_enabled("toy") and "toy" not in excluded_capabilities:
         abilities.append(
