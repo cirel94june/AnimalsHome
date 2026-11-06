@@ -2682,3 +2682,13 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 能力开关：新增 `taobao_chat`，默认开，没填 AppSecret 时不注入。只搜、只看，不写收藏，也不记逛街记录。
 - 已知影响：autonomy 的 `_web_roam_query_from_result` 也用这个 pattern，模型若在那里写 `[TAOBAO:x]`，会把 `TAOBAO:x` 当成网页查询词。那边的提示只教 `[WEB_SEARCH:…]`，影响很小。
 - 测试 `test_taobao_chat.py` 7 项。相关的 45 个测试文件跑过，FAILED 的测试和改动前相同（english_corner、idle_autonomy_actions 里的老问题）。本机没有淘宝钥匙，没有真实搜过，也没有在真实聊天里试过。
+
+## 172. 修 §171 复审的两项 Medium
+
+- M1 开关接线：新增 `web_search.allowed_web_commands(searches, extracts)`，按指令类型查 `taobao_chat`（`capabilities.taobao_chat_on`：开关 + AppSecret）和 `web_search`，关着的只清除、不执行。私聊 3 处、聊天室 2 处调度都先过它，座位原来只查 `web_search` 的判断去掉了。`_taobao_context` 执行前再查一次，调度和执行之间被关掉就不搜。
+  - 顺带的行为变化：小克、Lucien 私聊和群聊原来不查 `web_search` 开关，现在关掉后 `[WEB_SEARCH:]` 也只清除、不执行，和座位一致。
+- M2 带商品资料的续答：`searches` 里有淘宝时，`perform_web_search_check` 和 `_chatroom_web_search` 不再调用 `_process_background_reply_commands`，改用 `strip_untrusted_reply`。它不逐个列举标签：先 `strip_tool_commands`，再去掉所有 `[...]` / `［...］`（后面紧跟 `(` 的 markdown 链接保留）和 `【小组件…】` `【横幅…】`。没进执行入口的标签就算漏清，也只是显示出来，不会执行。座位路径同样先清一遍。
+- 测试 `test_taobao_chat.py` +9（共 16 项）：四种开关组合；没钥匙；调度后被关掉；调度点数量；20 种动作标签只清除；markdown 链接和普通文字保留；聊天室 `[巡逻:停]` 反例不进执行入口；普通联网搜索仍进执行入口；私聊的守卫在执行入口之前（源码断言）。
+- `test_seat_abilities._enable` 同时替换 `capabilities.is_capability_enabled`，因为开关改到那里查了；断言没改。
+- 相关测试文件跑过，FAILED 和改动前相同（english_corner、idle_autonomy_actions 的老问题）。全量测试没跑完。没有真实调用过淘宝、模型或设备。
+- 没有改、要提醒的：普通联网搜索、读网页（§171 之前就有）的续答同样读外部内容，也同样进执行入口，和 M2 是同一类问题，网页比商品标题更不可控。这次按 M2 的范围只改了淘宝，已记进待办。

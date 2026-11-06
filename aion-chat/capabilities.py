@@ -424,6 +424,10 @@ def _is_taobao_chat_available() -> bool:
     return taobao_union.has_secret()
 
 
+def taobao_chat_on() -> bool:
+    return is_capability_enabled("taobao_chat") and _is_taobao_chat_available()
+
+
 def capability_available(key: str) -> tuple[bool, str]:
     checks: dict[str, Callable[[], bool]] = {
         "activity_check": is_activity_tracking_enabled,
@@ -661,7 +665,7 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(music_ability_text())
     if is_capability_enabled("web_search") and _is_web_search_available():
         texts.append(web_search_ability_text())
-    if is_capability_enabled("taobao_chat") and _is_taobao_chat_available():
+    if taobao_chat_on():
         texts.append(taobao_chat_ability_text(user_name))
     if is_capability_enabled("image_gen"):
         texts.append(image_gen_ability_text(user_name))
@@ -806,7 +810,7 @@ async def build_capability_prompt_items(
     if is_capability_enabled("web_search") and _is_web_search_available():
         abilities.append(web_search_ability_text())
 
-    if is_capability_enabled("taobao_chat") and _is_taobao_chat_available():
+    if taobao_chat_on():
         abilities.append(taobao_chat_ability_text(user_name))
 
     if toy_profiles.active() == "sosexy" and whisper_mode and is_capability_enabled("toy") and "toy" not in excluded_capabilities:

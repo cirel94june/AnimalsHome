@@ -90,9 +90,12 @@ from web_search import (
     WEB_EXTRACT_CMD_PATTERN,
     WEB_SEARCH_CMD_PATTERN,
     WebCommandStreamFilter,
+    allowed_web_commands,
     clean_web_command_text,
     format_web_system_message,
+    has_taobao_query,
     run_web_commands,
+    strip_untrusted_reply,
 )
 from lounge_visit_commands import (
     LoungeVisitCommandStreamFilter,
@@ -1046,13 +1049,15 @@ async def _process_chatroom_commands(
     web_extract_matches = WEB_EXTRACT_CMD_PATTERN.findall(full_text)
     if web_search_matches or web_extract_matches:
         full_text = clean_web_command_text(full_text)
-        await _chatroom_sys_msg(
-            room_id,
-            format_web_system_message(who_label, web_search_matches, web_extract_matches),
-            _q,
-            after_msg_id=msg_id,
-        )
-        triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
+        web_search_matches, web_extract_matches = allowed_web_commands(web_search_matches, web_extract_matches)
+        if web_search_matches or web_extract_matches:
+            await _chatroom_sys_msg(
+                room_id,
+                format_web_system_message(who_label, web_search_matches, web_extract_matches),
+                _q,
+                after_msg_id=msg_id,
+            )
+            triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}
 
     # ── MOMENT (朋友圈) ──
     moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
@@ -1909,20 +1914,24 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         return
 
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
+    read_products = has_taobao_query(searches)
+    if read_products:  # 读过外部商品资料的这一轮：动作标签只清除，不执行
+        full_text = strip_untrusted_reply(full_text)
     if is_seat:  # 座位的后台指令还没逐条接好身份：这里只去掉指令，不执行
         full_text = _normalize_cli_bubble_breaks(
             _visible_chatroom_text(_strip_unexecuted_transfers(clean_web_command_text(full_text))), model_key)
         if full_text.strip():
             await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
         return
-    from schedule import _process_background_reply_commands
-    full_text = await _process_background_reply_commands(
-        full_text,
-        target={"type": "chatroom", "room_id": room_id},
-        conv_id=None,
-        sender=sender,
-        ai_msg_id=reply_msg_id,
-    )
+    if not read_products:
+        from schedule import _process_background_reply_commands
+        full_text = await _process_background_reply_commands(
+            full_text,
+            target={"type": "chatroom", "room_id": room_id},
+            conv_id=None,
+            sender=sender,
+            ai_msg_id=reply_msg_id,
+        )
     full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(clean_web_command_text(full_text)), model_key)
     if not full_text.strip():
         return
@@ -4211,7 +4220,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     web_extract_matches = WEB_EXTRACT_CMD_PATTERN.findall(full_text)
     if web_search_matches or web_extract_matches:
         full_text = clean_web_command_text(full_text)
-        if is_capability_enabled("web_search"):
+        web_search_matches, web_extract_matches = allowed_web_commands(web_search_matches, web_extract_matches)
+        if web_search_matches or web_extract_matches:
             await _chatroom_sys_msg(room_id, format_web_system_message(label, web_search_matches, web_extract_matches),
                                     _q, after_msg_id=msg_id)
             triggered["web_search"] = {"searches": web_search_matches, "extracts": web_extract_matches}

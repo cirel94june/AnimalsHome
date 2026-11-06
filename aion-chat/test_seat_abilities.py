@@ -22,6 +22,8 @@ def room(monkeypatch):
 
 def _enable(monkeypatch, *off):
     monkeypatch.setattr(chatroom_routes, "is_capability_enabled", lambda name: name not in off)
+    # 联网和淘宝的开关统一在 capabilities 里查（web_search.allowed_web_commands）
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name not in off)
 
 
 def _run(text):

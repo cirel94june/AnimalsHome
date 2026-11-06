@@ -121,9 +121,12 @@ from web_search import (
     WEB_EXTRACT_CMD_PATTERN,
     WEB_SEARCH_CMD_PATTERN,
     WebCommandStreamFilter,
+    allowed_web_commands,
     clean_web_command_text,
     format_web_system_message,
+    has_taobao_query,
     run_web_commands,
+    strip_untrusted_reply,
 )
 from lounge_visit_commands import (
     LoungeVisitCommandStreamFilter,
@@ -1617,6 +1620,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             web_extract_matches = WEB_EXTRACT_CMD_PATTERN.findall(full_text)
             if web_search_matches or web_extract_matches:
                 full_text = clean_web_command_text(full_text)
+                web_search_matches, web_extract_matches = allowed_web_commands(web_search_matches, web_extract_matches)
 
             poi_matches = POI_SEARCH_PATTERN.findall(full_text)
             if poi_matches:
@@ -2301,6 +2305,7 @@ async def send_message(conv_id: str, body: MsgCreate):
             web_extract_matches = WEB_EXTRACT_CMD_PATTERN.findall(full_text)
             if web_search_matches or web_extract_matches:
                 full_text = clean_web_command_text(full_text)
+                web_search_matches, web_extract_matches = allowed_web_commands(web_search_matches, web_extract_matches)
 
             # 检测 [POI_SEARCH:xxx] 指令 → 标记，后续触发自动搜索+追加回复
             poi_matches = POI_SEARCH_PATTERN.findall(full_text)
@@ -3154,15 +3159,20 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
     if not full_text.strip():
         return
 
-    from schedule import _process_background_reply_commands
-    full_text = await _process_background_reply_commands(
-        full_text,
-        target={"type": "private"},
-        conv_id=conv_id,
-        sender="aion",
-        ai_msg_id=msg_id,
-    )
-    full_text = _visible_ai_text(clean_web_command_text(full_text))
+    if has_taobao_query(searches):  # 读过外部商品资料的这一轮：动作标签只清除，不执行
+        full_text = _visible_ai_text(strip_untrusted_reply(full_text))
+        if not full_text.strip():
+            return
+    else:
+        from schedule import _process_background_reply_commands
+        full_text = await _process_background_reply_commands(
+            full_text,
+            target={"type": "private"},
+            conv_id=conv_id,
+            sender="aion",
+            ai_msg_id=msg_id,
+        )
+        full_text = _visible_ai_text(clean_web_command_text(full_text))
 
     now = time.time()
     reply_atts = await with_band_vibration_attachment(msg_id, [])
@@ -3756,6 +3766,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             web_extract_matches = WEB_EXTRACT_CMD_PATTERN.findall(full_text)
             if web_search_matches or web_extract_matches:
                 full_text = clean_web_command_text(full_text)
+                web_search_matches, web_extract_matches = allowed_web_commands(web_search_matches, web_extract_matches)
 
             # 检测 [POI_SEARCH:xxx] 指令
             poi_matches = POI_SEARCH_PATTERN.findall(full_text)
