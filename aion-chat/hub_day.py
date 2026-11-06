@@ -32,7 +32,9 @@ CHAT_CHARS = 220          # 每条摘要最多给模型看多少字
 MEMORY_CHARS = 160
 MAX_CHAT_TEXT = 5000      # 提示词里这一块的总长度：别把日记提示词撑爆
 MAX_MEMORY_TEXT = 3000
-CHAT_LABELS = {"private": "私聊", "private_group": "小群", "public_group": "大群", "group": "群聊"}
+# 真 Hub 回的是 big_group / small_group（11-06 连真 Hub 查到），接口说明里的写法也认
+CHAT_LABELS = {"private": "私聊", "small_group": "小群", "private_group": "小群",
+               "big_group": "大群", "public_group": "大群", "group": "群聊"}
 
 
 def day_for(now: float | None = None) -> str:

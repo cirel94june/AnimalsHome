@@ -2729,3 +2729,9 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - capture 总是写明 chat_type（不是 bug，Hub 要求传对，写明更稳）。`test_private_capture_does_not_send_chat_type` 改成断言 private。
 - 没改、已告诉 Hub 窗口要确认的：朋友圈读记忆时用 `context_block(who, query, "moments", "private_group")`，朋友圈评论也用 private_group capture。按 Hub 现在的规则，这些也算「自家小群」，可能在朋友圈里被提醒讲梦、讲了也算今天讲过。
 - 测试 `test_hub_dream_inputs.py` 5 项。没连真 Hub。
+
+## 176. 修 §174：真 Hub 的群类型名
+
+- `60f0d03` 部署后在服务器上连真 Hub 试（只看条数）：三位都读通了，一页读完，提示词约 2000 字。
+- 但真 Hub 的 `chats[].chat_type` 是 `big_group` / `small_group`，不是接口说明推断的 private_group / public_group，所以提示词里都显示「别处」，大群小群分不出来。`speaker_hint` 和「大群半公开」那句提示还在，影响是模型分不清这条是大群的。
+- 改 `CHAT_LABELS`，两种写法都认。测试 +1。

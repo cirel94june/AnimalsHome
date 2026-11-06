@@ -145,6 +145,15 @@ def test_prompt_block_carries_the_hints_and_marks_old_events():
     assert "没读全" not in text
 
 
+def test_real_hub_group_names_get_the_right_labels():
+    """11-06 连真 Hub 查到：chat_type 是 big_group / small_group，原来都显示成「别处」。"""
+    day = {"complete": True, "memories": [], "chats": [{"summary": "甲", "chat_type": "big_group"},
+                                                       {"summary": "乙", "chat_type": "small_group"},
+                                                       {"summary": "丙", "chat_type": "没见过的"}]}
+    text = hub_day.format_day(day, "2026-11-06", "小猫")
+    assert "- 大群：甲" in text and "- 小群：乙" in text and "- 别处：丙" in text
+
+
 def test_nothing_that_day_is_an_empty_block():
     assert hub_day.format_day({"chats": [], "memories": [], "complete": True}, "2026-11-06", "小猫") == ""
 
