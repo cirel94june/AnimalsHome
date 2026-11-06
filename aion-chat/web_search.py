@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from config import SETTINGS
+from mcp_policy import OUTING_CMD_PATTERN
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
@@ -16,7 +17,7 @@ WEB_SEARCH_CMD_PATTERN = re.compile(r"\[(?:WEB_SEARCH\s*[：:]\s*|(?=TAOBAO\s*[�
 _TAOBAO_QUERY = re.compile(r"^TAOBAO\s*[：:]\s*(.*)$", re.IGNORECASE | re.S)
 WEB_EXTRACT_CMD_PATTERN = re.compile(r"\[WEB_EXTRACT\s*[：:]\s*([^\]]+)\]", re.IGNORECASE)
 _WEB_CMD_START_RE = re.compile(
-    r"(?:\[|［|【)\s*(?:(?:WEB_SEARCH|WEB_EXTRACT|MEMORY_SEARCH|TAOBAO)\s*[：:]|BAND_VIBRATE\s*:"
+    r"(?:\[|［|【)\s*(?:(?:WEB_SEARCH|WEB_EXTRACT|MEMORY_SEARCH|TAOBAO|出门)\s*[：:]|BAND_VIBRATE\s*:"
     r"|BAND_NOTE_(?:SINGLE|CALL)\s*[：:]|APP_(?:LOCK|TEMP_UNLOCK|UNLOCK)\s*:"
     r"|DEVICE_(?:LOCK|TEMP_UNLOCK)\s*:|DEVICE_UNLOCK"
     r"|(?:COME_HOME|LOOK_AT_ME)\s*:"
@@ -43,6 +44,7 @@ def is_web_search_available() -> bool:
 def clean_web_command_text(text: str) -> str:
     cleaned = WEB_SEARCH_CMD_PATTERN.sub("", text or "")
     cleaned = WEB_EXTRACT_CMD_PATTERN.sub("", cleaned)
+    cleaned = OUTING_CMD_PATTERN.sub("", cleaned)  # 续答里写了也只清除：读过外面内容的回复不能叫人出门
     return cleaned.strip()
 
 
@@ -331,7 +333,7 @@ def _possible_command_prefix_len(text: str) -> int:
         for colon in (":", "：")
     )
     probes = (
-        "[WEB_SEARCH:", "[WEB_SEARCH：", "[WEB_EXTRACT:", "[WEB_EXTRACT：", "[TAOBAO:", "[TAOBAO：",
+        "[WEB_SEARCH:", "[WEB_SEARCH：", "[WEB_EXTRACT:", "[WEB_EXTRACT：", "[TAOBAO:", "[TAOBAO：", "[出门:", "[出门：",
         "[BAND_VIBRATE:",
         "[BAND_NOTE_SINGLE:", "[BAND_NOTE_SINGLE：",
         "[BAND_NOTE_CALL:", "[BAND_NOTE_CALL：",

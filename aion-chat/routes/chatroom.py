@@ -820,6 +820,15 @@ async def _send_private_whisper(who_identity: str, content: str):
         await _send_aion_private_whisper(content)
 
 
+async def _process_outing(text: str, actor: str, room_id: str, queue, msg_id: str, allowed: bool) -> str:
+    """[出门:…]：系统叫醒、环境音、AI 之间接话只清除，不执行。"""
+    from routes.mcp_tools import process_outing_commands
+
+    async def notify(message: str) -> None:
+        await _chatroom_sys_msg(room_id, message, queue, after_msg_id=msg_id)
+    return await process_outing_commands(text, actor, allowed=allowed, notify=notify)
+
+
 async def _process_chatroom_commands(
     full_text: str,
     room_id: str,
@@ -828,6 +837,7 @@ async def _process_chatroom_commands(
     _q: asyncio.Queue,
     *,
     user_text: str = "",
+    allow_outing: bool = True,
 ) -> tuple[str, dict]:
     """处理 AI 回复中的工具指令，执行副作用，返回 (清理后的文本, 触发的后续动作信息)。
     who: 内部身份 aion 或 connor"""
@@ -922,6 +932,7 @@ async def _process_chatroom_commands(
         sender=who_identity, source_msg_id=msg_id, on_saved=_save_pat_event,
     )
     full_text = await process_note_commands(full_text, who_identity)
+    full_text = await _process_outing(full_text, who_identity, room_id, _q, msg_id, allow_outing)
     full_text = await process_band_vibration(
         full_text,
         source_type="chatroom",
@@ -4481,6 +4492,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         await _save_chatroom_reply_failure(room_id, actor_id, _q, reason, partial_text=raw_text, msg_id=msg_id)
         return
     command_text = await process_note_commands(raw_text, actor_id)
+    command_text = await _process_outing(command_text, actor_id, room_id, _q, msg_id,
+                                         not extra_prompt and capture_user_turn and not hub_background)
     side_effect_notice = ""  # 只发了指令、没说别的话时，在房间里留一句说明，不记成回复失败
     if group:
         whispers = PRIVATE_WHISPER_CMD_PATTERN.findall(command_text)
@@ -4845,6 +4858,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
             aion_msg_id,
             _q,
             user_text=query_text,
+            allow_outing=not ambient_context and capture_user_turn and not hub_background,
         )
     except Exception as e:
         import traceback
@@ -4989,6 +5003,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
             connor_msg_id,
             _q,
             user_text=query_text,
+            allow_outing=not ambient_context and capture_user_turn and not hub_background,
         )
     except Exception as e:
         import traceback

@@ -15,6 +15,8 @@ from typing import Any
 from urllib.parse import parse_qsl, quote, quote_plus, urlsplit
 
 SEE, WRITE, PLAY, BAN, NEW = "see", "write", "play", "ban", "new"
+# 聊天里叫 AI 出门：[出门:地方名:想做什么]。放这里是因为清理指令的地方都要用，这个模块没有重依赖
+OUTING_CMD_PATTERN = re.compile(r"[\[［]\s*出门\s*[:：]\s*([^\]］:：]+?)\s*(?:[:：]\s*([^\]］]*?)\s*)?[\]］]")
 
 MAX_CALLS_PER_ROUND = 3
 MAX_CONSECUTIVE_ERRORS = 8

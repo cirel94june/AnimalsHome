@@ -108,6 +108,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
     CapabilityDef("svakom", "SVAKOM SL278H · AI 循环编排", "life", "独立控制 SL278H 的主体模式、主体震动力度和小部件拍打；关闭会停止 AI 编排，不影响手动控制。", default_enabled=False, runtime_note="仅选用 SVAKOM 且开启时注入；不要求连接或密语模式，与玩具页开关同步。"),
     CapabilityDef("luckin", "瑞幸下单", "life", "注入 [LUCKIN:...]，让模型可以在明确要求时创建瑞幸订单。", runtime_note="还需要瑞幸 MCP 开启。"),
     CapabilityDef("health_context", "健康数据", "context", "注入近期健康摘要。", default_enabled=False, setting_key="health_share_enabled"),
+    CapabilityDef("mcp_chat", "聊天里出门", "social", "注入 [出门:地方名:想做什么]，让 AI 在聊天里决定去工具页接好的论坛、游戏，后台去，回来在私聊里讲。"),
     CapabilityDef("taobao_chat", "聊天里搜淘宝", "context", "注入 [TAOBAO:关键词]，让模型在聊天里当场搜淘宝联盟的真实商品，再带着结果接着说。"),
     CapabilityDef("web_search", "联网搜索/网页读取", "context", "注入 [WEB_SEARCH:查询] / [WEB_EXTRACT:URL]，让模型可主动联网搜索或读取用户分享的网页。", default_enabled=True, setting_key="web_search_enabled", runtime_note="需要配置 Tavily API key。"),
     CapabilityDef(
@@ -652,6 +653,23 @@ def poi_search_ability_text(user_name: str) -> str:
     )
 
 
+def mcp_chat_ability_text(user_name: str, actor: str) -> str:
+    """这位 AI 能去的地方。没有地方、线路不支持就是空串，不注入。"""
+    import mcp_outings
+    try:
+        places = mcp_outings.places_for(actor, autonomy_only=False)
+        if not places or not mcp_outings.tool_model_for(actor):
+            return ""
+    except Exception:
+        return ""
+    lines = [f"- {p['name']}" + (f"：{' '.join(str(p.get('description')).split())[:80]}" if p.get("description") else "") for p in places]
+    return (
+        f"[出门:地方名:想做什么] — {user_name}叫你去，或你真的想去外面逛逛时用。写了就是真的去，不要只说不写，也不要没去说去过。"
+        "去了要一会儿才回来，不耽误聊天，回来会在你们的私聊里讲见闻。在外面发帖是公开的。不用每次都去。\n能去的地方：\n"
+        + "\n".join(lines)
+    )
+
+
 def desk_note_ability_text(user_name: str) -> str:
     import desk_notes
     return (
@@ -695,6 +713,10 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(wechat_message_ability_text(user_name))
     if is_capability_enabled("poi_search") and _is_location_known():
         texts.append(poi_search_ability_text(user_name))
+    if actor and is_capability_enabled("mcp_chat"):
+        outing_text = mcp_chat_ability_text(user_name, actor)
+        if outing_text:
+            texts.append(outing_text)
     if is_capability_enabled("desk_note"):  # 便笺指令座位回复里本来就会处理，这里把能力告诉 TA
         texts.append(desk_note_ability_text(user_name))
     if is_capability_enabled("inner_monologue"):  # 和小克 / Lucien 同一段说明；前端对所有 AI 的消息都特殊显示
@@ -863,6 +885,11 @@ async def build_capability_prompt_items(
 
     if is_capability_enabled("moment"):
         abilities.append(moment_ability_text())
+
+    if is_capability_enabled("mcp_chat"):
+        outing_text = mcp_chat_ability_text(user_name, who)
+        if outing_text:
+            abilities.append(outing_text)
 
     if is_capability_enabled("desk_note"):
         abilities.append(desk_note_ability_text(user_name))

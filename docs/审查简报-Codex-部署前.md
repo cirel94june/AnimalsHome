@@ -2880,3 +2880,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `run_outing` 新增（两条线路都有）：只能调清单里的工具；调用前用 `jsonschema` 校验完整参数，不过就不发，把这个工具的完整说明（上限 3000 字）给模型。超时和一般失败不走这里。`jsonschema` 本机和服务器都已装（`mcp` 带的）。
 - 工具页文案不再说「没有能调用工具的模型」。
 - 压缩后的实际大小和整趟 token 开销，要真机量。测试 `test_mcp_codex_route.py`，用假 Codex，没有真的调过 Codex。
+
+## 191. MCP 第 3 步：聊天里能出门
+
+- 指令 `[出门:地方名:想做什么]`。新开关 `mcp_chat`（默认开）。能力说明只列这位 AI 能去的地方，没有地方或没有模型就不注入。
+- `routes.mcp_tools.process_outing_commands`：放在 `process_note_commands` 旁边，5 处正式回复都走，一条回复最多一个。地点按「空白压缩、不分大小写」匹配这位 AI 的清单，不在就留一条提示。`start_outing` 后台跑，页面也改用它。
+- 只清除不执行：`_reply_aion` / `_reply_connor` 在 `ambient_context`、`capture_user_turn=False`、`hub_background` 时；座位在 `extra_prompt`、`capture_user_turn=False`、`hub_background` 时。续答（联网、POI、淘宝）不经过这里，`clean_web_command_text` 也会清掉指令。
+- 隐藏：流式过滤、`safe_live_stream`、`tts`、`context_builder._ALL_CMD_PATTERNS`。
+- 告诉她：出发时当前聊天一条系统提示；回来发私聊；聊天触发的失败在私聊留一句（`go_out` 的错误已遮过）。
+- 权限按小猫定的：不看回复来自哪，只看地点配置，聊天叫去也能发帖、不限趟数。**她明确接受**：模型读过外面内容后，下一轮写 `[出门:…]` 也能去。
+- 测试 `test_mcp_chat_outing.py`。相关 42 个文件 584 过、2 败：`friend_visit`、`model_audio_input`；这轮单独在改动前版本确认了 `model_audio_input` 也失败。没有真的走过一趟。
+- **第 1–3 步都写完了**，等审和部署。AIsay 账号还没接上。

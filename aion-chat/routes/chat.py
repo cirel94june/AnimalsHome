@@ -1572,6 +1572,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 sender="aion", source_msg_id=ai_msg_id,
             )
             full_text = await process_note_commands(full_text, "aion")
+            full_text = await _process_outing(full_text, conv_id)
             full_text = await process_band_vibration(
                 full_text,
                 source_type="private",
@@ -2253,6 +2254,7 @@ async def send_message(conv_id: str, body: MsgCreate):
                 sender="aion", source_msg_id=ai_msg_id,
             )
             full_text = await process_note_commands(full_text, "aion")
+            full_text = await _process_outing(full_text, conv_id)
             full_text = await process_band_vibration(
                 full_text,
                 source_type="private",
@@ -3044,6 +3046,24 @@ async def perform_private_memory_search(
     await export_conversation(conv_id)
 
 
+async def _process_outing(text: str, conv_id: str) -> str:
+    """小克私聊的 [出门:…]：都是她发消息、编辑或重新生成的正式回复。"""
+    from routes.mcp_tools import process_outing_commands
+
+    async def notify(message: str) -> None:
+        now = time.time()
+        msg_id = f"msg_{time.time_ns()}_outing"
+        async with get_db() as db:
+            await db.execute(
+                "INSERT INTO messages (id, conv_id, role, content, created_at, attachments) VALUES (?,?,?,?,?,?)",
+                (msg_id, conv_id, "system", message, now, "[]"),
+            )
+            await db.commit()
+        await manager.broadcast({"type": "msg_created", "data": {
+            "id": msg_id, "conv_id": conv_id, "role": "system", "content": message, "created_at": now, "attachments": []}})
+    return await process_outing_commands(text, "aion", notify=notify)
+
+
 async def _web_search_sys_msg(
     conv_id: str,
     searches: list[str],
@@ -3718,6 +3738,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                 sender="aion", source_msg_id=ai_msg_id,
             )
             full_text = await process_note_commands(full_text, "aion")
+            full_text = await _process_outing(full_text, conv_id)
             full_text = await process_band_vibration(
                 full_text,
                 source_type="private",

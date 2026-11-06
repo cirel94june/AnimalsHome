@@ -113,6 +113,7 @@ _STRIP_PATTERNS = [
     re.compile(r'\[MOMENT:[^\]]*\]'),
     re.compile(r'\[NOTE[:：][^\]]*\]'),
     re.compile(r'\[TAOBAO\s*[:：][^\]]*\]', re.IGNORECASE),
+    re.compile(r'\[出门\s*[:：][^\]]*\]'),
     re.compile(r'\[MEMORY:[^\]]*\]'),
     re.compile(r'\[微信消息[：:][^\]]*\]'),
     re.compile(r'\[拍拍抱枕:(?:拍打开关|拍拍调慢|拍拍调快)\]'),

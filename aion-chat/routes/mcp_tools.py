@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 import mcp_outings
+import mcp_policy
 from config import BASE_DIR
 
 router = APIRouter()
@@ -121,6 +122,72 @@ async def _go_out(actor: str, name: str, purpose: str) -> dict:
     return {"ok": True, "message": message, "event": event, "counts": result.get("counts")}
 
 
+def start_outing(actor: str, name: str, purpose: str, source: str) -> bool:
+    """放到后台去，不占着聊天。TA 已经在外面就返回 False。"""
+    if actor in _out_now or any(key[0] == actor for key in _running):
+        return False
+    key = (actor, name)
+    _running.add(key)
+
+    async def run():
+        try:
+            result = await go_out(actor, name, purpose, source=source)
+            if source == "chat" and not result.get("ok"):
+                await _tell_she_did_not_make_it(actor, name, result.get("error") or "")
+        finally:
+            _running.discard(key)
+
+    task = asyncio.create_task(run())
+    _tasks.add(task)  # 保留引用，避免后台任务被回收
+    task.add_done_callback(_tasks.discard)
+    return True
+
+
+async def _tell_she_did_not_make_it(actor: str, name: str, reason: str) -> None:
+    """聊天里说了要去，没去成要说一声：原来只写自主活动记录，她看不到。"""
+    import autonomy
+    try:
+        await autonomy._save_private_message(actor, f"（我想去「{name}」，但没去成：{reason[:120]}）", force_private=True)
+    except Exception as error:
+        log.warning("[MCP] %s 没去成的提示没发出去：%s", actor, type(error).__name__)
+
+
+async def process_outing_commands(text: str, actor: str, *, allowed: bool = True, notify=None) -> str:
+    """从正式回复里取出 [出门:地方:想做什么]，从正文去掉，开始出门。一条回复最多一个。
+    allowed=False（系统叫醒、环境音、AI 之间接话）只清除不执行。"""
+    if not text or "出门" not in text:
+        return text
+    match = mcp_policy.OUTING_CMD_PATTERN.search(text)
+    if not match:
+        return text
+    clean = mcp_policy.OUTING_CMD_PATTERN.sub("", text).strip()
+    from capabilities import is_capability_enabled
+    if not allowed or not is_capability_enabled("mcp_chat"):
+        return clean
+    message = _begin_outing(actor, match.group(1), match.group(2) or "")
+    if notify and message:
+        try:
+            await notify(message)
+        except Exception as error:
+            log.warning("[MCP] 出门提示没发出去：%s", type(error).__name__)
+    return clean
+
+
+def _begin_outing(actor: str, wanted: str, purpose: str) -> str:
+    import autonomy
+    label = autonomy._actor_label(actor)
+    def same(name) -> str:
+        return " ".join(str(name or "").split()).lower()
+    place = next((p["name"] for p in mcp_outings.places_for(actor, autonomy_only=False) if same(p["name"]) == same(wanted)), "")
+    if not place:
+        return f"{label}想出门，但不认识「{wanted[:40]}」这个地方"
+    if not mcp_outings.tool_model_for(actor):
+        return f"{label}想去「{place}」，但还没有能出门的模型"
+    if not start_outing(actor, place, purpose[:200], "chat"):
+        return f"{label}已经在外面了，这次没去「{place}」"
+    return f"🚪 {label}去「{place}」了，回来会在私聊里讲"
+
+
 @router.post("/api/mcp-tools/{name}/outing")
 async def api_outing(name: str, request: Request):
     data = await _body(request)
@@ -131,18 +198,6 @@ async def api_outing(name: str, request: Request):
         raise HTTPException(400, "这位 AI 不能去这个地方（工具未启用或没勾选 TA）")
     if not mcp_outings.tool_model_for(actor):
         raise HTTPException(400, "这位 AI 还没有能出门的模型（相遇卡里选一条线路）")
-    key = (actor, name)
-    if key in _running or actor in _out_now:
+    if not start_outing(actor, name, str(data.get("purpose") or "")[:200], "page"):
         raise HTTPException(409, "TA 已经在外面了")
-    _running.add(key)
-
-    async def run():
-        try:
-            await go_out(actor, name, str(data.get("purpose") or "")[:200], source="page")
-        finally:
-            _running.discard(key)
-
-    task = asyncio.create_task(run())
-    _tasks.add(task)  # 保留引用，避免后台任务被回收
-    task.add_done_callback(_tasks.discard)
     return {"started": True}
