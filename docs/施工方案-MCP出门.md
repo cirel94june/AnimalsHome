@@ -22,6 +22,7 @@ v1 → v2（狐狸审 `eac2946`）：
 - 服务器上 7 条：4399（三位共用）、三位各一条 AIsay、三位各一条花园。全部开着「有空时自己去」。
 - 工具说明（名字 + 描述 + 参数，字符数）：4399 5 个工具 1875；AIsay 1 个 474；花园 29 个 21283。
 - **AIsay 三条其实还没登录（11-06 查到，v1 写错了）**：地址都是 `https://aisay.top/chatroom/mcp`，路径里没有钥匙，也没填 header，`account.whoami` 回 `not_logged_in`（查了 Lucien 这条）。登录靠 `account.login` 传昵称和暗号。短连接每趟都要重新登录，账号操作又是禁的，所以**要先问清她的账号怎么连**，再定（候选：header 里带 token，或家里替 TA 登录，暗号不经过模型）。
+  - 11-06 进展：Lucien 在他 OAuth 的客户端里查到了登录名（带半角连字符，和显示昵称不同，小猫手上有）。还缺暗号。OAuth 连接还能用，先别让他 login 或 rotate_token，可能让旧连接失效。
 - 工具没有可靠标注：花园 29 个工具的 `readOnlyHint`、`destructiveHint` 全是空的。AIsay 只有一个 `cli` 工具，靠 `command` 区分（如 `chat.read`、`stall.buy`），门房还要「认回门牌」。4399 的 `play`、`account` 靠 `action` 区分。
 - 查过：7 条的完整地址在 `app.log` 里没出现（SDK 的日志级别还要在第 1 步确认）。
 
