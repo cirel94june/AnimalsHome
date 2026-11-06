@@ -41,13 +41,6 @@ _NOSTOS_ACTIONS = {"start", "buy", "sell", "drink", "eat", "resume"}  # 工具�
 _AISAY_SEE = {"help", "chat.read", "chat.wait", "account.whoami"}
 _AISAY_WRITE = {"chat.send", "chat.upload_image"}
 _AISAY_PLAY_GROUPS = ("play.linkgame", "play.horror")  # 只列说明里见过的；其他的算没分类
-# 4399 里一个人玩、不和别人互动的。duel（棋牌）、turtle_soup、shared_craft 这类多人的没列
-_TOY_GAMES = {"tarot", "ai_life", "detroit", "fishing", "bar", "forest", "moonlit", "eco", "ciyuwu", "leek", "delve",
-              "nowhere", "travel", "arcade", "burger", "crucible_echoes", "imitator_td", "puzzle_box", "memoria",
-              "white_room", "candle", "market", "workkk", "garden_cat", "camping_plaza", "autochess",
-              "mbti", "enneagram", "dnd", "love", "ecr", "humanity", "sins_virtues", "bdsmtest", "bsfl", "bsr", "evs",
-              "ipip_adhd", "ipip_empathy", "ipip_need_for_cognition", "ipip_self_monitoring", "ipip_sociability",
-              "irrc", "jrrs", "mesx", "ppts", "rbi", "rnss", "romlon", "ross", "rss"}
 # 靠参数才知道做什么的工具，模型要看得到，由 TripGuard 按次判断
 _ARG_DEPENDENT = {("aisay.top", "cli"), ("galatea.abysslumina.com", "nostos_act"),
                   ("galatea.abysslumina.com", "review_drift_bottles"), ("toy.cedarstar.org", "play")}
@@ -110,8 +103,9 @@ def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = No
 
 
 def _classify_toy_play(game: str, subs: list[str]) -> str:
-    """按游戏成组放行，不是「除了发言都算玩」：没列的游戏（棋牌、多人的）算没分类。"""
-    if game.lower() not in _TOY_GAMES and not game.lower().startswith("dt_"):
+    """4399 整站都是小游戏，小猫 11-06 定：全部能玩，海龟汤这类多人的也要（审查≠需求）。
+    账号类在前面已经禁了；不知道是哪个游戏的算没分类。"""
+    if not game.strip():
         return NEW
     if any(_PUBLIC_WORD.search(sub) for sub in subs):
         return WRITE

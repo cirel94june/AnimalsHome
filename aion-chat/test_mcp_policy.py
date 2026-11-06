@@ -35,7 +35,10 @@ OTHER = {"url": "https://other.example/mcp"}
     (TOY, "play", {"game": "fishing", "action": "status"}, SEE),
     (TOY, "play", {"game": "fishing", "action": "send_message"}, WRITE),  # 游戏里的公开发言算写
     (TOY, "play", {"game": "fishing", "params": {"command": "post hello"}}, WRITE),
-    (TOY, "play", {"game": "duel", "action": "move"}, NEW),               # 棋牌和多人的没列
+    (TOY, "play", {"game": "turtle_soup", "action": "create_random"}, PLAY),  # 小猫要玩
+    (TOY, "play", {"game": "turtle_soup", "action": "ask", "params": {"content": "他是人吗"}}, PLAY),
+    (TOY, "play", {"game": "turtle_soup", "action": "register"}, BAN),    # 账号还是不行
+    (TOY, "play", {"game": "duel", "action": "move"}, PLAY),
     (TOY, "play", {"action": "cast"}, NEW),                               # 不知道哪个游戏
     (TOY, "play", {"game": "fishing", "action": "rotate_token"}, BAN),
     (TOY, "account", {"action": "login"}, BAN),
