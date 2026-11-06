@@ -2728,4 +2728,4 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 座位取时间线里最后一条 `sender == "user"` 的消息；没有才用最后一条。这个 `query_text` 只给 Hub 用。
   - capture 总是写明 chat_type（不是 bug，Hub 要求传对，写明更稳）。`test_private_capture_does_not_send_chat_type` 改成断言 private。
 - 没改、已告诉 Hub 窗口要确认的：朋友圈读记忆时用 `context_block(who, query, "moments", "private_group")`，朋友圈评论也用 private_group capture。按 Hub 现在的规则，这些也算「自家小群」，可能在朋友圈里被提醒讲梦、讲了也算今天讲过。
-- 测试 `test_hub_dream_inputs.py` 6 项。没连真 Hub。
+- 测试 `test_hub_dream_inputs.py` 5 项。没连真 Hub。
