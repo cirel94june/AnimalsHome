@@ -3,6 +3,8 @@ import asyncio
 import time
 from pathlib import Path
 
+import pytest
+
 import memory_hub_bridge as bridge
 import seat_chat
 
@@ -129,12 +131,38 @@ def test_after_a_rejection_background_reads_pause_and_do_not_drop_the_flag(monke
 
 def test_rejection_inside_an_exception_group_is_recognised():
     assert bridge._background_rejected(ExceptionGroup("g", [ExceptionGroup("h", [REJECTED])]))
-    assert bridge._background_rejected(RuntimeError("Invalid params: extra inputs are not permitted: background"))
+
+
+class McpError(Exception):
+    """协议层报错，按类型名认，和 mcp 包里的同名。"""
+
+
+@pytest.mark.parametrize("text", [
+    "Unexpected keyword argument: background",
+    "1 validation error\nbackground\n  Unexpected keyword argument [type=unexpected_keyword_argument]",
+    "background\n  Extra inputs are not permitted [type=extra_forbidden]",
+    'Invalid arguments {"code":"unrecognized_keys","keys":["background"]}',  # 狐狸 §180 的反例：原来漏判
+    "Additional properties are not allowed ('background' was unexpected)",
+    "Unknown argument: background",
+])
+def test_real_rejection_formats_are_recognised(text):
+    assert bridge._background_rejected(bridge.HubToolError("context 返回错误", text))
+    assert bridge._background_rejected(McpError(text))
+
+
+@pytest.mark.parametrize("error", [
+    ConnectionError("background stream: unexpected EOF"),  # 狐狸 §180 的反例：原来误判，错停十分钟
+    TimeoutError("background unexpected"),
+    RuntimeError("Unexpected keyword argument: background"),  # 不是工具或协议层的报错
+    bridge.HubToolError("context 返回错误", "background job failed: unexpected token"),
+    bridge.HubToolError("context 返回错误", "数据库忙"),
+])
+def test_other_errors_are_not_mistaken_for_it(error):
+    assert not bridge._background_rejected(error)
 
 
 def test_network_failures_still_trip_the_normal_breaker(monkeypatch):
     _rejecting(monkeypatch, ConnectionError("连不上"))
-    assert not bridge._background_rejected(ConnectionError("background 连不上"))
     asyncio.run(bridge.context_block("aion", "", "room", "private", background=True))
     assert bridge._consecutive_failures.get("read", 0) >= 1 and bridge._background_paused_until == 0.0
 

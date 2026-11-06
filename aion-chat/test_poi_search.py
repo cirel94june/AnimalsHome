@@ -114,6 +114,20 @@ def test_refusals_are_logged_without_the_key(monkeypatch, capsys):
     assert "secret-key" not in capsys.readouterr().out
 
 
+def test_address_lookup_before_the_search_does_not_leak_the_key(monkeypatch, capsys):
+    """狐狸 §179：每次搜索前的逆地理编码、天气也不能打出 key。"""
+    _amap(monkeypatch, RuntimeError("https://restapi.amap.com/?key=FAKE_SECRET_CANARY"), [])
+    assert asyncio.run(location.amap_regeo(1, 2, "FAKE_SECRET_CANARY")) is None
+    asyncio.run(location.amap_weather("310000", "FAKE_SECRET_CANARY"))
+    assert "FAKE_SECRET_CANARY" not in capsys.readouterr().out
+
+
+def test_voice_never_reads_the_new_tag_forms():
+    import tts
+    for tag in ("[POI_SEARCH:奶茶]", "[POI_SEARCH：奶茶]", "[poi_search:奶茶]"):
+        assert any(p.search(tag) for p in tts._STRIP_PATTERNS), tag
+
+
 def test_fullwidth_colon_is_recognised_and_hidden():
     assert context_builder.POI_SEARCH_PATTERN.findall("[POI_SEARCH：奶茶]") == ["奶茶"]
     assert context_builder.strip_tool_commands("我查查[POI_SEARCH：奶茶]") == "我查查"

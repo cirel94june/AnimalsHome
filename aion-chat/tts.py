@@ -99,7 +99,7 @@ _STRIP_PATTERNS = [
     _WIDGET_TTS_COMMAND,
     re.compile(r'\[语音\s*(?:[|｜:：])[^\]]*(?:\]|$)'),
     re.compile(r'\[CAM_CHECK\]'),
-    re.compile(r'\[POI_SEARCH:[^\]]*\]'),
+    re.compile(r'\[POI_SEARCH\s*[:：][^\]]*\]', re.IGNORECASE),
     re.compile(r'\[MUSIC:[^\]]*\]'),
     re.compile(r'\[ALARM:[^\]]*\]'),
     re.compile(r'\[REMINDER:[^\]]*\]'),

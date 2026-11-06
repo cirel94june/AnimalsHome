@@ -2799,3 +2799,9 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 部署验收（狐狸提醒旧签名可能静默忽略额外参数，不能只看调用成功）：Hub 上线后先用 `list_tools` 确认 `context` 的参数里有 `background`，再部署。「不带梦、不占次数」的语义由 Hub 侧确认。
 - Hub 已回话接受：交接卡读取带 background（交接卡模式下不起作用）；Lucien 系统叫醒仍传提醒内容（有 background 就不带梦，提醒里的「梦」字也不算她在问）。
 - 测试 `test_hub_background.py` +6。
+
+## 181. 修 §180、§179 复审的 Medium 和 Low
+
+- §180 M：`_background_rejected` 原来只看文字里是否同时有 background 和任意关键词。`ConnectionError("background stream: unexpected EOF")` 被误判，`{"code":"unrecognized_keys","keys":["background"]}` 又漏判。改成：只看 `HubToolError` 和 `McpError`，连接、超时、其他异常不管文字写什么都不算；文字只认明确的格式（unexpected keyword argument、extra inputs not permitted、unrecognized_keys、additional properties、unknown argument，且紧贴 background）。
+- §179 M：`amap_regeo` 和 `amap_weather` 的异常也只记类型。全文件查过，高德请求的 print 都改了（哨兵那处不是高德请求，没动）。
+- §179 L：`tts._STRIP_PATTERNS` 的 POI 认全角冒号和大小写。

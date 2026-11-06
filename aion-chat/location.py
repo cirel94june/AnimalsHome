@@ -207,7 +207,7 @@ async def amap_regeo(lng: float, lat: float, key: str) -> dict | None:
                     "district": rc.get("addressComponent", {}).get("district", ""),
                 }
     except Exception as e:
-        print(f"[Location] 逆地理编码失败: {e}")
+        print(f"[Location] 逆地理编码失败: {type(e).__name__}")  # 异常文字里可能带完整地址和 key
     return None
 
 
@@ -234,7 +234,7 @@ async def amap_weather(adcode: str, key: str) -> dict:
             if fc_data.get("status") == "1" and fc_data.get("forecasts"):
                 result["forecast"] = fc_data["forecasts"][0].get("casts", [])
     except Exception as e:
-        print(f"[Location] 天气查询失败: {e}")
+        print(f"[Location] 天气查询失败: {type(e).__name__}")  # 同上
     return result
 
 

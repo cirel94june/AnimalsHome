@@ -198,8 +198,21 @@ class HubToolError(RuntimeError):
         self.detail = detail
 
 
+# 只认「background 这个参数不被接受」的明确格式，不是文字里碰巧同时有两个词（狐狸 §180）
+_BACKGROUND_REJECTED = re.compile(
+    r"unexpected keyword argument\W{0,4}background"
+    r"|background\W[\s\S]{0,80}?(?:unexpected.keyword.argument|extra.(?:inputs?|fields?).{0,12}not.permitted|extra_forbidden)"
+    r"|unrecognized_keys[\s\S]{0,120}?\Wbackground\W"
+    r"|unrecognized.keys?\W{0,6}background"
+    r"|additional.propert(?:y|ies)[\s\S]{0,60}?\Wbackground\W"
+    r"|unknown.(?:argument|parameter|param|field|option|key)\W{0,4}background",
+    re.IGNORECASE,
+)
+
+
 def _background_rejected(error: BaseException) -> bool:
-    """Hub 是不是明确不认 background 这个参数。网络故障、超时不算，照原来的熔断。"""
+    """Hub 是不是明确不认 background 这个参数。只看工具和协议层的报错；
+    连接、超时这类异常不管文字写什么都不算，照原来的熔断。"""
     stack = [error]
     while stack:
         item = stack.pop()
@@ -207,9 +220,9 @@ def _background_rejected(error: BaseException) -> bool:
         if nested:
             stack.extend(nested)
             continue
-        text = f"{getattr(item, 'detail', '')} {item}".lower()
-        if "background" in text and any(word in text for word in (
-                "unexpected", "extra", "additional", "unknown", "not permitted", "invalid param", "not allowed")):
+        if not isinstance(item, HubToolError) and type(item).__name__ != "McpError":
+            continue
+        if _BACKGROUND_REJECTED.search(f"{getattr(item, 'detail', '')}\n{item}"):
             return True
     return False
 
