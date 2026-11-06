@@ -252,6 +252,19 @@ def _chat_type(chat_type: str) -> str:
     return chat_type if chat_type in CHAT_TYPES else "private"
 
 
+def spoken_text(content: Any, attachments: Any = None) -> str:
+    """小猫这一轮真正说的话。语音消息的正文是空的，话在附件的 transcript 里；
+    不带上的话，Hub 认不出她在问梦，可能继续现编（Hub #145）。"""
+    if isinstance(attachments, str):
+        try:
+            attachments = json.loads(attachments or "[]")
+        except ValueError:
+            attachments = []
+    spoken = [str(att.get("transcript") or "").strip() for att in (attachments or [])
+              if isinstance(att, dict) and att.get("type") in ("voice", "video_clip")]
+    return "\n".join(part for part in [*spoken, str(content or "").strip()] if part)
+
+
 async def context_block(actor: str, message: str, chat_id: str = "", chat_type: str = "private") -> str:
     result = await _context_block(actor, message, chat_id, chat_type)
     _log_read(actor, chat_id)
@@ -820,9 +833,8 @@ async def _send_capture(cfg: dict[str, Any], row: sqlite3.Row) -> tuple[str, str
         "ai_response": row["ai_response"][:8000],
         "platform": row["platform"],
     }
-    if row["chat_type"] != "private":
-        # Hub 不传 chat_type 时按私聊记，群聊内容会进私人层
-        arguments["chat_type"] = "private_group"
+    # 总是写明：Hub 靠它判断这轮回复算不算讲过梦（#145）；不传时虽按私聊算，但群聊内容会进私人层
+    arguments["chat_type"] = "private" if row["chat_type"] == "private" else "private_group"
     if row["event_id"]:
         arguments["event_id"] = row["event_id"]  # 重复提交时 Hub 回 {"status": "duplicate"}，同样算送达
     if row["chat_id"]:

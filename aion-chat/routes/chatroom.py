@@ -3714,7 +3714,7 @@ async def reply_once(room_id: str, body: ReplyOnceTrigger):
     cam.reset_patrol_timer()
 
     context_limit = room.get("context_minutes", 30)
-    query_text = msgs[-1]["content"] if msgs else ""
+    query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
     model_key, connor_model_key = _room_models(body)
 
     _q: asyncio.Queue = GenerationQueue()
@@ -4003,7 +4003,7 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
         return {"error": "房间不存在"}
 
     context_limit = room.get("context_minutes", 30)
-    query_text = msgs[-1]["content"] if msgs else ""
+    query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
     model_key, connor_model_key = _room_models(body)
     _q: asyncio.Queue = GenerationQueue()
 
@@ -4580,7 +4580,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
 async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, connor_model_key="Codex", tts_enabled=False, tts_connor_voice="", whisper_mode=False):
     """Connor 单聊回复（Codex CLI 流式调用）"""
     connor_label = _name_for_identity("connor")
-    query_text = msgs[-1]["content"] if msgs else ""
+    query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
 
     await _q.put({"type": "preparing", "sender": "connor"})
     connor_messages, digest_out = await build_connor_1v1_context(
@@ -4729,7 +4729,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
 
 async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_key, _q, context_limit, *, tts_enabled=False, tts_aion_voice="", tts_connor_voice="", whisper_mode=False):
     """群聊回复：顺序执行，第二个 AI 能看到第一个的回复和工具执行结果"""
-    query_text = msgs[-1]["content"] if msgs else ""
+    query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
 
     reply_order = load_chatroom_config().get("reply_order", "random")
     digest = {
@@ -5137,7 +5137,7 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
             for round_num in range(max_rounds):
                 await _q.put({"type": "round_start", "round": round_num + 1, "total": max_rounds})
 
-                query_text = msgs[-1]["content"] if msgs else ""
+                query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
 
                 # 决定回复顺序
                 if reply_order == "connor":

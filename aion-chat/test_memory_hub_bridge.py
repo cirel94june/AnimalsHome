@@ -204,10 +204,11 @@ def test_capture_turn_logs_with_platform_and_identity(fake_hub, isolated_config)
                                      "chat_type": "private_group"})
 
 
-def test_private_capture_does_not_send_chat_type(fake_hub, isolated_config):
+def test_private_capture_says_it_is_private(fake_hub, isolated_config):
+    """Hub #145：靠 chat_type 判断这轮回复算不算讲过梦，总是写明。"""
     _write(isolated_config, enabled=True, url=fake_hub)
     assert asyncio.run(bridge.capture_turn("aion", "我到家了", "欢迎回来"))
-    assert "chat_type" not in CALLS[-1][1] and CALLS[-1][1]["platform"] == "aionshome"
+    assert CALLS[-1][1]["chat_type"] == "private" and CALLS[-1][1]["platform"] == "aionshome"
 
 
 def test_schedule_capture_strips_tool_commands(fake_hub, isolated_config):

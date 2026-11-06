@@ -141,7 +141,10 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
     actor = actors.get_actor(actor_id) or {"name": actor_id}
     wb = load_worldbook()
     user_name = (wb.get("user_name") or "").strip() or "用户"
-    query_text = str((msgs[-1] if msgs else {}).get("content") or "")
+    # 她这一轮说的话，不是时间线最后一条：群里轮到 TA 时，最后一条常是别的 AI 刚说的，
+    # Hub 就认不出她在问梦（Hub #145）。这段记录里没有她的话时才用最后一条。
+    heard = next((m for m in reversed(msgs or []) if m.get("sender") == "user"), None) or (msgs[-1] if msgs else {})
+    query_text = memory_hub_bridge.spoken_text(heard.get("content"), heard.get("attachments"))
 
     # 新对话开头的交接卡由 context_block 自己判断并附上
     hub_task = asyncio.create_task(memory_hub_bridge.context_block(

@@ -2713,3 +2713,19 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
   - 本地「记忆整理」（`_do_digest`）：Hub 说整理记忆前也可以调。但整理的结果会写进本地记忆再送回 Hub，把 Hub 的摘要喂进去可能绕一圈变成重复记忆，所以先不接。
   - 自主活动的「翻记忆库」：看的是过去某天的本地记忆，不是今天。
 - 测试 `test_hub_day.py` 13 项，用假的 Hub，没连真 Hub，也没真写过日记。
+
+## 175. Hub #145 梦每天自然讲一次：确认 context、capture 的两个入参
+
+- Hub 要确认：context 传小猫这一轮的原话；capture 的 chat_type 传对。
+- 查的结果：
+  - 参数名没问题：Hub 的 MCP `context` 收的是 `message`，内部当 user_message 用，我们传的就是 `message`。
+  - 小克私聊、Lucien 私聊、小克和 Lucien 的群聊：传的是触发这轮回复的那条消息。打字的都对。
+  - **漏洞 1，语音消息**：语音的正文是空串，话在附件的 transcript 里，所以她用语音问梦时 Hub 收到的是空的。
+  - **漏洞 2，座位在群里**：`seat_chat.build_context` 取时间线最后一条，群里轮到 TA 时那常是别的 AI 刚说的，不是她的话。
+  - capture：私聊原来不传 chat_type，Hub 默认按 private 算，所以「讲过梦」本来就算得上，不是 bug。群聊传 private_group。bot 看起来也都传了（只看了 cloudy 的 `bot.py`，没改）。
+- 改法：
+  - `memory_hub_bridge.spoken_text(content, attachments)`：把语音、视频通话的 transcript 和正文合起来。私聊 2 处、聊天室 5 处 `query_text` 都用它（这个 query_text 也用于本地记忆召回，语音消息现在也能召回了，算顺带改善）。
+  - 座位取时间线里最后一条 `sender == "user"` 的消息；没有才用最后一条。这个 `query_text` 只给 Hub 用。
+  - capture 总是写明 chat_type（不是 bug，Hub 要求传对，写明更稳）。`test_private_capture_does_not_send_chat_type` 改成断言 private。
+- 没改、已告诉 Hub 窗口要确认的：朋友圈读记忆时用 `context_block(who, query, "moments", "private_group")`，朋友圈评论也用 private_group capture。按 Hub 现在的规则，这些也算「自家小群」，可能在朋友圈里被提醒讲梦、讲了也算今天讲过。
+- 测试 `test_hub_dream_inputs.py` 6 项。没连真 Hub。
