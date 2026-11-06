@@ -149,6 +149,9 @@ def _in_cooldown(kind: str = "read") -> bool:
 
 _consecutive_failures: dict[str, int] = {}
 FAILURES_BEFORE_COOLDOWN = 2
+# Hub 明确说不认 background 时，只暂停后台这几种读取；不算普通失败，真实聊天不受连累（狐狸 §178 M2）
+BACKGROUND_PAUSE_SECONDS = 600.0
+_background_paused_until = 0.0
 
 # 每位 AI 最近一次去 Hub 取记忆的情况，系统日志里显示（11-01：原来只显示本地旧记忆，Hub 取没取到看不出来）
 last_read_status: dict[tuple[str, str], dict[str, Any]] = {}
@@ -187,6 +190,36 @@ def _succeeded(kind: str = "read") -> None:
     _consecutive_failures[kind] = 0
 
 
+class HubToolError(RuntimeError):
+    """工具返回了错误。detail 是对方的说明，可能带着她的话，只用来判断，不写日志。"""
+
+    def __init__(self, message: str, detail: str = ""):
+        super().__init__(message)
+        self.detail = detail
+
+
+def _background_rejected(error: BaseException) -> bool:
+    """Hub 是不是明确不认 background 这个参数。网络故障、超时不算，照原来的熔断。"""
+    stack = [error]
+    while stack:
+        item = stack.pop()
+        nested = getattr(item, "exceptions", None)
+        if nested:
+            stack.extend(nested)
+            continue
+        text = f"{getattr(item, 'detail', '')} {item}".lower()
+        if "background" in text and any(word in text for word in (
+                "unexpected", "extra", "additional", "unknown", "not permitted", "invalid param", "not allowed")):
+            return True
+    return False
+
+
+def _pause_background() -> None:
+    global _background_paused_until
+    _background_paused_until = time.monotonic() + BACKGROUND_PAUSE_SECONDS
+    log.warning("[MemoryHub] Hub 不认 background，后台这几种读取先暂停 %ss（不影响真实聊天）", int(BACKGROUND_PAUSE_SECONDS))
+
+
 def _trip(cfg: dict[str, Any], error: BaseException, kind: str = "read") -> None:
     failures = _consecutive_failures.get(kind, 0) + 1
     _consecutive_failures[kind] = failures
@@ -215,7 +248,8 @@ async def _call_tool(cfg: dict[str, Any], tool: str, arguments: dict[str, Any], 
                 sent.append(True)
             result = await session.call_tool(tool, arguments)
     if getattr(result, "isError", False):
-        raise RuntimeError(f"{tool} 返回错误")
+        detail = "\n".join(item.text for item in (result.content or []) if isinstance(getattr(item, "text", None), str))
+        raise HubToolError(f"{tool} 返回错误", detail)
     texts = [item.text for item in (result.content or []) if isinstance(getattr(item, "text", None), str)]
     return "\n".join(texts)
 
@@ -292,6 +326,9 @@ async def _context_block(actor: str, message: str, chat_id: str = "", chat_type:
     if _in_cooldown("read"):
         _note_read(actor, chat_id, "cooldown")
         return ""
+    if background and time.monotonic() < _background_paused_until:
+        _note_read(actor, chat_id, "background_paused")
+        return ""  # 不去掉标记重试：那样闹铃里就又带上梦了
     chat_type = _chat_type(chat_type)
     if chat_type != "private" or not is_new_session(last_activity(actor)):
         return await _incremental_block(cfg, actor, message, chat_id, chat_type, background=background)
@@ -333,6 +370,10 @@ async def _incremental_block(cfg: dict[str, Any], actor: str, message: str, chat
     except asyncio.CancelledError:
         raise
     except Exception as error:  # 包含超时与 anyio 的 ExceptionGroup
+        if background and _background_rejected(error):
+            _pause_background()
+            _note_read(actor, chat_id, "background_rejected", started=started)
+            return ""
         _trip(cfg, error, "read")
         _note_read(actor, chat_id, "timeout" if isinstance(error, (asyncio.TimeoutError, TimeoutError)) else "error",
                    started=started, error=type(error).__name__)
@@ -381,6 +422,9 @@ async def handoff_block(actor: str, chat_type: str = "private", *, background: b
     except asyncio.CancelledError:
         raise
     except Exception as error:
+        if background and _background_rejected(error):
+            _pause_background()
+            return ""
         _trip(cfg, error, "read")
         return ""
     _succeeded("read")

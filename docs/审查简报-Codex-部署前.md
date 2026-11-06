@@ -2788,3 +2788,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 没改、要提醒的：POI 结果里的店名来自商家，续答（`perform_poi_check`、`_chatroom_poi_check`）仍进 `_process_background_reply_commands`。和 §171 M2、联网搜索是同一类老问题，这次没动。
 - 测试 `test_poi_search.py` 10 项。相关 105 个文件 1062 过、8 败；这 8 项放到改动前的版本上同样失败（聊天室系统提示样式 2、手环 2、friend_visit 1、米环健康 1、triggered reasoning 2）。全量没跑。没有真的让 AI 搜过。
 - **部署**：这个提交在 §178 之后，要等 Hub 的 background 上线才能一起部署。
+
+## 180. 修 §178 复审的两项 Medium
+
+- M1 AI 互聊后续轮次：`trigger_ai_chat` 第一轮是她按的，不标；`round_num > 0` 时给 `_reply_aion`、`_reply_connor`、`_generate_seat_reply` 传新参数 `hub_background=True`。只影响告诉 Hub 的标记，capture 规则不动。
+- M2 旧 Hub 拒绝参数连累真实聊天：
+  - `_call_tool` 工具报错改抛 `HubToolError`，对方说明放在 `detail`。这段可能带她的话，不进日志，只用于判断；`str(error)` 和原来一样。
+  - `_background_rejected`：带 background 且明确是「不认这个参数」（含 ExceptionGroup 内层、McpError 文字）才算。网络和超时不算，照原来的熔断。
+  - 被拒：不计入普通读取失败，后台读取单独暂停 10 分钟（`_note_read` 记 background_paused / background_rejected），返回空块。不去掉标记重试。真实聊天照常读。
+- 部署验收（狐狸提醒旧签名可能静默忽略额外参数，不能只看调用成功）：Hub 上线后先用 `list_tools` 确认 `context` 的参数里有 `background`，再部署。「不带梦、不占次数」的语义由 Hub 侧确认。
+- Hub 已回话接受：交接卡读取带 background（交接卡模式下不起作用）；Lucien 系统叫醒仍传提醒内容（有 background 就不带梦，提醒里的「梦」字也不算她在问）。
+- 测试 `test_hub_background.py` +6。

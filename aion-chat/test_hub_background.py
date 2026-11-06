@@ -1,5 +1,6 @@
 """Hub：background=true 表示这一轮不是小猫在说话；斗地主用单独的 chat_id。"""
 import asyncio
+import time
 from pathlib import Path
 
 import memory_hub_bridge as bridge
@@ -63,8 +64,8 @@ def test_every_background_path_says_so():
     camera = (ROOT / "camera.py").read_text(encoding="utf-8")
     assert camera.count("memory_hub_background=True") == 2    # 监控叫醒
     room = (ROOT / "routes" / "chatroom.py").read_text(encoding="utf-8")
-    assert room.count("memory_hub_background=bool(ambient_context) or not capture_user_turn") == 2  # 环境音、自主接话
-    assert "background=bool(extra_prompt) or not capture_user_turn" in room                        # 座位
+    assert room.count("memory_hub_background=hub_background or bool(ambient_context) or not capture_user_turn") == 2  # 环境音、自主接话
+    assert "background=hub_background or bool(extra_prompt) or not capture_user_turn" in room                        # 座位
     assert "memory_hub_background" not in (ROOT / "routes" / "chat.py").read_text(encoding="utf-8")  # 真实聊天不传
 
 
@@ -85,3 +86,97 @@ def test_every_connor_context_call_in_background_jobs_is_marked():
                 if "import" in source[max(0, at - 40):at]:
                     continue
                 assert "memory_hub_background=True" in call, (name, at)
+
+
+def _rejecting(monkeypatch, error):
+    calls = _calls(monkeypatch, new_session=True)
+
+    async def tool(cfg, name, arguments, sent=None):
+        calls.append((name, arguments))
+        if arguments.get("background"):
+            raise error
+        return "记忆"
+    monkeypatch.setattr(bridge, "_call_tool", tool)
+    monkeypatch.setattr(bridge, "_background_paused_until", 0.0)
+    monkeypatch.setitem(bridge._cooldown_until, "read", 0.0)
+    monkeypatch.setitem(bridge._consecutive_failures, "read", 0)
+    monkeypatch.setattr(bridge, "_in_cooldown", lambda kind="read": time.monotonic() < bridge._cooldown_until.get(kind, 0.0))
+    return calls
+
+
+REJECTED = bridge.HubToolError("context 返回错误", "Unexpected keyword argument: background")
+
+
+def test_old_hub_rejecting_the_flag_does_not_hurt_real_chat(monkeypatch):
+    """狐狸 §178 M2：新对话同时请求两次，旧 Hub 各拒绝一次，原来会触发全局冷却，真实聊天也读不到。"""
+    calls = _rejecting(monkeypatch, REJECTED)
+    assert asyncio.run(bridge.context_block("aion", "", "room", "private", background=True)) == ""
+    assert bridge._cooldown_until["read"] == 0.0 and bridge._consecutive_failures.get("read", 0) == 0
+    assert "记忆" in asyncio.run(bridge.context_block("aion", "你好", "room", "private"))
+
+
+def test_after_a_rejection_background_reads_pause_and_do_not_drop_the_flag(monkeypatch):
+    calls = _rejecting(monkeypatch, REJECTED)
+    asyncio.run(bridge.context_block("aion", "", "room", "private", background=True))
+    seen = len(calls)
+    assert asyncio.run(bridge.context_block("aion", "", "room", "private", background=True)) == ""
+    assert len(calls) == seen  # 暂停期间不发请求
+    assert all(args.get("background") is True for _, args in calls)  # 也没有去掉标记重试
+    monkeypatch.setattr(bridge, "_background_paused_until", time.monotonic() - 1)
+    asyncio.run(bridge.context_block("aion", "", "room", "private", background=True))
+    assert len(calls) > seen  # 过了暂停时间再试
+
+
+def test_rejection_inside_an_exception_group_is_recognised():
+    assert bridge._background_rejected(ExceptionGroup("g", [ExceptionGroup("h", [REJECTED])]))
+    assert bridge._background_rejected(RuntimeError("Invalid params: extra inputs are not permitted: background"))
+
+
+def test_network_failures_still_trip_the_normal_breaker(monkeypatch):
+    _rejecting(monkeypatch, ConnectionError("连不上"))
+    assert not bridge._background_rejected(ConnectionError("background 连不上"))
+    asyncio.run(bridge.context_block("aion", "", "room", "private", background=True))
+    assert bridge._consecutive_failures.get("read", 0) >= 1 and bridge._background_paused_until == 0.0
+
+
+def test_hub_error_text_is_not_in_the_message_that_gets_logged():
+    assert "Unexpected" not in str(REJECTED)
+
+
+def test_ai_chat_later_rounds_are_background_first_is_not(monkeypatch):
+    """狐狸 §178 M1：第二轮的「最后一句」是 AI 说的。"""
+    from routes import chatroom as room
+
+    seen = []
+
+    async def reply(*a, hub_background=False, **k):
+        seen.append(hub_background)
+        return None
+
+    async def seat(*a, hub_background=False, **k):
+        seen.append(("seat", hub_background))
+
+    async def load(room_id):
+        return {"type": "group", "ai_chat_rounds": 2, "context_minutes": 30}, [{"content": "聊聊", "sender": "user"}]
+    tasks = []
+    monkeypatch.setattr(room, "_load_room_and_messages", load)
+    monkeypatch.setattr(room, "_room_models", lambda body: ("m", "c"))
+    monkeypatch.setattr(room, "_reply_aion", reply)
+    monkeypatch.setattr(room, "_reply_connor", reply)
+    monkeypatch.setattr(room, "_generate_seat_reply", seat)
+    monkeypatch.setattr(room, "_group_seat_members", lambda: ["ai3"])
+    monkeypatch.setattr(room, "load_chatroom_config", lambda: {"reply_order": "aion"})
+    monkeypatch.setattr(room, "spawn_generation_task", lambda coro: tasks.append(coro))
+
+    class Body:
+        rounds = 2
+        tts_enabled = False
+        tts_aion_voice = ""
+        tts_connor_voice = ""
+
+    async def run():
+        await room.trigger_ai_chat("r", Body())
+        await tasks[0]
+    asyncio.run(run())
+    assert seen[:3] == [False, False, ("seat", False)]
+    assert seen[3:6] == [True, True, ("seat", True)]

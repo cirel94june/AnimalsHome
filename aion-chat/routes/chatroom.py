@@ -4422,7 +4422,7 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
 
 async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor: str = "", group: bool = False,
                                extra_prompt: str = "", proceed_check=None, extra_attachments: list | None = None,
-                               capture_user_turn: bool = True):
+                               capture_user_turn: bool = True, hub_background: bool = False):
     """座位 3～6 的回复（seat_chat 轻量线路：人设 + Memory Hub + 座位自己的模型）。
 
     私聊时 actor 取房间登记的座位；群聊时由调用方指定，并按群聊方式组织上下文。
@@ -4451,7 +4451,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
                 actor_id, merged or msgs, context_limit=context_limit, chat_id=room_id, group=group,
                 query_text=seat_chat.hub_query_for(actor_id, msgs, system_wake=bool(extra_prompt),
                                                    her_turn=capture_user_turn),
-                background=bool(extra_prompt) or not capture_user_turn)
+                background=hub_background or bool(extra_prompt) or not capture_user_turn)
             if extra_prompt:  # 系统叫 TA 来说话（比如闹铃到点），不是有人发了消息
                 trigger_msg = {"role": "user", "content": extra_prompt}
                 if extra_attachments:  # 定时监督到点时的摄像头截图
@@ -4763,7 +4763,7 @@ def _group_seat_members() -> list[str]:
 
 
 @_chatroom_reply_guard("aion")
-async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *, tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = "", capture_user_turn: bool = True):
+async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *, tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = "", capture_user_turn: bool = True, hub_background: bool = False):
     ai_label = _name_for_identity("aion")
     await _q.put({"type": "preparing", "sender": "aion"})
     aion_history, digest_out = await build_aion_group_context(
@@ -4771,7 +4771,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
         include_image_attachments=not bool(ambient_context),
         digest_result=digest_result,
         whisper_mode=whisper_mode,
-        memory_hub_background=bool(ambient_context) or not capture_user_turn,  # 不是她在说话
+        memory_hub_background=hub_background or bool(ambient_context) or not capture_user_turn,  # 不是她在说话
     )
     if ambient_context:
         aion_history.append({"role": "user", "content": append_message_meta(ambient_context, time.time(), "环境语音")})
@@ -4906,7 +4906,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
 
 @_chatroom_reply_guard("connor")
-async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_model_key="Codex", tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = "", capture_user_turn: bool = True):
+async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_model_key="Codex", tts_enabled=False, tts_voice="", digest_result=None, whisper_mode=False, ambient_context: str = "", capture_user_turn: bool = True, hub_background: bool = False):
     connor_label = _name_for_identity("connor")
     await _q.put({"type": "preparing", "sender": "connor"})
     connor_history, digest_out = await build_connor_group_context(
@@ -4914,7 +4914,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         include_image_attachments=not bool(ambient_context),
         digest_result=digest_result,
         whisper_mode=whisper_mode,
-        memory_hub_background=bool(ambient_context) or not capture_user_turn,  # 不是她在说话
+        memory_hub_background=hub_background or bool(ambient_context) or not capture_user_turn,  # 不是她在说话
     )
     if ambient_context:
         connor_history.append({"role": "user", "content": append_message_meta(ambient_context, time.time(), "环境语音")})
@@ -5089,6 +5089,9 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
                 await _q.put({"type": "round_start", "round": round_num + 1, "total": max_rounds})
 
                 query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
+                # 第一轮是她按下去的；后面几轮是 AI 接 AI，最后一句不是她说的（狐狸 §178 M1）。
+                # 只告诉 Hub，不改 capture：记录规则还是原来那样
+                hub_background = round_num > 0
 
                 # 决定回复顺序
                 if reply_order == "connor":
@@ -5102,23 +5105,27 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
                     digest = await _reply_aion(
                         room_id, msgs, context_limit, query_text, model_key, _q,
                         tts_enabled=tts_enabled, tts_voice=tts_aion_voice, digest_result=digest,
+                        hub_background=hub_background,
                     )
                     _, msgs = await _load_room_and_messages(room_id)
                     digest = await _reply_connor(
                         room_id, msgs, context_limit, query_text, _q,
                         connor_model_key=connor_model_key,
                         tts_enabled=tts_enabled, tts_voice=tts_connor_voice, digest_result=digest,
+                        hub_background=hub_background,
                     )
                 else:
                     digest = await _reply_connor(
                         room_id, msgs, context_limit, query_text, _q,
                         connor_model_key=connor_model_key,
                         tts_enabled=tts_enabled, tts_voice=tts_connor_voice, digest_result=digest,
+                        hub_background=hub_background,
                     )
                     _, msgs = await _load_room_and_messages(room_id)
                     digest = await _reply_aion(
                         room_id, msgs, context_limit, query_text, model_key, _q,
                         tts_enabled=tts_enabled, tts_voice=tts_aion_voice, digest_result=digest,
+                        hub_background=hub_background,
                     )
 
                 # 其他家人（狗蛋等）也接一轮
@@ -5126,7 +5133,8 @@ async def trigger_ai_chat(room_id: str, body: AiChatTrigger):
                     room_now, msgs = await _load_room_and_messages(room_id)
                     if (room_now or {}).get("type") != "group":
                         break
-                    await _generate_seat_reply(room_id, room_now, msgs, _q, context_limit, actor=actor, group=True)
+                    await _generate_seat_reply(room_id, room_now, msgs, _q, context_limit, actor=actor, group=True,
+                                               hub_background=hub_background)
 
                 # 重新加载消息
                 _, msgs = await _load_room_and_messages(room_id)
