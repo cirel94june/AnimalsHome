@@ -57,6 +57,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
 <script>
 (function () {
   var status = 'pending';
+  var loadSeq = 0;  // 切换标签后，晚到的旧请求不能覆盖当前列表
   var list = document.getElementById('list');
   var ROOMS = { living_room: '客厅', bedroom: '卧室', study: '书房', kitchen: '厨房', dreams: '梦' };
 
@@ -77,23 +78,25 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
   }
 
   function load() {
+    var seq = ++loadSeq, st = status;
     list.innerHTML = '<div class="empty">读取中…</div>';
-    api('GET', '/api/hub-review/list?status=' + status).then(function (j) {
+    api('GET', '/api/hub-review/list?status=' + st).then(function (j) {
+      if (seq !== loadSeq) return;
       if (j.__status !== 200) { list.innerHTML = '<div class="empty">' + esc(j.detail || '读不到') + '</div>'; return; }
-      if (!j.items.length) { list.innerHTML = '<div class="empty">' + (status === 'pending' ? '没有要你点头的记忆了 ✨' : '没有要看的了 ✨') + '</div>'; return; }
+      if (!j.items.length) { list.innerHTML = '<div class="empty">' + (st === 'pending' ? '没有要你点头的记忆了 ✨' : '没有要看的了 ✨') + '</div>'; return; }
       list.innerHTML = '';
-      j.items.forEach(function (item) { list.appendChild(card(item)); });
+      j.items.forEach(function (item) { list.appendChild(card(item, st)); });
     });
   }
 
-  function card(item) {
+  function card(item, st) {
     var el = document.createElement('div'); el.className = 'card';
     var room = ROOMS[item.proposed_room] || item.proposed_room || '';
     var who = item.who || item.proposer_ai_id || item.owner_ai || '';
     var olds = (item.conflict_targets || []).map(function (t, i) {
       return '<label class="old"><input type="checkbox" data-i="' + i + '"><span>' + esc(t.content) + '</span></label>';
     }).join('');
-    var pending = status === 'pending';
+    var pending = st === 'pending';
     el.innerHTML =
       '<div class="meta">' + (room ? '<span>' + esc(room) + '</span>' : '') + (who ? '<span>' + esc(who) + ' 记的</span>' : '') +
       (item.created_at ? '<span>' + esc(when(item.created_at)) + '</span>' : '') + '</div>' +
@@ -109,7 +112,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     el.addEventListener('click', function (e) {
       var btn = e.target.closest('button[data-a]'); if (!btn) return;
       var action = btn.dataset.a;
-      if (action === 'edit') { openEdit(el, item); return; }
+      if (action === 'edit') { openEdit(el, item, pending); return; }
       var body = { action: pending ? (action === 'reject' ? 'reject' : 'approve') : 'seen' };
       if (action === 'retire') {
         if (!confirm('这条记忆收起来？以后还能找回。')) return;
@@ -125,7 +128,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       .map(function (box) { var t = item.conflict_targets[+box.dataset.i]; return { id: t.id, updated_at: t.updated_at }; });
   }
 
-  function openEdit(el, item) {
+  function openEdit(el, item, pending) {
     if (el.querySelector('.edit')) return;
     var area = document.createElement('textarea'); area.className = 'edit'; area.value = item.content || '';
     var row = document.createElement('div'); row.className = 'btns';
@@ -134,7 +137,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     row.querySelector('[data-cancel]').onclick = function () { area.remove(); row.remove(); };
     row.querySelector('[data-save]').onclick = function () {
       var text = area.value.trim(); if (!text) { toast('写点什么再保存'); return; }
-      send(el, item, { action: status === 'pending' ? 'approve' : 'seen', content: text });
+      send(el, item, { action: pending ? 'approve' : 'seen', content: text });
     };
   }
 

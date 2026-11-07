@@ -2940,3 +2940,9 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 钥匙：列表和审批只用主人钥匙（`MEMORY_HUB_OWNER_SECRET`），没配就 503，不退回共用钥匙；summary 用共用钥匙。钥匙只在服务器，回给网页的字段按白名单挑。
 - 返回码按接口说明：409 提示刷新，页面不当成已保存，并重新读取；200 带 error 算失败（`legacy_operator_only` 提示要在服务器上处理）；503 再点一次；`already` 算成功。`retire_ids` 原样带页面上显示的 `updated_at`，只能从 `conflict_targets` 里勾。
 - 涉及权限（主人钥匙），上线前请狐狸看一次。
+
+### 199a. 复审修复：切换标签后晚到的旧请求覆盖列表
+
+- 狐狸 `test_tab_race.js` 在 3cdb695 上本地复现失败。
+- 改法：`load()` 带序号，不是最新一次的回应直接丢掉；每张卡片记住自己是哪个标签画出来的（按钮、「改一下」提交的 action 都按卡片自己的，不读全局 `status`）。
+- 测试原样收进 `aion-chat/js_tests/hub_review_tab_race.js`，`test_hub_review_page.py` 用 node 跑它。去掉修复时失败，加上通过；原 16 项接口测试仍通过。
