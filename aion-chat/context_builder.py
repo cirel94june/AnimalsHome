@@ -284,6 +284,12 @@ async def build_ability_block(
         except Exception:
             pass
 
+    if is_capability_enabled("desk_note"):
+        import desk_notes
+        fresh_notes = desk_notes.fresh_from_her_text(user_name)
+        if fresh_notes:
+            parts.append(fresh_notes)
+
     device_context_text = get_device_context_for_prompt()
     if device_context_text:
         parts.append(device_context_text)

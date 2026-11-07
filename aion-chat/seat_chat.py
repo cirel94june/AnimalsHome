@@ -178,6 +178,10 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules(viewer=actor_id)))
         except Exception:
             pass
+    from capabilities import is_capability_enabled
+    if is_capability_enabled("desk_note"):
+        import desk_notes
+        background.append(desk_notes.fresh_from_her_text(user_name))  # 空串会被下面过滤掉
     background.append(location_line())  # 和小克一样：位置上下文开关开着时带上她的位置
     messages += [
         {"role": "user", "content": "\n\n".join(b for b in background if b)},

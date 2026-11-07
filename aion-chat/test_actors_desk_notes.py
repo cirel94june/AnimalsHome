@@ -114,6 +114,45 @@ def test_ai_only_sees_recent_notes_and_they_are_clipped(tmp_path, monkeypatch):
     assert "长" * desk_notes.VISIBLE_TEXT + "…" in text and "长" * (desk_notes.VISIBLE_TEXT + 1) not in text
 
 
+def test_her_fresh_notes_are_shown_on_their_own(tmp_path, monkeypatch):
+    """11-07 小猫：纸条写上去他们还是不看。原来只在能力说明里。"""
+    import time
+    _client(tmp_path, monkeypatch)
+    assert desk_notes.fresh_from_her_text("小猫") == ""
+    desk_notes.add_note("connor", "AI 自己写的")
+    assert desk_notes.fresh_from_her_text("小猫") == ""  # 只放她写的
+    desk_notes.add_note("user", "记得\n吃饭")
+    text = desk_notes.fresh_from_her_text("小猫")
+    assert "【小猫贴在桌面上的纸条（最近一天）】" in text and "记得 吃饭" in text and "AI 自己写的" not in text
+    assert desk_notes.fresh_from_her_text("小猫", now=time.time() + 25 * 3600) == ""  # 过了一天就不放这里
+
+
+def test_seat_context_really_carries_her_note(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    import capabilities
+    import memory_hub_bridge
+    import seat_chat
+    _client(tmp_path, monkeypatch)
+    desk_notes.add_note("user", "记得吃饭")
+    monkeypatch.setattr(memory_hub_bridge, "context_block", AsyncMock(return_value=""))
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name == "desk_note")
+    built = asyncio.run(seat_chat.build_context("ai3", []))
+    assert any("贴在桌面上的纸条" in str(m.get("content")) and "记得吃饭" in str(m.get("content")) for m in built)
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: False)
+    assert not any("贴在桌面上的纸条" in str(m.get("content")) for m in asyncio.run(seat_chat.build_context("ai3", [])))
+
+
+def test_aion_and_connor_context_really_carries_her_note(tmp_path, monkeypatch):
+    import capabilities
+    import context_builder
+    _client(tmp_path, monkeypatch)
+    desk_notes.add_note("user", "记得吃饭")
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name == "desk_note")
+    monkeypatch.setattr(context_builder, "is_capability_enabled", lambda name: name == "desk_note")
+    text = asyncio.run(context_builder.build_ability_block("小猫", who="aion"))
+    assert "贴在桌面上的纸条" in str(text) and "记得吃饭" in str(text)
+
+
 def test_user_notes_api_newest_first_and_delete(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     first = client.post("/api/desk/notes", json={"text": "第一张"}).json()

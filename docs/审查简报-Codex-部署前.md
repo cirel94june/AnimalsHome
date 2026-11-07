@@ -2903,3 +2903,9 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - High 1：回家总结请求的 `messages[:1]` 没遮，改成 `redact_deep`。
 - High 2：`known_secrets`、`site_of` 对拆不开的地址不抛，整串仍遮；`save_tool` 拒绝拆不开或没有主机名的地址（`https://[`）。
 - Medium：座位只写出门指令不算回复失败（`went_out`）。小克、Lucien 群聊同样的情况也按 `triggered["outing"]` 走，不存空消息。
+
+## 194. 她新贴的纸条放到每轮都看的地方
+
+- 小猫 11-07：纸条写上去他们还是不看。查了：`[NOTE]` 说明和便笺清单确实在提示里，但只在能力说明段。
+- `desk_notes.fresh_from_her_text`：她 24 小时内写的便笺，放进动态上下文（`build_ability_block` 的 parts，日程和位置同一处；座位放 `background`）。开关还是 `desk_note`。
+- 还没验证他们会不会因此真的接话，要她试。
