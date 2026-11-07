@@ -1722,7 +1722,7 @@ async def _chatroom_poi_check(room_id: str, sender: str, model_key: str, categor
     from config import load_worldbook, SETTINGS
 
     # 和小克私聊、座位用同一份搜索（原来这里单独抄了一份，也一样丢掉关键词）
-    poi_text = await search_nearby_pois_text(categories) or POI_FAILED_TEXT
+    poi_text = await search_nearby_pois_text(categories, room_key=room_id) or POI_FAILED_TEXT
 
     wb = load_worldbook()
     user_name = wb.get("user_name", "用户")
@@ -4360,7 +4360,7 @@ async def _chatroom_poi_search(room_id: str, sender: str, model_key: str, catego
         pinned = model_snapshot(model_key)
     sender_label = _name_for_identity(sender)
     try:
-        poi_text = await search_nearby_pois_text(categories)
+        poi_text = await search_nearby_pois_text(categories, room_key=room_id)
     except Exception as e:
         poi_text = ""
         print(f"[CHATROOM_POI] {sender} 周边搜索失败: {e}")

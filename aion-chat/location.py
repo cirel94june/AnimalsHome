@@ -238,7 +238,8 @@ async def amap_weather(adcode: str, key: str) -> dict:
     return result
 
 
-async def amap_poi_search(lng: float, lat: float, types: str, key: str, radius: int = 2000, *, keywords: str = "") -> list:
+async def amap_poi_search(lng: float, lat: float, types: str, key: str, radius: int = 2000, *, keywords: str = "",
+                          offset: int = 10) -> list:
     """周边 POI 搜索。types 是高德分类代码，keywords 是自由的词（比如「奶茶」），至少给一个。"""
     url = "https://restapi.amap.com/v3/place/around"
     params = {
@@ -247,7 +248,7 @@ async def amap_poi_search(lng: float, lat: float, types: str, key: str, radius: 
         **({"types": types} if types else {}),
         **({"keywords": keywords} if keywords else {}),
         "radius": radius,
-        "offset": 10,
+        "offset": offset,
         "page": 1,
         "extensions": "all",
         "sortrule": "distance",
@@ -1026,10 +1027,22 @@ async def _call_core_location(
 
 
 MAX_POI_SEARCHES = 3
+SHARED_SEEN_SECONDS = 15 * 60   # 同一个群里这段时间内别人拿到过的店，后搜的人跳过
+WIDE_OFFSET = 25                # 要跳过别人拿过的，就多取一些
+_room_seen: dict[str, tuple[float, set[str]]] = {}
+
+
+def _seen_in_room(room_key: str) -> set[str]:
+    now = time.time()
+    for key in [k for k, (expires, _) in _room_seen.items() if expires < now]:
+        _room_seen.pop(key, None)
+    if room_key not in _room_seen:
+        _room_seen[room_key] = (now + SHARED_SEEN_SECONDS, set())
+    return _room_seen[room_key][1]
 POI_FAILED_TEXT = "系统这次没能搜到附近的结果。如实告诉她没查到，不要自己编地方。"
 
 
-async def search_nearby_pois_text(categories: list[str]) -> str:
+async def search_nearby_pois_text(categories: list[str], *, room_key: str = "") -> str:
     """按类型搜索她当前位置周边（取最新 GPS 坐标、刷新地址和缓存），返回给 AI 看的结果文字；
     没配高德 Key、没有坐标或一个类型都没搜成时返回空串。小克私聊和座位共用。"""
     cfg = load_location_config()
@@ -1053,17 +1066,28 @@ async def search_nearby_pois_text(categories: list[str]) -> str:
     # 3. 搜索用户指定的 POI 类别
     poi_types = cfg.get("poi_types", {})
     search_results = {}
+    skipped_any = False
+    offset = WIDE_OFFSET if room_key else 10
     for cat in [item.strip() for item in categories if item.strip()][:MAX_POI_SEARCHES]:
         type_code = poi_types.get(cat)
         if type_code:
-            pois = await amap_poi_search(lng, lat, type_code, amap_key, cfg.get("poi_radius", 2000))
+            pois = await amap_poi_search(lng, lat, type_code, amap_key, cfg.get("poi_radius", 2000), offset=offset)
             # 更新缓存（只存四大类，位置页显示的是这些）
             if "nearby_pois" not in status:
                 status["nearby_pois"] = {}
             status["nearby_pois"][cat] = pois
         else:
             # 不是那四类：当关键词搜。原来写「奶茶」会被直接丢掉，AI 说了去查然后没下文（11-06 小猫：POI 一直没效果）
-            pois = await amap_poi_search(lng, lat, "", amap_key, cfg.get("poi_radius", 2000), keywords=cat[:40])
+            pois = await amap_poi_search(lng, lat, "", amap_key, cfg.get("poi_radius", 2000), keywords=cat[:40],
+                                         offset=offset)
+        if room_key:
+            # 群里几位同时搜同一类，原来拿到的是同一串最近的店（11-07 小猫：高度同质化）。
+            # 拿到结果后、下一次等待前就登记，几位并发也能错开
+            seen = _seen_in_room(room_key)
+            fresh = [p for p in pois if p.get("name") and p["name"] not in seen]
+            skipped_any = skipped_any or len(fresh) < len(pois)
+            pois = (fresh or pois)[:10]
+            seen.update(p["name"] for p in pois if p.get("name"))
         search_results[cat] = pois
 
     # 更新 last_api 坐标
@@ -1093,4 +1117,6 @@ async def search_nearby_pois_text(categories: list[str]) -> str:
                 entry += f" | {p['address']}"
             result_lines.append(entry)
     poi_text = "\n".join(result_lines)
+    if skipped_any:
+        poi_text += "\n（群里其他人刚搜到的店已经去掉了，挑这里面的说，别和他们重复）"
     return poi_text

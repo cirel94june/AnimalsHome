@@ -23,7 +23,7 @@ def _setup(monkeypatch, *, key="k", lng=121.0, lat=31.0):
 def _search(monkeypatch, result=None):
     calls = []
 
-    async def fake(lng, lat, types, key, radius=2000, *, keywords=""):
+    async def fake(lng, lat, types, key, radius=2000, *, keywords="", offset=10):
         calls.append({"types": types, "keywords": keywords})
         return [{"name": "某店", "distance": "120"}] if result is None else result
     monkeypatch.setattr(location, "amap_poi_search", fake)
@@ -149,7 +149,61 @@ def test_all_paths_use_the_shared_search_and_say_when_it_failed():
     room = (root / "routes" / "chatroom.py").read_text(encoding="utf-8")
     start = room.index("async def _chatroom_poi_check")
     body = room[start:room.index("\nasync def ", start + 10)]
-    assert "search_nearby_pois_text(categories) or POI_FAILED_TEXT" in body and "amap_poi_search" not in body
+    assert "search_nearby_pois_text(categories, room_key=room_id) or POI_FAILED_TEXT" in body and "amap_poi_search" not in body
     chat = (root / "routes" / "chat.py").read_text(encoding="utf-8")
     assert "search_nearby_pois_text(categories) or POI_FAILED_TEXT" in chat
     assert "_is_outside_location" not in room
+
+
+def _many(monkeypatch, count=25):
+    async def fake(lng, lat, types, key, radius=2000, *, keywords="", offset=10):
+        return [{"name": f"店{i}", "distance": str(10 * i)} for i in range(min(count, offset))]
+    monkeypatch.setattr(location, "amap_poi_search", fake)
+
+
+def _names(text):
+    import re
+    return re.findall(r"- (店\d+)", text)
+
+
+def test_three_in_a_group_get_different_shops(monkeypatch):
+    """11-07 小猫：群里三个人搜到的高度同质化。"""
+    _setup(monkeypatch)
+    _many(monkeypatch)
+    monkeypatch.setattr(location, "_room_seen", {})
+    first = _names(asyncio.run(location.search_nearby_pois_text(["奶茶"], room_key="g1")))
+    second_text = asyncio.run(location.search_nearby_pois_text(["奶茶"], room_key="g1"))
+    second = _names(second_text)
+    assert len(first) == 10 and len(second) == 10 and not set(first) & set(second)
+    assert "别和他们重复" in second_text
+    other_room = _names(asyncio.run(location.search_nearby_pois_text(["奶茶"], room_key="g2")))
+    assert other_room == first  # 别的群不受影响
+
+
+def test_concurrent_searches_in_a_group_still_differ(monkeypatch):
+    _setup(monkeypatch)
+    _many(monkeypatch)
+    monkeypatch.setattr(location, "_room_seen", {})
+
+    async def both():
+        return await asyncio.gather(*(location.search_nearby_pois_text(["奶茶"], room_key="g1") for _ in range(3)))
+    texts = asyncio.run(both())
+    sets = [set(_names(t)) for t in texts]
+    assert all(sets)
+    assert not (sets[0] & sets[1]) and not (sets[1] & sets[2]) and not (sets[0] & sets[2])
+
+
+def test_when_everything_was_taken_they_still_get_something(monkeypatch):
+    _setup(monkeypatch)
+    _many(monkeypatch, count=5)
+    monkeypatch.setattr(location, "_room_seen", {})
+    asyncio.run(location.search_nearby_pois_text(["奶茶"], room_key="g1"))
+    assert _names(asyncio.run(location.search_nearby_pois_text(["奶茶"], room_key="g1")))
+
+
+def test_private_chat_is_unchanged(monkeypatch):
+    _setup(monkeypatch)
+    _many(monkeypatch)
+    monkeypatch.setattr(location, "_room_seen", {})
+    one = _names(asyncio.run(location.search_nearby_pois_text(["奶茶"])))
+    assert one == _names(asyncio.run(location.search_nearby_pois_text(["奶茶"]))) and len(one) == 10
