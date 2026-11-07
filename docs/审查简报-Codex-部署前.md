@@ -2896,3 +2896,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 
 - 小猫 11-06：在哪儿叫的就回哪儿。`_process_outing` 查房间类型，`group` 才传 `reply_room`。`go_out`、`_go_out`、`start_outing` 带上它。见闻用 `routes.chatroom._save_msg` 发回群里（`auto_tts=False`），发不出去退回私聊。见闻已清过动作标签，`_save_msg` 不执行标签。没去成的提示也回群里。
 - 隐私提示：群里能看到见闻。出门不带 Hub 记忆，见闻是基于外面内容写的。
+
+## 193. 修 `1414d2e` 跑出失败的 3 条（新流程：先复现，确认后再改）
+
+- 3 条都先用狐狸的测试在本机复现失败。
+- High 1：回家总结请求的 `messages[:1]` 没遮，改成 `redact_deep`。
+- High 2：`known_secrets`、`site_of` 对拆不开的地址不抛，整串仍遮；`save_tool` 拒绝拆不开或没有主机名的地址（`https://[`）。
+- Medium：座位只写出门指令不算回复失败（`went_out`）。小克、Lucien 群聊同样的情况也按 `triggered["outing"]` 走，不存空消息。

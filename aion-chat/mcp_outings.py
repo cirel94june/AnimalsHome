@@ -20,6 +20,7 @@ import threading
 import time
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -71,7 +72,7 @@ def _all_secrets() -> list[str]:
     if stamp is None or _secret_cache[0] != stamp:
         found: set[str] = set()
         for server in _cfg()["servers"]:
-            found.update(mcp_policy.known_secrets(server))
+            found.update(mcp_policy.known_secrets(server))  # 地址写坏了也不抛：其他连接要照样遮
         _secret_cache = (stamp, sorted(found, key=len, reverse=True))
     return _secret_cache[1]
 
@@ -156,6 +157,11 @@ def save_tool(data: dict[str, Any], *, original_name: str = "") -> dict[str, Any
         raise ValueError("名字只能用中文、字母、数字、空格和 - · .，最多 40 个字")
     if not re.fullmatch(r"https?://\S+", url):
         raise ValueError("地址要以 http:// 或 https:// 开头")
+    try:
+        if not urlsplit(url).hostname:
+            raise ValueError
+    except ValueError:
+        raise ValueError("这个地址不对，看看有没有写错") from None
     if srv_type not in ("http", "sse"):
         raise ValueError("类型只能是 http 或 sse")
     actors = data.get("actors") or []
@@ -626,7 +632,7 @@ async def run_outing(
     # 整趟一个截止时间：逛（含连接和工具）+ 回家总结 一共不超过 OUTING_TIMEOUT_SECONDS，给总结预留一段
     await asyncio.wait_for(loop(), timeout=OUTING_TIMEOUT_SECONDS - SUMMARY_RESERVE_SECONDS)
     trail = "\n".join(f"- {a}" for a in actions[-12:]) or "（没有用工具）"
-    final = await asyncio.wait_for(model_call(model_key, messages[:1] + (persona_messages if persona_messages is not None else _persona_messages(actor)) + [{
+    final = await asyncio.wait_for(model_call(model_key, mcp_policy.redact_deep(mcp_policy.known_secrets(server), messages[:1]) + (persona_messages if persona_messages is not None else _persona_messages(actor)) + [{
         "role": "user",
         "content": (
             f"你刚从「{server['name']}」回来。你在那里做了这些：\n{trail}\n\n"

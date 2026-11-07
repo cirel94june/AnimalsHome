@@ -188,6 +188,13 @@ def test_ability_lists_only_their_places(out, monkeypatch):
     assert capabilities.mcp_chat_ability_text("小猫", "ai3") == ""
 
 
+def test_outing_only_reply_is_not_a_failure_in_source():
+    """狐狸 1414d2e Medium（完整复现在他的探针里）：只写出门指令，原来会记成回复失败。"""
+    room = (Path(__file__).parent / "routes" / "chatroom.py").read_text(encoding="utf-8")
+    assert "if side_effect_notice or triggered or went_out:" in room
+    assert room.count('or triggered.get("outing")) and not clean_text') >= 2
+
+
 def test_hook_sites():
     root = Path(__file__).parent
     chat = (root / "routes" / "chat.py").read_text(encoding="utf-8")

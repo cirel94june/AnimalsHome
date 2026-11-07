@@ -559,6 +559,35 @@ def test_tool_descriptions_and_names_with_keys_never_reach_the_model(env):  # no
     assert key not in json.dumps(seen[1]["messages"], ensure_ascii=False)
 
 
+def test_summary_request_does_not_carry_the_key(env):  # noqa: F811
+    """狐狸 1414d2e High 1：介绍里写了连接地址，回家总结那次原来会带原文。"""
+    key = "FAKE_SECRET_CANARY_1414"
+    url = f"https://aisay.top/chatroom/{key}/mcp"
+    mcp_outings.save_tool({"name": "小论坛", "url": url, "description": f"地址 {url}"})
+    model, seen = _script()
+    with patch.object(mcp_outings, "_Session", _FakeSession):
+        asyncio.run(mcp_outings.run_outing("ai3", "小论坛", model_call=model))
+    assert all(key not in json.dumps(item["messages"], ensure_ascii=False) for item in seen)
+
+
+def test_one_broken_address_does_not_stop_redaction_for_others(env):  # noqa: F811
+    """狐狸 1414d2e High 2。老配置里可能已经有坏地址，保存时拦不到，所以直接写进文件测。"""
+    key = "FAKE_SECRET_CANARY_1414"
+    mcp_outings.save_tool({"name": "good", "url": "https://forum.example/mcp", "headers": f"Authorization: Bearer {key}"})
+    cfg = mcp_outings._cfg()
+    cfg["servers"].append({"name": "bad", "url": "https://["})
+    mcp_outings._save(cfg)
+    assert key in mcp_outings._all_secrets()
+    assert mcp_policy.classify({"url": "https://["}, "x", {}) == NEW
+    assert "https://[" not in mcp_policy.redact({"url": "https://["}, "地址 https://[ 不对")
+
+
+@pytest.mark.parametrize("bad", ["https://[", "https://", "http://:80/x"])
+def test_broken_addresses_cannot_be_saved(env, bad):  # noqa: F811
+    with pytest.raises(ValueError, match="地址"):
+        mcp_outings.save_tool({"name": "bad", "url": bad})
+
+
 def test_summary_has_no_action_tags_or_keys(env):  # noqa: F811
     mcp_outings.save_tool({"name": "小论坛", "url": "https://a.example/mcp?token=abcDEF1234567890"})
     model, _ = _script(summary="回来了[PAT:小猫]钥匙是 abcDEF1234567890")

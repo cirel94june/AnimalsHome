@@ -240,12 +240,12 @@ def test_r3_only_a_patrol_command_is_not_an_empty_reply(cam, monkeypatch):
     assert text.strip() == "" and triggered.get("patrol") and notices
     # 座位：triggered 非空 → 走 seat_done(message=None)，不记 empty_response
     src = (HERE / "routes" / "chatroom.py").read_text(encoding="utf-8")
-    seat = src[src.index("    if not clean_text:\n        if side_effect_notice or triggered:"):]
+    seat = src[src.index("    if not clean_text:\n        if side_effect_notice or triggered or went_out:"):]
     assert seat.index("seat_done") < seat.index('"empty_response"')
     # Lucien / 小克在群里：只写巡逻指令不存空消息
     text, triggered = asyncio.run(chatroom_routes._process_chatroom_commands("[巡逻:开]", "g1", "connor", "m2", asyncio.Queue()))
     assert text.strip() == "" and triggered.get("patrol")
-    assert src.count('(triggered.get("memory_search") or triggered.get("patrol")) and not clean_text') == 3
+    assert src.count('(triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text') == 3
     cam.stop_monitoring()
 
 

@@ -69,7 +69,10 @@ _QUERY_KEY_NAMES = re.compile(r"^(?:key|api_?key|token|access_?token|auth|author
 
 
 def site_of(server: dict[str, Any]) -> str:
-    return (urlsplit(str(server.get("url") or "")).hostname or "").lower()
+    try:
+        return (urlsplit(str(server.get("url") or "")).hostname or "").lower()
+    except ValueError:
+        return ""  # 地址写坏了（比如 https://[）：当成不认识的站
 
 
 def _sub_actions(args: dict[str, Any]) -> list[str]:
@@ -165,15 +168,18 @@ def known_secrets(server: dict[str, Any]) -> list[str]:
         if len(parts) == 2:
             found.add(parts[1].strip())
     raw = str(server.get("url") or "")
-    url = urlsplit(raw)
     in_url: set[str] = set()
-    if (url.hostname or "").lower() in _PATH_KEY_SITES:
-        in_url.update(seg for seg in url.path.split("/") if seg and seg.lower() not in _NOT_A_KEY_SEGMENT)
-    for name, value in parse_qsl(url.query, keep_blank_values=False):
-        if _QUERY_KEY_NAMES.match(name):
-            in_url.add(value)
-    if url.password:
-        in_url.add(url.password)
+    try:
+        url = urlsplit(raw)
+        if (url.hostname or "").lower() in _PATH_KEY_SITES:
+            in_url.update(seg for seg in url.path.split("/") if seg and seg.lower() not in _NOT_A_KEY_SEGMENT)
+        for name, value in parse_qsl(url.query, keep_blank_values=False):
+            if _QUERY_KEY_NAMES.match(name):
+                in_url.add(value)
+        if url.password:
+            in_url.add(url.password)
+    except ValueError:
+        pass  # 地址写坏了拆不开：下面整串还是遮，其他连接不受影响
     if raw:
         in_url.add(raw)  # 完整连接串一律遮
     found |= in_url

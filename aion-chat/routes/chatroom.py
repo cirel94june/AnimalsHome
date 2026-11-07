@@ -5,6 +5,7 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 
 import json, time, asyncio, random, re, mimetypes, secrets
 import memory_hub_bridge
+import mcp_policy
 import seat_chat
 import actors as actors_registry
 from desk_notes import process_note_commands
@@ -941,6 +942,8 @@ async def _process_chatroom_commands(
         sender=who_identity, source_msg_id=msg_id, on_saved=_save_pat_event,
     )
     full_text = await process_note_commands(full_text, who_identity)
+    if allow_outing and mcp_policy.OUTING_CMD_PATTERN.search(full_text or ""):
+        triggered["outing"] = True
     full_text = await _process_outing(full_text, who_identity, room_id, _q, msg_id, allow_outing)
     full_text = await process_band_vibration(
         full_text,
@@ -4501,8 +4504,10 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         await _save_chatroom_reply_failure(room_id, actor_id, _q, reason, partial_text=raw_text, msg_id=msg_id)
         return
     command_text = await process_note_commands(raw_text, actor_id)
-    command_text = await _process_outing(command_text, actor_id, room_id, _q, msg_id,
-                                         not extra_prompt and capture_user_turn and not hub_background)
+    outing_allowed = not extra_prompt and capture_user_turn and not hub_background
+    # 只写了出门、没说别的：提示已经在 _process_outing 里发了，不算回复失败
+    went_out = outing_allowed and bool(mcp_policy.OUTING_CMD_PATTERN.search(command_text or ""))
+    command_text = await _process_outing(command_text, actor_id, room_id, _q, msg_id, outing_allowed)
     side_effect_notice = ""  # 只发了指令、没说别的话时，在房间里留一句说明，不记成回复失败
     if group:
         whispers = PRIVATE_WHISPER_CMD_PATTERN.findall(command_text)
@@ -4525,7 +4530,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
     if not clean_text and music_atts:  # 只点了歌：用歌名当 TA 的这条消息，播放卡片挂在上面
         clean_text = "🎵 " + " / ".join(f"《{a['name']}》- {a['artist']}" for a in music_atts)
     if not clean_text:
-        if side_effect_notice or triggered:  # 许愿 / 生图 / 搜索的系统提示已经插过了
+        if side_effect_notice or triggered or went_out:  # 许愿 / 生图 / 搜索的系统提示已经插过了
             if side_effect_notice:
                 await _chatroom_sys_msg(room_id, side_effect_notice, _q)
             await _q.put({"type": "seat_done", "actor": actor_id, "message": None})
@@ -4645,7 +4650,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
-    if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
+    if (triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
         await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
             room_id=room_id, model_key=connor_model_key, msg_id=connor_msg_id, history=connor_messages, digest_result=digest_out,
@@ -4878,7 +4883,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, model_key)
 
-    if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
+    if (triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
         await _q.put({"type": "aion_done", "message": None})
         await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
             room_id=room_id, model_key=model_key, msg_id=aion_msg_id, history=aion_history, digest_result=digest_out,
@@ -5023,7 +5028,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
-    if (triggered.get("memory_search") or triggered.get("patrol")) and not clean_text:
+    if (triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
         await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
             room_id=room_id, model_key=connor_model_key, msg_id=connor_msg_id, history=connor_history, digest_result=digest_out,
