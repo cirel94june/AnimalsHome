@@ -593,7 +593,12 @@ async def run_outing(
 
     known_tools: dict[str, Any] = {}
 
+    game_tools = mcp_policy.GALATEA_GAME_PLAY | mcp_policy.GALATEA_GAME_WRITE
+
     async def one_call(session, name: str, args: dict[str, Any]) -> str:
+        if guard.games and name in game_tools:  # 每次入局 / 出牌前再看一眼桥，中途断了就不再进局（狐狸 §201 M3）
+            import garden_wake
+            guard.games = await asyncio.to_thread(garden_wake.bridge_active, actor)
         refusal = guard.before(name, args)
         if refusal:
             return refusal

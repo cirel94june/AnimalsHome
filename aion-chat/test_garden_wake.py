@@ -311,3 +311,121 @@ def test_injector_fails_when_home_refuses(fake_home):
     line = json.dumps({"version": 1, "type": "garden_wake", "reason": "x", "message": "y"}) + "\n"
     result = _inject(url, "ai3", line, key="wrong")
     assert result.returncode == 1 and b"wrong" not in result.stderr
+
+
+# ── 狐狸 §201 复审的三个失败测试（原样收进来，只换了夹具名）──
+import threading  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+GARDEN2 = {'name': 'garden', 'url': 'https://galatea.abysslumina.com/mcp', 'actors': ['ai3']}
+
+
+@pytest.fixture
+def wake_env(env, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(config, "DATA_DIR", env)
+    monkeypatch.setattr(garden_wake, "_pending", {})
+    monkeypatch.setattr(garden_wake, "_workers", {})
+    return env
+
+
+def test_concurrent_connects_keep_both_actors_settings(wake_env, monkeypatch):
+    garden_wake._save_settings({})
+    original_settings = garden_wake._settings
+    original_save = garden_wake._save_settings
+    barrier = threading.Barrier(2)
+    save_lock = threading.Lock()
+
+    def simultaneous_read():
+        snapshot = original_settings()
+        barrier.wait(timeout=5)
+        return snapshot
+
+    def sequential_writes(data):
+        # A legal write interleaving, avoiding Windows-specific open-file errors.
+        # Both callers still run the actual serializer/replace on a real temp file.
+        with save_lock:
+            original_save(data)
+
+    monkeypatch.setattr(garden_wake, '_settings', simultaneous_read)
+    monkeypatch.setattr(garden_wake, '_save_settings', sequential_writes)
+    monkeypatch.setattr(garden_wake, 'server_for', lambda actor: {**GARDEN2, 'actors': [actor]})
+    monkeypatch.setattr(garden_wake.subprocess, 'run',
+                        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, '', ''))
+    errors = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(garden_wake.connect, actor) for actor in ('aion', 'connor')]
+        for future in futures:
+            try:
+                assert future.result(timeout=10) == (True, '')
+            except Exception as exc:
+                errors.append(repr(exc))
+    saved = original_settings()
+    assert not errors and all(saved.get(actor, {}).get('want') for actor in ('aion', 'connor')), \
+        f'concurrent settings lost: errors={errors}, saved={saved}'
+
+
+def test_same_reason_replaces_message_while_waiting_for_actor(wake_env, monkeypatch):
+    from routes import mcp_tools
+    monkeypatch.setattr(garden_wake, 'server_for', lambda actor: GARDEN2)
+    monkeypatch.setattr(garden_wake, '_pending', {'ai3': {garden_wake.GAME_REASON: 'OLD_TURN'}})
+    monkeypatch.setattr(garden_wake, '_workers', {})
+    monkeypatch.setattr(mcp_tools, '_out_now', {'ai3'})
+    delivered = []
+
+    async def go_out(actor, name, message, **kwargs):
+        delivered.append(message)
+        return {'ok': True}
+
+    async def new_event_during_wait(seconds):
+        garden_wake.receive('ai3', garden_wake.GAME_REASON, 'NEW_TURN')
+        mcp_tools._out_now.clear()
+
+    monkeypatch.setattr(mcp_tools, 'go_out', go_out)
+    monkeypatch.setattr(garden_wake.asyncio, 'sleep', new_event_during_wait)
+
+    async def run():
+        garden_wake._workers['ai3'] = asyncio.current_task()
+        await garden_wake._work('ai3')
+
+    asyncio.run(run())
+    assert delivered == ['NEW_TURN'], f'superseded wake still ran: {delivered}'
+
+
+def test_disconnect_before_join_closes_game_admission(wake_env, monkeypatch):
+    mcp_outings.save_tool({**GARDEN2, 'headers': 'Authorization: Bearer FAKE_GARDEN_TOKEN'})
+    state = {'active': True}
+    sent = []
+    monkeypatch.setattr(garden_wake, 'bridge_active', lambda actor: state['active'])
+
+    def stop(verb, actor):
+        assert (verb, actor) == ('stop', 'ai3')
+        state['active'] = False
+        return True, ''
+
+    monkeypatch.setattr(garden_wake, '_systemctl', stop)
+
+    class Session:
+        tools = [{'type': 'function', 'function': {'name': 'join_game', 'description': 'join',
+                  'parameters': {'type': 'object', 'required': ['game_id'],
+                                 'properties': {'game_id': {'type': 'string'}}}}}]
+        def __init__(self, server): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): pass
+        async def call_result(self, name, args):
+            sent.append((name, state['active']))
+            return '{"ok":true}', False
+
+    monkeypatch.setattr(mcp_outings, '_Session', Session)
+    rounds = []
+
+    async def model(key, messages, tools):
+        if tools is None or rounds:
+            return {'content': 'done'}
+        rounds.append(1)
+        assert garden_wake.disconnect('ai3') == (True, '')
+        assert not garden_wake.bridge_active('ai3')
+        return {'tool_calls': [{'id': 'c1', 'function': {
+            'name': 'join_game', 'arguments': json.dumps({'game_id': 'g1'})}}]}
+
+    asyncio.run(mcp_outings.run_outing('ai3', 'garden', model_call=model))
+    assert not sent, f'joined after bridge stopped: {sent}'

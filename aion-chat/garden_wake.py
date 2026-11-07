@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import threading
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -31,6 +32,7 @@ SYSTEMCTL = "/usr/bin/systemctl"
 _pending: dict[str, dict[str, str]] = {}     # 每位 AI：reason → 最新一条 message
 _workers: dict[str, asyncio.Task] = {}
 _tasks: set[asyncio.Task] = set()
+_settings_lock = threading.Lock()  # 连接 / 断开在线程里跑，几位同时点时读改写要排队（狐狸 §201 M1）
 
 
 def _path():
@@ -39,6 +41,10 @@ def _path():
 
 
 def _settings() -> dict[str, Any]:
+    return _read_settings()
+
+
+def _read_settings() -> dict[str, Any]:
     try:
         data = json.loads(_path().read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -62,10 +68,11 @@ def _actor_settings(actor: str) -> dict[str, Any]:
 
 
 def _update(actor: str, **fields: Any) -> None:
-    data = _settings()
-    entry = data.get(actor) if isinstance(data.get(actor), dict) else {}
-    data[actor] = {**entry, **fields}
-    _save_settings(data)
+    with _settings_lock:
+        data = _read_settings()
+        entry = data.get(actor) if isinstance(data.get(actor), dict) else {}
+        data[actor] = {**entry, **fields}
+        _save_settings(data)
 
 
 def notify_on(actor: str) -> bool:
@@ -173,17 +180,20 @@ def receive(actor: str, reason: str, message: str) -> str:
 async def _work(actor: str) -> None:
     from routes import mcp_tools
     while _pending.get(actor):
-        pending = _pending[actor]
+        waited = 0
+        while actor in mcp_tools._out_now and waited < WAIT_FREE_SECONDS:  # 他在别处逛：等他回来
+            await asyncio.sleep(3)
+            waited += 3
+        # 等完再挑、再取：等的时候来了同一种新唤醒，跑最新那条（狐狸 §201 M2）
+        pending = _pending.get(actor) or {}
+        if not pending:
+            break
         reason = GAME_REASON if GAME_REASON in pending else next(iter(pending))
         message = pending.pop(reason)
         server = server_for(actor)
         if not server:
             log.warning("[GARDEN] %s 被叫醒，但花园连接不在了", actor)
             continue
-        waited = 0
-        while actor in mcp_tools._out_now and waited < WAIT_FREE_SECONDS:  # 他在别处逛：等他回来
-            await asyncio.sleep(3)
-            waited += 3
         try:
             await mcp_tools.go_out(actor, server["name"], message, source="garden_wake", wake=reason)
         except asyncio.CancelledError:
