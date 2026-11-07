@@ -1826,7 +1826,8 @@ class CameraMonitor:
         recent_detail = "\n".join(
             f"[{entry.get('time', '')}] {entry.get('monitoringlog', '')}" for entry in logs
         ) or trigger_log
-        parts = [f"[监控唤醒] {user_name}已经{time_ago}没有和你说话了。"]
+        # 原来只写了多久没说话，没写现在几点（11-07：小克七点被叫醒问「核磁做完了吗」）
+        parts = [f"[监控唤醒] 现在是 {now_text(seconds=False)}。{user_name}已经{time_ago}没有和你说话了。"]
         if core_reason:
             parts.append(f"叫你来的原因：{core_reason}")
         if summary:
@@ -1960,7 +1961,7 @@ class CameraMonitor:
             for entry in all_logs[-5:]
         ) or trigger_log
 
-        core_parts = [f"【{user_name}】已经{time_ago}没有和你说话了。"]
+        core_parts = [f"现在是 {now_text(seconds=False)}。【{user_name}】已经{time_ago}没有和你说话了。"]
         if core_reason:
             core_parts.append(f"哨兵唤醒你的原因：{core_reason}")
         if summary:
@@ -2212,7 +2213,7 @@ class CameraMonitor:
             prefix.append({"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"})
             prefix.append({"role": "assistant", "content": "收到，我会记住你的信息。"})
 
-        core_parts = [f"【{user_name}】已经{time_ago}没有和你说话了。"]
+        core_parts = [f"现在是 {now_text(seconds=False)}。【{user_name}】已经{time_ago}没有和你说话了。"]
         if core_reason:
             core_parts.append(f"哨兵唤醒你的原因：{core_reason}")
         if summary:

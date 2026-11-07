@@ -220,6 +220,10 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             {"role": "assistant", "content": "明白了。"},
         ]
     messages += _history(actor_id, msgs, context_limit, group=group, user_name=user_name)
+    # 「当前时间」在一大段记录最前面，离要回的那句太远（11-07：狗蛋早上七点说成十二点半）。
+    # 在最后一条记录后面再写一遍（群里常常接在别的 AI 后面说，也要有）；系统叫醒由叫醒的提示自己写
+    if messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), str):
+        messages[-1] = {**messages[-1], "content": messages[-1]["content"] + f"\n\n（现在是 {now}）"}
     return messages
 
 
