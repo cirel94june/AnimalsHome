@@ -9,6 +9,8 @@ let isAiChatting = false;
 let chatroomModel = '';
 let chatroomConnorModel = 'Codex';
 let chatroomReplyOrder = 'random';
+let crGroupMembers = [];   // [{id, names:[显示名, 小名…]}]，@ 和排顺序用
+let crSpeakOrder = [];
 let isReplyOnce = false;
 let chatroomModels = [];
 let crStartupModelsReady = false;
@@ -2235,6 +2237,7 @@ async function fetchCurrentModel(configPromise) {
     Promise.resolve(configPromise || api('/config')).then(cfg => {
       if (cfg?.connor_model && chatroomConnorModel === initial.connor) chatroomConnorModel = cfg.connor_model;
       if (cfg?.reply_order && chatroomReplyOrder === initial.order) chatroomReplyOrder = cfg.reply_order;
+      if (Array.isArray(cfg?.group_members)) crGroupMembers = cfg.group_members;
     }),
   ]);
   for (const result of results) {
@@ -2251,6 +2254,75 @@ function renderModelOptions(selected, { withoutCodex = false } = {}) {
   if (withoutCodex && !options.length) return '<option value="">还没有线路（去设置 → 🧭 模型线路 接中转站）</option>';
   return (withoutCodex && selected && !keys.includes(selected) ? ['<option value="">默认模型</option>'] : []).concat(options).join('');
 }
+
+// ── 发言顺序（按我排的顺序）──
+function crMemberName(id) {
+  const m = crGroupMembers.find(x => x.id === id);
+  return (m && m.names && m.names[0]) || id;
+}
+function crOrderedMembers(order) {
+  const ids = crGroupMembers.map(m => m.id);
+  const out = (order || []).filter(id => ids.includes(id));
+  return [...new Set(out)].concat(ids.filter(id => !out.includes(id)));
+}
+function crRenderSpeakOrder() {
+  const box = document.getElementById('speakOrderBox');
+  const select = document.getElementById('setReplyOrder');
+  if (!box || !select) return;
+  box.hidden = select.value !== 'custom';
+  box.innerHTML = crSpeakOrder.map((id, i) =>
+    `<div class="speak-order-row"><span>${i + 1}. ${esc(crMemberName(id))}</span>` +
+    `<button type="button" data-up="${i}" ${i === 0 ? 'disabled' : ''} aria-label="往前">↑</button>` +
+    `<button type="button" data-down="${i}" ${i === crSpeakOrder.length - 1 ? 'disabled' : ''} aria-label="往后">↓</button></div>`
+  ).join('');
+}
+document.getElementById('setReplyOrder')?.addEventListener('change', () => {
+  if (!crSpeakOrder.length) crSpeakOrder = crOrderedMembers([]);
+  crRenderSpeakOrder();
+});
+document.getElementById('speakOrderBox')?.addEventListener('click', e => {
+  const up = e.target.closest('[data-up]'), down = e.target.closest('[data-down]');
+  const i = up ? +up.dataset.up : down ? +down.dataset.down : -1;
+  const j = up ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= crSpeakOrder.length) return;
+  [crSpeakOrder[i], crSpeakOrder[j]] = [crSpeakOrder[j], crSpeakOrder[i]];
+  crRenderSpeakOrder();
+});
+
+// ── @ 谁：输入 @ 时弹出家人名字，点一下填进去 ──
+function crMentionQuery() {
+  const el = document.getElementById('input');
+  if (!el || currentRoom?.type !== 'group') return null;
+  const before = el.value.slice(0, el.selectionStart);
+  const m = before.match(/[@＠]([^\s@＠]{0,12})$/);
+  return m ? { start: before.length - m[0].length, query: m[1] } : null;
+}
+function crUpdateMentionPicker() {
+  const box = document.getElementById('mentionPicker');
+  if (!box) return;
+  const q = crMentionQuery();
+  const hits = q ? crGroupMembers.filter(m => (m.names || []).some(n => n.toLowerCase().startsWith(q.query.toLowerCase()))) : [];
+  box.hidden = !hits.length;
+  box.innerHTML = hits.map(m => `<button type="button" data-mention="${esc(m.names[0])}">@${esc(m.names[0])}</button>`).join('');
+}
+document.getElementById('input')?.addEventListener('input', crUpdateMentionPicker);
+document.getElementById('input')?.addEventListener('blur', () => setTimeout(() => {
+  const box = document.getElementById('mentionPicker'); if (box) box.hidden = true;
+}, 150));
+document.getElementById('mentionPicker')?.addEventListener('mousedown', e => e.preventDefault());
+document.getElementById('mentionPicker')?.addEventListener('click', e => {
+  const btn = e.target.closest('[data-mention]');
+  const el = document.getElementById('input');
+  const q = crMentionQuery();
+  if (!btn || !el || !q) return;
+  const after = el.value.slice(el.selectionStart);
+  const insert = '@' + btn.dataset.mention + ' ';
+  el.value = el.value.slice(0, q.start) + insert + after;
+  const pos = q.start + insert.length;
+  el.setSelectionRange(pos, pos);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.focus();
+});
 
 function updateHeaderActions() {
   const isGroup = currentRoom && currentRoom.type === 'group';
@@ -4402,6 +4474,9 @@ function crPopulateSettings(room, cfg = {}) {
   document.getElementById('optConnor').textContent = `${crConnorName} 优先`;
   chatroomReplyOrder = cfg.reply_order || chatroomReplyOrder || 'random';
   document.getElementById('setReplyOrder').value = chatroomReplyOrder;
+  if (Array.isArray(cfg.group_members)) crGroupMembers = cfg.group_members;
+  crSpeakOrder = crOrderedMembers(cfg.speak_order || []);
+  crRenderSpeakOrder();
   updateHeaderActions();
 
   const isConnor1v1 = room.type === 'connor_1v1';
@@ -4997,6 +5072,7 @@ async function saveSettings() {
       tts_aion_voice: document.getElementById('setTtsAionVoice').value,
       tts_connor_voice: document.getElementById('setTtsConnorVoice').value,
       reply_order: nextReplyOrder,
+      ...(nextReplyOrder === 'custom' ? { speak_order: crSpeakOrder.slice() } : {}),
       ...ambient,
   };
 
@@ -5011,7 +5087,7 @@ async function saveSettings() {
       // 超时可能发生在服务器已落盘之后；只读核对避免误报失败。
       const checked = await api(`/rooms/${roomId}/settings`, { timeoutMs: 8000 }).catch(() => null);
       if (!checked || !Object.entries(payload).every(([key, value]) =>
-        (key === 'context_limit' || key === 'ai_chat_rounds' ? checked.room?.[key] : checked.config?.[key]) === value)) {
+        JSON.stringify(key === 'context_limit' || key === 'ai_chat_rounds' ? checked.room?.[key] : checked.config?.[key]) === JSON.stringify(value))) {
         throw saveError;
       }
       result = { ok: true, ...checked };

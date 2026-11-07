@@ -3784,3 +3784,17 @@ body[data-theme="light"] .lounge-report-card { background: var(--surface); }
 /* 💭 思考：一直看得见，手指点得到；弹出来的思考过程给大一点的地方 */
 .msg-feedback-btn.msg-reasoning-chip { width:auto; height:auto; min-height:28px; padding:2px 8px; margin-left:4px; border:1px solid var(--border); border-radius:999px; font-size:11px; line-height:22px; color:var(--text2); opacity:.85; white-space:nowrap; }
 .msg-reasoning-popover { max-height:min(60vh,480px); }
+
+/* 11-07 @ 谁 和 发言顺序 */
+form:has(> .mention-picker) { position: relative; }
+.mention-picker { position: absolute; left: 12px; bottom: calc(100% + 6px); z-index: 30; display: flex; flex-wrap: wrap; gap: 6px;
+  max-width: calc(100% - 24px); padding: 6px; border-radius: 14px; background: var(--bg-card, rgba(255,255,255,.95));
+  box-shadow: 0 6px 24px rgba(0,0,0,.15); }
+.mention-picker[hidden] { display: none; }
+.mention-picker button { border: none; border-radius: 10px; padding: 6px 10px; font-size: 14px; background: rgba(120,150,220,.14); color: inherit; }
+.speak-order { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.speak-order[hidden] { display: none; }
+.speak-order-row { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.speak-order-row span { flex: 1; }
+.speak-order-row button { width: 30px; height: 26px; border-radius: 8px; border: 1px solid rgba(120,150,200,.4); background: transparent; color: inherit; }
+.speak-order-row button:disabled { opacity: .3; }

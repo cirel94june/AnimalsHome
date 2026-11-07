@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#050923">
-<link rel="stylesheet" href="/static/chatroom.css?v=compact-settings-20260912">
+<link rel="stylesheet" href="/static/chatroom.css?v=20261107-mention">
 <link rel="stylesheet" href="/static/ai-message-editor.css?v=20260920">
 <link rel="stylesheet" href="/static/pat.css?v=inline-order-20260910">
 <link rel="stylesheet" href="/static/memory-editor.css?v=20260905">
@@ -133,6 +133,7 @@
           </div>
         </div>
         <textarea id="input" rows="1" maxlength="4000" placeholder="发消息..."></textarea>
+        <div id="mentionPicker" class="mention-picker" hidden></div>
         <button type="submit" class="send-btn" id="sendBtn">➤</button>
       </form>
       <div class="voice-mode-row" id="crVoiceModeRow">
@@ -172,8 +173,11 @@
             <option value="random">随机</option>
             <option value="aion" id="optAion">AI 优先</option>
             <option value="connor" id="optConnor">第二位 AI 优先</option>
+            <option value="custom">按我排的顺序</option>
             <option value="manual">指定回复</option>
           </select>
+          <div id="speakOrderBox" class="speak-order" hidden></div>
+          <div class="hint" style="font-size:12px;opacity:.7;margin-top:4px">在消息里 @ 谁，那条就只有谁回；AI 回话里 @ 别人，被 @ 的会接着说（一条消息最多多接 3 次）。</div>
         </div>
         <div class="settings-inline-row settings-model-row">
         <div class="field" id="fieldAionModel">
@@ -482,7 +486,7 @@
 <link rel="stylesheet" href="/static/expressive-voice.css?v=20261003-3">
 <script src="/static/expressive-voice.js?v=20261003-3"></script>
 <script src="/static/tts-voices.js?v=elevenlabs-20261003"></script>
-<script src="/static/chatroom.js?v=20261005-model-list-1"></script>
+<script src="/static/chatroom.js?v=20261107-mention"></script>
   <script src="/static/voice-call-policy.js?v=voice-latency-20260902a"></script>
   <script src="/static/voice-call.js?v=voice-latency-20260902a"></script>
 </body>

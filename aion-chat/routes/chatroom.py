@@ -7,6 +7,7 @@ import json, time, asyncio, random, re, mimetypes, secrets
 import memory_hub_bridge
 import mcp_policy
 import seat_chat
+import group_mentions
 import actors as actors_registry
 from desk_notes import process_note_commands
 from dataclasses import replace
@@ -2828,6 +2829,7 @@ class ConfigUpdate(BaseModel):
     tts_aion_voice: Optional[str] = None
     tts_connor_voice: Optional[str] = None
     reply_order: Optional[str] = None
+    speak_order: Optional[list[str]] = None
     connor_model: Optional[str] = None
     aion_model: Optional[str] = None
     ambient_voice_enabled: Optional[bool] = None
@@ -2862,8 +2864,11 @@ def _apply_config_update(cfg: dict, body: ConfigUpdate) -> dict:
             cfg[key] = values[key]
     if body.connor_persona is not None and body.connor_persona_sections is None:
         cfg["connor_persona_sections"] = {}
-    if body.reply_order in ("aion", "connor", "random", "manual"):
+    if body.reply_order in ("aion", "connor", "random", "manual", "custom"):
         cfg["reply_order"] = body.reply_order
+    if body.speak_order is not None:  # 只认家里的身份，去重；没排的人会接在最后
+        known = {"aion", "connor", *seat_chat.SEAT_ACTORS}
+        cfg["speak_order"] = list(dict.fromkeys(a for a in body.speak_order if a in known))[:12]
     if body.connor_model is not None:
         cfg["connor_model"] = body.connor_model or "Codex"
     if body.ambient_voice_wake_word is not None:
@@ -2891,6 +2896,8 @@ def _public_chatroom_config(cfg: dict) -> dict:
         "connor_online": None,
         "ai_name": wb.get("ai_name", "AI"),
         "user_name": wb.get("user_name", "你"),
+        "group_members": [{"id": a, "names": group_mentions.names_for(a)}
+                          for a in ["aion", "connor"] + _group_seat_members()],
     }
 
 @router.get("/config")
@@ -4773,32 +4780,54 @@ async def _generate_group_replies(room_id, room, msgs, model_key, connor_model_k
     if first_responder not in ("aion", "connor"):
         first_responder = random.choice(["aion", "connor"])
 
-    if first_responder == "aion":
-        digest = await _reply_aion(
-            room_id, msgs, context_limit, query_text, model_key, _q,
-            tts_enabled=tts_enabled, tts_voice=tts_aion_voice,
-            digest_result=digest, whisper_mode=whisper_mode,
-        )
-        _, updated_msgs = await _load_room_and_messages(room_id)
-        await _reply_connor(room_id, updated_msgs, context_limit, query_text, _q,
-                            connor_model_key=connor_model_key, tts_enabled=tts_enabled, tts_voice=tts_connor_voice, digest_result=digest, whisper_mode=whisper_mode)
+    # 谁说、按什么顺序（11-07 小猫：@ 功能、所有家人都能排顺序）
+    seats = _group_seat_members()
+    members = ["aion", "connor"] + seats
+    her_text = str(msgs[-1].get("content") or "") if msgs and msgs[-1].get("sender") == "user" else ""
+    mentioned = group_mentions.find_mentions(her_text, members)
+    if mentioned:
+        order = mentioned                       # 她 @ 了谁就只有谁回
+    elif reply_order == "custom":
+        order = group_mentions.clean_order(load_chatroom_config().get("speak_order") or [], members)
     else:
-        digest = await _reply_connor(
-            room_id, msgs, context_limit, query_text, _q,
-            connor_model_key=connor_model_key, tts_enabled=tts_enabled,
-            tts_voice=tts_connor_voice, digest_result=digest,
-            whisper_mode=whisper_mode,
-        )
-        _, updated_msgs = await _load_room_and_messages(room_id)
-        await _reply_aion(room_id, updated_msgs, context_limit, query_text, model_key, _q,
-                          tts_enabled=tts_enabled, tts_voice=tts_aion_voice, digest_result=digest, whisper_mode=whisper_mode)
+        order = [first_responder, "connor" if first_responder == "aion" else "aion"] + seats
+    turn = group_mentions.Turn(order, members)
+    started = time.time()
+    first = True
+    while (actor := turn.next()) is not None:
+        if first:
+            room_now, current = room, msgs
+        else:
+            room_now, current = await _load_room_and_messages(room_id)
+        first = False
+        if actor not in ("aion", "connor") and (room_now or {}).get("type") != "group":
+            continue  # 和原来一样：只有座位要确认还在群里，小克 / Lucien 照常回
+        if actor == "aion":
+            digest = await _reply_aion(room_id, current, context_limit, query_text, model_key, _q,
+                                       tts_enabled=tts_enabled, tts_voice=tts_aion_voice,
+                                       digest_result=digest, whisper_mode=whisper_mode)
+        elif actor == "connor":
+            digest = await _reply_connor(room_id, current, context_limit, query_text, _q,
+                                         connor_model_key=connor_model_key, tts_enabled=tts_enabled,
+                                         tts_voice=tts_connor_voice, digest_result=digest, whisper_mode=whisper_mode)
+        else:  # 狗蛋等座位：能看到前面所有人的话
+            await _generate_seat_reply(room_id, room_now, current, _q, context_limit, actor=actor, group=True)
+        said = await _latest_text_from(room_id, actor, started)
+        if said:
+            turn.heard(actor, said)
 
-    # 其他启用了、选好模型的家人（狗蛋等）接着说，能看到前面所有人的话。只在群聊房间里
-    for actor in _group_seat_members():
-        room, updated_msgs = await _load_room_and_messages(room_id)
-        if (room or {}).get("type") != "group":
-            break
-        await _generate_seat_reply(room_id, room, updated_msgs, _q, context_limit, actor=actor, group=True)
+
+async def _latest_text_from(room_id: str, sender: str, since: float) -> str:
+    """这一轮里这位刚说的话（用来看他 @ 了谁）。没说成、读不到都是空串：@ 接力只是锦上添花，不能耽误后面的人回话。"""
+    try:
+        async with get_db() as db:
+            row = await (await db.execute(
+                "SELECT content FROM chatroom_messages WHERE room_id=? AND sender=? AND created_at>=? "
+                "ORDER BY created_at DESC LIMIT 1", (room_id, sender, since))).fetchone()
+    except Exception as error:
+        print(f"[CHATROOM] 读 {sender} 刚说的话失败，这次不看 @: {type(error).__name__}")
+        return ""
+    return str(row[0] or "") if row else ""
 
 
 def _group_seat_members() -> list[str]:

@@ -735,7 +735,7 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
             texts.append(seat_memory_ability_text(user_name))
     if is_capability_enabled("schedule"):
         texts.extend([
-            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会叫你来提醒用户。日期时间用ISO格式。",
+            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 到点系统叫你来提醒用户（你发一条消息给她）。这不是手机闹钟，她的手机不会响铃；跟她说的时候别说「闹钟设好了」，说「到点我来叫你」。日期时间用ISO格式。",
             "[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。",
             "[SCHEDULE_DEL:日程id] — 删除你自己设的日程/闹铃（别人设的删不了）。",
         ])
@@ -783,7 +783,7 @@ async def build_capability_prompt_items(
 
     if is_capability_enabled("schedule"):
         abilities.extend([
-            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 设置闹铃，到时间系统会主动提醒用户。日期时间用ISO格式。",
+            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 到点系统叫你来提醒用户（你发一条消息给她）。这不是手机闹钟，她的手机不会响铃；跟她说的时候别说「闹钟设好了」，说「到点我来叫你」。日期时间用ISO格式。",
             "[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。",
             (
                 f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督查看。到时间后系统自动截取摄像头画面发送给你，"

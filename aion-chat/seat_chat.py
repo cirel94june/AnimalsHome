@@ -19,6 +19,7 @@ import memory_hub_bridge
 from config import MODELS, is_model_deprecated, load_worldbook
 from context_builder import append_message_meta
 from group_post import group_privacy_rule
+import group_mentions
 
 SEAT_ROOM_TYPE = "seat_1v1"
 SEAT_ACTORS = tuple(a for a in actors.SEAT_IDS if a not in ("aion", "connor"))
@@ -194,6 +195,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             f"{group_privacy_rule(user_name)}下面是最近的聊天记录，"
             "【】里是说话的人，<meta> 里是发送时间，只供你参考，回复时都不要带。"
             "轮到你说话了：用你自己的口吻接话，可以回应任何人，不用替别人说话。"
+            + group_mentions.hint_for(actor_id)
         ) if group else (
             f"[私聊说明]\n你现在在和{user_name}的私聊窗口里。下面是最近的聊天记录，"
             "<meta> 里是发送时间，只供你参考，回复时不要带。直接用你自己的口吻回复最后一条。"
