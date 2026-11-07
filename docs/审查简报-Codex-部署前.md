@@ -2946,3 +2946,12 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 狐狸 `test_tab_race.js` 在 3cdb695 上本地复现失败。
 - 改法：`load()` 带序号，不是最新一次的回应直接丢掉；每张卡片记住自己是哪个标签画出来的（按钮、「改一下」提交的 action 都按卡片自己的，不读全局 `status`）。
 - 测试原样收进 `aion-chat/js_tests/hub_review_tab_race.js`，`test_hub_review_page.py` 用 node 跑它。去掉修复时失败，加上通过；原 16 项接口测试仍通过。
+
+## 200. 全家海龟汤（群聊转发 4399 裁判）
+
+- 新模块 `turtle_soup.py`；`routes/chatroom.py` 加 `_turtle_soup`，挂在：小猫发消息后、AI 回之前（只有她、只在 group 房间能开局）；小克 / Lucien / 座位（群聊）保存回复之后。没有进行中的局时只做一次正则，不连 4399。
+- 只用游客连接（`toy.cedarstar.org/mcp`，不带 token），不会用 Lucien 的 4399 账号。只调 `play(turtle_soup, …)` 的 list_puzzles / create_random / ask / guess / hint_request / reveal_answer。
+- 汤主的话用系统消息（`system_model_context`）发；`seat_chat.merged_messages` 放进 group 房间里以「🐢 汤主」开头的系统消息，别的系统消息照旧不放。
+- 状态存 `data/turtle_soup.json`（房间号、题目、计数），每个群一把锁。
+- 实测（服务器、假群号、不发进她的群）：开局（清汤）、问 3 个、猜 1 次（0%）、提示 1 次、结束都正常。`test_turtle_soup.py` 54 项通过；群聊 / 座位相关回归 274 过，6 个失败在改动前就失败。
+- 不涉及权限和数据（游戏传话），按流程测过直接上线。

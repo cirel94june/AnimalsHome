@@ -839,6 +839,25 @@ async def _process_outing(text: str, actor: str, room_id: str, queue, msg_id: st
     return await process_outing_commands(text, actor, allowed=allowed, notify=notify, reply_room=reply_room)
 
 
+async def _turtle_soup(room_id: str, sender: str, text: str, _q: asyncio.Queue, *, can_start: bool = False) -> bool:
+    """全家海龟汤：开局以后，群里以「问」「猜：」开头的行转给 4399 的裁判，汤主的回答发回群里。
+    只有小猫在群聊房间里能开局；出错只记类型，不影响后面的回复。"""
+    if not text:
+        return False
+    try:
+        import turtle_soup
+        if not turtle_soup.active(room_id):
+            if not (can_start and turtle_soup.wants_start(text)) or await _get_room_type(room_id) != "group":
+                return False
+
+        async def post(message: str) -> None:
+            await _chatroom_sys_msg(room_id, message, _q)
+        return await turtle_soup.on_message(room_id, sender, _name_for_identity(sender), text, post, can_start=can_start)
+    except Exception as error:
+        print(f"[TURTLE] 群聊转发失败: {type(error).__name__}")
+        return False
+
+
 async def _process_chatroom_commands(
     full_text: str,
     room_id: str,
@@ -3627,6 +3646,9 @@ async def send_message(room_id: str, body: MsgSend):
 
     async def _bg_generate():
         try:
+            if room_type == "group" and body.content and await _turtle_soup(room_id, "user", body.content, _q, can_start=True):
+                _, fresh = await _load_room_and_messages(room_id)  # 带上汤主刚回的话（不改外层的 room）
+                msgs[:] = fresh or msgs
             if room_type == seat_chat.SEAT_ROOM_TYPE:
                 await _generate_seat_reply(room_id, room, msgs, _q, context_limit)
             elif room_type == "connor_1v1":
@@ -4541,6 +4563,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
     msg = await _save_msg(room_id, actor_id, clean_text, msg_id, attachments=music_atts or None, auto_tts=False,
                           reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
+    if group:
+        await _turtle_soup(room_id, actor_id, clean_text, _q)
     _spawn_seat_followups(room_id, actor_id, model_key, triggered, pinned)
     # 闹铃、主动陪伴这类系统叫来的话、AI 之间自主叫来接话（capture_user_turn=False）不单独记入 Memory Hub：
     # 那时往回找到的「小猫上一句」是旧的，配成新回合会冒充她刚说的，并发时还会记两次（Codex §136 R1）
@@ -4911,6 +4935,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "aion_done", "message": aion_msg})
+    await _turtle_soup(room_id, "aion", clean_text, _q)
     if not has_error and not safety_notice and not ambient_context and capture_user_turn:
         memory_hub_bridge.schedule_chatroom_capture(
             "aion", memory_hub_bridge.paired_user_message(msgs, "aion"), clean_text, await _get_room_type(room_id),
@@ -5063,6 +5088,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "connor_done", "message": connor_msg})
+    await _turtle_soup(room_id, "connor", clean_text, _q)
     if not has_error and not safety_notice and not ambient_context and capture_user_turn:
         memory_hub_bridge.schedule_chatroom_capture(
             "connor", memory_hub_bridge.paired_user_message(msgs, "connor"), clean_text, await _get_room_type(room_id),

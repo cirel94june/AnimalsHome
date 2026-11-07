@@ -65,6 +65,8 @@ def _persona_text(actor_id: str) -> str:
 def _speaker_name(sender: str, user_name: str) -> str:
     if sender == "user":
         return user_name
+    if sender == "system":
+        return "系统"
     try:
         return actors.display_name(sender) or sender
     except Exception:
@@ -73,14 +75,15 @@ def _speaker_name(sender: str, user_name: str) -> str:
 
 async def merged_messages(actor_id: str, limit: int) -> list[dict]:
     """这位座位自己的私聊（所有窗口都算，窗口只是帮她整理）+ 所有家里群（不含台球等小游戏房间），
-    合成一条时间线（同小克、Lucien）。每条带 source：private / group。系统消息不放进来。"""
+    合成一条时间线（同小克、Lucien）。每条带 source：private / group。
+    系统消息不放进来，只有海龟汤「🐢 汤主」的话放进来（不然狗蛋看不到裁判的回答）。"""
     import json
     from database import get_db
     async with get_db() as db:
         cur = await db.execute(
             "SELECT m.sender, m.content, m.created_at, m.attachments, r.type FROM chatroom_messages m "
             "JOIN chatroom_rooms r ON r.id = m.room_id "
-            "WHERE m.sender != 'system' AND r.id NOT GLOB 'billiards_*' "
+            "WHERE (m.sender != 'system' OR (r.type = 'group' AND m.content LIKE '🐢 汤主%')) AND r.id NOT GLOB 'billiards_*' "
             "AND (r.type = 'group' OR (r.type = ? AND r.actor = ?)) "
             "ORDER BY m.created_at DESC, m.rowid DESC LIMIT ?",
             (SEAT_ROOM_TYPE, actor_id, max(1, int(limit)) * 2),
