@@ -75,6 +75,13 @@
 </button>
 </div>
 <a class="hub-memory-link" href="/hub-memory" onclick="if(window.parent!==window&&window.parent.openSubPage){window.parent.openSubPage('/hub-memory');return false;}">☁ Hub 记忆：狗蛋和每位 AI 在 Memory Hub 里记住的事 ›</a>
+<a class="hub-memory-link" id="hubReviewLink" href="/hub-review" onclick="if(window.parent!==window&&window.parent.openSubPage){window.parent.openSubPage('/hub-review');return false;}">✓ 家里的记忆 · 待确认<span id="hubReviewCount"></span> ›</a>
+<script>
+fetch('/api/hub-review/summary').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+  var n = j ? (j.waiting || 0) + (j.review_after || 0) : 0;
+  if (n) document.getElementById('hubReviewCount').textContent = '（' + n + ' 条）🔴';
+}).catch(function () {});
+</script>
 <div class="tabs" role="tablist" aria-label="记忆视图">
 <button class="tab" role="tab" data-view="memories" aria-selected="true">记忆</button>
 <button class="tab" role="tab" data-view="atoms" aria-selected="false">原子档案</button>

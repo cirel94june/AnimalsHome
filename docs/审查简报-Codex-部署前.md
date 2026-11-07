@@ -2933,3 +2933,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 两处容易混的：监控叫醒（座位和小克 / Lucien，`camera.py` 3 处）的提示只写「多久没说话」，没写现在几点；座位的「当前时间」在一大段记录最前面。
 - 改法：监控叫醒提示开头写「现在是 …」；座位最后一条是她的话时，后面加「（现在是 …）」。
 - 不能保证模型以后不再搞错，只是把时间放到了最显眼的地方。
+
+## 199. 家里的记忆 · 待确认（Hub #150 审批页）
+
+- 新路由 `routes/hub_review.py`（`/api/hub-review/summary|list|{id}`）和页面 `/hub-review`（`static/ib/hub-review.html`，IB 机样式）。记忆库页面加入口，显示待确认条数。
+- 钥匙：列表和审批只用主人钥匙（`MEMORY_HUB_OWNER_SECRET`），没配就 503，不退回共用钥匙；summary 用共用钥匙。钥匙只在服务器，回给网页的字段按白名单挑。
+- 返回码按接口说明：409 提示刷新，页面不当成已保存，并重新读取；200 带 error 算失败（`legacy_operator_only` 提示要在服务器上处理）；503 再点一次；`already` 算成功。`retire_ids` 原样带页面上显示的 `updated_at`，只能从 `conflict_targets` 里勾。
+- 涉及权限（主人钥匙），上线前请狐狸看一次。

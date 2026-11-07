@@ -43,6 +43,7 @@ from schedule import schedule_mgr
 from routes import chat, cam as cam_routes, files, settings, memories
 from routes import memory_library
 from routes import hub_memory as hub_memory_routes
+from routes import hub_review as hub_review_routes
 from routes import user_profile
 import post_sentinel
 from routes import voice as voice_routes
@@ -348,6 +349,7 @@ app.mount("/aion-pet", StaticFiles(directory=str(BASE_DIR.parent / "AionPet")), 
 # 路由
 app.include_router(chat.router)
 app.include_router(hub_memory_routes.router)
+app.include_router(hub_review_routes.router)
 app.include_router(cam_routes.router)
 app.include_router(files.router)
 from network_check import router as network_check_router
@@ -616,6 +618,12 @@ async def playground_page():
 @app.get("/playground/explore")
 async def playground_explore_page():
     return FileResponse(BASE_DIR / "static" / "playground.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+@app.get("/hub-review")
+async def hub_review_page():
+    """家里的记忆 · 待确认（Hub 记忆审批，钥匙只在服务器）。"""
+    return FileResponse(BASE_DIR / "static" / "ib" / "hub-review.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
 
 @app.get("/hub-memory")
 async def hub_memory_page():
