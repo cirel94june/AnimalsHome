@@ -81,7 +81,8 @@ async def api_test(name: str):
         return {"ok": False, "error": mcp_outings.redact_everything(str(error))[:300] or type(error).__name__}
 
 
-async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto", reply_room: str = "") -> dict:
+async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto", reply_room: str = "",
+                 wake: str = "") -> dict:
     """出门逛一趟：见闻发到 TA 的私聊（群里叫去的回那个群），并记一条自主活动日志。
     页面、聊天、自主活动都走这里：同一位 AI 同时只能出门一趟，锁放在这一层。"""
     if actor in _out_now:
@@ -89,7 +90,8 @@ async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto",
     _out_now.add(actor)
     trip = mcp_outings.trip_started(actor, name, source)
     try:
-        result = await _go_out(actor, name, purpose, reply_room)
+        extra = {"wake": wake} if wake else {}  # 平常出门的调用形状不变
+        result = await _go_out(actor, name, purpose, reply_room, **extra)
         mcp_outings.trip_finished(trip, "ok" if result.get("ok") else "failed", result.get("counts"))
         return result
     except BaseException:
@@ -111,11 +113,11 @@ async def _say_it(actor: str, text: str, reply_room: str) -> dict | None:
     return await autonomy._save_private_message(actor, text, force_private=True)
 
 
-async def _go_out(actor: str, name: str, purpose: str, reply_room: str = "") -> dict:
+async def _go_out(actor: str, name: str, purpose: str, reply_room: str = "", *, wake: str = "") -> dict:
     import autonomy
     label = autonomy._actor_label(actor)
     try:
-        result = await mcp_outings.run_outing(actor, name, purpose=purpose)
+        result = await mcp_outings.run_outing(actor, name, purpose=purpose, **({"wake": wake} if wake else {}))
     except Exception as error:
         reason = mcp_outings.redact_everything(str(error))[:300] or type(error).__name__  # 先遮后截
         log.warning("[MCP] %s 去 %s 没成功：%s", actor, name, reason)

@@ -33,10 +33,12 @@ _GALATEA = {
           "get_machine", "list_threads", "get_thread", "list_notifications", "list_activity", "nostos_status"},
     WRITE: {"create_thread", "create_reply", "interact"},
     PLAY: {"nostos_start"},
-    # 棋牌这次不开（要搭桥，小猫说后面再看）；改资料、撤回不开放
-    BAN: {"delete_thread", "delete_reply", "withdraw_chat_message", "update_profile", "decorate_avatar",
-          "join_game", "start_game", "submit_action", "leave_waiting_game", "send_game_chat", "send_chat_message"},
+    # 改资料、撤回不开放。棋牌在下面：只有这位 AI 的唤醒桥连着时才开
+    BAN: {"delete_thread", "delete_reply", "withdraw_chat_message", "update_profile", "decorate_avatar"},
 }
+# 花园棋牌（11-07 小猫：三位都去玩狼人杀）。没接唤醒桥时进了局就没人叫他出牌，会超时被踢，所以桥没连着照旧不让做
+GALATEA_GAME_PLAY = {"join_game", "start_game", "submit_action", "leave_waiting_game"}
+GALATEA_GAME_WRITE = {"send_game_chat", "send_chat_message"}  # 牌桌发言别家都看得到，跟「能发帖回帖」开关走
 _TOY = {SEE: {"list_games", "get_guide"}, WRITE: {"feedback"}, PLAY: set(), BAN: {"account"}}
 KNOWN_SITES = {"galatea.abysslumina.com": _GALATEA, "toy.cedarstar.org": _TOY}
 _NOSTOS_ACTIONS = {"start", "buy", "sell", "drink", "eat", "resume"}  # 工具说明里写明的，都是游戏内部的
@@ -58,7 +60,8 @@ _PENDING_STATUS = {"pending", "queued", "processing", "accepted", "in_progress"}
 _POSITIVE_STATUS = {"ok", "success", "succeeded", "created", "published", "posted", "done"}
 _WRITE_EVIDENCE_KEYS = ("id", "thread_id", "reply_id", "post_id", "message_id", "floor_number", "write_confirmation_code")
 _STATE_KEYS = ("turn", "round", "revision", "version", "state_version", "tick", "day", "step", "balance", "coins",
-               "inventory", "action_log", "history", "last_action")
+               "inventory", "action_log", "history", "last_action",
+               "latest_event_id", "snapshot_token")  # 花园 get_my_status 的说明里写的
 _VOLATILE_KEYS = {"timestamp", "ts", "time", "now", "server_time", "servertime", "generated_at", "request_id",
                   "requestid", "trace_id", "traceid", "elapsed", "elapsed_ms", "latency", "latency_ms", "duration_ms"}
 # 路径里的钥匙按站点规则取，不靠「长得像不像钥匙」猜（狐狸方案审查）
@@ -90,7 +93,8 @@ def _sub_actions(args: dict[str, Any]) -> list[str]:
     return found
 
 
-def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = None) -> str:
+def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = None, *, games: bool = False) -> str:
+    """games：这位 AI 的花园唤醒桥连着，棋牌可以玩。"""
     args = args if isinstance(args, dict) else {}
     site = site_of(server)
     subs = _sub_actions(args)
@@ -105,6 +109,10 @@ def classify(server: dict[str, Any], tool: str, args: dict[str, Any] | None = No
             return PLAY if str(command.get("id") or "").lower() in _NOSTOS_ACTIONS else NEW
         if tool == "review_drift_bottles":
             return WRITE if args.get("decisions") else SEE  # 不传 decisions 只是读信
+        if tool in GALATEA_GAME_PLAY:
+            return PLAY if games else BAN
+        if tool in GALATEA_GAME_WRITE:
+            return WRITE if games else BAN
     if site == "toy.cedarstar.org" and tool == "play":
         return _classify_toy_play(str(args.get("game") or ""), subs)
     table = KNOWN_SITES.get(site)
@@ -144,11 +152,12 @@ def _classify_aisay(command: str, subs: list[str]) -> str:
     return NEW
 
 
-def visible_to_model(server: dict[str, Any], tool: str, *, can_write: bool, allow_unknown: bool = False) -> bool:
+def visible_to_model(server: dict[str, Any], tool: str, *, can_write: bool, allow_unknown: bool = False,
+                     games: bool = False) -> bool:
     """整个工具都不能用的，不让模型看到。"""
     if (site_of(server), tool) in _ARG_DEPENDENT:
         return True
-    kind = classify(server, tool, {})
+    kind = classify(server, tool, {}, games=games)
     if kind == NEW:
         return allow_unknown and can_write
     return kind != BAN and (can_write or kind != WRITE)
@@ -330,10 +339,12 @@ def _scope_of(tool: str, args: dict[str, Any]) -> str:
 
 
 class TripGuard:
-    def __init__(self, server: dict[str, Any], *, can_write: bool = True, allow_unknown: bool = False):
+    def __init__(self, server: dict[str, Any], *, can_write: bool = True, allow_unknown: bool = False,
+                 games: bool = False):
         self.server = server
         self.can_write = can_write
         self.allow_unknown = allow_unknown
+        self.games = games
         self.calls = self.writes = self.plays = self.refused = 0
         self.consecutive_errors = 0
         # 三种状态分开（狐狸 v2.5 审查 M1）：
@@ -350,7 +361,7 @@ class TripGuard:
         return self.consecutive_errors >= MAX_CONSECUTIVE_ERRORS
 
     def _kind(self, tool: str, args: dict[str, Any]) -> str:
-        kind = classify(self.server, tool, args)
+        kind = classify(self.server, tool, args, games=self.games)
         return WRITE if kind == NEW and self.allow_unknown else kind  # 放行后按写算，从不按看算
 
     def before(self, tool: str, args: dict[str, Any]) -> str | None:
@@ -364,7 +375,7 @@ class TripGuard:
     def _refusal(self, tool: str, args: dict[str, Any]) -> str | None:
         kind = self._kind(tool, args)
         if kind == BAN:
-            return "家里不让做这个（删除、改资料、账号和钥匙、棋牌），这次没有执行。换别的事做吧。"
+            return ("家里不让做这个（删除、改资料、账号和钥匙；棋牌要先接上唤醒桥），这次没有执行。换别的事做吧。")
         if kind == NEW:
             self.unclassified.append(_label(tool, args))
             return "家里还没给这个操作分类，这次没有执行。"
@@ -384,7 +395,7 @@ class TripGuard:
         self.calls += 1
         self.writes += kind == WRITE
         self.plays += kind == PLAY
-        unclassified = classify(self.server, tool, args) == NEW
+        unclassified = classify(self.server, tool, args, games=self.games) == NEW
         result = outcome(self.server, kind, text, is_error, unclassified=unclassified)
         self._note_progress(kind, tool, args, text, result)
         if result == OK:

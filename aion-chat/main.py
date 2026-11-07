@@ -44,6 +44,7 @@ from routes import chat, cam as cam_routes, files, settings, memories
 from routes import memory_library
 from routes import hub_memory as hub_memory_routes
 from routes import hub_review as hub_review_routes
+from routes import garden_wake as garden_wake_routes
 from routes import user_profile
 import post_sentinel
 from routes import voice as voice_routes
@@ -234,6 +235,8 @@ async def lifespan(app: FastAPI):
     seat_diary_task = asyncio.create_task(seat_diary.seat_diary_loop())  # 狗蛋等座位写日记
     import patrol_control
     patrol_resume_task = asyncio.create_task(patrol_control.resume_loop())  # AI 说「巡逻停 3 小时」到点自动恢复
+    import garden_wake
+    garden_wake_task = asyncio.create_task(garden_wake.watch_loop())  # 花园唤醒桥断了告诉小猫（不重连）
     idle_autonomy_mgr.start()
     board_patrol_mgr.start()
     ha_event_listener.start()
@@ -255,8 +258,9 @@ async def lifespan(app: FastAPI):
         seat_diary_task.cancel()
         seat_persona_evolution_task.cancel()
         patrol_resume_task.cancel()
+        garden_wake_task.cancel()
         await asyncio.gather(memory_hub_outbox_task, memory_hub_jobs_task, moments_hub_task, seat_diary_task,
-                             seat_persona_evolution_task, patrol_resume_task, return_exceptions=True)
+                             seat_persona_evolution_task, patrol_resume_task, garden_wake_task, return_exceptions=True)
         await post_sentinel.stop()
         try:
             from billiards.service import get_service as billiards_service
@@ -350,6 +354,7 @@ app.mount("/aion-pet", StaticFiles(directory=str(BASE_DIR.parent / "AionPet")), 
 app.include_router(chat.router)
 app.include_router(hub_memory_routes.router)
 app.include_router(hub_review_routes.router)
+app.include_router(garden_wake_routes.router)
 app.include_router(cam_routes.router)
 app.include_router(files.router)
 from network_check import router as network_check_router

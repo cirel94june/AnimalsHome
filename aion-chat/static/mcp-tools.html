@@ -39,6 +39,10 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
   <p class="intro">在这里接你想让 AI 去的地方：论坛、游戏、旅行、浏览器、GitHub……
     打开「有空时可以自己去」，AI 空闲时会自己挑地方逛，回来在你们的私聊里讲见闻。
     去的 AI 需要在相遇卡里选好模型。</p>
+  <section class="tool" id="garden"><h3>花园唤醒（狼人杀等桌游）</h3>
+    <div class="desc">连着的时候：牌桌上轮到他，花园会叫醒他去走一步；打开「有人找他就去看」，论坛上有人回他、@他也会叫醒他。
+      牌局进展只发到你们的私聊。断了不会自己重连，会在私聊里告诉你，你看过后点「重新连接」。</div>
+    <div id="garden-rows"><div class="desc">读取中…</div></div></section>
   <div id="list"></div>
 </div>
 <script>
@@ -141,6 +145,39 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     };
   }
 
+  var STATE = { active: '连着', activating: '正在连', inactive: '没连', failed: '断开了', unknown: '看不到' };
+  function loadGarden() {
+    var box = document.getElementById('garden-rows');
+    return api('/api/garden-wake/status').then(function (j) {
+      box.innerHTML = j.actors.map(function (a) {
+        if (!a.garden) return '<div class="desc">' + esc(a.name) + '：还没接花园论坛</div>';
+        var on = a.state === 'active' || a.state === 'activating';
+        return '<div class="btns" style="align-items:center"><b style="min-width:4em">' + esc(a.name) + '</b>' +
+          '<span class="tag' + (on ? '' : ' muted') + '">' + esc(STATE[a.state] || a.state) + '</span>' +
+          '<label class="checks"><label><input type="checkbox" data-notify="' + esc(a.id) + '"' + (a.notify ? ' checked' : '') +
+          '>有人找他就去看</label></label>' +
+          (on ? '<button data-gstop="' + esc(a.id) + '">断开</button>'
+              : '<button class="primary" data-gstart="' + esc(a.id) + '">' + (a.want || a.state === 'failed' ? '重新连接' : '连接') + '</button>') +
+          '</div>';
+      }).join('');
+    }).catch(function (e) { box.innerHTML = '<div class="desc">读不到：' + esc(e.message) + '</div>'; });
+  }
+  document.getElementById('garden').addEventListener('click', function (e) {
+    var start = e.target.closest('[data-gstart]'), stop = e.target.closest('[data-gstop]');
+    if (!start && !stop) return;
+    var id = (start || stop).getAttribute(start ? 'data-gstart' : 'data-gstop');
+    (start || stop).disabled = true;
+    api('/api/garden-wake/' + encodeURIComponent(id) + (start ? '/connect' : '/disconnect'), { method: 'POST' })
+      .then(function () { toast(start ? '连上了' : '断开了'); }).catch(function (err) { alert(err.message); })
+      .then(function () { setTimeout(loadGarden, 1500); });
+  });
+  document.getElementById('garden').addEventListener('change', function (e) {
+    var id = e.target.getAttribute('data-notify'); if (!id) return;
+    api('/api/garden-wake/' + encodeURIComponent(id) + '/notify', { method: 'POST', body: JSON.stringify({ on: e.target.checked }) })
+      .then(function () { toast(e.target.checked ? '有人找他会去看' : '有人找他先不去看（轮到出牌照样叫）'); })
+      .catch(function (err) { e.target.checked = !e.target.checked; alert(err.message); });
+  });
+  loadGarden();
   document.getElementById('add-btn').onclick = function () { openEdit(null); };
   list.addEventListener('click', function (e) {
     var b = e.target.closest('button'); if (!b) return;

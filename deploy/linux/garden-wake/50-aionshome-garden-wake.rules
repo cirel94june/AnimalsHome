@@ -1,0 +1,13 @@
+// 家里的程序（aionshome）只能启动 / 停止这三个唤醒桥，别的服务一个都碰不了。
+// 家里的服务开了 NoNewPrivileges，用不了 sudo，所以走 polkit。
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "aionshome") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var units = ["garden-wake@aion.service", "garden-wake@connor.service", "garden-wake@ai3.service"];
+    var verb = action.lookup("verb");
+    if (units.indexOf(action.lookup("unit")) >= 0 && (verb === "start" || verb === "stop")) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

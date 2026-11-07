@@ -2955,3 +2955,31 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 状态存 `data/turtle_soup.json`（房间号、题目、计数），每个群一把锁。
 - 实测（服务器、假群号、不发进她的群）：开局（清汤）、问 3 个、猜 1 次（0%）、提示 1 次、结束都正常。`test_turtle_soup.py` 54 项通过；群聊 / 座位相关回归 274 过，6 个失败在改动前就失败。
 - 不涉及权限和数据（游戏传话），按流程测过直接上线。
+
+## 201. 花园唤醒桥（狼人杀等桌游），涉及权限，上线前请狐狸看
+
+小猫 11-07：三位都接；有人找他也提醒他去看，做成开关。官方桥 `WenXiaoWendy/galatea-garden-wake-bridge` 固定在 `f0cd9c2`，代码不改。11-07 用官方 `check` 给三位各握手一次：现有的花园 Bearer 就是机器 token。
+
+**权限 1：花园棋牌开放（`mcp_policy.py`）**
+- `join_game / start_game / submit_action / leave_waiting_game` 算 PLAY，`send_game_chat / send_chat_message` 算 WRITE（跟「能发帖回帖」开关走）。**只在 `games=True` 时**；否则还是 BAN、模型看不到。
+- `games` 由 `run_outing` 决定：花园站点并且 `garden_wake.bridge_active(actor)`（`systemctl is-active garden-wake@<AI>` 是 active）。理由：桥没连着时进了局，没人叫他出牌。
+- 删除、改资料、子动作里的封禁词照旧优先。`_STATE_KEYS` 加了 `latest_event_id`、`snapshot_token`（`get_my_status` 说明里写的），让「不确定的玩」可以靠局面解除。
+
+**权限 2：家里的程序能启停这三个桥**
+- 家里的服务开了 `NoNewPrivileges`，用不了 sudo，所以用 polkit：`deploy/linux/garden-wake/50-aionshome-garden-wake.rules` 只放行 `subject.user == aionshome`、unit 是 `garden-wake@{aion,connor,ai3}.service`、verb 是 `start / stop`。本地模拟过：别的 unit、`enable` 都不放行。
+- 单元 `garden-wake@.service`：`User=garden-wake`、`Restart=no`、没有 `[Install]`（enable 不了），沙盒设置照官方。token 在 root 600 的 `/etc/garden-wake/<AI>.env`。
+- 家里从不自动启动：`watch_loop` 每 60 秒只做 `is-active`，断了就在私聊里告诉小猫一次，`want=False`。只有她在工具页点「连接 / 重新连接」时调一次 start，不重试。
+
+**权限 3：本机唤醒接口 `POST /api/garden-wake/{AI}/wake`**
+- 要 `X-Garden-Wake-Key` 等于 `GARDEN_WAKE_LOCAL_KEY`（`hmac.compare_digest`，没配就全拒）；`request.client.host` 必须是 127.0.0.1 / ::1；带任何 `Cf-*` 请求头就拒（隧道也是从本机连进来的）。
+- 只收下、排队，回 `{"accepted": true}`；格式按桥的上限（reason 64、message 4096）。
+- injector `tools/garden_wake_inject.py`：只用标准库，stdin 按 UTF-8 读一行（测试发现按系统编码读中文会乱码，已改），校验信封后转发；家里没收下就退出 1（桥只重试一次）。
+
+**跑一趟**
+- `go_out(..., wake=reason)` → `run_outing(wake=...)`：系统提示换成唤醒版，花园的 `message` 原文作为普通 user 消息（桥的约定），不进系统提示。见闻只发私聊。
+- 每位一个队列：同一种 reason 只留最新；出牌优先；他正在别处逛就等，最多 15 分钟。
+- 论坛 / 私信唤醒受「有人找他就去看」开关（`data/garden_wake.json`，默认开）；出牌不受影响。
+
+**测试**：`test_garden_wake.py` 28 项（封禁 / 开放、接口密钥 / 隧道 / 本机、开关、队列顺序、等他回来、断了只告诉一次且只 is-active、connect 只启动指定实例、唤醒趟的消息和可见工具、injector 真子进程 + 假家里）。MCP 相关回归 193 项通过。
+
+**还没做的**：没装到服务器（等狐狸）；没真进过一局；每步时限没实测；小猫在私聊里当军师的话，这一版他被叫醒时还看不到（下一版把最近的私聊带进去）。

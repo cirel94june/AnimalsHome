@@ -1,0 +1,22 @@
+# 花园唤醒桥，每位 AI 一个实例：garden-wake@aion / @connor / @ai3
+# 官方约定（WenXiaoWendy/galatea-garden-wake-bridge）：只连一次，断了就退出；Restart=no，不开机自启。
+# 没有 [Install] 段，所以 enable 不了。只由小猫在 MCP 工具页点「连接 / 重新连接」时启动。
+[Unit]
+Description=Galatea Garden 唤醒桥（%i）
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=garden-wake
+Group=garden-wake
+WorkingDirectory=/opt/garden-wake
+EnvironmentFile=/etc/garden-wake/%i.env
+ExecStart=/usr/bin/node /opt/garden-wake/dist/cli.js run
+Restart=no
+TimeoutStopSec=20
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
