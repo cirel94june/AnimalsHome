@@ -706,6 +706,34 @@ def _idle_duration_text(minutes: int) -> str:
     return f"{remaining} 分钟"
 
 
+RECENT_CHOICES = 5
+
+
+async def _recent_choices_hint(actor: str) -> str:
+    """最近几次空闲时选了什么。小猫 11-07：他们醒了多半找她说话或休息，淘宝这些很少用，提示换着做，不强制。"""
+    try:
+        async with get_db() as db:
+            cur = await db.execute(
+                "SELECT metadata FROM idle_events WHERE actor=? AND action='select' ORDER BY created_at DESC LIMIT ?",
+                (actor, RECENT_CHOICES),
+            )
+            rows = await cur.fetchall()
+    except Exception:
+        return ""
+    picks = []
+    for row in rows:
+        try:
+            picked = json.loads(row[0] or "{}").get("selected_action")
+        except (TypeError, ValueError):
+            picked = None
+        if picked:
+            picks.append("休息" if picked == "rest" else ACTION_SHORT_NAMES.get(picked, picked))
+    if len(picks) < 3 or len(set(picks)) == len(picks):
+        return ""  # 次数太少，或者本来就没重复
+    return ("\n\n你最近几次空闲时选的是（新的在前）：" + "、".join(picks) +
+            "。如果你也想，可以换点没做过的试试，比如逛逛、出门、玩点什么；不是必须，真想做哪个就选哪个。")
+
+
 async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int = 0) -> dict:
     cfg = await get_actor_config(actor)
     enabled = [
@@ -793,7 +821,7 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         "从下面动作里，按照自己想做的事情选择一项。只返回 JSON，不要解释。每次都可以随机选择要做的事。"
         "如果最近用户明确要求测试或选择某个动作，请在下面的可用选项范围内优先遵守。"
         f"{rest_hint}\n\n"
-        f"{options}{niche_hint}\n\n"
+        f"{options}{niche_hint}{await _recent_choices_hint(actor)}\n\n"
         "reason 请保留你选择它的真实动机。"
         + (f"如果选 role_chat，可以在 target 里写想找谁聊的编号（{_partner_hint(actor)}，写等号前的编号），不写就由系统安排。"
            if "role_chat" in enabled else "")
