@@ -551,17 +551,52 @@ def _count_sentinel(scfg: dict, data, prompt: str, text: str) -> None:
     usage_log.record_json(f"哨兵 · {scfg.get('model') or '未设置'}", "哨兵（后台小模型）", data, prompt, text)
 
 
-async def _call_sentinel_text(scfg: dict, prompt: str, timeout: int = 60) -> str | None:
-    """统一调用哨兵模型（纯文本），支持 Gemini 原生和 OpenAI 兼容格式"""
+async def _with_backup(scfg: dict, call, what: str):
+    """Codex 线路没回话或出错时，改用设置里选的备用中转线路（11-07 小猫：怕 Codex 没额度哨兵就停了）。
+    不是 Codex 线路、或者没选备用：照原样返回 / 抛出。"""
+    import asyncio
+    if scfg.get("provider") != "codex":
+        return await call(scfg)
+    error = None
+    try:
+        text = await call(scfg)
+        if text and str(text).strip():
+            return text
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        error = exc
+    from config import get_sentinel_backup_config
+    backup = get_sentinel_backup_config()
+    if not backup:
+        if error:
+            raise error
+        return text
+    print(f"[Sentinel] Codex {what}{'出错（' + type(error).__name__ + '）' if error else '没有回话'}，改用备用线路 {backup['label']}")
+    return await call(backup)
+
+
+def _chat_url(scfg: dict) -> str:
+    from ai_providers import _openai_chat_completions_url
+    return _openai_chat_completions_url(scfg["base_url"])  # 地址带不带 /v1 都行，和聊天线路同一套规则
+
+
+async def _call_sentinel_text(scfg: dict, prompt: str, timeout: int = 60, *, use_chat_slot: bool = True) -> str | None:
+    """统一调用哨兵模型（纯文本），支持 Gemini 原生和 OpenAI 兼容格式；Codex 线路不行时用备用。"""
+    return await _with_backup(scfg, lambda cfg: _sentinel_text_once(cfg, prompt, timeout, use_chat_slot), "文字")
+
+
+async def _sentinel_text_once(scfg: dict, prompt: str, timeout: int, use_chat_slot: bool) -> str | None:
     if scfg.get("provider") == "codex":
         from ai_providers import call_codex_sentinel
         return await call_codex_sentinel(
             prompt,
             model=scfg.get("model") or "gpt-5.6-luna",
             timeout=timeout,
+            use_chat_slot=use_chat_slot,
         )
     if scfg.get("use_openai"):
-        url = f"{scfg['base_url']}/v1/chat/completions"
+        url = _chat_url(scfg)
         headers = {"Authorization": f"Bearer {scfg['api_key']}", "Content-Type": "application/json"}
         payload = {
             "model": scfg["model"],
@@ -599,7 +634,11 @@ async def _call_sentinel_text(scfg: dict, prompt: str, timeout: int = 60) -> str
 
 
 async def _call_sentinel_vision(scfg: dict, prompt: str, img_b64: str, mime_type: str = "image/jpeg", timeout: int = 60) -> str | None:
-    """统一调用哨兵模型（带图片），支持 Gemini 原生和 OpenAI 兼容格式"""
+    """统一调用哨兵模型（带图片），支持 Gemini 原生和 OpenAI 兼容格式；Codex 线路不行时用备用。"""
+    return await _with_backup(scfg, lambda cfg: _sentinel_vision_once(cfg, prompt, img_b64, mime_type, timeout), "看图")
+
+
+async def _sentinel_vision_once(scfg: dict, prompt: str, img_b64: str, mime_type: str, timeout: int) -> str | None:
     if scfg.get("provider") == "codex":
         from ai_providers import call_codex_sentinel
         return await call_codex_sentinel(
@@ -610,7 +649,7 @@ async def _call_sentinel_vision(scfg: dict, prompt: str, img_b64: str, mime_type
             timeout=timeout,
         )
     if scfg.get("use_openai"):
-        url = f"{scfg['base_url']}/v1/chat/completions"
+        url = _chat_url(scfg)
         headers = {"Authorization": f"Bearer {scfg['api_key']}", "Content-Type": "application/json"}
         payload = {
             "model": scfg["model"],

@@ -211,6 +211,7 @@ class SettingsUpdate(BaseModel):
     sentinel_api_key: Optional[str] = None
     sentinel_model: Optional[str] = None
     sentinel_codex_model: Optional[str] = None
+    sentinel_backup_model: Optional[str] = None
     default_model: Optional[str] = None
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
@@ -298,6 +299,7 @@ async def get_settings():
         "sentinel_api_key": SETTINGS.get("sentinel_api_key", ""),
         "sentinel_model": SETTINGS.get("sentinel_model", ""),
         "sentinel_codex_model": normalize_sentinel_codex_model(SETTINGS.get("sentinel_codex_model")),
+        "sentinel_backup_model": SETTINGS.get("sentinel_backup_model", ""),
         "default_model": default_model_key(),
         "embedding_base_url": SETTINGS.get("embedding_base_url", ""),
         "embedding_api_key": SETTINGS.get("embedding_api_key", ""),
@@ -423,6 +425,8 @@ async def update_settings(body: SettingsUpdate):
         SETTINGS["sentinel_model"] = body.sentinel_model
     if body.sentinel_codex_model is not None:
         SETTINGS["sentinel_codex_model"] = normalize_sentinel_codex_model(body.sentinel_codex_model)
+    if body.sentinel_backup_model is not None:  # 只记模型在下拉框里的名字，地址和 Key 用那条中转线路自己的
+        SETTINGS["sentinel_backup_model"] = str(body.sentinel_backup_model).strip()[:200]
     if body.default_model is not None:
         SETTINGS["default_model"] = body.default_model.strip()  # 已在开头校验过
     if body.embedding_base_url is not None:

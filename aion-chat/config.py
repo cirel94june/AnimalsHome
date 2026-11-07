@@ -155,6 +155,20 @@ def get_sentinel_config() -> dict:
         "ready": bool(gemini_key),
     }
 
+def get_sentinel_backup_config() -> dict | None:
+    """Codex 线路用不了（没额度、报错、没回话）时顶上的备用：从小猫已经配好的中转线路里选一个模型
+    （设置里「Codex 用不了时改用」）。没选、或那条线路没了 / 不是中转，返回 None。Key 只在服务器。"""
+    key = str(SETTINGS.get("sentinel_backup_model") or "").strip()
+    entry = MODELS.get(key) if key else None
+    if not isinstance(entry, dict) or entry.get("provider") != "custom_openai":
+        return None
+    base_url, api_key, model = (str(entry.get(k) or "").strip() for k in ("base_url", "api_key", "model"))
+    if not (base_url and api_key and model):
+        return None
+    return {"route": "backup", "provider": "openai_compatible", "base_url": base_url.rstrip("/"),
+            "api_key": api_key, "model": model, "use_openai": True, "ready": True, "label": key}
+
+
 def get_embedding_config() -> dict:
     """
     返回向量模型配置。

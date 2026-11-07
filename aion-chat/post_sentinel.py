@@ -338,11 +338,8 @@ async def _call_model(prompt):
     cfg = get_sentinel_config()
     if not cfg.get('ready'):
         raise RuntimeError('哨兵模型未配置')
-    if cfg.get('provider') == 'codex':
-        from ai_providers import call_codex_sentinel
-        raw = await call_codex_sentinel(prompt, model=cfg['model'], timeout=60, use_chat_slot=False)
-    else:
-        raw = await _call_sentinel_text(cfg, prompt, timeout=60)
+    # 走同一个入口：Codex 不行时用备用中转。自己有串行队列，不占聊天的 Codex 名额
+    raw = await _call_sentinel_text(cfg, prompt, timeout=60, use_chat_slot=False)
     parsed = extract_json_object(raw or '')
     if not isinstance(parsed, dict):
         error = ValueError('模型返回无法解析的 JSON 对象')

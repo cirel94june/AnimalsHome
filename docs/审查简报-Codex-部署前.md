@@ -2990,3 +2990,14 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - M2 等他回来时同一种新唤醒没替换旧的：先等他空下来，再挑 reason、再取 message，所以跑的是最新那条。
 - M3 桥中途断了还能入局：每次调用棋牌工具前再查一次 `bridge_active`，断了就按 BAN 拒绝。
 - 三个测试原样收进 `test_garden_wake.py`（只换夹具名）。退回 175b1c1 的两个文件时这 3 个失败，修复后 31 项通过；MCP 相关回归 196 项通过。
+
+## 202. 哨兵备用线路（Codex 用不了时改用中转）
+
+小猫 11-07：怕 Codex 没额度时哨兵就停了，想接中转模型。
+- `config.get_sentinel_backup_config()`：设置 `sentinel_backup_model` 是模型下拉框里的名字，只认 `custom_openai` 线路，地址、Key、模型都用那条线路自己的（页面不经手 Key）。没选或线路没了就是 None。
+- `memory._call_sentinel_text / _call_sentinel_vision` 外面包 `_with_backup`：只在主线路是 Codex 时生效；Codex 抛错或回空才改用备用，取消照常抛。原线路出错照旧抛，不换。
+- `post_sentinel._call_model` 改走同一个入口（`use_chat_slot=False` 照旧，不占聊天名额）。
+- OpenAI 兼容地址改用聊天线路同一套规则（`_openai_chat_completions_url`），原线路地址带 `/v1` 不再拼成 `/v1/v1`。
+- 设置页：Codex 线路下面加「Codex 用不了时改用」下拉框（列已配好的中转模型）；原线路模型名旁加「拉取模型列表」（用已有的 `/api/custom-routes/models`，安全限制在 relay_models）。
+- 测试 `test_sentinel_backup.py` 18 项；哨兵相关回归 73 过，2 个 + 设置页 UI 脚本在改动前就失败。
+- 不涉及权限和数据（换模型线路），测过直接上线。

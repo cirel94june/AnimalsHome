@@ -824,6 +824,11 @@ body[data-theme="light"] .transport-mode-btn.is-active {
               <label class="form-label" for="sentinelCodexModelInput">Codex 模型</label>
               <select class="form-input" id="sentinelCodexModelInput"></select>
             </div>
+            <div class="field full" id="sentinelBackupField">
+              <label class="form-label" for="sentinelBackupInput">Codex 用不了时改用</label>
+              <select class="form-input" id="sentinelBackupInput"><option value="">不用备用（Codex 没额度时哨兵就停）</option></select>
+              <p class="hint">从你已经配好的中转线路里选一个模型。平时照样走 Codex；Codex 没额度、报错或者没回话时，这一次改用它。选能看图的模型，摄像头巡逻才看得了照片。</p>
+            </div>
           </div>
           <p class="hint" id="sentinelRouteHint">原线路继续使用下方配置；留空则走 Gemini 官方 API + 上方 Free Key。</p>
           <div class="settings-grid" id="sentinelOriginalFields">
@@ -837,7 +842,9 @@ body[data-theme="light"] .transport-mode-btn.is-active {
             </div>
             <div class="field full">
               <label class="form-label">模型名称</label>
-              <input class="form-input mono-input" type="text" id="sentinelModelInput" placeholder="例：Qwen/Qwen3.6-35B-A3B" autocomplete="off">
+              <input class="form-input mono-input" type="text" id="sentinelModelInput" placeholder="例：Qwen/Qwen3.6-35B-A3B" autocomplete="off" list="sentinelModelList">
+              <datalist id="sentinelModelList"></datalist>
+              <button class="ghost-btn" type="button" id="sentinelFetchModels" onclick="fetchSentinelModels(this)">⇣ 拉取模型列表</button>
             </div>
           </div>
         </div>
@@ -1421,10 +1428,54 @@ async function loadSentinelCodexModels(current) {
   select.value = current;
 }
 
+// 哨兵备用：列出已经配好的中转线路里的模型（地址和 Key 不经过页面）
+async function loadSentinelBackupModels(current) {
+  var select = $("sentinelBackupInput");
+  var rows = [];
+  try { rows = (await api("GET", "/api/models")).filter(function (m) { return m.custom; }); } catch (e) {}
+  var options = [["", "不用备用（Codex 没额度时哨兵就停）"]].concat(rows.map(function (m) {
+    return [m.key, m.key + (m.route_name ? "（" + m.route_name + "）" : "")];
+  }));
+  if (current && !rows.some(function (m) { return m.key === current; })) {
+    options.push([current, current + "（这条线路已经没有了，请换一个）"]);
+  }
+  select.replaceChildren.apply(select, options.map(function (o) {
+    var option = document.createElement("option");
+    option.value = o[0];
+    option.textContent = o[1];
+    return option;
+  }));
+  select.value = current || "";
+}
+
+// 原线路：用上面填的地址和 Key 问中转站有哪些模型，填进模型名的下拉提示
+async function fetchSentinelModels(button) {
+  var baseUrl = $("sentinelBaseUrlInput").value.trim();
+  if (!baseUrl) { alert("先填 API 地址"); return; }
+  var label = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在问中转站…";
+  try {
+    var res = await api("POST", "/api/custom-routes/models", { base_url: baseUrl, api_key: $("sentinelApiKeyInput").value.trim() }, { timeoutMs: 30000 });
+    var ids = res.models || [];
+    var list = $("sentinelModelList");
+    list.replaceChildren.apply(list, ids.map(function (id) { var o = document.createElement("option"); o.value = id; return o; }));
+    $("sentinelModelInput").focus();
+    alert(ids.length ? "拉到 " + ids.length + " 个模型，点模型名称那一栏就能选" : "这个中转站没列出模型");
+  } catch (e) {
+    alert(e.message || "拉取失败");
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 function updateSentinelRouteUi() {
   var route = $("sentinelRouteInput").value;
   var useLuna = route === "codex_luna";
   $("sentinelCodexModelField").style.display = useLuna ? "" : "none";
+  $("sentinelBackupField").style.display = useLuna ? "" : "none";
+  $("sentinelFetchModels").disabled = useLuna;
   var fields = $("sentinelOriginalFields");
   fields.style.opacity = useLuna ? "0.48" : "1";
   fields.querySelectorAll("input").forEach(function(input) {
@@ -1465,6 +1516,7 @@ function updateAsrProviderUi(usePreset) {
   $("geminiFreeKeyInput").value = s.gemini_free_key || "";
   $("sentinelRouteInput").value = s.sentinel_route === "codex_luna" ? "codex_luna" : "original";
   loadSentinelCodexModels(s.sentinel_codex_model || "gpt-5.6-luna");
+  loadSentinelBackupModels(s.sentinel_backup_model || "");
   fillDefaultModel(Array.isArray(loaded[1]) ? loaded[1] : [], s.default_model || "");
   renderCodexModels();
   $("sentinelBaseUrlInput").value = s.sentinel_base_url || "";
@@ -1590,6 +1642,7 @@ async function saveSettings() {
     sentinel_api_key: $("sentinelApiKeyInput").value.trim(),
     sentinel_model: $("sentinelModelInput").value.trim(),
     sentinel_codex_model: $("sentinelCodexModelInput").value,
+    sentinel_backup_model: $("sentinelBackupInput").value,
     default_model: $("defaultModelInput").value,
     embedding_base_url: $("embeddingBaseUrlInput").value.trim(),
     embedding_api_key: $("embeddingApiKeyInput").value.trim(),
