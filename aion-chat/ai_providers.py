@@ -31,7 +31,9 @@ MODEL_RAW_RESPONSE_DIR = DATA_DIR / "model_raw_responses"
 MODEL_RAW_RESPONSE_RETENTION_SECONDS = 3 * 24 * 60 * 60
 THINK_TAG_OPEN = "<think>"
 THINK_TAG_CLOSE = "</think>"
-_THINK_TAG_RE = re.compile(r"<think>([\s\S]*?)</think>", re.IGNORECASE)
+# 有的中转站用 <thinking>（11-07：小克在群里漏了思维链，原来只认 <think>）
+THINK_TAG_PAIRS = (("<think>", "</think>"), ("<thinking>", "</thinking>"))
+_THINK_TAG_RE = re.compile(r"<(think|thinking)>([\s\S]*?)</\1>", re.IGNORECASE)
 
 
 def _tag_prefix_suffix_len(text: str, tag: str) -> int:
@@ -52,7 +54,7 @@ def extract_think_tag_reasoning(text: str, existing_reasoning: str = "") -> tupl
     reasoning_parts: list[str] = []
 
     def _remove(match: re.Match) -> str:
-        inner = (match.group(1) or "").strip()
+        inner = (match.group(2) or "").strip()
         if inner:
             reasoning_parts.append(inner)
         return "\n\n"
@@ -73,6 +75,7 @@ class ThinkTagReasoningFilter:
         self.meta = meta
         self.pending = ""
         self.in_think = False
+        self.close_tag = THINK_TAG_CLOSE
 
     def _append_reasoning(self, text: str) -> None:
         if self.meta is None or not text:
@@ -91,14 +94,14 @@ class ThinkTagReasoningFilter:
         while buf:
             lower = buf.lower()
             if self.in_think:
-                close_idx = lower.find(THINK_TAG_CLOSE)
+                close_idx = lower.find(self.close_tag)
                 if close_idx >= 0:
                     self._append_reasoning(buf[:close_idx])
-                    buf = buf[close_idx + len(THINK_TAG_CLOSE):]
+                    buf = buf[close_idx + len(self.close_tag):]
                     self.in_think = False
                     continue
 
-                keep = _tag_prefix_suffix_len(lower, THINK_TAG_CLOSE)
+                keep = _tag_prefix_suffix_len(lower, self.close_tag)
                 if keep:
                     self._append_reasoning(buf[:-keep])
                     self.pending = buf[-keep:]
@@ -106,14 +109,17 @@ class ThinkTagReasoningFilter:
                     self._append_reasoning(buf)
                 break
 
-            open_idx = lower.find(THINK_TAG_OPEN)
-            if open_idx >= 0:
+            found = [(lower.find(open_tag), open_tag, close_tag) for open_tag, close_tag in THINK_TAG_PAIRS]
+            found = [item for item in found if item[0] >= 0]
+            if found:
+                open_idx, open_tag, close_tag = min(found)
                 out.append(buf[:open_idx])
-                buf = buf[open_idx + len(THINK_TAG_OPEN):]
+                buf = buf[open_idx + len(open_tag):]
                 self.in_think = True
+                self.close_tag = close_tag
                 continue
 
-            keep = _tag_prefix_suffix_len(lower, THINK_TAG_OPEN)
+            keep = max(_tag_prefix_suffix_len(lower, open_tag) for open_tag, _ in THINK_TAG_PAIRS)
             if keep:
                 out.append(buf[:-keep])
                 self.pending = buf[-keep:]

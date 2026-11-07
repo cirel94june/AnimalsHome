@@ -76,3 +76,25 @@ class CodexUsageMetaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+def test_thinking_tags_are_hidden_too():
+    """11-07：小克在群里漏了思维链，那条线路用的是 <thinking>。"""
+    import ai_providers
+    meta = {}
+    stream = ai_providers.ThinkTagReasoningFilter(meta)
+    shown = "".join(stream.feed(part) for part in ["<thin", "king>想一想", "要说什么</thin", "king>你好呀"]) + stream.flush()
+    assert shown == "你好呀" and meta["reasoning_content"] == "想一想要说什么"
+    visible, reasoning = ai_providers.extract_think_tag_reasoning("<thinking>想</thinking>好的")
+    assert visible == "好的" and reasoning == "想"
+
+
+def test_think_tags_still_work_and_mismatched_tags_do_not_close():
+    import ai_providers
+    stream = ai_providers.ThinkTagReasoningFilter({})
+    assert stream.feed("<think>甲</thinking>乙</think>丙") + stream.flush() == "丙"
+    stream = ai_providers.ThinkTagReasoningFilter({})
+    assert stream.feed("<thinking>甲</think>乙</thinking>丙") + stream.flush() == "丙"
+    stream = ai_providers.ThinkTagReasoningFilter({})
+    assert stream.feed("我在想") + stream.flush() == "我在想"
