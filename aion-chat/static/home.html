@@ -351,7 +351,10 @@ html[data-skin="ib"] .home-feed-card { color: var(--ib-tx); border-color: var(--
   animation: folderIn .18s ease;
 }
 @keyframes folderIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
-.folder-title { margin-bottom: 14px; text-align: center; font-size: 17px; font-weight: 700; color: #0a1e42; }
+.folder-sheet::before { content: ''; display: block; width: 38px; height: 4px; margin: -8px auto 10px; border-radius: 2px; background: rgba(90, 110, 150, 0.35); }
+.folder-sheet.pulling { animation: none; transition: none; }
+.folder-sheet.settling { animation: none; transition: transform .22s ease, opacity .22s ease; }
+.folder-title { touch-action: none; margin-bottom: 14px; text-align: center; font-size: 17px; font-weight: 700; color: #0a1e42; }
 .folder-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 6px; }
 .folder-grid .app-icon .icon-label { display: block; }
 
@@ -1078,7 +1081,58 @@ function openFolder(folder) {
   document.getElementById('folderGrid').innerHTML = folderApps(folder).map(app => appHTML(app, { inFolder: true })).join('');
   applyUnreadBadges();
   document.getElementById('folderOverlay').hidden = false;
+  const sheet = document.querySelector('.folder-sheet');
+  sheet.style.transform = ''; sheet.style.opacity = ''; sheet.classList.remove('settling', 'pulling');
+  // 放得下就整块都能下拉；放不下要留给内容滚动，只有顶部标题能拉
+  sheet.style.touchAction = sheet.scrollHeight > sheet.clientHeight ? 'pan-y' : 'none';
 }
+
+// 文件夹跟手下拉：拉够了或甩得快就关，不够就弹回去
+function bindFolderPull() {
+  const sheet = document.querySelector('.folder-sheet');
+  let pull = null;
+  sheet.addEventListener('pointerdown', e => {
+    if (e.button != null && e.button !== 0) return;
+    if (sheet.style.touchAction === 'pan-y' && !e.target.closest('.folder-title')) return;
+    pull = { id: e.pointerId, y: e.clientY, x: e.clientX, at: Date.now(), active: false, dy: 0 };
+  });
+  sheet.addEventListener('pointermove', e => {
+    if (!pull || pull.id !== e.pointerId) return;
+    const dy = e.clientY - pull.y, dx = e.clientX - pull.x;
+    if (!pull.active) {
+      if (dy < 8 || Math.abs(dx) > dy) return;
+      pull.active = true;
+      sheet.classList.remove('settling');
+      sheet.classList.add('pulling');
+      try { sheet.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    pull.dy = Math.max(0, dy);
+    sheet.style.transform = `translateY(${pull.dy}px)`;
+    sheet.style.opacity = String(Math.max(0.35, 1 - pull.dy / 420));
+    e.preventDefault();
+  });
+  const finish = e => {
+    if (!pull || pull.id !== e.pointerId) return;
+    const { active, dy, at } = pull;
+    pull = null;
+    if (!active) return;
+    suppressClicksUntil = Date.now() + 320;
+    sheet.classList.remove('pulling');
+    sheet.classList.add('settling');
+    const fast = dy > 30 && dy / Math.max(1, Date.now() - at) > 0.7;
+    if (e.type === 'pointerup' && (dy > 110 || fast)) {
+      sheet.style.transform = 'translateY(70vh)';
+      sheet.style.opacity = '0';
+      setTimeout(closeFolder, 200);
+    } else {
+      sheet.style.transform = '';
+      sheet.style.opacity = '';
+    }
+  };
+  sheet.addEventListener('pointerup', finish);
+  sheet.addEventListener('pointercancel', finish);
+}
+bindFolderPull();
 
 function closeFolder() {
   document.getElementById('folderOverlay').hidden = true;
