@@ -16,5 +16,10 @@ def test_every_key_is_explained():
         assert words in HTML
 
 
+def test_image_settings_do_not_require_all_three_for_gemini():
+    api = (Path(__file__).parent / "routes" / "settings.py").read_text(encoding="utf-8")
+    assert 'image_provider in ("", "openai") and any(image_config.values())' in api
+
+
 def test_fold_runs_before_the_page_reads_fields():
     assert HTML.index("rarelyUsedSettings") < HTML.index("connectCommonWS();")

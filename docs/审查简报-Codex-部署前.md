@@ -3043,3 +3043,12 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - M：密码的 JSON 转义、网址编码写法也遮掉。
 - M：连接名先过 `NAME_PATTERN`，不合法在注册前拒绝。
 - 测试收进 `test_account_opening.py`。
+
+## 207. 画图三种方式
+
+11-08 小猫：要兼容 OpenAI、Gemini Banana，也能代码画图。`image_gen_provider`：空（原来的逻辑）/ openai / gemini / code。
+- openai：模型名带 gpt-image、dall-e（或地址是图片接口）走 `/images/generations`，有参考图走 `/images/edits`；其他走原来的 chat/completions。
+- gemini：Key、模型、地址可在生图设置里填，留空用 Gemini Key / 默认模型 / 官方地址。
+- code：`image_code.py`，AI 用自己的聊天模型输出 JSON 清单，只认 rect / ellipse / polygon / line / text，Pillow 画成 PNG。不解析 SVG、不执行模型写的代码。服务器没有中文字体，提示里要求不写中文。
+- 顺带：Gemini 报错不再打印正文或异常原文（URL 里有 Key）。超时 120 → 300 秒。
+- 测试 `test_image_providers.py`。未用真实图片接口试过。不涉及权限和数据。

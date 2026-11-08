@@ -747,12 +747,24 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       <summary>
         <div class="summary-title">
           <strong>🎨 生图模型</strong>
-          <span>独立配置文生图与参考图自拍的 OpenAI 兼容接口</span>
+          <span>OpenAI 兼容、Gemini Banana、代码画图，三选一</span>
         </div>
         <span class="summary-chevron">›</span>
       </summary>
       <div class="card-body">
-        <p class="hint">三项全部留空时，继续使用原来的 Gemini 生图模型和上方 Gemini API Key。填写完整并保存后，使用自定义接口；清空三项即可恢复默认。</p>
+        <div class="settings-grid">
+          <div class="field full">
+            <label class="form-label" for="imageGenProviderInput">用哪种方式画</label>
+            <select class="form-input" id="imageGenProviderInput" onchange="updateImageGenUi()">
+              <option value="">自动（填了下面三项就用，没填用 Gemini）</option>
+              <option value="openai">OpenAI 兼容（官方或中转的图片模型）</option>
+              <option value="gemini">Gemini Banana（自拍保持长相）</option>
+              <option value="code">代码画图（不用图片模型）</option>
+            </select>
+            <p class="hint" id="imageGenProviderHint"></p>
+          </div>
+        </div>
+        <div id="imageGenFields">
         <div class="settings-grid">
           <div class="field">
             <label class="form-label" for="imageGenBaseUrlInput">API 地址（Base URL）</label>
@@ -767,7 +779,7 @@ body[data-theme="light"] .transport-mode-btn.is-active {
             <input class="form-input mono-input" type="text" id="imageGenModelInput" placeholder="填写服务商提供的完整生图模型 ID" autocomplete="off">
           </div>
         </div>
-        <p class="hint">使用 chat/completions 接口，参考图通过 image_url 发送。请填写支持此格式生图的模型，不是仅支持看图的聊天模型。自定义接口失败时不会自动改用 Gemini。</p>
+        </div>
       </div>
     </details>
 
@@ -1494,6 +1506,17 @@ async function fetchSentinelModels(button) {
   }
 }
 
+function updateImageGenUi() {
+  var way = $("imageGenProviderInput").value;
+  $("imageGenFields").style.display = way === "code" ? "none" : "";
+  $("imageGenProviderHint").textContent = {
+    "": "下面三项填全就走 OpenAI 兼容；全空走 Gemini，需要 Gemini Key。",
+    openai: "三项都要填。模型名带 gpt-image 或 dall-e 时用图片接口（慢一些），别的模型用聊天接口出图，要选能出图的模型。",
+    gemini: "Key 必填（留空就用「各种钥匙」里的 Gemini Key）。模型留空用默认。地址留空是谷歌官方，中转要支持 Gemini 原生格式。",
+    code: "不用填任何东西，AI 用平时聊天的模型画成图。适合插画、图标、小漫画，画不出照片感，也做不了像真人的自拍。"
+  }[way] || "";
+}
+
 function updateSentinelRouteUi() {
   var route = $("sentinelRouteInput").value;
   var useLuna = route === "codex_luna";
@@ -1550,6 +1573,8 @@ function updateAsrProviderUi(usePreset) {
   $("embeddingBaseUrlInput").value = s.embedding_base_url || "";
   $("embeddingApiKeyInput").value = s.embedding_api_key || "";
   $("embeddingModelInput").value = s.embedding_model || "";
+  $("imageGenProviderInput").value = s.image_gen_provider || "";
+  updateImageGenUi();
   $("imageGenBaseUrlInput").value = s.image_gen_base_url || "";
   $("imageGenApiKeyInput").value = s.image_gen_api_key || "";
   $("imageGenModelInput").value = s.image_gen_model || "";
@@ -1629,6 +1654,7 @@ async function saveSettings() {
     }
   }
   var imageConfig = {
+    image_gen_provider: $("imageGenProviderInput").value,
     image_gen_base_url: $("imageGenBaseUrlInput").value.trim(),
     image_gen_api_key: $("imageGenApiKeyInput").value.trim(),
     image_gen_model: $("imageGenModelInput").value.trim()

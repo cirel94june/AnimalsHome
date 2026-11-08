@@ -15,7 +15,7 @@ from album import save_generated_image
 REFERENCE_IMAGE_PATH = PUBLIC_DIR / "生图锚点.jpg"
 SECONDARY_REFERENCE_IMAGE_PATH = PUBLIC_DIR / "2号机生图锚点.jpg"
 IMAGE_GEN_MODEL = "gemini-3.1-flash-lite-image"
-IMAGE_GEN_TIMEOUT = 120  # 生图超时秒数
+IMAGE_GEN_TIMEOUT = 300  # 生图超时秒数（gpt-image 这类图片接口常要一两分钟）
 
 
 def _selfie_reference_path(source_identity: str = "") -> Path:
@@ -46,8 +46,35 @@ def _openai_image_source(data: dict) -> str | None:
                 return match.group(1)
         return None
 
+    # OpenAI 图片接口：{"data":[{"b64_json":…}] 或 [{"url":…}]}
+    for item in data.get("data") or [] if isinstance(data.get("data"), list) else []:
+        if isinstance(item, dict) and item.get("b64_json"):
+            return "data:image/png;base64," + str(item["b64_json"])
     choices = data.get("choices") or []
-    return extract(choices[0].get("message", {}) if choices else {}) or extract(data.get("image_urls"))
+    return (extract(data.get("data")) or extract(choices[0].get("message", {}) if choices else {})
+            or extract(data.get("image_urls")))
+
+
+def _images_api_base(url: str, model: str) -> str:
+    """走 OpenAI 图片接口时返回接口前缀（到 /v1），走聊天接口返回空串。"""
+    clean = url.rstrip("/")
+    for tail in ("/images/generations", "/images/edits"):
+        if clean.endswith(tail):
+            return clean[: -len(tail)]
+    if clean.endswith("/chat/completions") or not re.search(r"gpt-image|dall-e", model, re.I):
+        return ""
+    return clean if clean.endswith("/v1") else clean + "/v1"
+
+
+async def _post_openai_images(client, api_base: str, api_key: str, model: str, prompt: str, images: list[tuple[str, bytes, str]]):
+    """有参考图走 edits（multipart），没有走 generations。"""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if images:
+        files = [("image[]", item) for item in images]
+        return await client.post(f"{api_base}/images/edits", headers=headers, files=files,
+                                 data={"model": model, "prompt": prompt, "n": "1"})
+    return await client.post(f"{api_base}/images/generations", headers=headers,
+                             json={"model": model, "prompt": prompt, "n": 1})
 
 
 async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: str,
@@ -71,15 +98,25 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
                 print(f"[image_gen] 参考图不存在: {reference}，降级为 DRAW 模式")
 
         url = base_url.rstrip("/")
-        if not url.endswith("/chat/completions"):
+        api_base = _images_api_base(url, model)
+        if not api_base and not url.endswith("/chat/completions"):
             url += "/chat/completions" if url.endswith("/v1") else "/v1/chat/completions"
         async with httpx.AsyncClient(timeout=IMAGE_GEN_TIMEOUT) as client:
             print(f"[image_gen] 使用自定义生图模型: {model}")
-            response = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json={"model": model, "stream": False, "messages": [{"role": "user", "content": content}]},
-            )
+            if api_base:
+                images = []
+                for ref in references or []:
+                    path = Path(ref['path'])
+                    images.append((path.name, path.read_bytes(), mimetypes.guess_type(path.name)[0] or 'image/jpeg'))
+                if reference_bytes is not None:
+                    images.append(("selfie.jpg", reference_bytes, "image/jpeg"))
+                response = await _post_openai_images(client, api_base, api_key, model, prompt, images)
+            else:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"model": model, "stream": False, "messages": [{"role": "user", "content": content}]},
+                )
             response.raise_for_status()
             source = _openai_image_source(response.json())
             if not source:
@@ -109,6 +146,41 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
     return None
 
 
+def _code_model(source_identity: str) -> str:
+    """代码画图用这位 AI 平时聊天的模型。"""
+    import actors
+    from config import default_model_key
+    actor = actors.get_actor(source_identity or "aion") or {}
+    return str(actor.get("model") or "") or default_model_key()
+
+
+async def _generate_code_image(prompt: str, is_selfie: bool, source_identity: str) -> str | None:
+    """模型写画画清单，家里画成 PNG。清单只是数据，不执行。"""
+    import image_code
+    from ai_providers import CLI_STATUS_PREFIX, stream_ai
+    from model_json import extract_json_object
+    model_key = _code_model(source_identity)
+    meta: dict = {}
+    text = ""
+    try:
+        ask = f"{image_code.instructions()}\n\n要画的内容：{prompt}"
+        async for chunk in stream_ai([{"role": "user", "content": ask}], model_key, meta):
+            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                text += chunk
+        if meta.get("provider_error"):
+            print("[image_gen] 代码画图：模型报错")
+            return None
+        data = image_code.render(extract_json_object(text))
+    except Exception as exc:
+        print(f"[image_gen] 代码画图失败（{type(exc).__name__}）")
+        return None
+    if not data:
+        print("[image_gen] 代码画图：模型没有给出能画的清单")
+        return None
+    return await save_generated_image(data, prompt=prompt, model=f"代码画图 · {model_key}", actor=source_identity,
+                                      kind="selfie" if is_selfie else "draw")
+
+
 async def generate_image(prompt: str, is_selfie: bool = False, source_identity: str = "", *, references=None) -> str | None:
     """
     调用设置中的生图模型，未配置时使用 Gemini；保存到相册并返回 uploads 相对路径。
@@ -117,7 +189,10 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
     """
     custom = [(SETTINGS.get(key) or "").strip() for key in
               ("image_gen_base_url", "image_gen_api_key", "image_gen_model")]
-    if any(custom):
+    provider = (SETTINGS.get("image_gen_provider") or "").strip()
+    if provider == "code":
+        return await _generate_code_image(prompt, is_selfie, source_identity)
+    if provider != "gemini" and any(custom):
         if not all(custom):
             print("[image_gen] 请完整填写生图 API 地址、Key 和模型名，或全部清空以使用 Gemini")
             return None
@@ -125,7 +200,10 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
             return await _generate_openai_image(prompt, is_selfie, source_identity, *custom, references=references)
         return await _generate_openai_image(prompt, is_selfie, source_identity, *custom)
 
-    api_key = get_key("gemini")
+    # Gemini（Banana）：选了这一路时，生图页填的 Key、模型、地址优先；地址留空就是谷歌官方
+    gemini_base, own_key, gemini_model = custom if provider == "gemini" else ("", "", "")
+    gemini_model = gemini_model or IMAGE_GEN_MODEL
+    api_key = own_key or get_key("gemini")
     if not api_key:
         print("[image_gen] 没有 Gemini API Key，无法生图")
         return None
@@ -155,7 +233,10 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
         else:
             print(f"[image_gen] 参考图不存在: {reference_image_path}，降级为 DRAW 模式")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{IMAGE_GEN_MODEL}:generateContent?key={api_key}"
+    root = gemini_base.rstrip("/") or "https://generativelanguage.googleapis.com"
+    if not root.endswith(("/v1beta", "/v1")):
+        root += "/v1beta"
+    url = f"{root}/models/{gemini_model}:generateContent?key={api_key}"
 
     payload = {
         "contents": [{"parts": parts}],
@@ -181,7 +262,7 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
             candidates = data.get("candidates", [])
             if not candidates:
                 error_msg = data.get("error", {}).get("message", "未知错误")
-                print(f"[image_gen] API 返回空 candidates: {error_msg}")
+                print(f"[image_gen] API 返回空 candidates: {str(error_msg)[:200]}")
                 return None
 
             content_parts = candidates[0].get("content", {}).get("parts", [])
@@ -198,13 +279,12 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
                 return None
 
             return await save_generated_image(base64.b64decode(image_data), prompt=prompt,
-                                              model=IMAGE_GEN_MODEL, actor=source_identity,
+                                              model=gemini_model, actor=source_identity,
                                               kind="selfie" if is_selfie else "draw", reference_bytes=ref_bytes)
 
     except httpx.HTTPStatusError as e:
-        error_body = e.response.text[:500] if e.response else ""
-        print(f"[image_gen] API 请求失败 ({e.response.status_code}): {error_body}")
+        print(f"[image_gen] API 请求失败 ({e.response.status_code})")  # 不打印正文：可能带地址和 Key
         return None
     except Exception as e:
-        print(f"[image_gen] 生图异常: {e}")
+        print(f"[image_gen] 生图异常: {type(e).__name__}")
         return None

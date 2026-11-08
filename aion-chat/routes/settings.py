@@ -216,6 +216,7 @@ class SettingsUpdate(BaseModel):
     embedding_base_url: Optional[str] = None
     embedding_api_key: Optional[str] = None
     embedding_model: Optional[str] = None
+    image_gen_provider: Optional[str] = None
     image_gen_base_url: Optional[str] = None
     image_gen_api_key: Optional[str] = None
     image_gen_model: Optional[str] = None
@@ -304,6 +305,7 @@ async def get_settings():
         "embedding_base_url": SETTINGS.get("embedding_base_url", ""),
         "embedding_api_key": SETTINGS.get("embedding_api_key", ""),
         "embedding_model": SETTINGS.get("embedding_model", ""),
+        "image_gen_provider": SETTINGS.get("image_gen_provider", ""),
         "image_gen_base_url": SETTINGS.get("image_gen_base_url", ""),
         "image_gen_api_key": SETTINGS.get("image_gen_api_key", ""),
         "image_gen_model": SETTINGS.get("image_gen_model", ""),
@@ -358,6 +360,8 @@ async def update_settings(body: SettingsUpdate):
             asr_config = normalize_asr_settings(proposed)
         except (ValueError, httpx.InvalidURL) as error:
             raise HTTPException(status_code=400, detail=str(error))
+    new_image_provider = body.image_gen_provider if body.image_gen_provider in ("", "openai", "gemini", "code") else None
+    image_provider = SETTINGS.get("image_gen_provider", "") if new_image_provider is None else new_image_provider
     image_fields = ("image_gen_base_url", "image_gen_api_key", "image_gen_model")
     image_config = {}
     if any(getattr(body, key) is not None for key in image_fields):
@@ -365,7 +369,7 @@ async def update_settings(body: SettingsUpdate):
             key: (getattr(body, key) if getattr(body, key) is not None else SETTINGS.get(key) or "").strip()
             for key in image_fields
         }
-        if any(image_config.values()) and not all(image_config.values()):
+        if image_provider in ("", "openai") and any(image_config.values()) and not all(image_config.values()):
             raise HTTPException(status_code=400, detail="请完整填写生图 API 地址、Key 和模型名，或全部清空以使用 Gemini")
         base_url = image_config["image_gen_base_url"]
         if base_url:
@@ -386,6 +390,8 @@ async def update_settings(body: SettingsUpdate):
         if value is not None:
             SETTINGS[field] = value.strip()
     SETTINGS.update(image_config)
+    if new_image_provider is not None:  # 校验都过了才改
+        SETTINGS["image_gen_provider"] = new_image_provider
     if body.minimax_tts_model is not None and body.minimax_tts_model not in MINIMAX_TTS_MODELS:
         raise HTTPException(status_code=400, detail="MiniMax 语音模型无效")
     minimax_voice_pattern = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{7,255}$")
