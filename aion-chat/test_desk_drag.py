@@ -36,3 +36,20 @@ def test_mixed_pages_start_at_the_top_row():
     html = (STATIC / "home.html").read_text(encoding="utf-8")
     assert ".app-pages.mixed .app-page { align-content: start; }" in html
     assert "homeWidgets.size ? rect.top +" in html
+
+
+def test_workbench_lists_every_desktop_app():
+    import re
+    home = (STATIC / "home.html").read_text(encoding="utf-8")
+    block = home[home.index("const APPS = ["):]
+    block = block[:block.index("\n];")]
+    ids = re.findall(r"\{\s*id:\s*'([\w-]+)'", block.replace("\r\n", "\n"))
+    wb = (STATIC / "ib" / "workbench.html").read_text(encoding="utf-8")
+    listed = wb[wb.index("var APP_LIST = "):wb.index("var PATTERNS = ")]
+    assert ids and all(f'"{i}"' in listed for i in ids)
+
+
+def test_desk_look_only_trusts_checked_urls_and_ids():
+    js = (STATIC / "ib" / "ib-skin.js").read_text(encoding="utf-8")
+    assert "function deskLookCss" in js
+    assert js.count("/^[\\w-]+$/.test(") == 2 and "cssUrl(it.url)" in js and "cssUrl(bgs[key])" in js

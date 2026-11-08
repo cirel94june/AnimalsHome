@@ -3083,3 +3083,6 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 
 ### §212a 混排页改为从上往下排（11-09）
 小猫反馈日历上不去：格子原来贴底，放不满时余量留在第 0 行上方。有小组件时 .app-pages.mixed 改 align-content:start，cellFromPagePoint 同步按顶部算。未涉及权限/数据。
+
+### §213 美化工作台「桌面」分页（11-09）
+skin.desk_look：桌面背景 bg/bg_blur、小组件 widget_blur/widget_veil/widget_bg、App 图标 icons（内置线条图案或上传图，上传图前端裁 256 方形）。复用已有 /api/skin 与 /api/skin/background，服务端未改；ib-skin.js 生成样式时地址过 cssUrl、键名过白名单正则。随方案槽/美化码一起存。

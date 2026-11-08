@@ -106,6 +106,45 @@
     return 'url("' + url.replace(/"/g, '') + '")';
   }
 
+  function clampNum(v, min, max, dflt) {
+    v = Number(v);
+    return isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt;
+  }
+
+  // 桌面外观（11-09 小猫）：桌面背景和毛玻璃、每个小组件的背景、每个 App 的图标
+  function deskLookCss(l) {
+    if (!l || typeof l !== 'object') return '';
+    var out = [];
+    var P = 'html[data-skin="ib"] ';
+    var screen = P + 'body .phone-screen,' + P + 'body[data-theme] .phone-screen';
+    var url = cssUrl(l.bg), blur = clampNum(l.bg_blur, 0, 40, 0);
+    if (blur > 0) {
+      // 模糊单独画在一层上，桌面上的图标和小组件不跟着糊
+      out.push(screen + '{background:var(--ib-base)!important;isolation:isolate;overflow:hidden}');
+      out.push(P + '.phone-screen::before{content:"";position:absolute;inset:-60px;z-index:-1;pointer-events:none;background:var(--ib-scrim),' + (url || 'var(--ib-bg-url)') + ' center / cover no-repeat;filter:blur(' + blur + 'px)}');
+    } else if (url) {
+      out.push(screen + '{background:var(--ib-scrim),' + url + ' center / cover no-repeat,var(--ib-base)!important}');
+    }
+    if (l.widget_blur !== undefined && l.widget_blur !== '') out.push('html[data-skin="ib"]{--ib-wgt-blur:' + clampNum(l.widget_blur, 0, 40, 22) + 'px}');
+    var veil = clampNum(l.widget_veil, 0, 0.9, 0.35);
+    var bgs = l.widget_bg && typeof l.widget_bg === 'object' ? l.widget_bg : {};
+    Object.keys(bgs).forEach(function (key) {
+      var u = cssUrl(bgs[key]);
+      if (!u || !/^[\w-]+$/.test(key)) return;
+      var v = 'rgba(255,255,255,' + veil + ')';
+      out.push(P + '.wgt[data-key="' + key + '"]{background-image:linear-gradient(' + v + ',' + v + '),' + u + '!important;background-size:cover!important;background-position:center!important}');
+    });
+    var icons = l.icons && typeof l.icons === 'object' ? l.icons : {};
+    Object.keys(icons).forEach(function (id) {
+      var it = icons[id], u = it && cssUrl(it.url);
+      if (!u || !/^[\w-]+$/.test(id)) return;
+      var rule = 'content:' + u + '!important';
+      if (it.kind === 'image') rule += ';padding:0!important;object-fit:cover!important;border-radius:22%';
+      out.push(P + '.app-icon[data-app-id="' + id + '"] .icon-img img,' + P + '.mini-icon[data-app-id="' + id + '"] img{' + rule + '}');
+    });
+    return out.join('\n');
+  }
+
   function buildCss(skin) {
     var vars = Object.assign({}, (PRESETS[skin.preset] || PRESETS.internal).vars, skin.vars || {});
     var decl = [];
@@ -121,6 +160,8 @@
     var chatBg = cssUrl(skin.chat_bg);
     if (chatBg) decl.push('--ib-chat-bg-url:' + chatBg);
     var css = decl.length ? 'html[data-skin="ib"]{' + decl.join(';') + '}' : '';
+    var deskCss = deskLookCss(skin.desk_look);
+    if (deskCss) css += '\n' + deskCss;
     if (skin.custom_css) css += '\n/* 美化码 · 自定义 CSS */\n' + String(skin.custom_css).replace(/<\/?style/gi, '');
     return css;
   }

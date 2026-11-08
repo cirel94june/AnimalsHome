@@ -69,6 +69,20 @@ body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #
 .pv-row.ta .pv-b { background: var(--ib-ai-bg); color: var(--ib-ai-tx); border-bottom-left-radius: var(--ib-bubble-tail); }
 .pv-input { margin-top: 10px; padding: 8px; border-radius: 16px; background: rgba(255,255,255,var(--ib-input-a)); border: 1px solid var(--ib-glass-line); font-size: 13px; color: var(--ib-tx3); }
 textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+.wlist .row b { font-weight: 500; font-size: 14px; flex: 1; }
+.wthumb { width: 44px; height: 32px; border-radius: 8px; border: 1px solid var(--ib-glass-line); background: rgba(255,255,255,.5) center / cover no-repeat; flex: none; }
+.icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(66px, 1fr)); gap: 12px 6px; margin-top: 12px; }
+.ic { border: none; background: none; color: var(--ib-tx2); font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.ic span { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ic i, .pick i { display: block; width: 50px; height: 50px; border-radius: 15px; background: #fff; border: 1px solid var(--ib-glass-line); overflow: hidden; }
+.ic img, .pick img { width: 100%; height: 100%; object-fit: contain; padding: 10px; display: block; }
+.ic img.photo { padding: 0; object-fit: cover; }
+.sheet-mask { position: fixed; inset: 0; z-index: 40; background: rgba(20,40,80,.3); display: none; align-items: flex-end; justify-content: center; }
+.sheet-mask.on { display: flex; }
+.sheet { width: 100%; max-width: 560px; max-height: 76vh; overflow-y: auto; padding: 16px 16px calc(20px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--ib-base, #eef3fa); }
+.sheet h3 { font-size: 16px; font-weight: 600; }
+.picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 10px; margin-top: 12px; }
+.pick { border: none; background: none; padding: 0; cursor: pointer; display: flex; justify-content: center; }
 .toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); opacity: 0; background: rgba(10,30,66,.86); color: #fff; padding: 9px 16px; border-radius: 999px; font-size: 13px; transition: all .25s; pointer-events: none; z-index: 50; }
 .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
@@ -83,6 +97,7 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
 
   <div class="tabs" id="tabs">
     <button class="tab on" data-pane="scheme">方案</button>
+    <button class="tab" data-pane="desk">桌面</button>
     <button class="tab" data-pane="base">基础</button>
     <button class="tab" data-pane="text">文字</button>
     <button class="tab" data-pane="bubble">气泡</button>
@@ -115,6 +130,29 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
       <h3>恢复默认</h3>
       <div class="hint">回到 IB 雾蓝默认外观（方案槽保留，可随时撤销）。</div>
       <div class="btns"><button class="btn" id="reset">恢复默认</button></div>
+    </div>
+  </section>
+
+  <!-- 桌面 -->
+  <section class="pane" id="pane-desk">
+    <div class="card">
+      <h3>桌面背景</h3>
+      <div class="hint">只换桌面这一页，其他页面还用「基础」里的全站背景。</div>
+      <div class="bgs"><div class="bgbox"><div class="thumb" id="thumb-desk"></div><div class="meta"><b>桌面背景</b>
+        <button class="btn small" id="desk-up">换图</button> <button class="btn small" id="desk-clear">跟随全站</button></div></div></div>
+      <div class="row" style="margin-top:6px"><label>毛玻璃<div class="hint">把背景糊掉，0 就是清晰的原图</div></label><input type="range" id="desk-blur" min="0" max="40" step="1"><output id="desk-blur-o"></output></div>
+    </div>
+    <div class="card">
+      <h3>小组件</h3>
+      <div class="row"><label>材质</label><span class="seg" id="wgt-material"><button data-v="glass">毛玻璃</button><button data-v="solid">实底</button><button data-v="clear">透明</button></span></div>
+      <div class="row"><label>毛玻璃强度</label><input type="range" id="wgt-blur" min="0" max="40" step="1"><output id="wgt-blur-o"></output></div>
+      <div class="row"><label>图片上的白纱<div class="hint">小组件换了图片后，字看不清就调高</div></label><input type="range" id="wgt-veil" min="0" max="0.9" step="0.05"><output id="wgt-veil-o"></output></div>
+      <div class="wlist" id="wgt-list"></div>
+    </div>
+    <div class="card">
+      <h3>App 图标</h3>
+      <div class="hint">点一个 App，选图案或传自己的图片。文件夹里的小图标也会跟着变。</div>
+      <div class="icons" id="icon-grid"></div>
     </div>
   </section>
 
@@ -216,6 +254,11 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
     </div>
   </section>
 </div>
+<div class="sheet-mask" id="icon-mask"><div class="sheet">
+  <h3 id="icon-title"></h3>
+  <div class="btns"><button class="btn small primary" id="icon-up">用我的图片</button><button class="btn small" id="icon-reset">恢复默认</button><button class="btn small" id="icon-close">关闭</button></div>
+  <div class="picks" id="icon-picks"></div>
+</div></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -233,6 +276,9 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
   };
   var SHADOWS = { none: 'none', soft: '0 3px 10px rgba(30,50,90,0.18)', deep: '0 8px 22px rgba(30,50,90,0.3)' };
   var UNDO_KEY = 'ib_skin_undo_v1';
+  var APP_LIST = [["chat", "聊天", "/public/funIcon_0005_聊天.png"], ["chatroom", "群聊", "/public/funIcon_0020_聊天室.png"], ["diary", "日记本", "/public/funIcon_0006_日记本.png"], ["memory", "记忆库", "/public/funIcon_0004_记忆库.png"], ["ai-feed", "AI 动态", "/public/funIcon_0031_家庭动态.png"], ["moments", "朋友圈", "/public/funIcon_0010_朋友圈.png"], ["music-station", "点歌台", "/public/funIcon_0032_点歌台.png"], ["album", "相册", "/public/funIcon_0033_相册.png"], ["taobao", "逛淘宝", "/public/funIcon_0034_逛淘宝.png"], ["lounge-friends", "好友串门", "/public/funIcon_0030_好友串门.png"], ["xhs-lite", "小红书", "/public/funIcon_0024_小红书.png"], ["wishes", "许愿池", "/public/funIcon_0023_许愿池.png"], ["worldbook", "世界书", "/public/funIcon_0007_世界书.png"], ["theater", "小剧场", "/public/funIcon_0009_小剧场.png"], ["english-corner", "学习角", "/public/funIcon_0028_学习角.png"], ["dateTheater", "去约会", "/public/funIcon_0026_去约会.png"], ["whisper", "密语时刻", "/public/funIcon_0011_密语时刻.png"], ["alarm", "日程监督", "/public/funIcon_0012_闹钟.png"], ["switches", "开关总览", "/public/funIcon_0008_设置.png"], ["settings", "设置", "/public/funIcon_0008_设置.png"], ["capabilities", "工具与能力", "/public/funIcon_0025_工具能力.png"], ["app-supervision", "监管", "/public/funIcon_0027_监管.png"], ["camera", "监控摄像头", "/public/funIcon_0014_监控.png"], ["logs", "监控日志", "/public/funIcon_0015_监控日志.png"], ["location", "定位追踪", "/public/funIcon_0013_地图.png"], ["activity", "活动日志", "/public/funIcon_0000_备忘录.png"], ["family-dynamics", "家庭动态", "/public/funIcon_0031_家庭动态.png"], ["health", "健康", "/public/funIcon_0003_健康心.png"], ["hug", "抱抱", "/public/funIcon_0029_爱的抱抱.png"], ["reading", "陪伴阅读", "/public/funIcon_0016_陪伴阅读.png"], ["gift", "爱的印记", "/public/funIcon_0018_爱的印记.png"], ["fund", "奥罗斯财团", "/public/funIcon_0019_奥罗斯财团.png"], ["playground", "娱乐室", "/public/funIcon_0019_娱乐室.png"], ["mcp-tools", "MCP 工具", "/public/funIcon_0019_娱乐室.png"], ["travel", "旅行", "/public/funIcon_0013_地图.png"], ["calendar", "小日历", "/public/funIcon_0031_家庭动态.png"], ["trpg", "跑团", "/public/funIcon_0009_小剧场.png"], ["usage", "用量", "/public/funIcon_0025_工具能力.png"], ["repair", "维修室", "/public/funIcon_0035_维修室.png"]];
+  var PATTERNS = ["activity", "alarm", "album", "app-supervision", "camera", "capabilities", "chat", "chatroom", "dateTheater", "diary", "doudizhu", "english-corner", "family-dynamics", "fund", "ghost-forest", "gift", "health", "hug", "location", "logs", "lounge-board", "lounge-friends", "mcp-tools", "memory", "moments", "music-station", "playground", "reading", "repair", "seeky", "settings", "taobao", "theater", "usage", "visual", "whisper", "wishes", "worldbook", "xhs-lite"];
+  var WIDGET_LIST = [['meet', '相遇卡'], ['notes', '便笺'], ['sched', '日程'], ['cal', '月历'], ['music', '音乐'], ['photo', '相片卡'], ['deco', '装饰']];
   var skin = normalize(IB ? IB.current() : {});
   var saveTimer = null;
 
@@ -243,12 +289,16 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
     while (s.slots.length < 4) s.slots.push(null);
     if (s.enabled === undefined) s.enabled = true;
     if (!s.preset) s.preset = 'internal';
+    s.desk_look = s.desk_look && typeof s.desk_look === 'object' ? s.desk_look : {};
+    if (!s.desk_look.widget_bg || typeof s.desk_look.widget_bg !== 'object') s.desk_look.widget_bg = {};
+    if (!s.desk_look.icons || typeof s.desk_look.icons !== 'object') s.desk_look.icons = {};
     return s;
   }
   function look(s) {  // 外观本身（不含方案槽），用于方案槽与美化码
     return { preset: s.preset, vars: JSON.parse(JSON.stringify(s.vars || {})), bg: s.bg || '', chat_bg: s.chat_bg || '',
       reduce_motion: !!s.reduce_motion, custom_css: s.custom_css || '',
-      icon_style: s.icon_style || 'ib', title_style: s.title_style || 'ib' };
+      icon_style: s.icon_style || 'ib', title_style: s.title_style || 'ib',
+      desk_look: JSON.parse(JSON.stringify(s.desk_look || {})) };
   }
   function presetVars() { return (IB.presets[skin.preset] || IB.presets.internal).vars; }
   function val(key) {
@@ -338,7 +388,7 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
       btns.appendChild(save);
       if (slot) {
         var load = document.createElement('button'); load.className = 'btn small primary'; load.textContent = '切换';
-        load.onclick = function () { pushUndo(); Object.assign(skin, JSON.parse(JSON.stringify(slot.look))); renderAll(); apply(true); toast('已切换到「' + slot.name + '」'); };
+        load.onclick = function () { pushUndo(); Object.assign(skin, JSON.parse(JSON.stringify(slot.look))); skin = normalize(skin); renderAll(); apply(true); toast('已切换到「' + slot.name + '」'); };
         btns.appendChild(load);
       }
       box.appendChild(el);
@@ -401,7 +451,91 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
   function renderExport() {
     try { $('#export').value = 'IB-LOOK:' + btoa(unescape(encodeURIComponent(JSON.stringify(look(skin))))); } catch (e) {}
   }
-  function renderAll() { renderPresets(); renderSlots(); renderControls(); renderExport(); }
+  // ── 桌面 ──
+  function iconOf(app) {
+    var it = skin.desk_look.icons[app[0]];
+    if (it && it.url) return { url: it.url, photo: it.kind === 'image' };
+    return { url: PATTERNS.indexOf(app[0]) >= 0 ? '/static/ib/icons/' + app[0] + '.svg' : app[2], photo: PATTERNS.indexOf(app[0]) < 0 };
+  }
+  function renderDesk() {
+    var l = skin.desk_look;
+    $('#thumb-desk').style.backgroundImage = 'url("' + (l.bg || skin.bg || '/static/ib/bg-internal.jpg') + '")';
+    var blur = +l.bg_blur || 0; $('#desk-blur').value = blur; $('#desk-blur-o').textContent = blur + 'px';
+    var wb = l.widget_blur === undefined ? 22 : +l.widget_blur; $('#wgt-blur').value = wb; $('#wgt-blur-o').textContent = wb + 'px';
+    var veil = l.widget_veil === undefined ? 0.35 : +l.widget_veil; $('#wgt-veil').value = veil; $('#wgt-veil-o').textContent = Math.round(veil * 100) + '%';
+    seg('#wgt-material', (skin.desk && skin.desk.material) || 'glass', function (v) { skin.desk = Object.assign({}, skin.desk, { material: v }); });
+    var list = $('#wgt-list'); list.innerHTML = '';
+    WIDGET_LIST.forEach(function (w) {
+      var row = document.createElement('div'); row.className = 'row';
+      var thumb = document.createElement('div'); thumb.className = 'wthumb';
+      if (l.widget_bg[w[0]]) thumb.style.backgroundImage = 'url("' + l.widget_bg[w[0]] + '")';
+      var name = document.createElement('b'); name.textContent = w[1];
+      var up = document.createElement('button'); up.className = 'btn small'; up.textContent = '换图';
+      up.onclick = function () { pickFile(function (url) { l.widget_bg[w[0]] = url; }); };
+      row.appendChild(thumb); row.appendChild(name); row.appendChild(up);
+      if (l.widget_bg[w[0]]) {
+        var clear = document.createElement('button'); clear.className = 'btn small'; clear.textContent = '去掉';
+        clear.onclick = function () { pushUndo(); delete l.widget_bg[w[0]]; renderDesk(); apply(true); };
+        row.appendChild(clear);
+      }
+      list.appendChild(row);
+    });
+    var grid = $('#icon-grid'); grid.innerHTML = '';
+    APP_LIST.forEach(function (app) {
+      var b = document.createElement('button'); b.className = 'ic'; b.type = 'button';
+      var frame = document.createElement('i'); var img = document.createElement('img');
+      var cur = iconOf(app); img.src = cur.url; img.alt = ''; if (cur.photo) img.className = 'photo';
+      var label = document.createElement('span'); label.textContent = app[1];
+      frame.appendChild(img); b.appendChild(frame); b.appendChild(label);
+      b.onclick = function () { openIconSheet(app); };
+      grid.appendChild(b);
+    });
+  }
+  var iconApp = null;
+  function setIcon(value) {
+    pushUndo();
+    if (value) skin.desk_look.icons[iconApp[0]] = value; else delete skin.desk_look.icons[iconApp[0]];
+    $('#icon-mask').classList.remove('on');
+    renderDesk(); apply(true);
+  }
+  function openIconSheet(app) {
+    iconApp = app;
+    $('#icon-title').textContent = '给「' + app[1] + '」换图标';
+    var box = $('#icon-picks');
+    if (!box.childElementCount) PATTERNS.forEach(function (name) {
+      var b = document.createElement('button'); b.className = 'pick'; b.type = 'button';
+      var frame = document.createElement('i'); var img = document.createElement('img');
+      img.src = '/static/ib/icons/' + name + '.svg'; img.alt = '';
+      frame.appendChild(img); b.appendChild(frame);
+      b.onclick = function () { setIcon({ kind: 'pattern', url: '/static/ib/icons/' + name + '.svg' }); };
+      box.appendChild(b);
+    });
+    $('#icon-mask').classList.add('on');
+  }
+  // 图标只显示几十像素，裁成方形缩小了再传，桌面才不会被大图拖慢
+  function squareIcon(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('图片打不开')); };
+      img.onload = function () {
+        var side = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement('canvas');
+        c.width = c.height = 256;
+        c.getContext('2d').drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 256, 256);
+        URL.revokeObjectURL(url);
+        c.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error('图片处理失败')); }, 'image/webp', 0.88);
+      };
+      img.src = url;
+    });
+  }
+  var fileSink = null, fileShrink = false;
+  function pickFile(sink, shrink) { fileSink = sink; fileShrink = !!shrink; $('#file').click(); }
+  function uploadImage(blob, name) {
+    var fd = new FormData(); fd.append('file', blob, name);
+    return fetch('/api/skin/background', { method: 'POST', body: fd })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j.url; }); });
+  }
+
+  function renderAll() { renderPresets(); renderSlots(); renderControls(); renderDesk(); renderExport(); }
 
   function bindStatic() {
     $$('.tab').forEach(function (t) {
@@ -424,10 +558,27 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
     };
 
     var target = null;
-    $$('[data-upload]').forEach(function (b) { b.onclick = function () { target = b.dataset.upload; $('#file').click(); }; });
+    $$('[data-upload]').forEach(function (b) { b.onclick = function () { target = b.dataset.upload; fileSink = null; $('#file').click(); }; });
+    $('#desk-up').onclick = function () { pickFile(function (url) { skin.desk_look.bg = url; }); };
+    $('#desk-clear').onclick = function () { pushUndo(); skin.desk_look.bg = ''; renderDesk(); apply(true); };
+    $('#desk-blur').oninput = function () { skin.desk_look.bg_blur = +this.value; $('#desk-blur-o').textContent = this.value + 'px'; apply(true); };
+    $('#wgt-blur').oninput = function () { skin.desk_look.widget_blur = +this.value; $('#wgt-blur-o').textContent = this.value + 'px'; apply(true); };
+    $('#wgt-veil').oninput = function () { skin.desk_look.widget_veil = +this.value; $('#wgt-veil-o').textContent = Math.round(this.value * 100) + '%'; apply(true); };
+    $('#icon-close').onclick = function () { $('#icon-mask').classList.remove('on'); };
+    $('#icon-mask').onclick = function (e) { if (e.target === this) this.classList.remove('on'); };
+    $('#icon-reset').onclick = function () { setIcon(null); };
+    $('#icon-up').onclick = function () { pickFile(function (url) { setIcon({ kind: 'image', url: url }); }, true); };
     $$('[data-clear]').forEach(function (b) { b.onclick = function () { pushUndo(); skin[b.dataset.clear] = ''; renderControls(); apply(true); }; });
     $('#file').onchange = function () {
       var f = this.files && this.files[0]; this.value = '';
+      if (f && fileSink) {
+        var sink = fileSink;
+        toast('上传中…');
+        (fileShrink ? squareIcon(f).then(function (b) { return uploadImage(b, 'icon.webp'); }) : uploadImage(f, f.name))
+          .then(function (url) { pushUndo(); sink(url); renderDesk(); apply(true); toast('已更换'); })
+          .catch(function (e) { toast('上传失败：' + e.message); });
+        return;
+      }
       if (!f || !target) return;
       var fd = new FormData(); fd.append('file', f);
       toast('上传中…');
@@ -455,6 +606,8 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
         skin.reduce_motion = !!data.reduce_motion; skin.custom_css = data.custom_css || '';
         skin.icon_style = data.icon_style === 'original' ? 'original' : 'ib';
         skin.title_style = data.title_style === 'plain' ? 'plain' : 'ib';
+        skin.desk_look = data.desk_look;
+        skin = normalize(skin);
         renderAll(); apply(true); toast('已导入');
       } catch (e) { toast('美化码格式不对'); }
     };
@@ -464,6 +617,7 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
       if (!prev) { toast('没有可以撤销的改动'); return; }
       var now = look(skin);
       Object.assign(skin, prev);
+      skin = normalize(skin);
       try { localStorage.setItem(UNDO_KEY, JSON.stringify(now)); } catch (e) {}
       renderAll(); apply(true); toast('已撤销（再点一次可恢复）');
     };
