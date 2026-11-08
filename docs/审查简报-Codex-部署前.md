@@ -3036,3 +3036,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ## 206. 设置页整理（第一步）
 
 11-08 小猫：看不懂各种 Key，想把用不上的收起来。MiniMax、ElevenLabs、瑞幸三块挪进最下面「现在用不上的」（页面脚本挪位置，输入框 id 和保存逻辑不变）；钥匙那块每项加一句用途和不填的后果。不涉及权限和数据。
+
+### 205a. 复审修复（狐狸 1 High、2 Medium，4 条测试都先复现失败）
+
+- High：开户固定走代码里写死的 `https://toy.cedarstar.org/mcp`，不带任何请求头，不再用工具页配置的那条。
+- M：密码的 JSON 转义、网址编码写法也遮掉。
+- M：连接名先过 `NAME_PATTERN`，不合法在注册前拒绝。
+- 测试收进 `test_account_opening.py`。

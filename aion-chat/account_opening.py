@@ -11,9 +11,12 @@ import asyncio
 import json
 import re
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, quote_plus, urlsplit
 
 CALL_TIMEOUT = 30
+# 开户固定走这条干净的 HTTPS 游客连接，不用工具页里配置的那条：
+# 那条可能被改成 http，或带着别的 AI 的认证头（狐狸 §205 High）
+_TOY_GUEST = {"name": "4399开户", "type": "http", "url": "https://toy.cedarstar.org/mcp", "headers": {}}
 _USERNAME = re.compile(r"^[A-Za-z0-9_一-鿿]{2,20}$")
 _TOKEN = re.compile(r"^[A-Za-z0-9._~-]{16,200}$")
 _locks: dict[str, asyncio.Lock] = {}
@@ -53,10 +56,15 @@ def _find_token(data: Any) -> str:
 
 
 def _safe(text: Any, *secrets: str) -> str:
+    """遮掉密码，连 JSON 转义、网址编码过的写法一起遮（狐狸 §205 M1）。长的先遮。"""
     out = str(text or "")
+    forms: set[str] = set()
     for secret in secrets:
         if secret:
-            out = out.replace(secret, "***")
+            forms |= {secret, json.dumps(secret)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1],
+                      quote(secret, safe=""), quote_plus(secret)}
+    for form in sorted(forms, key=len, reverse=True):
+        out = out.replace(form, "***")
     return out.replace("【cedartoy】", "")[:200]
 
 
@@ -64,7 +72,6 @@ async def open_toy_account(actor: str, username: Any, password: Any) -> dict[str
     """注册 4399 账号，存成只给这位 AI 用的连接。返回 {connection, username}。"""
     import actors
     import mcp_outings
-    import turtle_soup
     if actor not in {a["id"] for a in actors.list_actors(include_disabled=False)}:
         raise OpeningError("没有这位 AI")
     username, password = str(username or "").strip(), str(password or "")
@@ -79,14 +86,14 @@ async def open_toy_account(actor: str, username: Any, password: Any) -> dict[str
         if has_account("4399", actor):
             raise OpeningError("TA 已经有 4399 账号了")
         name = _connection_name(actor)
-        if mcp_outings._server(name):  # 注册之前先查，免得注册成功了却存不下
+        # 注册之前先查，免得注册成功了却存不下
+        if not mcp_outings.NAME_PATTERN.fullmatch(name):
+            raise OpeningError(f"「{name}」不能当连接的名字（可能带了表情），先改一下这位 AI 的显示名")
+        if mcp_outings._server(name):
             raise OpeningError(f"工具页已经有「{name}」了，先改名或删掉")
-        guest = turtle_soup._guest_server()
-        if not guest:
-            raise OpeningError("工具页要先有一个 4399 的游客连接（toy.cedarstar.org/mcp）")
         try:
             async with asyncio.timeout(CALL_TIMEOUT):
-                async with mcp_outings._Session(guest) as session:
+                async with mcp_outings._Session(dict(_TOY_GUEST)) as session:
                     text, is_error = await session.call_result(
                         "account", {"action": "login_or_register", "username": username, "password": password})
         except Exception as error:

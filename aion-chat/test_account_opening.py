@@ -116,3 +116,52 @@ def test_ai_still_cannot_register():
     server = {"url": "https://toy.cedarstar.org/mcp"}
     assert mcp_policy.classify(server, "account", {"action": "login_or_register"}) == mcp_policy.BAN
     assert mcp_policy.classify(server, "play", {"game": "turtle_soup", "action": "register"}) == mcp_policy.BAN
+
+
+# ── 狐狸 §205 复审的失败测试（原样收进来）──
+from urllib.parse import urlsplit  # noqa: E402
+
+import actors  # noqa: E402
+
+
+def test_json_encoded_error_does_not_reveal_password(site):
+    client, _, answer = site
+    password = r'PASS"WORD\123'
+    answer.update(text=json.dumps({'error': f'bad input: {password}'}), error=True)
+    response = _open(client, password=password)
+    assert response.status_code == 400
+    echoed_error = json.loads(response.json()['detail'])['error']
+    assert password not in echoed_error, f'JSON error exposes password: {echoed_error!r}'
+
+
+def test_unsavable_connection_name_is_rejected_before_registration(site, monkeypatch):
+    client, calls, _ = site
+    monkeypatch.setattr(actors, 'display_name', lambda actor: '狗蛋🐶')
+    response = _open(client)
+    assert response.status_code == 400
+    assert calls == [], 'registered remotely although the generated connection name cannot be saved'
+
+
+@pytest.mark.parametrize('url,headers', [
+    ('http://toy.cedarstar.org/mcp', ''),
+    ('https://toy.cedarstar.org/mcp', 'Authorization: Bearer OTHER_AI_TOKEN_CANARY'),
+])
+def test_registration_only_uses_clean_https_guest_connection(site, monkeypatch, url, headers):
+    client, calls, _ = site
+    mcp_outings.save_tool({'name': '4399', 'url': url, 'headers': headers, 'actors': ['aion']},
+                          original_name='4399')
+    selected = []
+    OriginalSession = mcp_outings._Session
+
+    class Observe(OriginalSession):
+        def __init__(self, server):
+            selected.append(server)
+            super().__init__(server)
+
+    monkeypatch.setattr(mcp_outings, '_Session', Observe)
+    response = _open(client, actor='ai3')
+    if calls:
+        server = selected[0]
+        assert urlsplit(server['url']).scheme == 'https', 'password was handed to an HTTP connection'
+        assert not any(k.lower() == 'authorization' for k in server.get('headers', {})), \
+            'registration used another AI authentication header'
