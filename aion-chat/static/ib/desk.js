@@ -31,6 +31,7 @@
   var people = { user: { name: '你', avatar: '/public/UserIcon.png' }, actors: [] };
   var notes = null;
   var schedules = null;
+  var calendarDays = {};  // 小日历：这个月每天的心情和聊天条数
   var spend = null;  // 今天的模型花费：超过「用量」页设的提醒线时首页显示一行
   var root = null;
 
@@ -199,11 +200,14 @@
     for (var i = 0; i < first; i++) cells += '<i></i>';
     for (var d = 1; d <= days; d++) {
       var mk = byDay[d];
-      cells += '<i class="' + (d === now.getDate() ? 'today' : '') + (mk ? ' mk' : '') + '"' +
-        (mk ? ' title="' + esc(mk.map(function (x) { return x.name; }).join('、')) + '" style="--mk:' + esc(safeColor(mk[0].color)) + '"' : '') + '>' + d + '</i>';
+      var info = calendarDays[y + '-' + pad(m + 1) + '-' + pad(d)] || {};
+      cells += '<i class="' + (d === now.getDate() ? 'today' : '') + (mk ? ' mk' : '') + (info.mood ? ' mood' : '') + (info.chats ? ' talked' : '') + '"' +
+        (mk ? ' title="' + esc(mk.map(function (x) { return x.name; }).join('、')) + '" style="--mk:' + esc(safeColor(mk[0].color)) + '"' : '') + '>' + (info.mood ? esc(info.mood) : d) + '</i>';
     }
     var next = all.map(function (x) { return { x: x, n: daysUntil(x.md, now) }; }).sort(function (a, b) { return a.n - b.n; })[0];
-    var foot = next ? (next.n === 0 ? '今天是' + esc(next.x.name) : '还有 ' + next.n + ' 天 · ' + esc(next.x.name)) : '在桌面设置里加上生日和纪念日';
+    var foot = next ? (next.n === 0 ? '今天是' + esc(next.x.name) : '还有 ' + next.n + ' 天 · ' + esc(next.x.name)) : '点开看家里每天的动态';
+    var todayInfo = calendarDays[y + '-' + pad(m + 1) + '-' + pad(now.getDate())] || {};
+    if (todayInfo.chats) foot = '今天聊了 ' + todayInfo.chats + ' 条 · ' + foot;
     return '<span class="wgt-lab">Calendar</span><div class="cal-head"><b>' + MON[m] + '</b><small>' + y + '</small></div>' +
       '<div class="cal-grid">' + cells + '</div><div class="cal-foot">' + foot + '</div>';
   }
@@ -238,7 +242,7 @@
     meet: function () { var w = el('div', 'wgt ib-meet', meetHtml()); w.dataset.act = 'meet-next'; return w; },
     notes: function () { var w = el('div', 'wgt ib-notes', notesHtml()); w.dataset.act = 'note'; return w; },
     sched: function () { var w = el('div', 'wgt ib-sched', schedHtml()); w.dataset.act = 'schedule'; return w; },
-    cal: function () { return el('div', 'wgt ib-cal', calHtml()); },
+    cal: function () { var w = el('div', 'wgt ib-cal', calHtml()); w.dataset.act = 'calendar'; return w; },
     music: function () { var w = el('div', 'wgt ib-music', musicHtml()); w.dataset.act = 'music'; return w; },
     photo: function () { var w = el('div', 'wgt ib-photo', photoHtml()); w.dataset.act = 'album'; return w; },
     deco: function () { return el('div', 'wgt ib-deco', decoHtml()); }
@@ -448,6 +452,7 @@
       if (act === 'search' && typeof window.openGlobalSearch === 'function') window.openGlobalSearch();
       else if (act === 'note') openNote();
       else if (act === 'schedule') location.href = '/schedule';
+      else if (act === 'calendar') location.href = '/calendar';
       else if (act === 'music') location.href = '/music-station';
       else if (act === 'album') location.href = '/album';
       else if (act === 'settings') openSettings();
@@ -482,6 +487,11 @@
   }
 
   function loadSchedules() {
+    var calNow = new Date();
+    fetch('/api/calendar/month?year=' + calNow.getFullYear() + '&month=' + (calNow.getMonth() + 1), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) { if (data && data.days) { calendarDays = data.days; render(); } })
+      .catch(function () {});
     fetch('/api/schedules?status=active', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : []; })
       .then(function (rows) { schedules = Array.isArray(rows) ? rows : []; render(); })
