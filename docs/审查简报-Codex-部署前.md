@@ -3080,3 +3080,6 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ## 212. 桌面混排（小组件和 App 同一张格子）
 
 `static/home-grid.js` 只算位置（被拖的优先、小组件优先、放不下往后找，不跨页、不重叠），`test_home_grid.js`。IB 桌面的小组件交给 `window.HomeGrid.setWidgets`，只有顶部时间留在 `#ib-desk`。非 IB 外观不注册小组件，走原来的逻辑。位置存 `/api/home/layout`，小组件 id 用 `w:名字`。`desk.css` 的 `#ib-desk` 规则改成 `:is(#ib-desk, .ib-desk-scope)`。不涉及权限。
+
+### §212a 混排页改为从上往下排（11-09）
+小猫反馈日历上不去：格子原来贴底，放不满时余量留在第 0 行上方。有小组件时 .app-pages.mixed 改 align-content:start，cellFromPagePoint 同步按顶部算。未涉及权限/数据。

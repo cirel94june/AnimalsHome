@@ -102,6 +102,7 @@ body[data-theme="dark"] .clock-widget {
   align-items: flex-start;
   position: relative;
 }
+.app-pages.mixed .app-page { align-content: start; }  /* 混排从上往下排，放不满的空隙留在下面，不在小组件头顶 */
 .widget-slot { display: block; padding: 0 6px; touch-action: none; }
 .widget-slot .wgt { height: 100%; }
 .widget-placeholder { border-radius: 22px; background: rgba(255,255,255,.22); outline: 1.5px dashed rgba(255,255,255,.7); outline-offset: -2px; margin: 0 6px; }
@@ -1135,6 +1136,7 @@ function renderApps() {
       ${Array.from({ length: pageCapacity }, (_, slot) => appCellHTML(cellMap.get(pageIndex * pageCapacity + slot), pageIndex * pageCapacity + slot)).join('')}
     </div>
   `).join('');
+  document.getElementById('appPages').classList.toggle('mixed', Boolean(placement));
   if (placement) attachWidgetNodes();
   dots.innerHTML = pageCount > 1
     ? Array.from({ length: pageCount }, (_, idx) => `<button class="page-dot ${idx === currentPage ? 'active' : ''}" type="button" data-page="${idx}" aria-label="第 ${idx + 1} 页"></button>`).join('')
@@ -1473,7 +1475,7 @@ function cellFromPagePoint(pageEl, x, y) {
   const colWidth = (rect.width - paddingLeft - paddingRight) / PAGE_COLUMNS;
   const contentHeight = rows * PAGE_ROW_HEIGHT + Math.max(0, rows - 1) * PAGE_ROW_GAP;
   const startX = rect.left + paddingLeft;
-  const startY = rect.bottom - paddingBottom - contentHeight;
+  const startY = homeWidgets.size ? rect.top + (parseFloat(style.paddingTop) || 0) : rect.bottom - paddingBottom - contentHeight;
   const relativeX = clampNumber(x - startX, 0, colWidth * PAGE_COLUMNS - 1);
   const relativeY = clampNumber(y - startY, 0, contentHeight - 1);
   const col = clampNumber(Math.floor(relativeX / colWidth), 0, PAGE_COLUMNS - 1);

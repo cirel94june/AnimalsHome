@@ -30,3 +30,9 @@ def test_styles_follow_widgets_out_of_the_top_area():
 def test_solver():
     result = subprocess.run(["node", str(ROOT / "test_home_grid.js")], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_mixed_pages_start_at_the_top_row():
+    html = (STATIC / "home.html").read_text(encoding="utf-8")
+    assert ".app-pages.mixed .app-page { align-content: start; }" in html
+    assert "homeWidgets.size ? rect.top +" in html
