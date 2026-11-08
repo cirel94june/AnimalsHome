@@ -26,6 +26,18 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
 .btns .primary { background: var(--ib-acc); color: #fff; border: none; }
 .result { margin-top: 8px; font-size: 12.5px; line-height: 1.6; color: var(--ib-tx2); word-break: break-all; }
 .empty { text-align: center; color: var(--ib-tx3); font-size: 13.5px; padding: 40px 0; }
+.ib-form { display: grid; gap: 8px; margin-top: 12px; }
+.ib-form select, .ib-form input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(120, 150, 200, 0.35); background: rgba(255, 255, 255, 0.65); color: var(--ib-tx); font: inherit; font-size: 14px; outline: none; -webkit-appearance: none; appearance: none; }
+.ib-form input::placeholder { color: var(--ib-tx3); }
+.ib-form input:focus, .ib-form select:focus { border-color: var(--ib-acc); }
+.ib-form button { padding: 10px 0; border-radius: 12px; border: none; background: var(--ib-acc, #3d6fd8); color: #fff; font-size: 14px; }
+.ib-form button:disabled { opacity: 0.5; }
+.wake-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(120, 150, 200, 0.3); font-size: 14px; }
+.wake-name { min-width: 4em; font-weight: 500; }
+.wake-notify { display: inline-flex; align-items: center; gap: 5px; flex: 1; min-width: 9em; font-size: 12.5px; color: var(--ib-tx2); }
+.wake-notify input { accent-color: var(--ib-acc); }
+.wake-row button { padding: 7px 14px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.8); background: rgba(255, 255, 255, 0.65); color: var(--ib-acc); font-size: 13px; }
+.wake-row button.primary { background: var(--ib-acc, #3d6fd8); color: #fff; border: none; }
 .ib-sheet textarea { min-height: 70px; resize: vertical; }
 .ib-sheet .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 6px; font-size: 13.5px; }
 .ib-sheet .checks label { display: inline-flex; align-items: center; gap: 4px; }
@@ -40,12 +52,11 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     打开「有空时可以自己去」，AI 空闲时会自己挑地方逛，回来在你们的私聊里讲见闻。
     去的 AI 需要在相遇卡里选好模型。</p>
   <section class="tool" id="garden"><h3>花园唤醒（狼人杀等桌游）</h3>
-    <div class="desc">连着的时候：牌桌上轮到他，花园会叫醒他去走一步；打开「有人找他就去看」，论坛上有人回他、@他也会叫醒他。
-      牌局进展只发到你们的私聊。断了不会自己重连，会在私聊里告诉你，你看过后点「重新连接」。</div>
+    <div class="desc">连着的时候：牌桌上轮到他，花园会叫醒他去走一步；打开「有人找他就去看」，论坛上有人回他、@他也会叫醒他。牌局进展只发到你们的私聊。断了不会自己重连，会在私聊里告诉你，你看过后点「重新连接」。</div>
     <div id="garden-rows"><div class="desc">读取中…</div></div></section>
   <section class="tool" id="opening"><h3>替 AI 开户</h3>
     <div class="desc">你点一下，家里的程序替 TA 注册，钥匙直接存进 TA 自己的连接，AI 和聊天里都看不到。密码请你自己记好，家里不保存。</div>
-    <div class="sec" style="display:grid;gap:8px;margin-top:8px">
+    <div class="ib-form">
       <select id="o-actor" aria-label="给谁开户"></select>
       <select id="o-site" aria-label="开在哪里"></select>
       <input id="o-name" placeholder="用户名（2 到 20 个字）" autocomplete="off">
@@ -161,10 +172,10 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       box.innerHTML = j.actors.map(function (a) {
         if (!a.garden) return '<div class="desc">' + esc(a.name) + '：还没接花园论坛</div>';
         var on = a.state === 'active' || a.state === 'activating';
-        return '<div class="btns" style="align-items:center"><b style="min-width:4em">' + esc(a.name) + '</b>' +
+        return '<div class="wake-row"><span class="wake-name">' + esc(a.name) + '</span>' +
           '<span class="tag' + (on ? '' : ' muted') + '">' + esc(STATE[a.state] || a.state) + '</span>' +
-          '<label class="checks"><label><input type="checkbox" data-notify="' + esc(a.id) + '"' + (a.notify ? ' checked' : '') +
-          '>有人找他就去看</label></label>' +
+          '<label class="wake-notify"><input type="checkbox" data-notify="' + esc(a.id) + '"' + (a.notify ? ' checked' : '') +
+          '>有人找他就去看</label>' +
           (on ? '<button data-gstop="' + esc(a.id) + '">断开</button>'
               : '<button class="primary" data-gstart="' + esc(a.id) + '">' + (a.want || a.state === 'failed' ? '重新连接' : '连接') + '</button>') +
           '</div>';
