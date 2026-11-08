@@ -133,7 +133,7 @@ def create(*, idea: str, dm_model: str, actors: list[str], my_name: str, my_char
     for a in chosen:
         players[a] = rules.random_sheet(ruleset, known[a]["name"])  # 简易规则直接用；其他规则下一步让 TA 自己捏
     game = {"id": uuid.uuid4().hex, "title": module["title"] if module else "", "idea": idea or (module or {}).get("hook", ""), "dm_model": dm_model,
-            "ruleset": ruleset, "module_text": (module or {}).get("text", ""), "phase": "opening" if ruleset == "simple" else "sheets", "round": 0,
+            "ruleset": ruleset, "module_text": (module or {}).get("text", ""), "phase": "sheets", "round": 0,
             "max_rounds": max(3, min(MAX_ROUNDS, int(rounds or DEFAULT_ROUNDS))), "created_at": time.time(), "scenario": "", "error": "",
             "order": chosen + ["user"], "players": players, "sheets_done": [], "actions": {}, "checks": [], "log": []}
     save(game)

@@ -444,6 +444,8 @@ from routes.travel import router as travel_router
 app.include_router(travel_router)
 from routes.family_trpg import router as family_trpg_router
 app.include_router(family_trpg_router)
+from routes.family_calendar import router as family_calendar_router
+app.include_router(family_calendar_router)
 from routes.usage import router as usage_router
 app.include_router(usage_router)
 from routes.unread import router as unread_router

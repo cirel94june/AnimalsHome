@@ -62,7 +62,7 @@ def test_opening_then_each_ai_acts_with_its_own_model_then_waits_for_her(table):
     calls, _ = table
     game = _advance(_new())
     assert game["title"] == "雪夜" and game["round"] == 1 and game["phase"] == "wait_user"
-    assert calls == ["dm-model", "model-aion", "model-ai3"]
+    assert calls == ["model-aion", "model-ai3", "dm-model", "model-aion", "model-ai3"]  # 先各自捏人，再开场、行动
     assert game["actions"] == {"aion": "model-aion 推开门", "ai3": "model-ai3 推开门"}
     assert not any(e["kind"] == "roll" for e in game["log"])  # 等她，不自己往下走
 
@@ -111,7 +111,7 @@ def test_failure_shows_error_and_can_continue(table):
     _, script = table
     script["fail"] = True
     game = _advance(_new())
-    assert game["phase"] == "opening" and game["error"]
+    assert game["phase"] == "sheets" and game["error"]
     script["fail"] = False
     assert _advance(game)["phase"] == "wait_user"
 
@@ -129,6 +129,7 @@ def test_downed_ai_is_skipped(table):
     calls, _ = table
     game = _new()
     game["players"]["ai3"]["hp"] = 0
+    game["phase"] = "opening"  # 跳过捏人，不然这张卡会被换掉
     t.save(game)
     game = _advance(game)
     assert "model-ai3" not in calls and "ai3" not in game["actions"]

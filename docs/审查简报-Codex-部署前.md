@@ -3072,3 +3072,7 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ### 210a. 跑团规则、捏人、模组
 
 `trpg_rules.py`：简易 / DnD 风（购点、职业、熟练、等级）/ CoC 风（百分比技能、理智、技能成长），只实现核心检定，点数由程序校验，AI 卡不合规换随机。`trpg_modules.py`：4 个原创短模组 + 她自己粘贴的（`data/trpg_modules.json`）。模组和剧本只进 DM 提示词，`public()` 不返回。
+
+## 211. 小日历；跑团简易规则也由 AI 自己捏人
+
+`family_calendar.py`、`routes/family_calendar.py`、`static/calendar.html`，桌面「家里的事」文件夹。月历按天统计聊天条数（只取时间和发送者，不读内容）和动态（朋友圈、日记、旅行、出门等）；心情存 `data/calendar_moods.json`。不涉及权限。

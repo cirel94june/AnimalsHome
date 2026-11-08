@@ -164,6 +164,9 @@ def random_sheet(rule: str, name: str, raw: Any = None) -> dict[str, Any]:
 
 def sheet_prompt(rule: str) -> str:
     """让 AI 给自己捏人时的说明和 JSON 格式。"""
+    if rule == "simple":
+        return ("这局用简易规则。给自己捏一个角色：五项属性 str/dex/int/cha/lck，每项 1 到 10，加起来正好 15。\n"
+                '输出 JSON：{"stats":{"str":3,"dex":4,"int":3,"cha":3,"lck":2},"appearance":"外貌一句话","character":"性格和来历一句话"}')
     if rule == "dnd":
         return ("这局用 DnD 风规则。给自己捏一个角色：六项属性 str/dex/con/int/wis/cha 每项 8 到 15，购点一共 27 点"
                 f"（价格 {DND_COST}）。职业和可选技能数：{ {k: v['picks'] for k, v in DND_CLASSES.items()} }。技能从这里选：{'、'.join(DND_SKILLS)}。\n"
