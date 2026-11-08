@@ -52,6 +52,7 @@ class Place:
     intro: str = ""
     wiki_url: str = ""
     photos: list[dict] = field(default_factory=list)  # {"path": "/uploads/travel/x.jpg", "credit": "..."}
+    has_live_camera: bool = False
 
     @property
     def label(self) -> str:
@@ -67,6 +68,8 @@ class Place:
             lines.append(f"此刻天气：{self.weather}")
         if self.intro:
             lines.append(f"简介：{self.intro}")
+        if self.has_live_camera:
+            lines.append("（第一张照片是当地此刻的公开摄像头画面，是真实的现在）")
         if self.photos:
             lines.append(f"（拿到了 {len(self.photos)} 张这里的真实照片，会附在游记里）")
         return "\n".join(lines)
@@ -307,4 +310,10 @@ async def lookup(name: str, *, photos: int = MAX_PHOTOS) -> Place:
                 place.photos.append({"path": await _download(client, c["url"]), "credit": c["credit"]})
             except Exception as error:
                 log.info("[travel] 照片下载失败：%s", error)
+        if photos:  # 世界窗：有公开摄像头就放在最前面，游记写的是此刻真实的样子（11-08 小猫）
+            import world_window
+            live = await world_window.camera_photo(client, place)
+            if live:
+                place.has_live_camera = True
+                place.photos.insert(0, {"path": live, "credit": world_window.CREDIT})
     return place

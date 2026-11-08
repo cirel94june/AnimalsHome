@@ -195,7 +195,7 @@ def test_amap_is_used_first_for_chinese_names_when_key_is_set(net, monkeypatch):
     seen = _amap_net(monkeypatch, geo=[{"location": "100.22,25.59", "province": "云南省", "city": "大理白族自治州"}])
     place = asyncio.run(tp.lookup("大理古城"))
     assert place.label == "大理古城，大理白族自治州，中国" and place.longitude == 100.22
-    assert not any("nominatim" in u for u in seen)
+    assert not any("nominatim" in u and "/reverse" not in u for u in seen)  # /reverse 是世界窗查英文地名
 
 
 def test_amap_falls_back_to_place_search_then_osm(net, monkeypatch):

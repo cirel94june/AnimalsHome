@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from config import SETTINGS
-from mcp_policy import OUTING_CMD_PATTERN
+from mcp_policy import OUTING_CMD_PATTERN, WORLD_LOOK_CMD_PATTERN
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
@@ -44,6 +44,7 @@ def is_web_search_available() -> bool:
 def clean_web_command_text(text: str) -> str:
     cleaned = WEB_SEARCH_CMD_PATTERN.sub("", text or "")
     cleaned = WEB_EXTRACT_CMD_PATTERN.sub("", cleaned)
+    cleaned = WORLD_LOOK_CMD_PATTERN.sub("", cleaned)
     cleaned = OUTING_CMD_PATTERN.sub("", cleaned)  # 续答里写了也只清除：读过外面内容的回复不能叫人出门
     return cleaned.strip()
 

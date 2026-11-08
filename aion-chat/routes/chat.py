@@ -3061,6 +3061,13 @@ async def _process_outing(text: str, conv_id: str) -> str:
             await db.commit()
         await manager.broadcast({"type": "msg_created", "data": {
             "id": msg_id, "conv_id": conv_id, "role": "system", "content": message, "created_at": now, "attachments": []}})
+    if text and "看看" in text:
+        import autonomy
+        import world_window
+
+        async def deliver(reply: str, photos: list[str]) -> None:
+            await autonomy._save_private_message("aion", reply, photos, force_private=True, auto_tts=False)
+        text = world_window.process(text, "aion", allowed=True, deliver=deliver, notify=notify)
     return await process_outing_commands(text, "aion", notify=notify)
 
 

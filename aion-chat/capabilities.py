@@ -73,6 +73,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
         default_enabled=False,
     ),
     CapabilityDef("activity_check", "查看活动动态", "context", "注入 [查看动态:n]，让模型可以查看近期设备活动摘要。", runtime_note="还需要活动日志页的 AI 联动开启。"),
+    CapabilityDef("world_window", "世界窗", "context", "注入 [看看:地名]，让模型可以看某座城市此刻的摄像头画面、天气和时间。"),
     CapabilityDef("location_context", "位置上下文", "context", "注入当前位置/天气等上下文信息。"),
     CapabilityDef("poi_search", "周边 POI 搜索", "life", "注入 [POI_SEARCH:类型或关键词]，位置追踪开启且有坐标时可用，在家也能查。", runtime_note="位置开启且有坐标时注入。"),
     CapabilityDef("video_call", "发起视频通话", "core", "注入 [视频电话]，让模型可以主动发起视频通话。", default_enabled=True, setting_key="video_call_enabled"),
@@ -709,6 +710,9 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         texts.append(patrol_control.ability_text(user_name))
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
         texts.append(activity_check_ability_text(user_name))
+    if is_capability_enabled("world_window"):
+        import world_window
+        texts.append(world_window.ability_text(user_name))
     if is_capability_enabled("wechat_message"):
         texts.append(wechat_message_ability_text(user_name))
     if is_capability_enabled("poi_search") and _is_location_known():
@@ -835,6 +839,10 @@ async def build_capability_prompt_items(
 
     if is_capability_enabled("activity_check") and is_activity_tracking_enabled():
         abilities.append(activity_check_ability_text(user_name))
+
+    if is_capability_enabled("world_window"):
+        import world_window
+        abilities.append(world_window.ability_text(user_name))
 
     if is_capability_enabled("poi_search") and _is_location_known():
         abilities.append(poi_search_ability_text(user_name))

@@ -3052,3 +3052,7 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - code：`image_code.py`，AI 用自己的聊天模型输出 JSON 清单，只认 rect / ellipse / polygon / line / text，Pillow 画成 PNG。不解析 SVG、不执行模型写的代码。服务器没有中文字体，提示里要求不写中文。
 - 顺带：Gemini 报错不再打印正文或异常原文（URL 里有 Key）。超时 120 → 300 秒。
 - 测试 `test_image_providers.py`。未用真实图片接口试过。不涉及权限和数据。
+
+## 208. 世界窗（[看看:地名]，并接进旅行）
+
+11-08 小猫转来手机本地教程，改成做进服务器。`world_window.py`：地名 → 天气、时间，Nominatim 反查英文城市名，SkylineWebcams 公开预览图（robots 未禁，同地 10 分钟缓存）。AI 指令走 `_process_outing` 同一入口（小克 / Lucien / 座位 / 私聊），系统叫醒时只清除不执行；接话走 `strip_untrusted_reply`，不执行动作。`travel_places.lookup` 有摄像头时放在第一张。能力 `world_window`。不涉及权限和数据。

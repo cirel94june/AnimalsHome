@@ -828,6 +828,15 @@ async def _process_outing(text: str, actor: str, room_id: str, queue, msg_id: st
 
     async def notify(message: str) -> None:
         await _chatroom_sys_msg(room_id, message, queue, after_msg_id=msg_id)
+    if text and "看看" in text:
+        import world_window
+
+        async def deliver(reply: str, photos: list[str]) -> None:
+            await _save_msg(room_id, actor, reply, attachments=photos or None, auto_tts=False)
+
+        async def recent() -> list[dict]:
+            return _render_recent_room_messages_for_ai(await _load_followup_messages(room_id, limit=10))
+        text = world_window.process(text, actor, allowed=allowed, deliver=deliver, notify=notify, recent=recent)
     if not text or "出门" not in text:
         return text
     reply_room = ""  # 群里叫去的回群里讲；私聊房间走 go_out 原来的私聊

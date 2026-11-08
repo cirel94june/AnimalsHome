@@ -17,7 +17,7 @@ from schedule import get_active_schedules, build_schedule_prompt
 from luckin import LUCKIN_CMD_PATTERN
 from song_gen import SONG_CMD_PATTERN
 from wechat_bridge import WECHAT_MESSAGE_PATTERN
-from mcp_policy import OUTING_CMD_PATTERN
+from mcp_policy import OUTING_CMD_PATTERN, WORLD_LOOK_CMD_PATTERN
 from web_search import WEB_EXTRACT_CMD_PATTERN, WEB_SEARCH_CMD_PATTERN
 from capabilities import (
     build_capability_prompt_items,
@@ -68,6 +68,7 @@ MEMORY_SEARCH_CMD_PATTERN = re.compile(
 
 # 所有需要从 AI 回复中剥离的工具指令正则列表（TTS、保存时统一清理）
 _ALL_CMD_PATTERNS = [
+    WORLD_LOOK_CMD_PATTERN,
     MUSIC_CMD_PATTERN, MOMENT_CMD_PATTERN, MEMORY_CMD_PATTERN, WISH_CMD_PATTERN,
     ACTIVITY_CHECK_PATTERN, SELFIE_CMD_PATTERN, DRAW_CMD_PATTERN, SONG_CMD_PATTERN,
     POI_SEARCH_PATTERN, TOY_CMD_PATTERN, SVAKOM_CMD_PATTERN, ANKNI_CMD_PATTERN, PET_CMD_PATTERN,

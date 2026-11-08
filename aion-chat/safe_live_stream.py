@@ -41,7 +41,7 @@ _BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{320,}={0,2}(?![A-Za
 
 _BRACKET_COMMAND_PREFIXES = tuple(value.upper() for value in (
     "[语音",
-    "[WEB_SEARCH", "[WEB_EXTRACT", "[TAOBAO", "[出门", "[LOUNGE_VISIT", "[MUSIC", "[MOMENT",
+    "[WEB_SEARCH", "[WEB_EXTRACT", "[TAOBAO", "[出门", "[看看", "[LOUNGE_VISIT", "[MUSIC", "[MOMENT",
     "[MEMORY", "[许愿", "[查看动态", "[SELFIE", "[DRAW", "[SONG",
     "[POI_SEARCH", "[TOY", "[SVAKOM", "[ANKNI", "[PET", "[HOME", "[BAND_VIBRATE", "[BAND_NOTE",
     "[LUCKIN", "[转账", "[悄悄话", "[去群里", "[WECHAT", "[ALARM", "[REMINDER",
@@ -55,7 +55,7 @@ _ANGLE_COMMAND_PREFIXES = ("<META", "<AUTONOMY_STATE")
 
 _LONG_FORM_BRACKET_PREFIXES = (
     "[语音",
-    "[WEB_SEARCH", "[WEB_EXTRACT", "[TAOBAO", "[出门", "[LOUNGE_VISIT", "[MUSIC", "[MOMENT",
+    "[WEB_SEARCH", "[WEB_EXTRACT", "[TAOBAO", "[出门", "[看看", "[LOUNGE_VISIT", "[MUSIC", "[MOMENT",
     "[MEMORY", "[许愿", "[SELFIE", "[DRAW", "[POI_SEARCH", "[BAND_NOTE",
     "[LUCKIN", "[悄悄话", "[去群里", "[WECHAT", "[ALARM", "[REMINDER", "[MONITOR",
     "[HEART", "[微信消息", "[拍拍抱枕", "[HOME", "[APP_", "[DEVICE_",

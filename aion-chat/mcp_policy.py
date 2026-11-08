@@ -18,6 +18,9 @@ SEE, WRITE, PLAY, BAN, NEW = "see", "write", "play", "ban", "new"
 # 聊天里叫 AI 出门：[出门:地方名:想做什么]。放这里是因为清理指令的地方都要用，这个模块没有重依赖
 OUTING_CMD_PATTERN = re.compile(r"[\[［]\s*出门\s*[:：]\s*([^\]］:：]+?)\s*(?:[:：]\s*([^\]］]*?)\s*)?[\]］]")
 
+# 世界窗：[看看:地名]
+WORLD_LOOK_CMD_PATTERN = re.compile(r"[\[［]\s*看看\s*[:：]\s*([^\]］]{1,40}?)\s*[\]］]")
+
 MAX_CALLS_PER_ROUND = 3
 MAX_CONSECUTIVE_ERRORS = 8
 # 按字面拦的：站点命名不老实时拦不住。打开「没见过的操作也放行」就是小猫接受这一点
