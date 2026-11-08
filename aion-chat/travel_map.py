@@ -28,6 +28,12 @@ COUNTRY_NAMES = {
     "maldives": "马尔代夫", "malta": "马耳他", "hrvatska": "克罗地亚", "netherlands": "荷兰", "norway": "挪威", "poland": "波兰",
     "portugal": "葡萄牙", "switzerland": "瑞士", "turkey": "土耳其", "egypt": "埃及", "mexico": "墨西哥", "israel": "以色列",
 }
+COUNTRY_NAMES.update({"south-korea": "韩国", "india": "印度", "indonesia": "印度尼西亚", "vietnam": "越南", "philippines": "菲律宾",
+                      "morocco": "摩洛哥", "south-africa": "南非", "new-zealand": "新西兰", "denmark": "丹麦", "finland": "芬兰"})
+# 总目录页没列全（日本、美国等都不在上面），这些是 11-08 逐个核对过页面上真有摄像头的
+EXTRA_COUNTRIES = ("japan", "united-states", "united-kingdom", "thailand", "turkey", "mexico", "netherlands", "poland", "portugal",
+                   "south-korea", "india", "indonesia", "vietnam", "philippines", "morocco", "south-africa", "new-zealand",
+                   "denmark", "finland")
 _COUNTRY_LINK = re.compile(r"webcam/([a-z-]+)\.html")
 _lock = threading.Lock()
 _filling: asyncio.Task | None = None
@@ -207,13 +213,15 @@ def _title(slug: str) -> str:
 async def camera_countries() -> list[dict[str, str]]:
     import world_window
     cached = _read("travel_cameras.json", {})
-    if cached.get("countries") and time.time() - cached.get("at", 0) < DIRECTORY_SECONDS:
+    fresh = cached.get("countries") and time.time() - cached.get("at", 0) < DIRECTORY_SECONDS
+    if fresh and set(EXTRA_COUNTRIES) <= {c["slug"] for c in cached["countries"]}:
         return cached["countries"]
     async with travel_places._client() as client:
         page = await world_window._text(client, f"{world_window.SITE}/webcam.html")
     slugs = sorted(set(_COUNTRY_LINK.findall(page)))
     if not slugs:
         raise PlaceError("摄像头目录这会儿读不到")
+    slugs = sorted(set(slugs) | set(EXTRA_COUNTRIES))
     countries = sorted(({"slug": s, "name": COUNTRY_NAMES.get(s, _title(s))} for s in slugs),
                        key=lambda c: (c["slug"] not in COUNTRY_NAMES, c["name"]))
     with _lock:

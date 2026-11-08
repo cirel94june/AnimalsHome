@@ -135,6 +135,12 @@ def test_camera_directory_and_cache(data, monkeypatch):
     assert len(urls) == 2  # 第二次走缓存
 
 
+def test_directory_includes_countries_the_index_page_leaves_out(data, monkeypatch):
+    _site(monkeypatch)
+    slugs = {c["slug"] for c in asyncio.run(tm.camera_countries())}
+    assert {"japan", "united-states", "south-korea"} <= slugs
+
+
 @pytest.mark.parametrize("country", ["../secret", "narnia"])
 def test_only_known_countries_are_fetched(data, monkeypatch, country):
     urls = _site(monkeypatch)
