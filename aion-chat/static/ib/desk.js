@@ -502,8 +502,6 @@
     if (d.changed) {
       desk.widgets = widgetsInOrder().map(function (w) { return w.dataset.key; });
       saveDesk();
-    } else if (!d.moved) {
-      openSettings();  // 长按没拖：和原来一样打开桌面设置
     }
     if (renderWaiting) { renderWaiting = false; render(); }
   }
@@ -511,7 +509,14 @@
   // ── 交互：点按 / 长按 ──
   function bind() {
     var timer = null, longPressed = false, startX = 0, startY = 0, lastX = 0, lastY = 0;
-    root.addEventListener('touchmove', function (e) { if (drag) e.preventDefault(); }, { passive: false });  // 拖的时候不让页面跟着滚
+    // 手机上长按后浏览器会发 pointercancel，指针事件就断了；拖动交给触摸事件接着走，也不让页面跟着滚
+    root.addEventListener('touchmove', function (e) {
+      if (!drag) return;
+      e.preventDefault();
+      var t = e.touches[0];
+      if (t) moveDrag(t.clientX, t.clientY);
+    }, { passive: false });
+    ['touchend', 'touchcancel'].forEach(function (t) { root.addEventListener(t, function () { if (drag) drop(); }); });
     root.addEventListener('pointerdown', function (e) {
       longPressed = false; startX = lastX = e.clientX; startY = lastY = e.clientY;
       clearTimeout(timer);
@@ -530,9 +535,10 @@
       if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) clearTimeout(timer);
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
-      root.addEventListener(t, function () {
+      root.addEventListener(t, function (e) {
         clearTimeout(timer);
-        if (drag && t !== 'pointerleave') drop();
+        // 触摸的取消信号不算松手，由 touchend 收尾
+        if (drag && (t === 'pointerup' || (t === 'pointercancel' && e.pointerType !== 'touch'))) drop();
       });
     });
     root.addEventListener('contextmenu', function (e) { e.preventDefault(); });

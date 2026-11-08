@@ -12,3 +12,9 @@ def test_widgets_can_be_dragged_and_order_is_saved():
 def test_folder_can_be_pulled_down():
     html = (ROOT / "home.html").read_text(encoding="utf-8")
     assert "bindFolderPull();" in html and "translateY(70vh)" in html
+
+
+def test_touch_cancel_does_not_open_the_settings_menu():
+    js = (ROOT / "ib" / "desk.js").read_text(encoding="utf-8")
+    assert "e.pointerType !== 'touch'" in js and "'touchend', 'touchcancel'" in js
+    assert "长按没拖" not in js
