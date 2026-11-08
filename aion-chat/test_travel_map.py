@@ -102,6 +102,20 @@ def test_remember_and_backfill(data, monkeypatch):
     assert geo["巴黎，法国"]["lat"] == 48.8 and geo["京都，日本"]["lat"] == 35.0
 
 
+def test_old_labels_try_the_place_itself_not_the_wrong_city():
+    assert tm._queries("京都 鴨川三条大橋，宁德市，中国") == ["京都 鴨川三条大橋", "京都", "宁德市"]
+    assert tm._queries("首尔 광장시장（广藏市场），重庆市，中国")[0] == "首尔 광장시장"
+
+
+def test_network_trouble_is_not_recorded_as_not_found(data, monkeypatch):
+    async def broken(client, name):
+        raise RuntimeError("429")
+    monkeypatch.setattr(travel_places, "_geocode_osm", broken)
+    monkeypatch.setattr(tm, "GEO_GAP", 0)
+    asyncio.run(tm._fill_missing(["京都，日本"]))
+    assert "京都，日本" not in tm._read("travel_geo.json", {})
+
+
 def test_backfill_marks_not_found(data, monkeypatch):
     _osm(monkeypatch, found=False)
     monkeypatch.setattr(tm, "GEO_GAP", 0)
@@ -128,7 +142,7 @@ def _site(monkeypatch):
 def test_camera_directory_and_cache(data, monkeypatch):
     urls = _site(monkeypatch)
     countries = asyncio.run(tm.camera_countries())
-    assert countries[0]["name"] in ("日本", "意大利") and {"slug": "atlantis-land", "name": "Atlantis Land"} in countries
+    assert {"slug": "japan", "name": "日本"} in countries and {"slug": "atlantis-land", "name": "Atlantis Land"} in countries
     cities = asyncio.run(tm.camera_cities("japan"))
     assert cities == [{"slug": "osaka", "name": "Osaka", "cams": 1}, {"slug": "tokyo", "name": "Tokyo", "cams": 2}]
     asyncio.run(tm.camera_cities("japan"))

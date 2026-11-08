@@ -80,8 +80,15 @@ def _client() -> httpx.AsyncClient:
 
 
 async def geocode(client: httpx.AsyncClient, name: str) -> Place | None:
-    """有高德 Key 且是中文地名时先用高德；再用 OpenStreetMap（中文和「国家+城市」这种写法认得好），
-    都查不到再用 Open-Meteo。"""
+    """先用 OpenStreetMap（中文和「国家+城市」这种写法认得好）；查不到、是中文地名、有高德 Key 时再用高德；
+    都查不到再用 Open-Meteo。11-08：原来高德在前，它只覆盖国内又会模糊匹配，
+    「京都 鸭川」被记成宁德市，「东京」被记成广西贵港，天气也跟着错。"""
+    try:
+        place = await _geocode_osm(client, name)
+        if place:
+            return place
+    except Exception as error:
+        log.info("[travel] OSM 查地名失败：%s", error)
     key = _amap_key()
     if key and _has_cjk(name):
         try:
@@ -92,12 +99,6 @@ async def geocode(client: httpx.AsyncClient, name: str) -> Place | None:
             # 不记异常全文：高德的 Key 在请求地址里，HTTPStatusError 的文字会带上它
             status = getattr(getattr(error, "response", None), "status_code", "")
             log.info("[travel] 高德查地名失败：%s %s", type(error).__name__, status)
-    try:
-        place = await _geocode_osm(client, name)
-        if place:
-            return place
-    except Exception as error:
-        log.info("[travel] OSM 查地名失败：%s", error)
     return await _geocode_open_meteo(client, name)
 
 

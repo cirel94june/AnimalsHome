@@ -3060,3 +3060,7 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ## 209. 旅行地球、放大地图、去过的地方、世界窗目录
 
 `travel_map.py`：按地方合并旅行记录（全家出游同一趟算一次）；坐标存 `data/travel_geo.json`，新旅行出发时记，老记录首次打开地图时后台按 OSM 限速补；她的地方存 `data/travel_my_places.json`；世界窗目录（国家、城市）缓存 7 天，城市页只取目录里有的国家。页面 `static/travel-map.js`，库放 `static/vendor/globe/`（d3-geo、topojson-client、world-atlas、Leaflet）。放大地图默认 OSM 底图，可切高德。接口在 `routes/travel.py`。不涉及权限。
+
+### 209a. 地名查询顺序
+
+实测旧游记大量被高德模糊匹配（「京都 鴨川」记成宁德市）。`travel_places.geocode` 改成 OSM 优先，查不到且是中文才用高德。老记录补坐标只用地名第一段，由细到粗；网络错误不记成查不到。标记详情不再显示当时查错的地区。旧游记文字里的天气不回改。

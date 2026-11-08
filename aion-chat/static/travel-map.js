@@ -40,7 +40,7 @@
           return '<h5>' + esc(part.title || part.who) + (v.parts.length > 1 ? ' · ' + esc(part.who) : '') + '</h5><p>' + esc(part.text) + '</p>';
         }).join('') + '</div>';
     }).join('');
-    $('tm-sheet-body').innerHTML = '<h3>' + esc(pin.name) + '</h3><div class="tm-sub">' + esc(pin.label) + '</div>' +
+    $('tm-sheet-body').innerHTML = '<h3>' + esc(pin.name) + '</h3>' + (pin.kind === 'me' ? '<div class="tm-sub">' + esc(pin.label) + '</div>' : '') +
       '<div class="tm-count">' + esc(who) + ' 来过 <b>' + pin.count + '</b> 次</div>' + list;
     $('tm-sheet').hidden = false;
   }

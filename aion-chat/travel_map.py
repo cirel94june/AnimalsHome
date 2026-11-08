@@ -135,21 +135,33 @@ def build_pins(cards: list[dict[str, Any]], geo: dict[str, Any], mine: list[dict
     return pins + list(grouped.values()), missing
 
 
+def _queries(label: str) -> list[str]:
+    """老记录的地名：「京都 鴨川三条大橋，宁德市，中国」后面的市是当时查错的，所以先只用第一段，由细到粗。"""
+    parts = [p.strip() for p in re.split(r"[，,]", re.sub(r";[^，]*", "", label)) if p.strip()]
+    if not parts:
+        return []
+    head = re.sub(r"[（(][^）)]*[）)]", " ", parts[0]).replace("+", " ")
+    words = head.split()
+    tries = [" ".join(words), " ".join(words[:2]), words[0] if words else ""] + parts[1:2]
+    return list(dict.fromkeys(t for t in tries if t))
+
+
 async def _fill_missing(labels: list[str]) -> None:
     async with travel_places._client() as client:
         for label in labels:
             await asyncio.sleep(GEO_GAP)
-            parts = [p for p in re.split(r"[，,]", re.sub(r";[^，]*", "", label)) if p.strip()]
-            queries = list(dict.fromkeys([" ".join([parts[0], parts[-1]]), parts[0]])) if parts else []
-            found = None
-            for query in queries:
+            found, failed = None, False
+            for query in _queries(label):
                 try:
                     found = await travel_places._geocode_osm(client, query)
                 except Exception as error:
                     log.info("[地图] 补坐标失败：%s", type(error).__name__)
+                    failed = True
                 if found:
                     break
                 await asyncio.sleep(GEO_GAP)
+            if failed and not found:
+                continue  # 网络问题不算查不到，下次打开地图再试
             with _lock:
                 geo = _read("travel_geo.json", {})
                 geo[label] = {"lat": found.latitude, "lng": found.longitude} if found else {"none": True}
