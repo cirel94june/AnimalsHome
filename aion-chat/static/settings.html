@@ -665,12 +665,12 @@ body[data-theme="light"] .transport-mode-btn.is-active {
         <span class="summary-chevron">›</span>
       </summary>
       <div class="card-body settings-grid">
-        <div class="field">
+        <div class="field" data-rarely>
           <label class="form-label">Gemini API Key</label>
           <input class="form-input mono-input" type="text" id="geminiKeyInput" placeholder="输入 Gemini API Key..." autocomplete="off">
           <p class="hint">谷歌官方的钥匙。用官方 Gemini 模型、默认画图、AI 唱歌时才要。你用中转聊天的话可以不填，不影响聊天。</p>
         </div>
-        <div class="field">
+        <div class="field" data-rarely>
           <label class="form-label">Gemini Free Key（哨兵+向量）</label>
           <input class="form-input mono-input" type="text" id="geminiFreeKeyInput" placeholder="留空则复用上方 Key" autocomplete="off">
           <p class="hint">只给后台小任务用。你的哨兵走 Codex，记忆走 Hub，可以不填。</p>
