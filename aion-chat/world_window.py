@@ -63,14 +63,15 @@ async def _text(client: httpx.AsyncClient, url: str, **kwargs) -> str:
     return response.text
 
 
-async def english_area(client: httpx.AsyncClient, lat: float, lon: float) -> tuple[str, str]:
-    """坐标 → 英文城市名和国家名（地名可能是中文，摄像头网站的路径是英文）。"""
+async def english_area(client: httpx.AsyncClient, lat: float, lon: float) -> tuple[list[str], str]:
+    """坐标 → 英文地名（从小到大）和国家名（地名可能是中文，摄像头网站的路径是英文）。"""
     response = await client.get("https://nominatim.openstreetmap.org/reverse", params={
         "lat": lat, "lon": lon, "zoom": 10, "format": "jsonv2", "accept-language": "en"})
     response.raise_for_status()
     address = response.json().get("address") or {}
-    city = next((address[k] for k in ("city", "town", "municipality", "village", "county", "state") if address.get(k)), "")
-    return str(city), str(address.get("country") or "")
+    # 东京这种地方，city 可能只是区名，所以从小到大都留着，一个个去配
+    names = [str(address[k]) for k in ("city", "town", "municipality", "village", "county", "state", "province") if address.get(k)]
+    return list(dict.fromkeys(names)), str(address.get("country") or "")
 
 
 def match_camera(page: str, city: str) -> str:
@@ -89,12 +90,12 @@ async def camera_photo(client: httpx.AsyncClient, place: travel_places.Place) ->
     if place.latitude is None or place.longitude is None:
         return ""
     try:
-        city, country = await english_area(client, place.latitude, place.longitude)
-        if not city or not country:
+        names, country = await english_area(client, place.latitude, place.longitude)
+        if not names or not country:
             return ""
         lowered = country.lower()
         page = await _text(client, f"{SITE}/webcam/{COUNTRY_SLUG.get(lowered) or _slug(country)}.html")
-        path = match_camera(page, city)
+        path = next((found for found in (match_camera(page, name) for name in names) if found), "")
         if not path:
             return ""
         found = _SOCIAL.search(await _text(client, f"{SITE}/{path}"))

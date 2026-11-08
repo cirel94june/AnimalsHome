@@ -74,6 +74,19 @@ def test_camera_photo_downloads_the_preview(monkeypatch):
     assert got == ["https://cdn.skylinewebcams.com/social1234.jpg"]
 
 
+def test_district_name_falls_back_to_the_bigger_area(monkeypatch):
+    class Ward(Client):
+        async def get(self, url, **kwargs):
+            if "nominatim" in url:
+                return Reply(data={"address": {"city": "Chiyoda", "state": "Tokyo", "country": "Japan"}})
+            return await super().get(url, **kwargs)
+
+    async def download(client, url):
+        return "/uploads/travel/live.jpg"
+    monkeypatch.setattr(travel_places, "_download", download)
+    assert asyncio.run(ww.camera_photo(Ward(), _place())) == "/uploads/travel/live.jpg"
+
+
 def test_no_camera_is_empty_not_an_error():
     assert asyncio.run(ww.camera_photo(Client(cam=False), _place())) == ""
 
