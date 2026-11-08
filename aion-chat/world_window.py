@@ -104,6 +104,19 @@ async def camera_photo(client: httpx.AsyncClient, place: travel_places.Place) ->
         return ""
 
 
+async def _world_place(client: httpx.AsyncClient, name: str) -> travel_places.Place | None:
+    """世界窗看的是世界上的城市：不走高德（实测把「东京」查成广西的小地方，瞎写的词也能配上一个小区）。"""
+    for finder in (travel_places._geocode_osm, travel_places._geocode_open_meteo):
+        try:
+            place = await finder(client, name)
+        except Exception as error:
+            log.info("[世界窗] 查地名失败：%s", type(error).__name__)
+            continue
+        if place is not None:
+            return place
+    return None
+
+
 async def look(name: str) -> Look | None:
     """查一个地方。地名查不到返回 None。"""
     key = (name or "").strip().lower()[:40]
@@ -113,7 +126,7 @@ async def look(name: str) -> Look | None:
     if cached and time.monotonic() - cached[0] < CACHE_SECONDS:
         return cached[1]
     async with travel_places._client() as client:
-        place = await travel_places.geocode(client, name.strip()[:40])
+        place = await _world_place(client, name.strip()[:40])
         if place is None:
             return None
         try:
@@ -121,13 +134,14 @@ async def look(name: str) -> Look | None:
         except Exception as error:
             log.info("[世界窗] %s 没拿到天气：%s", place.name, type(error).__name__)
         photo = await camera_photo(client, place)
-    lines = [f"地点：{place.label}"]
+    label = re.sub(r";[^，]*", "", place.label)  # OSM 有时一个名字给简繁两种写法
+    lines = [f"地点：{label}"]
     if place.local_time:
         lines.append(f"当地时间：{place.local_time}")
     if place.weather:
         lines.append(f"此刻天气：{place.weather}")
     lines.append("（附上了这里此刻的公开摄像头画面）" if photo else "（这里没有找到公开摄像头，没有画面）")
-    result = Look(place.label, "\n".join(lines), photo)
+    result = Look(label,"\n".join(lines), photo)
     _cache[key] = (time.monotonic(), result)
     return result
 

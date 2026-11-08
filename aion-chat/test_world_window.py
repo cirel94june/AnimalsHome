@@ -105,7 +105,15 @@ def _patch_lookup(monkeypatch, photo="/uploads/travel/live.jpg", place=True):
     async def camera(client, p):
         return photo
     monkeypatch.setattr(travel_places, "_client", lambda: Ctx())
-    monkeypatch.setattr(travel_places, "geocode", geocode)
+    monkeypatch.setattr(travel_places, "_geocode_osm", geocode)
+
+    async def nothing(client, name):
+        return None
+    monkeypatch.setattr(travel_places, "_geocode_open_meteo", nothing)
+
+    async def no_amap(client, name):
+        raise AssertionError("世界窗不走高德")
+    monkeypatch.setattr(travel_places, "geocode", no_amap)
     monkeypatch.setattr(travel_places, "fill_weather", weather)
     monkeypatch.setattr(ww, "camera_photo", camera)
     monkeypatch.setattr(ww, "_cache", {})
