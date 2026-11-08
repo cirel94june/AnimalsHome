@@ -18,6 +18,13 @@
     var id = pin.people && pin.people[0] && pin.people[0].id;
     return COLORS[id] || '#3d6fd8';
   }
+  // 标记旁边的名字：AI 起的地名常常很长，只留前面能认出地方的部分
+  function shortName(pin) {
+    var text = String(pin.name || pin.label || '').replace(/[（(][^）)]*[）)]/g, ' ').split(/[，,]/)[0].trim();
+    var words = text.split(/\s+/);
+    var two = words.slice(0, 2).join(' ');
+    return (two.length <= 9 ? two : words[0]).slice(0, 10);
+  }
   function photo(path) { return /^\/uploads\/[\w./-]+$/.test(String(path || '')) && String(path).indexOf('..') < 0 ? path : ''; }
   function when(v) {
     if (v.date) return v.date;
@@ -68,11 +75,23 @@
     ctx.beginPath(); path(window.d3.geoGraticule10()); ctx.strokeStyle = 'rgba(90,130,190,.18)'; ctx.lineWidth = 0.6; ctx.stroke();
     if (state.land) { ctx.beginPath(); path(state.land); ctx.fillStyle = '#f4f1e6'; ctx.fill(); ctx.strokeStyle = 'rgba(120,140,170,.55)'; ctx.lineWidth = 0.6; ctx.stroke(); }
     ctx.beginPath(); path({ type: 'Sphere' }); ctx.strokeStyle = 'rgba(90,130,190,.5)'; ctx.lineWidth = 1; ctx.stroke();
-    state.pins.forEach(function (pin) {
-      if (!visible(pin)) return;
+    var shown = state.pins.filter(visible).sort(function (a, b) { return b.count - a.count; });
+    shown.forEach(function (pin) {
       var p = projection([pin.lng, pin.lat]);
       ctx.beginPath(); ctx.arc(p[0], p[1], 4 + Math.min(pin.count, 5), 0, Math.PI * 2);
       ctx.fillStyle = colorOf(pin); ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+    });
+    // 名字：去得多的先写，挤在一起的就不写，转过去或放大地图能看到
+    ctx.font = '600 11.5px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+    var taken = [];
+    shown.forEach(function (pin) {
+      var p = projection([pin.lng, pin.lat]), text = shortName(pin), w = ctx.measureText(text).width;
+      var r = 4 + Math.min(pin.count, 5), left = p[0] + r + 3 + w > size ? p[0] - r - 3 - w : p[0] + r + 3;
+      var box = [left - 2, p[1] - 8, left + w + 2, p[1] + 8];
+      if (taken.some(function (b) { return box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1]; })) return;
+      taken.push(box);
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.92)'; ctx.strokeText(text, left, p[1]);
+      ctx.fillStyle = '#20314f'; ctx.fillText(text, left, p[1]);
     });
   }
   function spin() {
@@ -137,7 +156,7 @@
     if (state.markers) state.markers.remove();
     state.markers = window.L.layerGroup(state.pins.map(function (pin) {
       return window.L.circleMarker([pin.lat, pin.lng], { radius: 8 + Math.min(pin.count, 6), color: '#fff', weight: 2, fillColor: colorOf(pin), fillOpacity: 0.95 })
-        .bindTooltip(pin.name + ' · ' + pin.count + ' 次').on('click', function () { openPin(pin); });
+        .bindTooltip(esc(shortName(pin)) + (pin.count > 1 ? ' · ' + pin.count + ' 次' : ''), { permanent: true, direction: 'right', offset: [8, 0], className: 'tm-tip' }).on('click', function () { openPin(pin); });
     })).addTo(state.leaflet);
   }
   function openMap() {
