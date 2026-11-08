@@ -25,6 +25,7 @@ SITE = "https://www.skylinewebcams.com/en"
 IMAGE = "https://cdn.skylinewebcams.com/social{}.jpg"
 CREDIT = "此刻的公开摄像头 · SkylineWebcams"
 CACHE_SECONDS = 600
+NOMINATIM_GAP = 1.1
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 
 # 这个网站的国家路径和英文国名对不上的
@@ -63,10 +64,11 @@ async def _text(client: httpx.AsyncClient, url: str, **kwargs) -> str:
     return response.text
 
 
-async def english_area(client: httpx.AsyncClient, lat: float, lon: float) -> tuple[list[str], str]:
+async def english_area(client: httpx.AsyncClient, lat: float, lon: float, zoom: int = 10) -> tuple[list[str], str]:
     """坐标 → 英文地名（从小到大）和国家名（地名可能是中文，摄像头网站的路径是英文）。"""
+    await asyncio.sleep(NOMINATIM_GAP)  # OSM 要求每秒最多一次，太快会被拒
     response = await client.get("https://nominatim.openstreetmap.org/reverse", params={
-        "lat": lat, "lon": lon, "zoom": 10, "format": "jsonv2", "accept-language": "en"})
+        "lat": lat, "lon": lon, "zoom": zoom, "format": "jsonv2", "accept-language": "en"})
     response.raise_for_status()
     address = response.json().get("address") or {}
     # 东京这种地方，city 可能只是区名，所以从小到大都留着，一个个去配
@@ -96,6 +98,9 @@ async def camera_photo(client: httpx.AsyncClient, place: travel_places.Place) ->
         lowered = country.lower()
         page = await _text(client, f"{SITE}/webcam/{COUNTRY_SLUG.get(lowered) or _slug(country)}.html")
         path = next((found for found in (match_camera(page, name) for name in names) if found), "")
+        if not path:  # 东京：city 只给「千代田区」。再问一次上一级
+            wider, _ = await english_area(client, place.latitude, place.longitude, zoom=5)
+            path = next((found for found in (match_camera(page, name) for name in wider) if found), "")
         if not path:
             return ""
         found = _SOCIAL.search(await _text(client, f"{SITE}/{path}"))

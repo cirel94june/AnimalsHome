@@ -11,6 +11,9 @@ import world_window as ww
 from web_search import clean_web_command_text
 
 
+ww.NOMINATIM_GAP = 0
+
+
 @pytest.mark.parametrize("text,name", [("[看看:东京]", "东京"), ("［看看：巴黎］", "巴黎"), ("[ 看看 : New York ]", "New York")])
 def test_pattern(text, name):
     assert mcp_policy.WORLD_LOOK_CMD_PATTERN.search(text).group(1) == name
@@ -79,6 +82,21 @@ def test_district_name_falls_back_to_the_bigger_area(monkeypatch):
         async def get(self, url, **kwargs):
             if "nominatim" in url:
                 return Reply(data={"address": {"city": "Chiyoda", "state": "Tokyo", "country": "Japan"}})
+            return await super().get(url, **kwargs)
+
+    async def download(client, url):
+        return "/uploads/travel/live.jpg"
+    monkeypatch.setattr(travel_places, "_download", download)
+    assert asyncio.run(ww.camera_photo(Ward(), _place())) == "/uploads/travel/live.jpg"
+
+
+def test_only_a_ward_name_asks_the_wider_area(monkeypatch):
+    class Ward(Client):
+        async def get(self, url, **kwargs):
+            if "nominatim" in url:
+                wide = kwargs["params"]["zoom"] == 5
+                return Reply(data={"address": {"state": "Tokyo", "country": "Japan"} if wide
+                                   else {"city": "Chiyoda", "country": "Japan"}})
             return await super().get(url, **kwargs)
 
     async def download(client, url):
