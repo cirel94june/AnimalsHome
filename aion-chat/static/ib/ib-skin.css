@@ -539,3 +539,52 @@ html[data-skin="ib"][data-ib-reduce] *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+
+/* ── 设置页（11-08 小猫：这页没跟上 IB 风格，原来的规则写的是旧类名） ── */
+html[data-skin="ib"] .settings-card {
+  background: rgba(255, 255, 255, var(--ib-card-a));
+  color: var(--ib-card-tx);
+  border: 1px solid var(--ib-glass-line);
+  border-radius: 20px;
+  box-shadow: var(--ib-shadow);
+  backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
+}
+html[data-skin="ib"] .settings-card .settings-card {
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow: none;
+}
+html[data-skin="ib"] .summary-title strong { color: var(--ib-tx); font-weight: 600; }
+html[data-skin="ib"] .summary-title span,
+html[data-skin="ib"] .settings-card .hint { color: var(--ib-tx2); }
+html[data-skin="ib"] .summary-chevron { color: var(--ib-tx3); }
+html[data-skin="ib"] .settings-card .form-label,
+html[data-skin="ib"] .settings-card .sub-title { color: var(--ib-tx); }
+html[data-skin="ib"] .settings-card .sub-block { border-color: var(--ib-line); background: rgba(255, 255, 255, 0.28); }
+html[data-skin="ib"] input[type="password"] {
+  background: rgba(255, 255, 255, 0.66);
+  color: var(--ib-tx);
+  border: 1px solid var(--ib-line);
+  border-radius: 12px;
+}
+html[data-skin="ib"] .settings-dock {
+  background: rgba(255, 255, 255, var(--ib-topbar-a));
+  border: 1px solid var(--ib-glass-line);
+  box-shadow: var(--ib-shadow);
+  backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--ib-blur)) saturate(1.3);
+}
+html[data-skin="ib"] .action-btn,
+html[data-skin="ib"] .ghost-btn {
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--ib-acc);
+  border: 1px solid var(--ib-glass-line);
+  box-shadow: none;
+}
+/* 通用按钮规则带 !important 且优先级高，这里要压过它 */
+html[data-skin="ib"] .sub-page .settings-dock button.action-btn.primary.primary.primary {
+  background: linear-gradient(135deg, var(--ib-user-from), var(--ib-user-to)) !important;
+  color: #fff !important;
+  border: none !important;
+}
