@@ -3068,3 +3068,7 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ## 210. 全家跑团
 
 `family_trpg.py`、`routes/family_trpg.py`、`static/trpg.html`，桌面「跑团」。中立 DM（开局选模型），每位 AI 用自己的人设和模型，每轮等小猫行动；骰子程序掷，存盘后重试不重掷；HP、道具程序记，DM 增减有上限；数据只在 `data/trpg/`，不进 Hub 和群聊；AI 文本过 `strip_untrusted_reply`，不执行指令。游戏 id 校验 32 位 hex。不涉及权限。
+
+### 210a. 跑团规则、捏人、模组
+
+`trpg_rules.py`：简易 / DnD 风（购点、职业、熟练、等级）/ CoC 风（百分比技能、理智、技能成长），只实现核心检定，点数由程序校验，AI 卡不合规换随机。`trpg_modules.py`：4 个原创短模组 + 她自己粘贴的（`data/trpg_modules.json`）。模组和剧本只进 DM 提示词，`public()` 不返回。

@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 import family_trpg as trpg
+import trpg_modules
+import trpg_rules
 from config import BASE_DIR
 
 router = APIRouter()
@@ -33,6 +35,32 @@ async def trpg_page():
     return FileResponse(BASE_DIR / "static" / "trpg.html", headers={"Cache-Control": "no-cache"})
 
 
+@router.get("/api/trpg/rules")
+async def rule_info():
+    return trpg_rules.describe()
+
+
+@router.get("/api/trpg/modules")
+async def modules():
+    return {"modules": trpg_modules.listing()}
+
+
+@router.post("/api/trpg/modules")
+async def add_module(request: Request):
+    body = await _body(request)
+    try:
+        return trpg_modules.add(body.get("title"), body.get("rule"), body.get("text"))
+    except ValueError as error:
+        raise HTTPException(400, str(error))
+
+
+@router.delete("/api/trpg/modules/{module_id}")
+async def delete_module(module_id: str):
+    if not trpg_modules.remove(module_id):
+        raise HTTPException(404, "没有这个模组")
+    return {"ok": True}
+
+
 @router.get("/api/trpg/games")
 async def games():
     return {"games": trpg.list_games()}
@@ -47,7 +75,8 @@ async def create_game(request: Request):
     except (TypeError, ValueError):
         rounds = trpg.DEFAULT_ROUNDS
     game = _guard(trpg.create, idea=body.get("idea"), dm_model=str(body.get("dm_model") or ""), actors=[str(a) for a in actors],
-                  my_name=body.get("my_name"), my_character=str(body.get("my_character") or ""), rounds=rounds)
+                  my_name=body.get("my_name"), my_character=str(body.get("my_character") or ""), rounds=rounds,
+                  ruleset=str(body.get("ruleset") or "simple"), module_id=str(body.get("module_id") or ""), sheet=body.get("sheet"))
     trpg.start(game["id"])
     return {"id": game["id"]}
 
@@ -66,7 +95,7 @@ async def delete_game(game_id: str):
 @router.post("/api/trpg/games/{game_id}/act")
 async def act(game_id: str, request: Request):
     body = await _body(request)
-    _guard(trpg.act, game_id, body.get("text"))
+    _guard(trpg.act, game_id, body.get("text"), body.get("skill"))
     return {"ok": True}
 
 

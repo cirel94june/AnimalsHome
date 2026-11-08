@@ -24,6 +24,11 @@ textarea.input { min-height: 72px; resize: vertical; }
 .btn:disabled { opacity: .5; }
 .btn.small { width: auto; margin: 0; padding: 9px 14px; border-radius: 12px; font-size: 14px; flex: none; }
 .btn.soft { background: rgba(255,255,255,.75); color: var(--ib-acc, #3d6fd8); border: 1px solid rgba(120,150,200,.35); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.grid label { font-size: 12.5px; color: var(--ib-tx2); display: block; }
+.grid .input { padding: 7px 8px; margin-top: 3px; text-align: center; }
+.left { font-size: 13px; color: var(--ib-acc, #3d6fd8); margin: 8px 0 2px; }
+.left.over { color: #b4485a; }
 .row { display: flex; gap: 8px; align-items: stretch; }
 .game-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px 0; border-top: 1px dashed rgba(120,150,200,.3); color: inherit; font-size: 15px; }
 .game-item:first-child { border-top: 0; }
@@ -54,23 +59,34 @@ textarea.input { min-height: 72px; resize: vertical; }
   <div class="top-bar"><button class="back-btn" id="back" aria-label="返回">⬅</button><h2 id="title">全家跑团</h2><button class="btn small soft" id="del" hidden>删除</button></div>
   <div id="lobby">
     <section class="panel">
+      <div class="label">规则</div><select class="input" id="rule"></select><p class="label" id="rule-desc" style="margin:6px 0 0"></p>
+      <div class="label">模组（可不选，不选就按故事点子即兴）</div><select class="input" id="module"></select><p class="label" id="module-hook" style="margin:6px 0 0"></p>
       <div class="label">故事点子</div><textarea class="input" id="idea" maxlength="1000" placeholder="比如：大雪封山的旅馆里，有人收到了一封十年前寄出的信"></textarea>
       <div class="label">谁一起玩</div><div class="who" id="actors"></div>
       <div class="label">DM 用哪个模型</div><select class="input" id="dm"></select>
       <div class="label">你的角色</div><input class="input" id="me" maxlength="20" placeholder="角色名字">
-      <div class="label">角色设定（可不写）</div><input class="input" id="mine" maxlength="300" placeholder="比如：失忆的旅店学徒">
+      <div class="label">外貌（可不写）</div><input class="input" id="look" maxlength="200" placeholder="比如：银灰短发，左眼下有颗痣">
+      <div class="label">设定（可不写）</div><input class="input" id="mine" maxlength="300" placeholder="比如：失忆的旅店学徒">
+      <div id="builder"></div>
       <div class="label">大约几轮</div><input class="input" id="rounds" type="number" min="3" max="30" value="12">
       <p class="label">每轮 DM 说话 2 次，每位 AI 说话 1 次，轮数越多越费额度。</p>
       <button class="btn" id="create">开局</button>
     </section>
     <section class="panel"><div class="label">之前的局</div><div id="games"></div></section>
+    <section class="panel"><div class="label">放进我自己的模组</div>
+      <input class="input" id="m-title" maxlength="40" placeholder="模组名字">
+      <select class="input" id="m-rule" style="margin-top:8px"><option value="any">不限规则</option><option value="simple">简易</option><option value="dnd">DnD 风</option><option value="coc">CoC 风</option></select>
+      <textarea class="input" id="m-text" maxlength="40000" style="margin-top:8px" placeholder="把模组内容粘贴到这里，只有 DM 看得到"></textarea>
+      <input class="input" id="m-file" type="file" accept=".txt,.md" style="margin-top:8px">
+      <button class="btn soft" id="m-add">存进模组库</button>
+      <div id="m-mine"></div></section>
   </div>
   <div id="table" hidden>
     <div class="cards" id="cards"></div>
     <div class="feed" id="feed"></div>
     <div class="status" id="status"></div>
     <div class="dock panel">
-      <div id="act-box" hidden><textarea class="input" id="act" maxlength="400" placeholder="轮到你了：你要做什么？"></textarea><button class="btn" id="act-go">行动</button></div>
+      <div id="act-box" hidden><select class="input" id="learn" hidden style="margin-bottom:8px"></select><textarea class="input" id="act" maxlength="400" placeholder="轮到你了：你要做什么？"></textarea><button class="btn" id="act-go">行动</button></div>
       <div class="row" style="margin-top:8px"><input class="input" id="say" maxlength="400" placeholder="在牌桌上聊天，@ 谁谁回"><button class="btn small" id="say-go">发送</button></div>
     </div>
   </div>
@@ -114,7 +130,10 @@ textarea.input { min-height: 72px; resize: vertical; }
     $('cards').innerHTML = g.order.map(function (id) {
       var p = g.players[id];
       return '<div class="card' + (p.hp <= 0 ? ' down' : '') + '"><b>' + esc(p.name) + '</b>HP ' + p.hp + '/' + p.max_hp + '<div class="bar"><i style="width:' + Math.round(p.hp / p.max_hp * 100) + '%"></i></div>' +
-        Object.keys(p.stats).map(function (k) { return esc(g.stats_names[k]) + p.stats[k]; }).join(' ') + (p.items.length ? '<br>' + esc(p.items.join('、')) : '') + '</div>';
+        (p.san != null ? '理智 ' + p.san + '/' + p.max_san + '<br>' : '') + (p['class'] ? esc(p['class']) + ' ' + p.level + ' 级<br>' : '') +
+        (p.appearance ? esc(p.appearance) + '<br>' : '') +
+        Object.keys(p.stats).map(function (k) { return esc(g.stats_names[k]) + p.stats[k]; }).join(' ') +
+        (Array.isArray(p.skills) ? '<br>' + esc(p.skills.join('、')) : '') + (p.items.length ? '<br>' + esc(p.items.join('、')) : '') + '</div>';
     }).join('');
     var mark = g.log.length + ':' + (g.log.length ? g.log[g.log.length - 1].id : '');
     if (mark !== lastLog) {
@@ -131,6 +150,11 @@ textarea.input { min-height: 72px; resize: vertical; }
     $('status').innerHTML = g.error && !g.working ? '<span class="err">' + esc(g.error) + '</span> <button class="btn small soft" id="retry">重试</button>' : esc(statusText(g));
     if ($('retry')) $('retry').onclick = function () { post('/api/trpg/games/' + g.id + '/retry').then(refresh).catch(function (e) { toast(e.message); }); };
     $('act-box').hidden = g.phase !== 'wait_user';
+    var me = g.players.user, need = g.phase === 'wait_user' && me.pending_skills > 0;
+    $('learn').hidden = !need;
+    if (need && !$('learn').options.length) {
+      $('learn').innerHTML = '<option value="">升级了，选一个新技能</option>' + g.dnd_skills.filter(function (s) { return me.skills.indexOf(s) < 0; }).map(function (s) { return '<option>' + esc(s) + '</option>'; }).join('');
+    }
   }
   function refresh() {
     if (!current) return;
@@ -143,11 +167,12 @@ textarea.input { min-height: 72px; resize: vertical; }
   $('create').onclick = function () {
     var btn = this; btn.disabled = true;
     post('/api/trpg/games', { idea: $('idea').value, dm_model: $('dm').value, my_name: $('me').value, my_character: $('mine').value, rounds: $('rounds').value,
+      ruleset: $('rule').value, module_id: $('module').value, sheet: collectSheet(),
       actors: Array.prototype.map.call(document.querySelectorAll('#actors input:checked'), function (c) { return c.value; }) })
       .then(function (r) { open(r.id); }).catch(function (e) { toast(e.message); }).then(function () { btn.disabled = false; });
   };
   $('act-go').onclick = function () {
-    post('/api/trpg/games/' + current + '/act', { text: $('act').value }).then(function () { $('act').value = ''; refresh(); }).catch(function (e) { toast(e.message); });
+    post('/api/trpg/games/' + current + '/act', { text: $('act').value, skill: $('learn').value }).then(function () { $('act').value = ''; $('learn').innerHTML = ''; refresh(); }).catch(function (e) { toast(e.message); });
   };
   function sendChat() {
     var text = $('say').value.trim(); if (!text) return;
@@ -160,6 +185,84 @@ textarea.input { min-height: 72px; resize: vertical; }
     api('/api/trpg/games/' + current, { method: 'DELETE' }).then(showLobby).catch(function (e) { toast(e.message); });
   };
 
+  // ── 捏人 ──
+  var info = null, modulesList = [];
+  function num(key, label, value, lo, hi) {
+    return '<label>' + esc(label) + '<input class="input" type="number" data-stat="' + esc(key) + '" value="' + value + '" min="' + lo + '" max="' + hi + '"></label>';
+  }
+  function renderBuilder() {
+    var rule = $('rule').value, c = info[rule], html = '';
+    $('rule-desc').textContent = info.rules[rule].desc;
+    if (rule === 'dnd') {
+      html = '<div class="label">职业</div><select class="input" id="b-class">' + Object.keys(c.classes).map(function (k) { return '<option value="' + esc(k) + '">' + esc(k) + '（选 ' + c.classes[k].picks + ' 个技能）</option>'; }).join('') + '</select>' +
+        '<div class="label">属性（每项 8 到 15）</div><div class="grid">' + Object.keys(c.stats).map(function (k) { return num(k, c.stats[k], 10, 8, 15); }).join('') + '</div><div class="left" id="b-left"></div>' +
+        '<div class="label">技能</div><div class="who">' + Object.keys(c.skills).map(function (s) { return '<label><input type="checkbox" data-skill value="' + esc(s) + '">' + esc(s) + '</label>'; }).join('') + '</div>';
+    } else if (rule === 'coc') {
+      html = '<div class="label">属性（每项 ' + c.min + ' 到 ' + c.max + '）</div><div class="grid">' + Object.keys(c.stats).map(function (k) { return num(k, c.stats[k], 55, c.min, c.max); }).join('') + '</div><div class="left" id="b-left"></div>' +
+        '<div class="label">加技能点（括号里是初始值）</div><div class="grid">' + Object.keys(c.skills).map(function (s) { return '<label>' + esc(s) + '（' + c.skills[s] + '）<input class="input" type="number" data-add="' + esc(s) + '" value="0" min="0" max="89"></label>'; }).join('') + '</div><div class="left" id="b-left2"></div>';
+    } else {
+      html = '<div class="label">属性（加起来正好 ' + c.total + ' 点）</div><div class="grid">' + Object.keys(c.stats).map(function (k) { return num(k, c.stats[k], 3, c.min, c.max); }).join('') + '</div><div class="left" id="b-left"></div>';
+    }
+    $('builder').innerHTML = html;
+    updateLeft();
+    renderModules();
+  }
+  function statValues() {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll('#builder [data-stat]'), function (i) { out[i.dataset.stat] = parseInt(i.value, 10) || 0; });
+    return out;
+  }
+  function setLeft(id, text, over) { var el = $(id); if (el) { el.textContent = text; el.className = 'left' + (over ? ' over' : ''); } }
+  function updateLeft() {
+    var rule = $('rule').value, c = info[rule], s = statValues(), keys = Object.keys(s);
+    if (rule === 'dnd') {
+      var spent = keys.reduce(function (n, k) { return n + (c.cost[s[k]] == null ? 999 : c.cost[s[k]]); }, 0);
+      setLeft('b-left', '购点还剩 ' + (c.points - spent) + ' / ' + c.points, spent > c.points);
+    } else if (rule === 'coc') {
+      var sum = keys.reduce(function (n, k) { return n + s[k]; }, 0), pool = s.edu * 2 + s['int'] * 2, used = 0;
+      setLeft('b-left', '属性总和 ' + sum + ' / ' + c.pool, sum > c.pool);
+      Array.prototype.forEach.call(document.querySelectorAll('#builder [data-add]'), function (i) { used += parseInt(i.value, 10) || 0; });
+      setLeft('b-left2', '技能点还剩 ' + (pool - used) + ' / ' + pool + '（教育×2 + 智力×2）', used > pool);
+    } else {
+      var total = keys.reduce(function (n, k) { return n + s[k]; }, 0);
+      setLeft('b-left', '现在 ' + total + ' / ' + c.total, total !== c.total);
+    }
+  }
+  function collectSheet() {
+    var sheet = { stats: statValues(), appearance: $('look').value }, rule = $('rule').value;
+    if (rule === 'dnd') { sheet['class'] = $('b-class').value; sheet.skills = Array.prototype.map.call(document.querySelectorAll('#builder [data-skill]:checked'), function (c) { return c.value; }); }
+    if (rule === 'coc') { sheet.skills = {}; Array.prototype.forEach.call(document.querySelectorAll('#builder [data-add]'), function (i) { var v = parseInt(i.value, 10) || 0; if (v) sheet.skills[i.dataset.add] = v; }); }
+    return sheet;
+  }
+  function renderModules() {
+    var rule = $('rule').value;
+    $('module').innerHTML = '<option value="">不用模组，按故事点子即兴</option>' + modulesList.filter(function (m) { return m.rule === rule || m.rule === 'any'; }).map(function (m) { return '<option value="' + esc(m.id) + '">' + esc(m.title) + '</option>'; }).join('');
+    showHook();
+    $('m-mine').innerHTML = modulesList.filter(function (m) { return m.mine; }).map(function (m) { return '<div class="game-item">' + esc(m.title) + ' <button class="btn small soft" data-delmod="' + esc(m.id) + '">删除</button></div>'; }).join('');
+  }
+  function showHook() { var m = modulesList.filter(function (x) { return x.id === $('module').value; })[0]; $('module-hook').textContent = m ? (m.hook || '你自己放的模组') : ''; }
+  function loadModules() { return api('/api/trpg/modules').then(function (j) { modulesList = j.modules; renderModules(); }); }
+  $('rule').onchange = renderBuilder;
+  $('module').onchange = showHook;
+  $('builder').addEventListener('input', updateLeft);
+  $('m-file').onchange = function () {
+    var f = this.files[0]; if (!f) return;
+    if (f.size > 200000) { toast('文件太大了'); return; }
+    f.text().then(function (t) { $('m-text').value = t.slice(0, 40000); if (!$('m-title').value) $('m-title').value = f.name.replace(/[.][^.]+$/, '').slice(0, 40); });
+  };
+  $('m-add').onclick = function () {
+    post('/api/trpg/modules', { title: $('m-title').value, rule: $('m-rule').value, text: $('m-text').value }).then(function () { $('m-title').value = ''; $('m-text').value = ''; $('m-file').value = ''; toast('存好了'); return loadModules(); }).catch(function (e) { toast(e.message); });
+  };
+  $('m-mine').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-delmod]');
+    if (b && confirm('删除这个模组？')) api('/api/trpg/modules/' + b.dataset.delmod, { method: 'DELETE' }).then(loadModules).catch(function (err) { toast(err.message); });
+  });
+  api('/api/trpg/rules').then(function (r) {
+    info = r;
+    $('rule').innerHTML = Object.keys(r.rules).map(function (k) { return '<option value="' + esc(k) + '">' + esc(r.rules[k].name) + '</option>'; }).join('');
+    renderBuilder();
+    return loadModules();
+  });
   api('/api/travel/options').then(function (o) {
     $('actors').innerHTML = o.actors.map(function (a) { return '<label><input type="checkbox" value="' + esc(a.id) + '" checked>' + esc(a.name) + '</label>'; }).join('');
   });
