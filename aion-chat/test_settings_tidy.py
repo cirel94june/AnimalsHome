@@ -6,6 +6,7 @@ HTML = (Path(__file__).parent / "static" / "settings.html").read_text(encoding="
 
 def test_rarely_used_cards_are_marked_not_removed():
     assert HTML.count("<details data-rarely") == 3
+    assert HTML.count('<div class="field" data-rarely>') == 2  # 11-08 小猫：两个 Gemini Key 暂时用不上
     for field in ("minimaxTtsKeyInput", "elevenKey", "luckin"):
         assert field in HTML
 
