@@ -602,7 +602,7 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       </div>
     </details>
 
-    <details class="settings-card" open>
+    <details data-rarely class="settings-card">
       <summary>
         <div class="summary-title">
           <strong>🎙 MiniMax 克隆语音</strong>
@@ -638,7 +638,7 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       </div>
     </details>
 
-    <details class="settings-card" open>
+    <details data-rarely class="settings-card">
       <summary>
         <div class="summary-title">
           <strong>🎙 ElevenLabs 语音</strong>
@@ -659,7 +659,7 @@ body[data-theme="light"] .transport-mode-btn.is-active {
     <details class="settings-card" open>
       <summary>
         <div class="summary-title">
-          <strong>🔑 API 与基础账号</strong>
+          <strong>🔑 各种钥匙（大多不用填）</strong>
           <span>官方 Key、联网搜索、内置硅基模型、音乐 Cookie</span>
         </div>
         <span class="summary-chevron">›</span>
@@ -668,22 +668,27 @@ body[data-theme="light"] .transport-mode-btn.is-active {
         <div class="field">
           <label class="form-label">Gemini API Key</label>
           <input class="form-input mono-input" type="text" id="geminiKeyInput" placeholder="输入 Gemini API Key..." autocomplete="off">
+          <p class="hint">谷歌官方的钥匙。用官方 Gemini 模型、默认画图、AI 唱歌时才要。你用中转聊天的话可以不填，不影响聊天。</p>
         </div>
         <div class="field">
           <label class="form-label">Gemini Free Key（哨兵+向量）</label>
           <input class="form-input mono-input" type="text" id="geminiFreeKeyInput" placeholder="留空则复用上方 Key" autocomplete="off">
+          <p class="hint">只给后台小任务用。你的哨兵走 Codex，记忆走 Hub，可以不填。</p>
         </div>
         <div class="field">
           <label class="form-label">硅基流动 API Key</label>
           <input class="form-input mono-input" type="text" id="sfKeyInput" placeholder="输入硅基流动 API Key..." autocomplete="off">
+          <p class="hint">硅基流动的语音和语音转文字要用。不填的话这两样用不了硅基这条线，聊天不受影响。</p>
         </div>
         <div class="field">
           <label class="form-label">Tavily API Key（联网搜索）</label>
           <input class="form-input mono-input" type="text" id="tavilyApiKeyInput" placeholder="输入 Tavily API Key..." autocomplete="off">
+          <p class="hint">AI 联网搜索用的。你已经填好了，不用动。</p>
         </div>
         <div class="field full">
           <label class="form-label">网易云 MUSIC_U Cookie（VIP 点歌）</label>
           <input class="form-input mono-input" type="text" id="neteaseMusicUInput" placeholder="浏览器 F12 → Cookie → MUSIC_U" autocomplete="off">
+          <p class="hint">你的网易云登录凭证，填了能放 VIP 歌。不填只能放免费歌。别发到聊天里。</p>
         </div>
       </div>
     </details>
@@ -907,7 +912,7 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       </div>
     </details>
 
-    <details class="settings-card">
+    <details data-rarely class="settings-card">
       <summary>
         <div class="summary-title">
           <strong>☕ 瑞幸咖啡 MCP</strong>
@@ -975,6 +980,25 @@ body[data-theme="light"] .transport-mode-btn.is-active {
 
   </div>
 </div>
+<script>
+// 现在用不上的设置收到最下面：只是挪位置，里面填过的内容和保存都不变
+(function () {
+  var cards = document.querySelectorAll('[data-rarely]');
+  if (!cards.length) return;
+  var last = document.querySelectorAll('details.settings-card');
+  last = last[last.length - 1];
+  var fold = document.createElement('details');
+  fold.className = 'settings-card';
+  fold.id = 'rarelyUsedSettings';
+  var summary = document.createElement('summary');
+  summary.innerHTML = '<div class="summary-title"><strong>🗂 现在用不上的</strong><span>收起来了，内容都还在，想用时打开</span></div><span class="summary-chevron">›</span>';
+  var body = document.createElement('div');
+  body.className = 'card-body';
+  fold.append(summary, body);
+  last.after(fold);
+  cards.forEach(function (card) { body.appendChild(card); });
+})();
+</script>
 <script src="/static/theme.js?v=theme-20260606"></script>
 <script src="/static/common.js"></script>
 <script src="/static/tts-loudness-settings.js"></script>
