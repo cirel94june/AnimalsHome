@@ -3020,3 +3020,15 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - `call_custom_openai` 外面包一层（原函数改名 `_call_custom_openai_once`）：连接层错误（RemoteProtocol / Connect / Read / Write / WriteTimeout / ConnectTimeout / PoolTimeout）且还没吐正文时，等 1.5 秒重试一次；状态行不算正文。已经说了一半、ReadTimeout、第二次还断，都照旧报错。重试前清掉半截思考。
 - 测试 `test_relay_retry.py` 9 项；用到中转线路的回归前后都是同样 12 个旧失败，没有新增。
 - 不涉及权限和数据，测过直接上线。
+
+## 205. 替 AI 开户（涉及账号和钥匙，上线前请狐狸看）
+
+11-08 小猫：想让 AI 有自己的 4399 账号，AI 自己不能注册（规则不变）。
+- `account_opening.py`，`GET /api/account-opening`、`POST /api/account-opening/{site}`，工具页加表单。现在只有 4399。
+- 只用游客连接调 `account(action="login_or_register")`；钥匙从返回的 `token` 取，存成 `https://toy.cedarstar.org/{token}`，连接名「显示名4399」，`actors=[那位]`，`autonomy=False`。
+- 密码手动从请求体读（避免校验错误回显），不存不记；错误文字里遮掉密码；日志只记异常类型。
+- 注册前先查：这位已有带钥匙的连接、同名连接，都直接拒绝，避免注册成功却存不下。每位一把锁。
+- 模型那边不变：`account`、注册类子动作仍是 BAN（有测试）。
+- 已知：`list_tools` 把连接地址原样给工具页，所以钥匙在小猫自己的工具页能看到，手动接的连接也一样，这次没改。
+- 没真注册过：真实返回字段只按说明写，第一次开户才验证。
+- 测试 `test_account_opening.py`；MCP 相关回归 144 项通过。

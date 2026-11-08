@@ -81,6 +81,26 @@ async def api_test(name: str):
         return {"ok": False, "error": mcp_outings.redact_everything(str(error))[:300] or type(error).__name__}
 
 
+@router.get("/api/account-opening")
+async def api_account_overview():
+    import account_opening
+    return account_opening.overview()
+
+
+@router.post("/api/account-opening/{site}")
+async def api_open_account(site: str, request: Request):
+    """小猫点「开户」。手动读请求体：校验失败时密码不会被框架原样回传。"""
+    import account_opening
+    opener = account_opening.SITES.get(site)
+    if not opener:
+        raise HTTPException(404, "这个地方还不能开户")
+    data = await _body(request)
+    try:
+        return {"ok": True, **await opener(str(data.get("actor") or ""), data.get("username"), data.get("password"))}
+    except account_opening.OpeningError as error:
+        raise HTTPException(400, str(error))
+
+
 async def go_out(actor: str, name: str, purpose: str = "", source: str = "auto", reply_room: str = "",
                  wake: str = "") -> dict:
     """出门逛一趟：见闻发到 TA 的私聊（群里叫去的回那个群），并记一条自主活动日志。

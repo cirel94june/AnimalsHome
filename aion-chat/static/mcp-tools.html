@@ -43,6 +43,15 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     <div class="desc">连着的时候：牌桌上轮到他，花园会叫醒他去走一步；打开「有人找他就去看」，论坛上有人回他、@他也会叫醒他。
       牌局进展只发到你们的私聊。断了不会自己重连，会在私聊里告诉你，你看过后点「重新连接」。</div>
     <div id="garden-rows"><div class="desc">读取中…</div></div></section>
+  <section class="tool" id="opening"><h3>替 AI 开户</h3>
+    <div class="desc">你点一下，家里的程序替 TA 注册，钥匙直接存进 TA 自己的连接，AI 和聊天里都看不到。密码请你自己记好，家里不保存。</div>
+    <div class="sec" style="display:grid;gap:8px;margin-top:8px">
+      <select id="o-actor" aria-label="给谁开户"></select>
+      <select id="o-site" aria-label="开在哪里"></select>
+      <input id="o-name" placeholder="用户名（2 到 20 个字）" autocomplete="off">
+      <input id="o-pass" type="password" placeholder="密码（至少 6 位）" autocomplete="new-password">
+      <button class="primary" id="o-go" type="button">开户</button>
+    </div></section>
   <div id="list"></div>
 </div>
 <script>
@@ -178,6 +187,25 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       .catch(function (err) { e.target.checked = !e.target.checked; alert(err.message); });
   });
   loadGarden();
+  function loadOpening() {
+    return api('/api/account-opening').then(function (j) {
+      document.getElementById('o-site').innerHTML = j.sites.map(function (s) { return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>'; }).join('');
+      document.getElementById('o-actor').innerHTML = j.actors.map(function (a) {
+        return '<option value="' + esc(a.id) + '"' + (a.has['4399'] ? ' disabled' : '') + '>' + esc(a.name) + (a.has['4399'] ? '（已有账号）' : '') + '</option>';
+      }).join('');
+    });
+  }
+  document.getElementById('o-go').onclick = function () {
+    var btn = this, pass = document.getElementById('o-pass');
+    if (!document.getElementById('o-actor').value) { alert('现在没有可以开户的 AI'); return; }
+    btn.disabled = true;
+    api('/api/account-opening/' + encodeURIComponent(document.getElementById('o-site').value), { method: 'POST', body: JSON.stringify({
+      actor: document.getElementById('o-actor').value, username: document.getElementById('o-name').value, password: pass.value }) })
+      .then(function (j) { pass.value = ''; toast('开好了，已接上「' + j.connection + '」'); return Promise.all([load(), loadOpening()]); })
+      .catch(function (e) { alert(e.message); })
+      .then(function () { btn.disabled = false; });
+  };
+  loadOpening().catch(function () {});
   document.getElementById('add-btn').onclick = function () { openEdit(null); };
   list.addEventListener('click', function (e) {
     var b = e.target.closest('button'); if (!b) return;
