@@ -248,11 +248,14 @@
     deco: function () { return el('div', 'wgt ib-deco', decoHtml()); }
   };
 
-  var drag = null, renderWaiting = false;  // 正在拖小组件时不重画，松手再补
+  function spanOf(key) {  // 小组件占几格（4 列，每行约 96px）
+    if (key === 'cal') return { w: 4, h: 3 };
+    if (key === 'meet') return { w: 4, h: 2 };
+    return { w: sizeOf(key) === 'full' ? 4 : 2, h: 2 };
+  }
 
   function render() {
     if (!root) return;
-    if (drag) { renderWaiting = true; return; }
     root.innerHTML = '';
     root.dataset.material = desk.material;
     var hero = el('div', 'wgt full ib-hero', heroHtml());
@@ -263,20 +266,16 @@
       warn.href = '/usage';
       root.appendChild(warn);
     }
-    var pendingHalf = null;  // 落单的半宽挂件拉成整行，不留空位
+    var list = [];
     desk.widgets.forEach(function (key) {
       var w = BUILD[key] && BUILD[key]();
       if (!w) return;
       w.dataset.key = key;
-      if (sizeOf(key) === 'full') {
-        if (pendingHalf) { pendingHalf.classList.add('full'); pendingHalf = null; }
-        w.classList.add('full');
-      } else {
-        pendingHalf = pendingHalf ? null : w;
-      }
-      root.appendChild(w);
+      var span = spanOf(key);
+      list.push({ key: key, w: span.w, h: span.h, node: w, material: desk.material });
     });
-    if (pendingHalf) pendingHalf.classList.add('full');
+    if (window.HomeGrid) window.HomeGrid.setWidgets(list);
+    else list.forEach(function (x) { root.appendChild(x.node); });
     tick();
     // 挂件高度变化后让原桌面重新计算每页能放几行
     window.dispatchEvent(new Event('resize'));
@@ -430,119 +429,26 @@
     };
   }
 
-  // ── 拖小组件：长按拿起，跟手走，别的挂件自动让开，松手保存 ──
-  function widgetsInOrder() { return Array.prototype.slice.call(root.querySelectorAll('.wgt[data-key]')); }
-  function applySizes() {  // 换了顺序后，半宽挂件重新两两配对，落单的拉成整行
-    var pendingHalf = null;
-    widgetsInOrder().forEach(function (w) {
-      w.classList.remove('full');
-      if (sizeOf(w.dataset.key) === 'full') {
-        if (pendingHalf) { pendingHalf.classList.add('full'); pendingHalf = null; }
-        w.classList.add('full');
-      } else {
-        pendingHalf = pendingHalf ? null : w;
-      }
-    });
-    if (pendingHalf) pendingHalf.classList.add('full');
-  }
-  function flip(change) {  // 记下位置 → 改顺序 → 从旧位置滑到新位置
-    var items = widgetsInOrder().filter(function (w) { return !drag || w !== drag.el; });
-    var before = items.map(function (w) { return w.getBoundingClientRect(); });
-    change();
-    items.forEach(function (w, i) {
-      var after = w.getBoundingClientRect(), dx = before[i].left - after.left, dy = before[i].top - after.top;
-      if (!dx && !dy) return;
-      w.style.transition = 'none';
-      w.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
-      w.getBoundingClientRect();
-      w.style.transition = 'transform .2s ease';
-      w.style.transform = '';
-    });
-  }
-  function pickUp(w, x, y, pointerId) {
-    var rect = w.getBoundingClientRect(), ghost = w.cloneNode(true);
-    ghost.classList.add('wgt-ghost');
-    ghost.style.cssText = 'position:fixed;z-index:60;margin:0;pointer-events:none;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + rect.width + 'px;height:' + rect.height + 'px;';
-    root.appendChild(ghost);
-    w.classList.add('wgt-holding');
-    drag = { el: w, ghost: ghost, offsetX: x - rect.left, offsetY: y - rect.top, startX: x, startY: y, x: x, y: y, moved: false, changed: false };
-    // 小组件区自己能滚：拖到上下边缘时跟着滚，下面被挡住的挂件才够得着
-    drag.scroller = setInterval(function () {
-      if (!drag) return;
-      var box = root.getBoundingClientRect(), step = drag.y > box.bottom - 56 ? 12 : drag.y < box.top + 56 ? -12 : 0;
-      if (!step) return;
-      var before = root.scrollTop;
-      root.scrollTop += step;
-      if (root.scrollTop !== before) moveDrag(drag.x, drag.y);
-    }, 30);
-    try { root.setPointerCapture(pointerId); } catch (_) {}
-    if (navigator.vibrate) navigator.vibrate(12);
-  }
-  function moveDrag(x, y) {
-    drag.x = x; drag.y = y;
-    drag.ghost.style.left = (x - drag.offsetX) + 'px';
-    drag.ghost.style.top = (y - drag.offsetY) + 'px';
-    if (Math.hypot(x - drag.startX, y - drag.startY) > 10) drag.moved = true;
-    var under = document.elementFromPoint(x, y);
-    var target = under && under.closest && under.closest('.wgt[data-key]');
-    if (!target || target === drag.el || target.classList.contains('wgt-ghost')) return;
-    var list = widgetsInOrder(), from = list.indexOf(drag.el), to = list.indexOf(target);
-    flip(function () {
-      root.insertBefore(drag.el, from < to ? target.nextSibling : target);
-      applySizes();
-    });
-    drag.changed = true;
-  }
-  function drop() {
-    var d = drag;
-    clearInterval(d.scroller);
-    d.ghost.remove();
-    d.el.classList.remove('wgt-holding');
-    drag = null;
-    if (d.changed) {
-      desk.widgets = widgetsInOrder().map(function (w) { return w.dataset.key; });
-      saveDesk();
-    }
-    if (renderWaiting) { renderWaiting = false; render(); }
-  }
-
-  // ── 交互：点按 / 长按 ──
+  // ── 交互：点按 / 长按（小组件的拖动在桌面格子里，这里只管顶部）──
   function bind() {
-    var timer = null, longPressed = false, startX = 0, startY = 0, lastX = 0, lastY = 0;
-    // 手机上长按后浏览器会发 pointercancel，指针事件就断了；拖动交给触摸事件接着走，也不让页面跟着滚
-    root.addEventListener('touchmove', function (e) {
-      if (!drag) return;
-      e.preventDefault();
-      var t = e.touches[0];
-      if (t) moveDrag(t.clientX, t.clientY);
-    }, { passive: false });
-    ['touchend', 'touchcancel'].forEach(function (t) { root.addEventListener(t, function () { if (drag) drop(); }); });
+    var timer = null, longPressed = false, startX = 0, startY = 0;
     root.addEventListener('pointerdown', function (e) {
-      longPressed = false; startX = lastX = e.clientX; startY = lastY = e.clientY;
+      longPressed = false; startX = e.clientX; startY = e.clientY;
       clearTimeout(timer);
-      var pointerId = e.pointerId, picked = e.target.closest('.wgt[data-key]');
       timer = setTimeout(function () {
         longPressed = true;
-        if (picked && picked.isConnected) { pickUp(picked, lastX, lastY, pointerId); return; }
         root.classList.add('editing');
         if (navigator.vibrate) navigator.vibrate(12);
         setTimeout(function () { root.classList.remove('editing'); openSettings(); }, 260);
-      }, 450);
+      }, 600);
     });
     root.addEventListener('pointermove', function (e) {
-      lastX = e.clientX; lastY = e.clientY;
-      if (drag) { moveDrag(e.clientX, e.clientY); return; }
       if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) clearTimeout(timer);
     });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) {
-      root.addEventListener(t, function (e) {
-        clearTimeout(timer);
-        // 触摸的取消信号不算松手，由 touchend 收尾
-        if (drag && (t === 'pointerup' || (t === 'pointercancel' && e.pointerType !== 'touch'))) drop();
-      });
-    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (t) { root.addEventListener(t, function () { clearTimeout(timer); }); });
     root.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-    root.addEventListener('click', function (e) {
+    [root, document.getElementById('appPages')].forEach(function (area) { if (!area) return; area.addEventListener('click', function (e) {
+      if (area !== root && (!e.target.closest('.widget-slot') || window.HomeGrid.clicksSuppressed())) return;
       if (longPressed) { e.preventDefault(); return; }
       var target = e.target.closest('[data-act]');
       if (!target) return;
@@ -563,7 +469,7 @@
         desk.meet_actor = list[(i + 1) % list.length].id;
         saveDesk(); render();
       }
-    });
+    }); });
   }
 
   function loadNotes() {

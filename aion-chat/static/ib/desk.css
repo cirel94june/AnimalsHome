@@ -23,7 +23,7 @@ html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: no
   -webkit-user-select: none;
   -webkit-touch-callout: none;
 }
-#ib-desk .wgt {
+:is(#ib-desk, .ib-desk-scope) .wgt {
   position: relative;
   min-width: 0;
   overflow: hidden;
@@ -34,7 +34,7 @@ html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: no
   backdrop-filter: blur(22px) saturate(1.45);
   -webkit-backdrop-filter: blur(22px) saturate(1.45);
 }
-#ib-desk .wgt::before {
+:is(#ib-desk, .ib-desk-scope) .wgt::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
@@ -42,8 +42,8 @@ html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: no
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent);
   pointer-events: none;
 }
-#ib-desk .wgt.full { grid-column: 1 / -1; }
-#ib-desk .wgt-lab {
+:is(#ib-desk, .ib-desk-scope) .wgt.full { grid-column: 1 / -1; }
+:is(#ib-desk, .ib-desk-scope) .wgt-lab {
   position: absolute;
   top: 10px;
   left: 14px;
@@ -55,7 +55,7 @@ html[data-skin="ib"] .home-quick-row:has(#homeBoardNotice[hidden]) { display: no
   text-transform: uppercase;
   color: var(--ib-tx3);
 }
-#ib-desk.editing .wgt { animation: ibDeskWig 0.22s ease-in-out infinite alternate; }
+:is(#ib-desk, .ib-desk-scope).editing .wgt { animation: ibDeskWig 0.22s ease-in-out infinite alternate; }
 @keyframes ibDeskWig { from { transform: rotate(-0.6deg); } to { transform: rotate(0.6deg); } }
 
 /* ── Hero：日期 + 大时刻 + 头像 ── */
@@ -282,37 +282,37 @@ html[data-skin="ib"] .dock { padding: 12px 24px; margin-bottom: calc(18px + env(
 .ib-sheet .ntext { margin-top: 2px; font-size: 14px; line-height: 1.7; color: var(--ib-tx2); white-space: pre-wrap; word-break: break-word; }
 
 /* ── 新挂件：月历 / 音乐 / 相片卡 / 装饰 ── */
-#ib-desk .ib-cal { padding: 30px 14px 12px; }
-#ib-desk .cal-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-#ib-desk .cal-head b { font-family: var(--ib-serif); font-weight: 600; font-size: 20px; color: var(--ib-tx); }
-#ib-desk .cal-head small { font-size: 11px; color: var(--ib-tx3); letter-spacing: 0.1em; }
-#ib-desk .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
-#ib-desk .cal-grid i { font-style: normal; font-size: 11.5px; line-height: 22px; color: var(--ib-tx2); border-radius: 8px; position: relative; }
-#ib-desk .cal-grid i.wk { font-size: 10px; color: var(--ib-tx3); }
-#ib-desk .cal-grid i.today { background: var(--ib-acc); color: #fff; }
-#ib-desk .cal-grid i.mk::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--mk, var(--ib-acc)); }
-#ib-desk .cal-grid i.today.mk::after { background: #fff; }
-#ib-desk .cal-foot { margin-top: 6px; font-size: 11.5px; color: var(--ib-tx2); text-align: center; }
-#ib-desk .ib-music { padding: 30px 12px 12px; }
-#ib-desk .mu { display: flex; gap: 10px; align-items: center; }
-#ib-desk .mu-cover { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; flex: none; box-shadow: 0 4px 12px rgba(60, 90, 140, 0.2); }
-#ib-desk .mu-cover.none { display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.6); color: var(--ib-acc); font-size: 22px; }
-#ib-desk .mu-text { min-width: 0; }
-#ib-desk .mu-text b { display: block; font-size: 13.5px; font-weight: 600; color: var(--ib-tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#ib-desk .mu-text span { display: block; font-size: 11.5px; color: var(--ib-tx3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#ib-desk .mu-empty, #ib-desk .ph-empty, #ib-desk .deco-empty { padding: 34px 12px 14px; font-size: 12px; color: var(--ib-tx3); text-align: center; line-height: 1.6; }
-#ib-desk .ib-photo { min-height: 128px; }
-#ib-desk .ph { position: absolute; inset: 0; background: center / cover no-repeat; }
-#ib-desk .ph-cap { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); }
-#ib-desk .ib-deco { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 14px 12px; min-height: 96px; text-align: center; }
-#ib-desk .deco-img { max-width: 100%; max-height: 110px; object-fit: contain; }
-#ib-desk .deco-text { font-family: var(--ib-serif); font-size: 15px; line-height: 1.6; color: var(--ib-tx); white-space: pre-wrap; }
+:is(#ib-desk, .ib-desk-scope) .ib-cal { padding: 30px 14px 12px; }
+:is(#ib-desk, .ib-desk-scope) .cal-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+:is(#ib-desk, .ib-desk-scope) .cal-head b { font-family: var(--ib-serif); font-weight: 600; font-size: 20px; color: var(--ib-tx); }
+:is(#ib-desk, .ib-desk-scope) .cal-head small { font-size: 11px; color: var(--ib-tx3); letter-spacing: 0.1em; }
+:is(#ib-desk, .ib-desk-scope) .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i { font-style: normal; font-size: 11.5px; line-height: 22px; color: var(--ib-tx2); border-radius: 8px; position: relative; }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i.wk { font-size: 10px; color: var(--ib-tx3); }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i.today { background: var(--ib-acc); color: #fff; }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i.mk::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--mk, var(--ib-acc)); }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i.today.mk::after { background: #fff; }
+:is(#ib-desk, .ib-desk-scope) .cal-foot { margin-top: 6px; font-size: 11.5px; color: var(--ib-tx2); text-align: center; }
+:is(#ib-desk, .ib-desk-scope) .ib-music { padding: 30px 12px 12px; }
+:is(#ib-desk, .ib-desk-scope) .mu { display: flex; gap: 10px; align-items: center; }
+:is(#ib-desk, .ib-desk-scope) .mu-cover { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; flex: none; box-shadow: 0 4px 12px rgba(60, 90, 140, 0.2); }
+:is(#ib-desk, .ib-desk-scope) .mu-cover.none { display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.6); color: var(--ib-acc); font-size: 22px; }
+:is(#ib-desk, .ib-desk-scope) .mu-text { min-width: 0; }
+:is(#ib-desk, .ib-desk-scope) .mu-text b { display: block; font-size: 13.5px; font-weight: 600; color: var(--ib-tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(#ib-desk, .ib-desk-scope) .mu-text span { display: block; font-size: 11.5px; color: var(--ib-tx3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(#ib-desk, .ib-desk-scope) .mu-empty, :is(#ib-desk, .ib-desk-scope) .ph-empty, :is(#ib-desk, .ib-desk-scope) .deco-empty { padding: 34px 12px 14px; font-size: 12px; color: var(--ib-tx3); text-align: center; line-height: 1.6; }
+:is(#ib-desk, .ib-desk-scope) .ib-photo { min-height: 128px; }
+:is(#ib-desk, .ib-desk-scope) .ph { position: absolute; inset: 0; background: center / cover no-repeat; }
+:is(#ib-desk, .ib-desk-scope) .ph-cap { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45); }
+:is(#ib-desk, .ib-desk-scope) .ib-deco { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 14px 12px; min-height: 96px; text-align: center; }
+:is(#ib-desk, .ib-desk-scope) .deco-img { max-width: 100%; max-height: 110px; object-fit: contain; }
+:is(#ib-desk, .ib-desk-scope) .deco-text { font-family: var(--ib-serif); font-size: 15px; line-height: 1.6; color: var(--ib-tx); white-space: pre-wrap; }
 
 /* 挂件材质：毛玻璃（默认）/ 实底 / 透明 */
-#ib-desk[data-material="solid"] .wgt { background: rgba(255, 255, 255, 0.92); backdrop-filter: none; -webkit-backdrop-filter: none; }
-#ib-desk[data-material="clear"] .wgt { background: transparent; border-color: rgba(255, 255, 255, 0.35); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
-#ib-desk[data-material="clear"] .wgt::before { display: none; }
-#ib-desk .ib-photo.wgt { backdrop-filter: none; -webkit-backdrop-filter: none; }
+:is(#ib-desk, .ib-desk-scope)[data-material="solid"] .wgt { background: rgba(255, 255, 255, 0.92); backdrop-filter: none; -webkit-backdrop-filter: none; }
+:is(#ib-desk, .ib-desk-scope)[data-material="clear"] .wgt { background: transparent; border-color: rgba(255, 255, 255, 0.35); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+:is(#ib-desk, .ib-desk-scope)[data-material="clear"] .wgt::before { display: none; }
+:is(#ib-desk, .ib-desk-scope) .ib-photo.wgt { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 /* 桌面设置：拖动排序的行 */
 .ib-sheet .ib-wrow .grip { flex: none; cursor: grab; touch-action: none; padding: 0 6px; color: var(--ib-tx3); font-size: 18px; line-height: 1; }
@@ -331,8 +331,8 @@ html[data-skin="ib"] .app-pages { flex-shrink: 0; min-height: calc(2 * 82px + 14
 
 /* 今天花费超过提醒线 */
 .ib-spend { display: block; padding: 10px 14px; font-size: 13px; line-height: 1.5; color: #b45309; background: rgba(255, 243, 224, 0.9); text-decoration: none; }
-#ib-desk .cal-grid i.mood { font-size: 13px; }
-#ib-desk .cal-grid i.talked:not(.today):not(.mood) { color: var(--ib-tx); font-weight: 600; }
-#ib-desk .ib-cal { cursor: pointer; }
-#ib-desk .wgt-ghost { transform: scale(1.04) rotate(1deg); box-shadow: 0 18px 44px rgba(50, 80, 140, 0.35); opacity: 0.96; }
-#ib-desk .wgt-holding { opacity: 0.25; }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i.mood { font-size: 13px; }
+:is(#ib-desk, .ib-desk-scope) .cal-grid i.talked:not(.today):not(.mood) { color: var(--ib-tx); font-weight: 600; }
+:is(#ib-desk, .ib-desk-scope) .ib-cal { cursor: pointer; }
+:is(#ib-desk, .ib-desk-scope) .wgt-ghost { transform: scale(1.04) rotate(1deg); box-shadow: 0 18px 44px rgba(50, 80, 140, 0.35); opacity: 0.96; }
+:is(#ib-desk, .ib-desk-scope) .wgt-holding { opacity: 0.25; }

@@ -102,6 +102,10 @@ body[data-theme="dark"] .clock-widget {
   align-items: flex-start;
   position: relative;
 }
+.widget-slot { display: block; padding: 0 6px; touch-action: none; }
+.widget-slot .wgt { height: 100%; }
+.widget-placeholder { border-radius: 22px; background: rgba(255,255,255,.22); outline: 1.5px dashed rgba(255,255,255,.7); outline-offset: -2px; margin: 0 6px; }
+.drag-ghost.widget-slot { padding: 0; }
 .app-slot.empty {
   pointer-events: auto;
 }
@@ -671,6 +675,7 @@ body[data-theme="dark"] .gsi-title { color: rgba(244,246,255,0.70); }
 
   </div>
 
+<script src="/static/home-grid.js?v=20261109"></script>
 <script>
 /* ── 应用注册表 ─────────────────────────────────── */
 const APPS = [
@@ -720,7 +725,7 @@ const APPS = [
 // 没列进任何分组的新应用照旧单独放在桌面上。
 const FOLDERS = [
   { id: 'folder-play', name: '一起玩', apps: ['theater', 'music-station', 'playground', 'english-corner', 'reading', 'travel', 'trpg'] },
-  { id: 'folder-home', name: '家里的事', apps: ['calendar', 'ai-feed', 'moments', 'album', 'gift', 'wishes', 'lounge-friends', 'taobao', 'xhs-lite', 'family-dynamics'] },
+  { id: 'folder-home', name: '家里的事', apps: ['ai-feed', 'moments', 'album', 'gift', 'wishes', 'lounge-friends', 'taobao', 'xhs-lite', 'family-dynamics', 'calendar'] },
   { id: 'folder-life', name: '我的生活', apps: ['alarm', 'health', 'location', 'fund', 'app-supervision'] },
   { id: 'folder-switches', name: '家里的开关', apps: ['switches', 'settings', 'worldbook', 'capabilities', 'camera', 'logs', 'activity', 'usage', 'mcp-tools', 'repair'] },
   { id: 'folder-later', name: '先收起来', apps: ['whisper', 'dateTheater', 'hug'] },
@@ -796,6 +801,88 @@ const dragState = {
 };
 let suppressClicksUntil = 0;
 
+// ── 小组件和 App 混排（11-09 小猫）：IB 桌面把小组件交给这里，和图标放进同一张格子 ──
+const homeWidgets = new Map();   // 'w:cal' → {w, h, node, material}
+let pendingWidgets = null;
+
+function gridItems(layout) {
+  return [
+    ...getGridAppIds().map(id => ({ id, w: 1, h: 1, cell: layout?.[id] })),
+    ...[...homeWidgets].map(([id, item]) => ({ id, w: item.w, h: item.h, cell: layout?.[id] })),
+  ];
+}
+
+function solveLayout(layout, pinnedId) {
+  return window.HomeGridSolver.place(gridItems(layout), PAGE_COLUMNS, getRowsPerPage(), pinnedId);
+}
+
+function applyWidgets(list) {
+  const oldKeys = [...homeWidgets.keys()].join();
+  homeWidgets.clear();
+  list.forEach(item => homeWidgets.set('w:' + item.key, { w: item.w, h: item.h, node: item.node, material: item.material }));
+  if ([...homeWidgets.keys()].join() !== oldKeys) appLayout = normalizeLayout(appLayout);
+  renderApps();
+}
+
+window.HomeGrid = {
+  setWidgets(list) {
+    if (dragState.active) { pendingWidgets = list; return; }
+    applyWidgets(list);
+  },
+  clicksSuppressed() { return Date.now() < suppressClicksUntil; },
+};
+
+function currentPlacement() {
+  if (dragState.active && dragState.appId && Number.isInteger(dragState.dropCell)) {
+    return solveLayout({ ...dragState.originalLayout, [dragState.appId]: dragState.dropCell }, dragState.appId);
+  }
+  return solveLayout(appLayout);
+}
+
+function mixedPagesHTML(placement, rows) {
+  const perPage = PAGE_COLUMNS * rows;
+  const covered = new Set();
+  const tiles = Array.from({ length: pageCount }, () => []);
+  const position = (cell, w, h) => {
+    const at = window.HomeGridSolver.split(cell, PAGE_COLUMNS, rows);
+    return `grid-column:${at.col + 1} / span ${w};grid-row:${at.row + 1} / span ${h};`;
+  };
+  gridItems(placement).forEach(item => {
+    const cell = placement[item.id];
+    if (!Number.isInteger(cell)) return;
+    const page = Math.floor(cell / perPage);
+    if (!tiles[page]) return;
+    const at = window.HomeGridSolver.split(cell, PAGE_COLUMNS, rows);
+    for (let r = 0; r < item.h; r++) for (let c = 0; c < item.w; c++) covered.add(page * perPage + (at.row + r) * PAGE_COLUMNS + at.col + c);
+    const pos = position(cell, item.w, item.h);
+    const dragging = dragState.active && dragState.appId === item.id;
+    if (item.id.startsWith('w:')) {
+      const height = item.h * PAGE_ROW_HEIGHT + (item.h - 1) * PAGE_ROW_GAP;
+      tiles[page].push(dragging
+        ? `<div class="app-slot widget-placeholder" data-cell="${cell}" style="${pos}height:${height}px"></div>`
+        : `<div class="app-slot widget-slot ib-desk-scope" data-cell="${cell}" data-widget="${escapeAttr(item.id)}" data-material="${escapeAttr(homeWidgets.get(item.id).material || '')}" style="${pos}height:${height}px"></div>`);
+    } else {
+      const app = getAppById(item.id);
+      if (!app) return;
+      tiles[page].push(`<div class="app-slot" data-cell="${cell}" style="${pos}">${dragging ? '<div class="app-placeholder" aria-hidden="true"></div>' : appHTML(app, { grid: true, cell })}</div>`);
+    }
+  });
+  return tiles.map((list, page) => {
+    for (let n = 0; n < perPage; n++) {
+      const cell = page * perPage + n;
+      if (!covered.has(cell)) list.push(`<div class="app-slot empty" data-cell="${cell}" style="${position(cell, 1, 1)}"></div>`);
+    }
+    return `<div class="app-page" data-page-index="${page}">${list.join('')}</div>`;
+  }).join('');
+}
+
+function attachWidgetNodes() {
+  document.querySelectorAll('.widget-slot[data-widget]:not(.drag-ghost)').forEach(slot => {
+    const item = homeWidgets.get(slot.dataset.widget);
+    if (item) slot.appendChild(item.node);
+  });
+}
+
 function escapeAttr(value) {
   return String(value == null ? '' : value)
     .replace(/&/g, '&amp;')
@@ -829,7 +916,7 @@ function getRowsPerPage() {
   const height = pages?.clientHeight || 330;
   const verticalPadding = 24;
   const rows = Math.floor((height - verticalPadding + PAGE_ROW_GAP) / (PAGE_ROW_HEIGHT + PAGE_ROW_GAP));
-  return Math.max(2, Math.min(4, rows || 3));
+  return Math.max(2, Math.min(homeWidgets.size ? 7 : 4, rows || 3));
 }
 
 function buildSequentialLayout(ids) {
@@ -851,7 +938,7 @@ function hasLayoutPositions(positions) {
 }
 
 function sameLayout(a, b) {
-  return getGridAppIds().every(id => Number(a?.[id]) === Number(b?.[id]));
+  return [...getGridAppIds(), ...homeWidgets.keys()].every(id => Number(a?.[id]) === Number(b?.[id]));
 }
 
 function nextFreeCell(layout, startAt = 0) {
@@ -862,6 +949,7 @@ function nextFreeCell(layout, startAt = 0) {
 }
 
 function normalizeLayout(rawLayout) {
+  if (homeWidgets.size) return solveLayout(rawLayout || {});
   const appIds = getGridAppIds();
   const allowed = new Set(appIds);
   const layout = {};
@@ -1031,16 +1119,23 @@ function renderApps() {
   const rows = getRowsPerPage();
   document.documentElement.style.setProperty('--home-page-rows', rows);
   pageCapacity = PAGE_COLUMNS * rows;
-  pageCount = getPageCountForLayout();
+  const placement = homeWidgets.size ? currentPlacement() : null;
+  if (placement) {
+    const highest = Math.max(0, ...Object.values(placement));
+    pageCount = Math.max(MIN_FREE_PAGES, Math.floor(highest / pageCapacity) + 2);
+  } else {
+    pageCount = getPageCountForLayout();
+  }
   currentPage = Math.min(currentPage, pageCount - 1);
   const cellMap = makeCellMap();
   const dockApps = APPS.filter(app => app.dock);
 
-  track.innerHTML = Array.from({ length: pageCount }, (_, pageIndex) => `
+  track.innerHTML = placement ? mixedPagesHTML(placement, rows) : Array.from({ length: pageCount }, (_, pageIndex) => `
     <div class="app-page" data-page-index="${pageIndex}">
       ${Array.from({ length: pageCapacity }, (_, slot) => appCellHTML(cellMap.get(pageIndex * pageCapacity + slot), pageIndex * pageCapacity + slot)).join('')}
     </div>
   `).join('');
+  if (placement) attachWidgetNodes();
   dots.innerHTML = pageCount > 1
     ? Array.from({ length: pageCount }, (_, idx) => `<button class="page-dot ${idx === currentPage ? 'active' : ''}" type="button" data-page="${idx}" aria-label="第 ${idx + 1} 页"></button>`).join('')
     : '';
@@ -1216,7 +1311,7 @@ function handleAppKeydown(e) {
 function handlePagesPointerDown(e) {
   if (e.button != null && e.button !== 0) return;
   const pages = document.getElementById('appPages');
-  const icon = e.target.closest('.app-icon[data-grid-app="1"]');
+  const icon = e.target.closest('.app-icon[data-grid-app="1"], .widget-slot[data-widget]');
   gestureState.pointerId = e.pointerId;
   gestureState.startX = e.clientX;
   gestureState.startY = e.clientY;
@@ -1228,7 +1323,7 @@ function handlePagesPointerDown(e) {
     return;
   }
   dragState.pointerId = e.pointerId;
-  dragState.appId = icon.dataset.appId;
+  dragState.appId = icon.dataset.appId || icon.dataset.widget;
   dragState.sourceCell = appLayout[dragState.appId];
   dragState.dropCell = dragState.sourceCell;
   dragState.startX = e.clientX;
@@ -1305,6 +1400,10 @@ function startIconDrag(icon, x, y, pointerId) {
   ghost.classList.add('drag-ghost');
   ghost.style.width = `${rect.width}px`;
   ghost.style.height = `${rect.height}px`;
+  const isWidget = dragState.appId.startsWith('w:');
+  dragState.offX = isWidget ? x - rect.left : null;
+  dragState.offY = isWidget ? y - rect.top : null;
+  if (isWidget) ghost.style.transform = 'scale(1.03)';
   document.body.appendChild(ghost);
 
   dragState.active = true;
@@ -1324,15 +1423,15 @@ function startIconDrag(icon, x, y, pointerId) {
 
 function updateDragGhost(x, y) {
   if (!dragState.ghost) return;
-  dragState.ghost.style.left = `${x}px`;
-  dragState.ghost.style.top = `${y}px`;
+  dragState.ghost.style.left = `${dragState.offX == null ? x : x - dragState.offX}px`;
+  dragState.ghost.style.top = `${dragState.offY == null ? y : y - dragState.offY}px`;
 }
 
 function updateIconDrag(x, y) {
   dragState.lastX = x;
   dragState.lastY = y;
   updateDragGhost(x, y);
-  setDragDropCell(cellFromPoint(x, y));
+  setDragDropCell(dragState.offX == null ? cellFromPoint(x, y) : widgetCellFromPoint(x, y));
   scheduleDragPageTurn(x);
 }
 
@@ -1351,6 +1450,16 @@ function cellFromPoint(x, y) {
   if (slot) return Number(slot.dataset.cell);
   const page = el?.closest('.app-page') || document.querySelector(`.app-page[data-page-index="${currentPage}"]`);
   return page ? cellFromPagePoint(page, x, y) : dragState.dropCell;
+}
+
+// 小组件按左上角算落点，不按手指算；再挪进页内，拖的时候位置才不抖
+function widgetCellFromPoint(x, y) {
+  const page = document.querySelector(`.app-page[data-page-index="${currentPage}"]`);
+  const item = homeWidgets.get(dragState.appId);
+  if (!page || !item) return dragState.dropCell;
+  const colWidth = (page.getBoundingClientRect().width - 32) / PAGE_COLUMNS;
+  const cell = cellFromPagePoint(page, x - dragState.offX + colWidth / 2, y - dragState.offY + PAGE_ROW_HEIGHT / 2);
+  return window.HomeGridSolver.clampCell(cell, item.w, item.h, PAGE_COLUMNS, getRowsPerPage());
 }
 
 function cellFromPagePoint(pageEl, x, y) {
@@ -1418,7 +1527,14 @@ function endIconDrag(save) {
   dragState.ghost = null;
   document.getElementById('appPages').classList.remove('dragging');
 
-  if (save && wasActive && appId && Number.isInteger(dropCell)) {
+  dragState.offX = dragState.offY = null;
+  if (save && wasActive && appId && Number.isInteger(dropCell) && homeWidgets.size) {
+    appLayout = solveLayout({ ...originalLayout, [appId]: dropCell }, appId);
+    layoutRevision += 1;
+    saveLayout();
+    suppressClicksUntil = Date.now() + 420;
+    showToast('位置已保存');
+  } else if (save && wasActive && appId && Number.isInteger(dropCell)) {
     appLayout = { ...originalLayout };
     const targetId = getAppIdAtCell(appLayout, dropCell, appId);
     if (targetId && Number.isInteger(sourceCell)) appLayout[targetId] = sourceCell;
@@ -1430,6 +1546,12 @@ function endIconDrag(save) {
     showToast('图标位置已保存');
   } else {
     appLayout = originalLayout;
+  }
+  if (pendingWidgets) {
+    const list = pendingWidgets;
+    pendingWidgets = null;
+    applyWidgets(list);
+    return;
   }
   renderApps();
 }
