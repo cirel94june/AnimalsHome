@@ -3064,3 +3064,7 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ### 209a. 地名查询顺序
 
 实测旧游记大量被高德模糊匹配（「京都 鴨川」记成宁德市）。`travel_places.geocode` 改成 OSM 优先，查不到且是中文才用高德。老记录补坐标只用地名第一段，由细到粗；网络错误不记成查不到。标记详情不再显示当时查错的地区。旧游记文字里的天气不回改。
+
+## 210. 全家跑团
+
+`family_trpg.py`、`routes/family_trpg.py`、`static/trpg.html`，桌面「跑团」。中立 DM（开局选模型），每位 AI 用自己的人设和模型，每轮等小猫行动；骰子程序掷，存盘后重试不重掷；HP、道具程序记，DM 增减有上限；数据只在 `data/trpg/`，不进 Hub 和群聊；AI 文本过 `strip_untrusted_reply`，不执行指令。游戏 id 校验 32 位 hex。不涉及权限。

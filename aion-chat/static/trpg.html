@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>全家跑团</title>
+<link rel="stylesheet" href="/static/ib/desk.css">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); min-height: 100dvh; -webkit-tap-highlight-color: transparent; }
+.page { max-width: 680px; margin: 0 auto; padding: calc(10px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); }
+.top-bar { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; }
+.top-bar h2 { font-weight: 400; flex: 1; min-width: 0; font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.back-btn { border: none; background: rgba(255,255,255,.55); border-radius: 50%; width: 34px; height: 34px; font-size: 15px; color: var(--ib-acc, #3d6fd8); flex: none; }
+.panel { border-radius: 20px; padding: 14px 16px; margin-bottom: 12px; background: rgba(255,255,255,.55); border: 1px solid rgba(255,255,255,.85); box-shadow: 0 8px 24px rgba(70,100,150,.1); }
+.label { font-size: 12.5px; color: var(--ib-tx2); margin: 12px 0 6px; }
+.label:first-child { margin-top: 0; }
+.input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(120,150,200,.35); background: rgba(255,255,255,.7); color: var(--ib-tx); font: inherit; font-size: 15px; }
+textarea.input { min-height: 72px; resize: vertical; }
+.who { display: flex; flex-wrap: wrap; gap: 8px; font-size: 14px; }
+.who label { display: inline-flex; gap: 5px; align-items: center; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.6); }
+.btn { width: 100%; margin-top: 12px; padding: 11px 0; border: 0; border-radius: 14px; background: var(--ib-acc, #3d6fd8); color: #fff; font-size: 15px; }
+.btn:disabled { opacity: .5; }
+.btn.small { width: auto; margin: 0; padding: 9px 14px; border-radius: 12px; font-size: 14px; flex: none; }
+.btn.soft { background: rgba(255,255,255,.75); color: var(--ib-acc, #3d6fd8); border: 1px solid rgba(120,150,200,.35); }
+.row { display: flex; gap: 8px; align-items: stretch; }
+.game-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px 0; border-top: 1px dashed rgba(120,150,200,.3); color: inherit; font-size: 15px; }
+.game-item:first-child { border-top: 0; }
+.game-item small { display: block; color: var(--ib-tx3); font-size: 12px; margin-top: 2px; }
+.cards { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 10px; padding-bottom: 2px; }
+.card { flex: 0 0 148px; border-radius: 16px; padding: 10px 12px; background: rgba(255,255,255,.55); border: 1px solid rgba(255,255,255,.85); font-size: 12px; color: var(--ib-tx2); }
+.card b { display: block; font-size: 14px; color: var(--ib-tx); margin-bottom: 4px; }
+.card.down { opacity: .5; }
+.bar { height: 6px; border-radius: 4px; background: rgba(120,150,200,.25); overflow: hidden; margin: 4px 0; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg,#6fbf8b,#3aa76d); }
+.feed { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
+.e { font-size: 14.5px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+.e .n { font-size: 12px; color: var(--ib-tx3); display: block; }
+.e.narration { background: rgba(255,255,255,.62); border-radius: 16px; padding: 12px 14px; }
+.e.action { border-left: 3px solid var(--ib-acc, #3d6fd8); padding-left: 10px; }
+.e.roll { font-size: 13px; color: var(--ib-tx2); text-align: center; }
+.e.roll.ok { color: #2d8a57; } .e.roll.no { color: #b4485a; }
+.e.chat { font-size: 14px; color: var(--ib-tx2); }
+.e.system { text-align: center; font-size: 13px; color: var(--ib-tx3); }
+.status { text-align: center; font-size: 13px; color: var(--ib-tx2); padding: 6px 0; min-height: 28px; }
+.dock { position: sticky; bottom: 0; padding-top: 6px; }
+.err { color: #b4485a; }
+.toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); max-width: 88%; padding: 10px 16px; border-radius: 14px; background: rgba(10,30,66,.86); color: #fff; font-size: 13.5px; z-index: 50; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="top-bar"><button class="back-btn" id="back" aria-label="返回">⬅</button><h2 id="title">全家跑团</h2><button class="btn small soft" id="del" hidden>删除</button></div>
+  <div id="lobby">
+    <section class="panel">
+      <div class="label">故事点子</div><textarea class="input" id="idea" maxlength="1000" placeholder="比如：大雪封山的旅馆里，有人收到了一封十年前寄出的信"></textarea>
+      <div class="label">谁一起玩</div><div class="who" id="actors"></div>
+      <div class="label">DM 用哪个模型</div><select class="input" id="dm"></select>
+      <div class="label">你的角色</div><input class="input" id="me" maxlength="20" placeholder="角色名字">
+      <div class="label">角色设定（可不写）</div><input class="input" id="mine" maxlength="300" placeholder="比如：失忆的旅店学徒">
+      <div class="label">大约几轮</div><input class="input" id="rounds" type="number" min="3" max="30" value="12">
+      <p class="label">每轮 DM 说话 2 次，每位 AI 说话 1 次，轮数越多越费额度。</p>
+      <button class="btn" id="create">开局</button>
+    </section>
+    <section class="panel"><div class="label">之前的局</div><div id="games"></div></section>
+  </div>
+  <div id="table" hidden>
+    <div class="cards" id="cards"></div>
+    <div class="feed" id="feed"></div>
+    <div class="status" id="status"></div>
+    <div class="dock panel">
+      <div id="act-box" hidden><textarea class="input" id="act" maxlength="400" placeholder="轮到你了：你要做什么？"></textarea><button class="btn" id="act-go">行动</button></div>
+      <div class="row" style="margin-top:8px"><input class="input" id="say" maxlength="400" placeholder="在牌桌上聊天，@ 谁谁回"><button class="btn small" id="say-go">发送</button></div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  'use strict';
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function toast(t) { var d = document.createElement('div'); d.className = 'toast'; d.textContent = t; document.body.appendChild(d); setTimeout(function () { d.remove(); }, 2800); }
+  function api(path, opts) {
+    return fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {})).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || '没成功'); return j; });
+    });
+  }
+  function post(path, body) { return api(path, { method: 'POST', body: JSON.stringify(body || {}) }); }
+  var current = null, timer = null, lastLog = '';
+
+  function showLobby() {
+    current = null; clearInterval(timer); $('lobby').hidden = false; $('table').hidden = true; $('del').hidden = true; $('title').textContent = '全家跑团';
+    api('/api/trpg/games').then(function (j) {
+      $('games').innerHTML = j.games.length ? j.games.map(function (g) {
+        return '<button class="game-item" data-id="' + esc(g.id) + '">' + esc(g.title) + '<small>' + (g.phase === 'done' ? '已结束' : '第 ' + g.round + '/' + g.max_rounds + ' 轮') + ' · ' + esc(g.players.join('、')) + '</small></button>';
+      }).join('') : '<div class="label">还没有。</div>';
+    });
+  }
+  function open(id) {
+    current = id; lastLog = ''; $('lobby').hidden = true; $('table').hidden = false; $('del').hidden = false;
+    refresh(); clearInterval(timer); timer = setInterval(function () { if (!document.hidden) refresh(); }, 2500);
+  }
+  function statusText(g) {
+    if (g.error) return '';
+    if (g.working) return g.phase === 'opening' ? 'DM 在准备故事……' : g.phase === 'resolve' ? 'DM 在结算……' : '大家在想怎么行动……';
+    if (g.phase === 'wait_user') return '等你行动';
+    if (g.phase === 'done') return '故事结束了';
+    return '';
+  }
+  function name(g, who) { return who === 'dm' ? 'DM' : ((g.players[who] || {}).name || ''); }
+  function render(g) {
+    $('title').textContent = (g.title || '准备中') + (g.round ? ' · ' + g.round + '/' + g.max_rounds : '');
+    $('cards').innerHTML = g.order.map(function (id) {
+      var p = g.players[id];
+      return '<div class="card' + (p.hp <= 0 ? ' down' : '') + '"><b>' + esc(p.name) + '</b>HP ' + p.hp + '/' + p.max_hp + '<div class="bar"><i style="width:' + Math.round(p.hp / p.max_hp * 100) + '%"></i></div>' +
+        Object.keys(p.stats).map(function (k) { return esc(g.stats_names[k]) + p.stats[k]; }).join(' ') + (p.items.length ? '<br>' + esc(p.items.join('、')) : '') + '</div>';
+    }).join('');
+    var mark = g.log.length + ':' + (g.log.length ? g.log[g.log.length - 1].id : '');
+    if (mark !== lastLog) {
+      lastLog = mark;
+      var near = window.innerHeight + window.scrollY > document.body.scrollHeight - 220;
+      $('feed').innerHTML = g.log.map(function (e) {
+        var extra = e.kind === 'roll' ? (e.text.slice(-2) === '成功' ? ' ok' : ' no') : '';
+        var who = e.kind === 'system' ? '' : name(g, e.who);
+        if (e.kind === 'roll') return '<div class="e roll' + extra + '">🎲 ' + esc(who) + ' ' + esc(e.text) + '</div>';
+        return '<div class="e ' + esc(e.kind) + '">' + (who ? '<span class="n">' + esc(who) + (e.kind === 'action' ? ' 的行动' : '') + '</span>' : '') + esc(e.text) + '</div>';
+      }).join('');
+      if (near) window.scrollTo(0, document.body.scrollHeight);
+    }
+    $('status').innerHTML = g.error && !g.working ? '<span class="err">' + esc(g.error) + '</span> <button class="btn small soft" id="retry">重试</button>' : esc(statusText(g));
+    if ($('retry')) $('retry').onclick = function () { post('/api/trpg/games/' + g.id + '/retry').then(refresh).catch(function (e) { toast(e.message); }); };
+    $('act-box').hidden = g.phase !== 'wait_user';
+  }
+  function refresh() {
+    if (!current) return;
+    var id = current;
+    api('/api/trpg/games/' + id).then(function (g) { if (id === current) render(g); }).catch(function (e) { toast(e.message); });
+  }
+
+  $('back').onclick = function () { if (current) showLobby(); else if (history.length > 1) history.back(); else location.href = '/'; };
+  $('games').addEventListener('click', function (e) { var b = e.target.closest('[data-id]'); if (b) open(b.dataset.id); });
+  $('create').onclick = function () {
+    var btn = this; btn.disabled = true;
+    post('/api/trpg/games', { idea: $('idea').value, dm_model: $('dm').value, my_name: $('me').value, my_character: $('mine').value, rounds: $('rounds').value,
+      actors: Array.prototype.map.call(document.querySelectorAll('#actors input:checked'), function (c) { return c.value; }) })
+      .then(function (r) { open(r.id); }).catch(function (e) { toast(e.message); }).then(function () { btn.disabled = false; });
+  };
+  $('act-go').onclick = function () {
+    post('/api/trpg/games/' + current + '/act', { text: $('act').value }).then(function () { $('act').value = ''; refresh(); }).catch(function (e) { toast(e.message); });
+  };
+  function sendChat() {
+    var text = $('say').value.trim(); if (!text) return;
+    post('/api/trpg/games/' + current + '/chat', { text: text }).then(function () { $('say').value = ''; refresh(); }).catch(function (e) { toast(e.message); });
+  }
+  $('say-go').onclick = sendChat;
+  $('say').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.isComposing) sendChat(); });
+  $('del').onclick = function () {
+    if (!confirm('删除这一局？删了找不回来。')) return;
+    api('/api/trpg/games/' + current, { method: 'DELETE' }).then(showLobby).catch(function (e) { toast(e.message); });
+  };
+
+  api('/api/travel/options').then(function (o) {
+    $('actors').innerHTML = o.actors.map(function (a) { return '<label><input type="checkbox" value="' + esc(a.id) + '" checked>' + esc(a.name) + '</label>'; }).join('');
+  });
+  api('/api/models').then(function (rows) {
+    $('dm').innerHTML = rows.map(function (m) { return '<option value="' + esc(m.key) + '">' + esc(m.key) + '</option>'; }).join('');
+  });
+  showLobby();
+})();
+</script>
+</body>
+</html>

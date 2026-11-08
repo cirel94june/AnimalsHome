@@ -588,3 +588,5 @@ html[data-skin="ib"] .sub-page .settings-dock button.action-btn.primary.primary.
   color: #fff !important;
   border: none !important;
 }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .app-icon[data-app-id="trpg"] .icon-img img { content: url("/static/ib/icons/ghost-forest.svg"); }
+html[data-skin="ib"]:not([data-ib-icons="original"]) .mini-icon[data-app-id="trpg"] img { content: url("/static/ib/icons/ghost-forest.svg"); }
