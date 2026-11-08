@@ -3056,3 +3056,7 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 ## 208. 世界窗（[看看:地名]，并接进旅行）
 
 11-08 小猫转来手机本地教程，改成做进服务器。`world_window.py`：地名 → 天气、时间，Nominatim 反查英文城市名，SkylineWebcams 公开预览图（robots 未禁，同地 10 分钟缓存）。AI 指令走 `_process_outing` 同一入口（小克 / Lucien / 座位 / 私聊），系统叫醒时只清除不执行；接话走 `strip_untrusted_reply`，不执行动作。`travel_places.lookup` 有摄像头时放在第一张。能力 `world_window`。不涉及权限和数据。
+
+## 209. 旅行地球、放大地图、去过的地方、世界窗目录
+
+`travel_map.py`：按地方合并旅行记录（全家出游同一趟算一次）；坐标存 `data/travel_geo.json`，新旅行出发时记，老记录首次打开地图时后台按 OSM 限速补；她的地方存 `data/travel_my_places.json`；世界窗目录（国家、城市）缓存 7 天，城市页只取目录里有的国家。页面 `static/travel-map.js`，库放 `static/vendor/globe/`（d3-geo、topojson-client、world-atlas、Leaflet）。放大地图默认 OSM 底图，可切高德。接口在 `routes/travel.py`。不涉及权限。

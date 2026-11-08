@@ -275,6 +275,11 @@ async def _trip(mode: str, actors: list[str], *, where: str, named: str, wish: s
     wish = (wish or "").strip()[:200]
     place_name = await choose_place(actors[0], where=where, named=named, wish=wish, model=models[actors[0]])
     place = await _lookup_place(place_name, models[actors[0]])
+    try:
+        import travel_map
+        travel_map.remember(place.label, place.latitude, place.longitude)  # 地球上的标记用
+    except Exception as error:
+        log.warning("[travel] 坐标没记上：%s", type(error).__name__)
     session_id = f"travel_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
     if mode in ("solo", "duo"):

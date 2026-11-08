@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
@@ -46,6 +47,65 @@ async def api_journals(limit: int = 30):
                 cards.append({**card, "actor_name": names[actor]})
     cards.sort(key=lambda c: c.get("created_at", 0), reverse=True)
     return {"journals": cards[:max(1, min(100, limit))]}
+
+
+async def _json(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "格式不正确")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "格式不正确")
+    return body
+
+
+@router.get("/api/travel/map")
+async def api_map():
+    import travel_map
+    return await travel_map.map_data()
+
+
+@router.post("/api/travel/my-places")
+async def api_add_my_place(request: Request):
+    import travel_map
+    body = await _json(request)
+    try:
+        return await travel_map.add_my_place(str(body.get("name") or ""), near=bool(body.get("near")),
+                                             note=str(body.get("note") or ""), date=str(body.get("date") or ""))
+    except travel_map.PlaceError as error:
+        raise HTTPException(400, str(error))
+
+
+@router.delete("/api/travel/my-places/{place_id}")
+async def api_delete_my_place(place_id: str):
+    import travel_map
+    if not travel_map.delete_my_place(place_id):
+        raise HTTPException(404, "没有这条记录")
+    return {"ok": True}
+
+
+@router.get("/api/travel/cameras")
+async def api_cameras(country: str = ""):
+    import travel_map
+    try:
+        if country:
+            return {"cities": await travel_map.camera_cities(country)}
+        return {"countries": await travel_map.camera_countries()}
+    except travel_map.PlaceError as error:
+        raise HTTPException(400, str(error))
+    except httpx.HTTPError:
+        raise HTTPException(502, "摄像头目录这会儿读不到")
+
+
+@router.post("/api/travel/look")
+async def api_look(request: Request):
+    import travel_map
+    body = await _json(request)
+    try:
+        travel_map.send_to_look(str(body.get("actor") or ""), str(body.get("place") or ""))
+    except travel_map.PlaceError as error:
+        raise HTTPException(400, str(error))
+    return {"started": True}
 
 
 @router.post("/api/travel")

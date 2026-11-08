@@ -43,6 +43,37 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 22px 2px 10px; color: var(--
 .journal .gallery img { width: 120px; height: 90px; flex-shrink: 0; border-radius: 10px; object-fit: cover; max-height: none; }
 .journal .place .intro { font-size: 12.5px; line-height: 1.7; color: var(--ib-tx2); margin: 8px 0 4px; white-space: pre-wrap; max-height: none; }
 .journal .place .facts { font-size: 11.5px; color: var(--ib-tx3); }
+.tm-wrap { display: flex; justify-content: center; }
+#tm-globe { touch-action: none; display: block; cursor: grab; }
+.tm-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 12px; font-size: 12px; color: var(--ib-tx2); margin-top: 8px; }
+.tm-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
+.tm-note { text-align: center; font-size: 12px; color: var(--ib-tx3); margin-top: 6px; }
+.tm-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.tm-row > * { flex: 1; min-width: 0; }
+.tm-btn { padding: 10px 0; border-radius: 12px; border: 1px solid rgba(120, 150, 200, 0.3); background: rgba(255, 255, 255, 0.65); color: var(--ib-acc, #3d6fd8); font-size: 13.5px; }
+.tm-btn.main { background: var(--ib-acc, #3d6fd8); color: #fff; border: none; }
+.tm-input { width: 100%; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(120, 150, 200, 0.3); background: rgba(255, 255, 255, 0.65); color: var(--ib-tx); font: inherit; font-size: 14px; }
+.tm-cities { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 13px; color: var(--ib-tx2); max-height: 220px; overflow-y: auto; }
+.tm-cities button { padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(120, 150, 200, 0.3); background: rgba(255, 255, 255, 0.65); color: var(--ib-tx); font-size: 13px; }
+.tm-sheet { position: fixed; inset: 0; z-index: 2000; background: rgba(20, 30, 50, 0.35); display: flex; align-items: flex-end; justify-content: center; }
+.tm-sheet[hidden], .tm-map-wrap[hidden] { display: none; }
+.tm-sheet-box { width: 100%; max-width: 640px; max-height: 78dvh; overflow-y: auto; background: #f4f7fc; border-radius: 22px 22px 0 0; padding: 16px 18px calc(22px + env(safe-area-inset-bottom)); position: relative; }
+.tm-sheet-box h3 { font-size: 19px; font-weight: 600; padding-right: 34px; }
+.tm-x { position: absolute; top: 12px; right: 12px; width: 30px; height: 30px; border: 0; border-radius: 50%; background: rgba(120, 150, 200, 0.18); color: var(--ib-tx); }
+.tm-sub { font-size: 12px; color: var(--ib-tx3); margin-top: 2px; }
+.tm-count { font-size: 14px; margin: 10px 0 4px; color: var(--ib-tx2); }
+.tm-visit { border-top: 1px dashed rgba(120, 150, 200, 0.35); padding: 10px 0; }
+.tm-when { font-size: 12px; color: var(--ib-tx3); display: flex; justify-content: space-between; }
+.tm-visit h5 { font-size: 14px; margin: 8px 0 4px; }
+.tm-visit p { font-size: 13.5px; line-height: 1.75; color: var(--ib-tx2); white-space: pre-wrap; }
+.tm-photos { display: flex; gap: 6px; overflow-x: auto; margin-top: 8px; }
+.tm-photos img { width: 130px; height: 96px; object-fit: cover; border-radius: 10px; flex-shrink: 0; }
+.tm-del { border: 0; background: none; color: #b4485a; font-size: 12px; }
+.tm-map-wrap { position: fixed; inset: 0; z-index: 1500; background: #dfe9f6; }
+#tm-map { position: absolute; inset: 0; }
+.tm-map-btns { position: absolute; z-index: 1000; top: calc(10px + env(safe-area-inset-top)); right: 10px; display: flex; gap: 6px; }
+.tm-map-btns button { padding: 8px 12px; border-radius: 12px; border: 0; background: rgba(255, 255, 255, 0.92); color: var(--ib-tx); font-size: 13px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
+.tm-toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: 88%; padding: 10px 16px; border-radius: 14px; background: rgba(10, 30, 66, 0.86); color: #fff; font-size: 13.5px; z-index: 3000; }
 .empty { text-align: center; color: var(--ib-tx3); font-size: 13.5px; padding: 30px 0; }
 </style>
 </head>
@@ -62,9 +93,31 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 22px 2px 10px; color: var(--
     <button class="go" id="go">出发</button>
     <div class="status" id="status"></div>
   </div>
+  <h3 class="sec">去过的地方</h3>
+  <section class="panel">
+    <div class="tm-wrap"><canvas id="tm-globe" aria-label="旅行地球"></canvas></div>
+    <div class="tm-legend" id="tm-legend"></div>
+    <div class="tm-note" id="tm-empty"></div><div class="tm-note" id="tm-pending"></div>
+    <div class="tm-note">手指转地球，点标记看记录</div>
+    <div class="tm-row"><button class="tm-btn main" id="tm-open-map" type="button">放大看地图</button></div>
+    <div class="label">标上我去过的地方</div>
+    <input class="tm-input" id="tm-add-name" maxlength="40" placeholder="地名，比如 京都">
+    <div class="tm-row"><input class="tm-input" id="tm-add-date" type="date" aria-label="什么时候去的"><input class="tm-input" id="tm-add-note" maxlength="200" placeholder="一句话（可不写）"></div>
+    <div class="tm-row"><button class="tm-btn" id="tm-add" type="button">标上</button><button class="tm-btn" id="tm-add-near" type="button">用我现在的城市</button></div>
+  </section>
+  <h3 class="sec">世界窗</h3>
+  <section class="panel">
+    <div class="tm-note" style="text-align:left;margin-top:0">这些城市有公开摄像头。点一下，选的那位会去看，回来在私聊里跟你说。</div>
+    <div class="tm-row"><select class="tm-input" id="tm-look-actor" aria-label="谁去看"></select><select class="tm-input" id="tm-country" aria-label="国家"></select></div>
+    <div class="tm-cities" id="tm-cities"></div>
+  </section>
   <h3 class="sec">游记</h3>
   <div id="journals"></div>
 </div>
+<script src="/static/vendor/globe/d3-array.min.js"></script>
+<script src="/static/vendor/globe/d3-geo.min.js"></script>
+<script src="/static/vendor/globe/topojson-client.min.js"></script>
+<script src="/static/travel-map.js?v=20261108"></script>
 <script>
 (function () {
   'use strict';
@@ -148,6 +201,7 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 22px 2px 10px; color: var(--
 
   api('/api/travel/options').then(function (o) {
     state.actors = o.actors; state.hasLocation = o.has_location;
+    if (window.TravelMap) window.TravelMap.init(o.actors);
     var near = document.querySelector('#where [data-v="near"]');
     near.disabled = !o.has_location; if (!o.has_location) near.title = '定位追踪里还没有你的位置';
     renderWho();
@@ -156,5 +210,7 @@ h3.sec { font-weight: 400; font-size: 15px; margin: 22px 2px 10px; color: var(--
   loadJournals();
 })();
 </script>
+<div class="tm-sheet" id="tm-sheet" hidden><div class="tm-sheet-box"><button class="tm-x" data-close type="button" aria-label="关闭">✕</button><div id="tm-sheet-body"></div></div></div>
+<div class="tm-map-wrap" id="tm-map-wrap" hidden><div id="tm-map"></div><div class="tm-map-btns"><button id="tm-tiles" type="button">换国内地图</button><button id="tm-close-map" type="button">关闭</button></div></div>
 </body>
 </html>
