@@ -826,7 +826,36 @@ def _mentions_stream_options(body: bytes) -> bool:
 
 
 # ── 自定义 OpenAI 兼容中转站 ─────────────────────────
+# 还没开始回话就断了：连接层的错，重发不会重复说话。慢（ReadTimeout）不算，重发只会等两倍
+_RELAY_RETRYABLE = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError, httpx.WriteError,
+                    httpx.WriteTimeout, httpx.ConnectTimeout, httpx.PoolTimeout)
+RELAY_RETRY_DELAY = 1.5
+
+
 async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, request_timeout: float = 120):
+    """中转站线路。11-08 小猫：线路一天断好几次。还没吐出正文就断线时自动再试一次；已经说了一半不重发。"""
+    from contextlib import aclosing
+    for attempt in (1, 2):
+        started = False
+        try:
+            stream = _call_custom_openai_once(messages, cfg, meta, temperature, max_tokens, request_timeout=request_timeout)
+            async with aclosing(stream) as pieces:
+                async for piece in pieces:
+                    if isinstance(piece, str) and not piece.startswith(CLI_STATUS_PREFIX):
+                        started = True
+                    yield piece
+            return
+        except _RELAY_RETRYABLE as error:
+            if started or attempt == 2:
+                raise
+            print(f"[custom_openai] 还没回话就断线（{type(error).__name__}），再试一次")
+            if meta is not None:
+                meta.pop("reasoning_content", None)  # 上一次没说完的思考不留
+            yield f"{CLI_STATUS_PREFIX}线路抖了一下，正在重试..."
+            await asyncio.sleep(RELAY_RETRY_DELAY)
+
+
+async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, request_timeout: float = 120):
     model = (cfg.get("model") or "").strip()
     url = _openai_chat_completions_url(cfg.get("base_url", ""))
     if not url or not model:

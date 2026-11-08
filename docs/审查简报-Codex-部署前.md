@@ -3013,3 +3013,10 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 - 闹铃：4 处能力说明改成「到点系统叫你来提醒她，不是手机闹钟，别说闹钟设好了」。
 - 测试 `test_group_mentions.py` 25 项；群聊 / 座位 / 海龟汤回归 353 过，6 个失败改动前就有。日程 / 能力 51 过。
 - 不涉及权限和数据，测过直接上线。
+
+## 204. 中转线路断线自动重试
+
+11-08 小猫：线路一天断好几次。查到 8 次失败集中在 15:00–18:49，多为 `Server disconnected without sending a response`。
+- `call_custom_openai` 外面包一层（原函数改名 `_call_custom_openai_once`）：连接层错误（RemoteProtocol / Connect / Read / Write / WriteTimeout / ConnectTimeout / PoolTimeout）且还没吐正文时，等 1.5 秒重试一次；状态行不算正文。已经说了一半、ReadTimeout、第二次还断，都照旧报错。重试前清掉半截思考。
+- 测试 `test_relay_retry.py` 9 项；用到中转线路的回归前后都是同样 12 个旧失败，没有新增。
+- 不涉及权限和数据，测过直接上线。
