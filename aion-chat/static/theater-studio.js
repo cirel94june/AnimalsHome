@@ -140,7 +140,7 @@ const Studio = (() => {
     document.querySelector('.chat-header').insertAdjacentHTML('beforeend','<div class="studio-reading-header" id="studioReadingHeader" aria-label="当前章节" hidden><span id="novelNumber"></span><h1 id="novelTitle"></h1><span id="novelMeta"></span></div>');
     $('sidebar').querySelector('.sidebar-header').insertAdjacentHTML('beforeend','<div class="library-brand" style="text-align:right"><strong>小剧场</strong></div>');
     document.body.insertAdjacentHTML('beforeend','<dialog class="studio-dialog studio-chapters" id="studioChapterDialog"><header><h2>章节目录</h2><button class="studio-btn" onclick="document.getElementById(\'studioChapterDialog\').close()" aria-label="关闭目录">✕</button></header><p id="studioDirectoryTitle" class="field-help"></p><nav class="studio-directory" id="studioDirectory" aria-label="当前小剧场的章节"></nav></dialog>');
-    $('studioTitleGroup').insertAdjacentHTML('afterend', `<div class="studio-header-actions">${button('返回正文','Studio.returnToReader()','studio-return')}<button type="button" class="studio-btn" id="studioChapterPlan" onclick="Studio.editChapter(false)" hidden>章节计划</button>${button('目录','Studio.directory()')}<details id="studioMenu" class="studio-menu"><summary class="studio-btn">菜单</summary><div class="studio-menu-panel"><div class="studio-menu-basics"><label>故事模式 <select class="studio-mode-select" id="studioMode" aria-label="故事模式" onchange="Studio.switchMode(this.value)"><option value="dialogue">对话</option><option value="novel">小说</option></select></label>${button('字号','Studio.readingSettings()')}${button('人物锚点','Studio.anchors()')}${button('模型与音色','Studio.modelSettings()')}${button('角色管理','Studio.persona()')}</div><div class="studio-toolbar" id="studioToolbar"></div></div></details></div>`);
+    $('studioTitleGroup').insertAdjacentHTML('afterend', `<div class="studio-header-actions">${button('返回正文','Studio.returnToReader()','studio-return')}<button type="button" class="studio-btn" id="studioChapterPlan" onclick="Studio.editChapter(false)" hidden>章节计划</button>${button('目录','Studio.directory()')}<details id="studioMenu" class="studio-menu"><summary class="studio-btn">菜单</summary><div class="studio-menu-panel"><div class="studio-menu-basics"><label>故事模式 <select class="studio-mode-select" id="studioMode" aria-label="故事模式" onchange="Studio.switchMode(this.value)"><option value="dialogue">对话</option><option value="novel">小说</option></select></label>${button('字号','Studio.readingSettings()')}${button('人物锚点','Studio.anchors()')}${button('怎么玩','Studio.howto()')}${button('模型与音色','Studio.modelSettings()')}${button('角色管理','Studio.persona()')}</div><div class="studio-toolbar" id="studioToolbar"></div></div></details></div>`);
     document.querySelector('.chat-header>.config-btn').style.display='none';
     $('studioMenu').addEventListener('click',e=>{if(e.target.closest('button'))$('studioMenu').open=false;});
     document.addEventListener('click',e=>{if(!$('studioMenu').contains(e.target))$('studioMenu').open=false;});
@@ -365,14 +365,22 @@ const Studio = (() => {
   };
   send = function() { return novel() ? action(()=>write(false)) : oldSend(); };
   newConversation = function() {
-    modal('新的一页', '<label>故事名字</label><input id="newStoryTitle" placeholder="为这个宇宙起个名字"><label>故事模式</label><select id="newStoryMode"><option value="novel">小说 · 先定大纲，逐章写作</option><option value="dialogue">对话 · 自由的一问一答</option></select>', '创建故事', async()=>{
+    modal('新的一页', '<label>故事名字</label><input id="newStoryTitle" placeholder="为这个宇宙起个名字"><label>故事模式</label><select id="newStoryMode"><option value="novel">小说 · 先定大纲，逐章写作</option><option value="dialogue">对话 · 自由的一问一答</option></select><p class="field-help" id="newStoryHelp"></p><label>用哪个模型写</label><select id="newStoryModel"></select><label>AI 扮演谁</label><select id="newStoryPersona"></select><p class="field-help">角色在「菜单 → 角色管理」里加。不选也能玩，AI 就当旁白和其他人物。</p>', '创建故事', async()=>{
       const mode=$('newStoryMode').value;
-      const conv=await api('POST','/api/theater/conversations',{title:$('newStoryTitle').value.trim()||'未命名故事',persona_id:currentPersonaId,model:$('modelSelect').value});
+      currentPersonaId=$('newStoryPersona').value||null;
+      $('modelSelect').value=$('newStoryModel').value;
+      const conv=await api('POST','/api/theater/conversations',{title:$('newStoryTitle').value.trim()||'未命名故事',persona_id:currentPersonaId,model:$('newStoryModel').value});
       if (!conv.id) throw Error('创建失败');
       if (!conversations.some(c=>c.id===conv.id)) conversations.unshift(conv);
       await request('/books/'+conv.id,'PUT',{mode});
       await selectConv(conv.id);
     });
+    $('newStoryModel').innerHTML=$('modelSelect').innerHTML;
+    $('newStoryModel').value=$('modelSelect').value;
+    $('newStoryPersona').innerHTML='<option value="">不选角色</option>'+personas.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.name)}</option>`).join('');
+    $('newStoryPersona').value=currentPersonaId||'';
+    const help=()=>{$('newStoryHelp').textContent=$('newStoryMode').value==='novel'?'小说：你说一个脑洞，AI 先写大纲，你确认后它一章一章写，你看，还能让它读给你听。':'对话：像聊天一样演戏。你演一个角色，说话或写动作，AI 演其他人接着往下。';};
+    $('newStoryMode').onchange=help;help();
   };
   // The old send path needs an actual conversation, not the nonblocking creation dialog.
   const sendWithoutBook=oldSend;
@@ -745,9 +753,10 @@ const Studio = (() => {
       action(async()=>{const names=await api('GET','/api/worldbook');discussionNames={user_name:names.user_name||'用户',ai_name:names.ai_name||'AI'};})
     ]);
     await init();
-    if(!currentConvId)$('messages').innerHTML='<div class="studio-empty"><div class="ornament">❧</div><h2>今晚，去哪个宇宙？</h2><p>自由对话，或把一个念头写成一本小说。<br>故事留在这里，随时回来接着听。</p>'+button('创建第一个故事','newConversation()','primary')+'</div>';
+    if(!currentConvId)$('messages').innerHTML='<div class="studio-empty"><div class="ornament">❧</div><h2>今晚，去哪个宇宙？</h2><p>小剧场就是和 AI 一起写故事。两种玩法：<br><b>对话</b>：你演一个角色，AI 演其他人，一来一回。<br><b>小说</b>：说个脑洞，AI 写大纲、再一章章写给你看。<br>建故事时可以选模型和 AI 扮演的角色。</p>'+button('创建第一个故事','newConversation()','primary')+button('怎么玩','Studio.howto()')+'</div>';
   }
   return {
+    howto(){modal('小剧场怎么玩',`<p class="field-help"><b>对话模式</b>：直接在下面输入。写你的角色说什么、做什么，AI 接着演。不满意可以重新生成。</p><p class="field-help"><b>小说模式</b>：① 在下面说你的脑洞；② 点「生成大纲」，看过后确认；③ 点开始写，一章写完点「下一章」。想听就点朗读。</p><p class="field-help"><b>角色</b>：「菜单 → 角色管理」写 AI 要扮演谁，比如小克的人设或原创人物。</p><p class="field-help"><b>人物锚点</b>：小说写长了人物容易走样，把关键设定写进去，AI 会一直记着。</p><p class="field-help"><b>换模型</b>：建故事时选，或者「菜单 → 模型与音色」，每个故事可以不一样。</p>`,'知道了',async()=>{});},
     copyOutline:()=>action(copyOutline),
     outlineEditor:prefer=>action(()=>outlineEditor(prefer)),
     completeChapter:completed=>action(()=>completeChapter(completed)),
