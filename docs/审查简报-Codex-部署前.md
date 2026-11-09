@@ -3122,3 +3122,6 @@ schedule_remember 支持 fiction=true，只传 content，房间和前缀由 Hub 
 
 ### §218 异地备份（11-09，待狐狸审，未部署）
 offsite_backup.py、static/offsite-backup.html、tools/offsite_restore.py。data/ 快照（SQLite backup）→ tar.gz → scrypt + 分块 AES-GCM → R2（自签 SigV4，不跟随跳转）。钥匙在 data/offsite_backup.json 600，不进备份包。保留 14 份。
+
+### §219 小世界（11-09，已上线）
+故事可继续讲、小猫写正文、幕后闲聊、设定本（AI 用【新设定】直接写入，小猫可改）、前情提要；仅小猫点击时推进。为绕开未审的 §218，经 deploy/story-world 单独上线后并回。
