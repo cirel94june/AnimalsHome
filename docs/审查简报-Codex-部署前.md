@@ -3095,3 +3095,6 @@ tg_group.py + static/tg-group.html + 三只 bot 的 home_sync.py。复用 /api/o
 
 ### §214a 狐狸审查 6 条（11-09）已修
 H1 同步请求不跟随跳转；H2 代发核对本机配置的群；M1 同步异常不影响 send_telegram；M2 同秒按 message_id 截断；M3 指令先到时挂起，目标到达再执行；L1 翻页收全边界那一秒。狐狸原测试 27 条全过。
+
+### §214b bot 轮询触发陌生设备警报（11-09，小猫同意上线，待狐狸补看）
+security_access.observe：经 Cloudflare 且走 /api/outing/ 的请求（外层 cf_access 已验服务钥匙）视为可信，其他路径仍报警。

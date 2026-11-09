@@ -447,3 +447,28 @@ class TailscaleTrustExtrasTest(SecurityAccessTestCase):
         with mock.patch.dict(os.environ, {"AIONSHOME_TRUST_TAILSCALE": ""}):
             owner = self.service.observe(make_scope("127.0.0.1"), {})
             self.assertEqual({"old", "real"}, {a["alert_id"] for a in self.service.pending_alerts_for(owner)})
+
+
+def _door_service(tmp_path):
+    from security_access import SecurityAccessService
+    return SecurityAccessService(tmp_path / "sec")
+
+
+def _observe(service, path):
+    return service.observe({"type": "http", "method": "POST", "path": path, "client": ("74.220.52.251", 1)},
+                           {"cf-ray": "x", "host": "home.example"})
+
+
+def test_service_door_does_not_alarm_but_other_paths_do(tmp_path, monkeypatch):
+    import cf_access
+    monkeypatch.setattr(cf_access, "settings", lambda: {"x": 1})
+    monkeypatch.setattr(cf_access, "via_cloudflare", lambda headers, cfg: True)
+    service = _door_service(tmp_path)
+    assert not _observe(service, "/api/outing/tg-group/outbox").alerts
+    assert _observe(service, "/api/settings").alerts
+
+
+def test_service_door_needs_cloudflare(tmp_path, monkeypatch):
+    import cf_access
+    monkeypatch.setattr(cf_access, "settings", lambda: None)
+    assert _observe(_door_service(tmp_path), "/api/outing/tg-group/outbox").alerts

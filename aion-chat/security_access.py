@@ -35,6 +35,14 @@ _TAILSCALE_V4 = ipaddress.ip_network("100.64.0.0/10")
 _TAILSCALE_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 
 
+def _passed_service_door(scope: dict, headers: Mapping[str, str]) -> bool:
+    """bot 经 Cloudflare 走 /api/outing/ 那扇门：外层 cf_access 已经验过服务钥匙才放到这里，不是陌生设备。"""
+    import cf_access
+
+    cfg = cf_access.settings()
+    return cfg is not None and cf_access.is_outing_path(str(scope.get("path") or "")) and cf_access.via_cloudflare(headers, cfg)
+
+
 def classify_ip(ip: str, has_cloudflare_metadata: bool = False) -> str:
     if has_cloudflare_metadata:
         return "cloudflare"
@@ -434,6 +442,7 @@ class SecurityAccessService:
             or (source == "tailscale" and _trust_tailscale())
             or device_id in self._devices
             or ip in self._trusted_ips
+            or _passed_service_door(scope, headers)
         )
         blocked = not trusted and self.is_ip_blocked(ip)
         if seen_key not in self._daily_seen:
