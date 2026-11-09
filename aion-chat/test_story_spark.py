@@ -72,4 +72,27 @@ def test_stories_are_kept_and_deletable():
 
 def test_module_never_touches_hub_or_chat_tables():
     src = (story_spark.BASE_DIR / "story_spark.py").read_text(encoding="utf-8")
-    assert "memory_hub" not in src and "INSERT INTO messages" not in src and "INSERT INTO chatroom" not in src
+    assert "memory_hub_bridge" not in src and "INSERT INTO messages" not in src and "INSERT INTO chatroom" not in src
+
+
+def test_builtin_seats_use_own_model_and_persona(monkeypatch):
+    import actors
+    import chatroom
+    import config
+    import memory_hub_jobs
+    monkeypatch.setattr(actors, "get_actor", lambda a: {"enabled": True, "name": a})
+    monkeypatch.setattr(actors, "display_name", lambda a: "名" + a)
+    monkeypatch.setattr(memory_hub_jobs, "own_model", lambda a: "m-" + a)
+    monkeypatch.setattr(config, "load_worldbook", lambda: {"ai_persona": "小克人设"})
+    monkeypatch.setattr(chatroom, "_read_connor_persona", lambda: "L人设")
+    assert story_spark._seat("aion") == {"id": "aion", "name": "名aion", "model": "m-aion", "persona": "小克人设"}
+    assert story_spark._seat("connor")["persona"] == "L人设"
+
+
+def test_builtin_seat_without_model_cannot_narrate(monkeypatch):
+    import actors
+    import memory_hub_jobs
+    monkeypatch.setattr(actors, "get_actor", lambda a: {"enabled": True, "name": a})
+    monkeypatch.setattr(memory_hub_jobs, "own_model", lambda a: "")
+    with pytest.raises(Exception):
+        story_spark._seat("aion")

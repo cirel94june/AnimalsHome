@@ -131,10 +131,30 @@ async def _speak(prompt: str, model_key: str, persona: str = "", name: str = "")
     return out.strip()
 
 
+def _builtin_seat(actor_id: str) -> dict[str, str]:
+    """小克和 Lucien 的人设、模型存在原来的设置里，不走座位那一套。"""
+    import actors
+    import seat_chat
+    from chatroom import _read_connor_persona
+    from config import load_worldbook
+    from memory_hub_jobs import own_model
+
+    actor = actors.get_actor(actor_id) or {}
+    if not actor.get("enabled"):
+        raise seat_chat.SeatNotReady("这位还没启用")
+    model = own_model(actor_id)  # 用 TA 自己的模型，没设就不讲，不换别的
+    if not model:
+        raise seat_chat.SeatNotReady(f"还没给 {actor.get('name')} 选模型")
+    persona = load_worldbook().get("ai_persona") or "" if actor_id == "aion" else _read_connor_persona()
+    return {"id": actor_id, "name": actors.display_name(actor_id), "model": model, "persona": persona}
+
+
 def _seat(actor_id: str) -> dict[str, str]:
     import seat_chat
     import actors
 
+    if actor_id in ("aion", "connor"):
+        return _builtin_seat(actor_id)
     _, model = seat_chat.check_ready(actor_id)
     return {"id": actor_id, "name": actors.display_name(actor_id), "model": model, "persona": seat_chat._persona_text(actor_id)}
 
