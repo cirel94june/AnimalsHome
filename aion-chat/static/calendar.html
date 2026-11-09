@@ -26,6 +26,8 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
 .hint { font-size: 11.5px; color: var(--ib-tx3); text-align: center; margin-top: 8px; }
 h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
 .sub { font-size: 12.5px; color: var(--ib-tx2); margin: 12px 0 6px; }
+.cell u { position: absolute; top: 4px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: #d9704f; text-decoration: none; }
+.cell { position: relative; }
 .moods { display: flex; justify-content: space-between; gap: 2px; }
 .moods button { border: 0; background: transparent; font-size: 24px; width: 40px; height: 40px; border-radius: 50%; }
 .moods button.on { background: rgba(61,111,216,.2); }
@@ -49,7 +51,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
     <div class="head"><button class="nav" id="prev" aria-label="上个月">‹</button><b id="title"></b><button class="nav" id="next" aria-label="下个月">›</button></div>
     <div class="week"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
     <div class="grid" id="grid"></div>
-    <div class="hint">小横线越深，那天聊得越多</div>
+    <div class="hint">小横线越深，那天聊得越多；小圆点是节日或你加的日子（在桌面设置里添加）</div>
   </section>
   <section class="panel" id="detail" hidden>
     <h3 id="day-title"></h3>
@@ -80,7 +82,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
     $('grid').innerHTML = blanks + keys.map(function (k) {
       var c = data.days[k], cls = 'cell' + (k === data.today ? ' today' : '') + (k === selected ? ' on' : '');
       return '<button class="' + cls + '" data-day="' + k + '">' + parseInt(k.slice(8), 10) + '<i>' + esc(c.mood) + '</i>' +
-        (c.chats ? '<em style="opacity:' + (0.25 + 0.75 * c.chats / most).toFixed(2) + '"></em>' : '') + '</button>';
+        (c.festivals && c.festivals.length ? '<u title="' + esc(c.festivals.join('、')) + '"></u>' : '') + (c.chats ? '<em style="opacity:' + (0.25 + 0.75 * c.chats / most).toFixed(2) + '"></em>' : '') + '</button>';
     }).join('');
   }
   function loadMonth() {
@@ -94,7 +96,7 @@ h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
   function renderDetail(d) {
     current = d;
     var parts = d.date.split('-');
-    $('day-title').textContent = parseInt(parts[1], 10) + ' 月 ' + parseInt(parts[2], 10) + ' 日';
+    $('day-title').textContent = parseInt(parts[1], 10) + ' 月 ' + parseInt(parts[2], 10) + ' 日' + (d.festivals && d.festivals.length ? ' · ' + d.festivals.join('、') : '');
     $('moods').innerHTML = d.moods.map(function (m) { return '<button class="' + (m === d.mood ? 'on' : '') + '" data-mood="' + esc(m) + '">' + esc(m) + '</button>'; }).join('');
     $('note').value = d.note || '';
     var top = d.chats.length ? d.chats[0].count : 1;

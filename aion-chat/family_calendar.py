@@ -25,6 +25,9 @@ class CalendarError(Exception):
     """给小猫看的话。"""
 
 
+import festivals
+
+
 def _path():
     from config import DATA_DIR
     return DATA_DIR / "calendar_moods.json"
@@ -119,8 +122,10 @@ async def month(year: int, month_no: int) -> dict[str, Any]:
     for event in await _events(start, end):
         cells[_key(event["at"])]["events"] += 1
     moods = _moods()
+    personal = festivals._personal()
     for key, cell in cells.items():
         cell["mood"] = (moods.get(key) or {}).get("mood", "")
+        cell["festivals"] = festivals.on(date.fromisoformat(key), personal)
     return {"year": year, "month": month_no, "first_weekday": first.weekday(), "days": cells, "moods": MOODS, "today": date.today().isoformat()}
 
 
@@ -132,5 +137,5 @@ async def day_detail(day: str) -> dict[str, Any]:
     for _ts, who in await _chat_counts(start, end):
         counts[who] = counts.get(who, 0) + 1
     chats = sorted(({"who": w, "name": names.get(w, w), "count": c} for w, c in counts.items()), key=lambda r: -r["count"])
-    return {"date": day, "chats": chats, "events": await _events(start, end), **(_moods().get(day) or {"mood": "", "note": ""}), "moods": MOODS,
+    return {"date": day, "festivals": festivals.on(target), "chats": chats, "events": await _events(start, end), **(_moods().get(day) or {"mood": "", "note": ""}), "moods": MOODS,
             "generated_at": time.time()}

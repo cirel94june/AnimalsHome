@@ -40,7 +40,7 @@ def home(tmp_path, monkeypatch):
 def test_month_counts(home):
     data = asyncio.run(cal.month(2026, 11))
     day = data["days"]["2026-11-08"]
-    assert day == {"chats": 4, "events": 3, "mood": ""}  # 系统消息不算，select 这种内部事件不算
+    assert day == {"chats": 4, "events": 3, "mood": "", "festivals": []}  # 系统消息不算，select 这种内部事件不算
     assert data["days"]["2026-11-07"]["chats"] == 1 and len(data["days"]) == 30
     assert data["first_weekday"] == 6  # 2026-11-01 是周日
 

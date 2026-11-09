@@ -38,9 +38,17 @@ def day_kind(day: date) -> str:
     return "工作日" if work else "休息日"
 
 
+def _festival_hint(day: date) -> str:
+    try:
+        import festivals
+        return festivals.hint(day)
+    except Exception:
+        return ""
+
+
 def now_text(now: datetime | None = None, *, seconds: bool = True) -> str:
     """例：2026年11月1日 星期日 下午 17:33:05（北京时间，今天是休息日）"""
     now = now or datetime.now()
     clock = now.strftime("%H:%M:%S" if seconds else "%H:%M")
     return (f"{now.year}年{now.month}月{now.day}日 星期{_WEEKDAYS[now.weekday()]} {_period(now.hour)} {clock}"
-            f"（北京时间，今天是{day_kind(now.date())}）")
+            f"（北京时间，今天是{day_kind(now.date())}）{_festival_hint(now.date())}")
