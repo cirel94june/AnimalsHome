@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>异地备份</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); min-height: 100vh; }
+.wrap { max-width: 560px; margin: 0 auto; padding: 0 14px calc(28px + env(safe-area-inset-bottom)); }
+.top-bar { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 2px 10px; }
+.top-bar a { color: inherit; font-size: 20px; text-decoration: none; }
+.top-bar h2 { flex: 1; font-size: 18px; font-weight: 600; }
+.card { background: rgba(255,255,255,.55); border: 1px solid var(--ib-glass-line, rgba(255,255,255,.7)); border-radius: 16px; padding: 14px; margin-top: 10px; }
+.card h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.hint { font-size: 12px; color: var(--ib-tx3, #7d92b5); line-height: 1.6; }
+label { display: block; font-size: 13px; margin-top: 10px; color: var(--ib-tx2, #3d5788); }
+input { width: 100%; margin-top: 4px; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 10px; padding: 9px 11px; font: inherit; font-size: 14px; background: rgba(255,255,255,.75); color: inherit; }
+button.main { display: block; width: 100%; margin-top: 12px; border: none; border-radius: 12px; padding: 11px; font-size: 15px; color: #fff; background: var(--ib-acc, #2a6bb0); cursor: pointer; }
+button.alt { display: block; width: 100%; margin-top: 8px; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 12px; padding: 10px; font-size: 14px; color: inherit; background: rgba(255,255,255,.6); cursor: pointer; }
+button:disabled { opacity: .5; }
+.line { font-size: 14px; line-height: 1.7; }
+.warn { color: #b4492f; }
+.toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: rgba(10,30,66,.86); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; }
+.toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar"><a href="/" aria-label="返回">←</a><h2>异地备份</h2></div>
+  <div class="card"><h3>现在的情况</h3><div id="state" class="line">读取中…</div>
+    <button class="alt" id="run" type="button">立刻备份一次</button>
+    <button class="alt" id="drill" type="button">恢复演练</button>
+    <div class="hint" style="margin-top:8px">恢复演练：把最新一份下载到临时位置解开检查，不碰现在的数据。</div>
+  </div>
+  <div class="card"><h3>钥匙和密码</h3>
+    <div class="hint">保存后这里不再显示内容。已经填过的项留空就是不改。<b>备份密码丢了，备份就打不开了</b>，请先存进 Bitwarden，并抄一份在纸上。</div>
+    <form id="form" autocomplete="off">
+      <label>Account ID<input id="account_id" autocomplete="off" spellcheck="false"></label>
+      <label>存储桶名字<input id="bucket" autocomplete="off" spellcheck="false"></label>
+      <label>Access Key ID<input id="access_key_id" type="password" autocomplete="new-password" spellcheck="false"></label>
+      <label>Secret Access Key<input id="secret_access_key" type="password" autocomplete="new-password" spellcheck="false"></label>
+      <label>备份密码（至少 16 位）<input id="passphrase" type="password" autocomplete="new-password" spellcheck="false"></label>
+      <button class="main" type="submit">保存</button>
+    </form>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var FIELDS = ['account_id', 'access_key_id', 'secret_access_key', 'passphrase'];
+  function toast(t) { var n = $('toast'); n.textContent = t; n.classList.add('on'); clearTimeout(n._t); n._t = setTimeout(function () { n.classList.remove('on'); }, 2800); }
+  function api(url, opts) { return fetch(url, opts).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); }); }
+  function when(ts) { var d = new Date(ts * 1000); return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  function row(text, warn) { var d = document.createElement('div'); if (warn) d.className = 'warn'; d.textContent = text; return d; }
+  function render(s) {
+    var box = $('state'), st = s.status || {};
+    box.textContent = '';
+    if (!s.ready) box.appendChild(row('钥匙和密码还没填全，备份还没开始。', true));
+    else box.appendChild(row('每天凌晨 4:30 自动备份，保留最近 ' + s.keep + ' 份。'));
+    if (st.last_run) {
+      if (st.last_error) box.appendChild(row('上次备份失败（' + when(st.last_run) + '）：' + st.last_error, true));
+      else if (st.last_ok) box.appendChild(row('上次备份成功：' + when(st.last_run) + '，约 ' + Math.ceil(st.last_ok.bytes / 1048576) + ' MB'));
+    }
+    if (st.last_drill) {
+      if (st.drill_error) box.appendChild(row('上次演练失败（' + when(st.last_drill) + '）：' + st.drill_error, true));
+      else if (st.drill_ok) box.appendChild(row('上次演练通过：' + when(st.last_drill) + '，检查了 ' + st.drill_ok.databases + ' 个数据库'));
+    }
+    $('bucket').value = s.bucket;
+    FIELDS.forEach(function (k) { $(k).value = ''; $(k).placeholder = s.filled[k] ? '已填写，留空不改' : ''; });
+    $('run').disabled = $('drill').disabled = !s.ready;
+  }
+  function load() { return api('/api/offsite-backup', { cache: 'no-store' }).then(render).catch(function () { $('state').textContent = '读取失败'; }); }
+  function action(btn, url, busy, done) {
+    btn.onclick = function () {
+      btn.disabled = true; var label = btn.textContent; btn.textContent = busy;
+      api(url, { method: 'POST' }).then(function (j) { toast(j.ok ? done : j.error); }).catch(function (e) { toast(e.message); })
+        .then(function () { btn.textContent = label; return load(); });
+    };
+  }
+  action($('run'), '/api/offsite-backup/run', '正在备份…', '备份成功');
+  action($('drill'), '/api/offsite-backup/drill', '正在演练…', '演练通过');
+  $('form').onsubmit = function (e) {
+    e.preventDefault();
+    var body = { bucket: $('bucket').value };
+    FIELDS.forEach(function (k) { body[k] = $(k).value; });
+    api('/api/offsite-backup', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (s) { render(s); toast('保存好了'); }).catch(function (err) { toast(err.message); });
+  };
+  load();
+})();
+</script>
+</body>
+</html>

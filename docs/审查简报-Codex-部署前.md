@@ -3119,3 +3119,6 @@ H1 外层页面 CSP frame-src none 拦自身跳转；M2 制作记录单独存，
 
 ### §215c 小故事接 Hub fiction（11-09）
 schedule_remember 支持 fiction=true，只传 content，房间和前缀由 Hub 定；参与的 AI 各记各的；hub_day 对 fiction 记忆写明情节非当天事实。撤销 game_room。
+
+### §218 异地备份（11-09，待狐狸审，未部署）
+offsite_backup.py、static/offsite-backup.html、tools/offsite_restore.py。data/ 快照（SQLite backup）→ tar.gz → scrypt + 分块 AES-GCM → R2（自签 SigV4，不跟随跳转）。钥匙在 data/offsite_backup.json 600，不进备份包。保留 14 份。
