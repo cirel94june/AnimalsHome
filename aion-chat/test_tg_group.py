@@ -77,3 +77,26 @@ def test_bad_input_is_refused():
     for bad in ({**msg(1), "chat_id": "123"}, {**msg(1), "sender_id": "x"}, {**msg(1), "text": "  "}, {**msg(1), "message_id": "a"}):
         with pytest.raises(HTTPException):
             tg_group.ingest("aion", bad)
+
+
+def test_same_second_reply_excludes_later_messages():
+    for i in (1, 2, 3):
+        tg_group.ingest("aion", {**msg(i), "ts": 1000})
+    assert sorted(tg_group.pick_for_command("-100123", 2)) == [1, 2]
+
+
+def test_same_second_pagination_is_complete():
+    for i in range(1, 62):
+        tg_group.ingest("aion", {**msg(i), "ts": 1000})
+    first = tg_group.list_messages(limit=60)
+    second = tg_group.list_messages(before=first[0]["ts"], limit=60)
+    assert {m["message_id"] for m in first + second} == set(range(1, 62))
+
+
+def test_command_before_target_runs_when_target_arrives():
+    command = msg(2, "/带回家", is_owner=True, reply_to=1)
+    assert tg_group.ingest("aion", command)["command"] is False
+    arrived = tg_group.ingest("connor", msg(1, "目标"))
+    assert arrived["command"] is True and arrived["reply_to"] == 1
+    assert tg_group.ingest("connor", command)["command"] is False
+    assert tg_group.ingest("ai3", msg(1, "目标"))["command"] is False

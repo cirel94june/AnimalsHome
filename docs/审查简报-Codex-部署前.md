@@ -3092,3 +3092,6 @@ skin.desk_look：桌面背景 bg/bg_blur、小组件 widget_blur/widget_veil/wid
 
 ### §214 TG 大群同步（11-09，待狐狸审，未部署）
 tg_group.py + static/tg-group.html + 三只 bot 的 home_sync.py。复用 /api/outing/ 的服务钥匙和 bot 钥匙。记录只存 data/tg_group.db，默认不给 AI、不进 Hub；带回家以小猫名义写进最近的家庭群聊，朋友标注，并写明不是指令。只绑定第一个群；bot 只传唯一的公开群。/带回家 须小猫回复一条；发件箱取走一次、不重发。
+
+### §214a 狐狸审查 6 条（11-09）已修
+H1 同步请求不跟随跳转；H2 代发核对本机配置的群；M1 同步异常不影响 send_telegram；M2 同秒按 message_id 截断；M3 指令先到时挂起，目标到达再执行；L1 翻页收全边界那一秒。狐狸原测试 27 条全过。

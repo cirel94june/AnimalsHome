@@ -34,6 +34,7 @@ MAX_TEXT_CHARS = 4000
 MAX_SEND_CHARS = 2000
 MAX_BRING_MESSAGES = 30
 MAX_BRING_CHARS = 6000
+PENDING_BRING_SECONDS = 3600
 COMMAND_LOOKBACK = 9        # TG 上回复一条说 /带回家：连同它前面最多 9 条一起
 CLAIM_EXPIRES_SECONDS = 120
 BRING_COMMANDS = {"/带回家", "／带回家"}
@@ -56,6 +57,9 @@ def _connect() -> sqlite3.Connection:
             text TEXT NOT NULL, reply_to INTEGER, brought_at REAL,
             PRIMARY KEY (chat_id, message_id));
         CREATE INDEX IF NOT EXISTS idx_tg_group_ts ON messages (ts);
+        CREATE TABLE IF NOT EXISTS pending_bring (
+            chat_id TEXT NOT NULL, reply_to INTEGER NOT NULL, created_at REAL NOT NULL,
+            PRIMARY KEY (chat_id, reply_to));
         CREATE TABLE IF NOT EXISTS outbox (
             id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, created_at REAL NOT NULL,
             status TEXT NOT NULL DEFAULT 'waiting', claimed_at REAL, finished_at REAL, actor TEXT);
@@ -102,8 +106,16 @@ def ingest(actor: str, body: dict[str, Any], now: float | None = None) -> dict[s
              1 if body.get("is_bot") is True else 0, 1 if is_owner else 0, text, reply_to),
         )
         is_new = cur.rowcount == 1
-    return {"new": is_new, "command": is_new and is_owner and bool(reply_to) and text in BRING_COMMANDS,
-            "chat_id": chat_id, "reply_to": reply_to}
+        moment = time.time() if now is None else now
+        wants_bring = is_new and is_owner and bool(reply_to) and text in BRING_COMMANDS
+        if wants_bring and conn.execute("SELECT 1 FROM messages WHERE chat_id=? AND message_id=?", (chat_id, reply_to)).fetchone() is None:
+            # 三只 bot 各传各的，指令可能比它回复的那条先到：先记下，那条到了再办（狐狸 §214 M3）
+            conn.execute("DELETE FROM pending_bring WHERE created_at < ?", (moment - PENDING_BRING_SECONDS,))
+            conn.execute("INSERT OR IGNORE INTO pending_bring (chat_id, reply_to, created_at) VALUES (?,?,?)", (chat_id, reply_to, moment))
+            wants_bring = False
+        if is_new and conn.execute("DELETE FROM pending_bring WHERE chat_id=? AND reply_to=?", (chat_id, message_id)).rowcount:
+            return {"new": True, "command": True, "chat_id": chat_id, "reply_to": message_id}
+    return {"new": is_new, "command": wants_bring, "chat_id": chat_id, "reply_to": reply_to}
 
 
 def _kind(row: sqlite3.Row, family: set[str]) -> str:
@@ -122,6 +134,11 @@ def list_messages(before: float | None = None, limit: int = 60) -> list[dict[str
             rows = conn.execute("SELECT * FROM messages WHERE ts < ? ORDER BY ts DESC, message_id DESC LIMIT ?", (before, limit)).fetchall()
         else:
             rows = conn.execute("SELECT * FROM messages ORDER BY ts DESC, message_id DESC LIMIT ?", (limit,)).fetchall()
+        # Telegram 的时间只精确到秒：这一页最早那一秒的消息要收全，下一页才不会漏（狐狸 §214 L1）
+        if len(rows) == limit:
+            seen = {r["message_id"] for r in rows}
+            rows += [r for r in conn.execute("SELECT * FROM messages WHERE ts = ? ORDER BY message_id DESC", (rows[-1]["ts"],))
+                     if r["message_id"] not in seen]
     return [{"message_id": r["message_id"], "ts": r["ts"], "name": r["sender_name"], "kind": _kind(r, family),
              "text": r["text"], "brought": bool(r["brought_at"])} for r in reversed(rows)]
 
@@ -167,12 +184,13 @@ def failed_outbox(since: float) -> list[dict[str, Any]]:
 
 def pick_for_command(chat_id: str, reply_to: int) -> list[int]:
     with _connect() as conn:
-        target = conn.execute("SELECT ts FROM messages WHERE chat_id=? AND message_id=?", (chat_id, reply_to)).fetchone()
+        target = conn.execute("SELECT ts, message_id FROM messages WHERE chat_id=? AND message_id=?", (chat_id, reply_to)).fetchone()
         if target is None:
             return []
         rows = conn.execute(
-            "SELECT message_id FROM messages WHERE chat_id=? AND ts<=? AND text NOT IN ('/带回家','／带回家') "
-            "ORDER BY ts DESC, message_id DESC LIMIT ?", (chat_id, target["ts"], COMMAND_LOOKBACK + 1)).fetchall()
+            "SELECT message_id FROM messages WHERE chat_id=? AND (ts<? OR (ts=? AND message_id<=?)) "
+            "AND text NOT IN ('/带回家','／带回家') ORDER BY ts DESC, message_id DESC LIMIT ?",
+            (chat_id, target["ts"], target["ts"], target["message_id"], COMMAND_LOOKBACK + 1)).fetchall()
     return [r["message_id"] for r in rows]
 
 
