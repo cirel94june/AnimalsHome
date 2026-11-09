@@ -3098,3 +3098,6 @@ H1 同步请求不跟随跳转；H2 代发核对本机配置的群；M1 同步�
 
 ### §214b bot 轮询触发陌生设备警报（11-09，小猫同意上线，待狐狸补看）
 security_access.observe：经 Cloudflare 且走 /api/outing/ 的请求（外层 cf_access 已验服务钥匙）视为可信，其他路径仍报警。
+
+### §215 小故事（11-09）
+story_spark.py + static/story-spark.html：聊天和群聊的消息菜单「变成小故事」，自选消息，讲述者可选某位 AI / NPC 模型 / 大家接力。故事存 data/story_sparks.db，不写聊天、不进 Hub。小剧场侧栏有入口。

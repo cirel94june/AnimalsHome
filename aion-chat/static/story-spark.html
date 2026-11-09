@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>小故事</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { min-height: 100%; }
+body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); }
+.wrap { max-width: 640px; margin: 0 auto; padding: 0 14px calc(28px + env(safe-area-inset-bottom)); }
+.top-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 2px 10px; }
+.top-bar a, .top-bar button.back { color: inherit; text-decoration: none; font-size: 20px; border: none; background: none; cursor: pointer; }
+.top-bar h2 { flex: 1; font-size: 18px; font-weight: 600; }
+.card { background: rgba(255,255,255,.55); border: 1px solid var(--ib-glass-line, rgba(255,255,255,.7)); border-radius: 16px; padding: 12px 14px; margin-top: 10px; }
+.card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.hint { font-size: 12px; color: var(--ib-tx3, #7d92b5); line-height: 1.6; }
+.msgs { max-height: 44vh; overflow-y: auto; margin-top: 8px; }
+.pick { display: block; width: 100%; text-align: left; font: inherit; color: inherit; background: rgba(255,255,255,.5); border: 1.5px solid transparent; border-radius: 12px; padding: 7px 10px; margin-bottom: 5px; cursor: pointer; }
+.pick.on { border-color: var(--ib-acc, #2a6bb0); background: rgba(127,166,221,.24); }
+.pick b { font-size: 12px; font-weight: 600; color: var(--ib-tx2, #3d5788); display: block; }
+.pick span { font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--ib-line, #cbd8ec); background: rgba(255,255,255,.66); color: inherit; border-radius: 999px; padding: 7px 13px; font: inherit; font-size: 14px; cursor: pointer; }
+.chip.on { background: var(--ib-acc, #2a6bb0); border-color: transparent; color: #fff; }
+select, textarea { width: 100%; margin-top: 8px; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 12px; padding: 9px 11px; font: inherit; font-size: 14px; background: rgba(255,255,255,.75); color: inherit; }
+textarea { min-height: 62px; resize: vertical; }
+.go { display: block; width: 100%; margin-top: 12px; border: none; border-radius: 14px; padding: 12px; font-size: 15px; color: #fff; background: var(--ib-acc, #2a6bb0); cursor: pointer; }
+.go:disabled { opacity: .5; }
+.story { display: block; width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.story b { font-size: 15px; font-weight: 600; }
+.story small { display: block; font-size: 12px; color: var(--ib-tx3, #7d92b5); margin-top: 3px; }
+.seg { margin-top: 12px; }
+.seg b { font-size: 12px; color: var(--ib-acc, #2a6bb0); font-weight: 600; }
+.seg p { font-size: 15.5px; line-height: 1.85; white-space: pre-wrap; word-break: break-word; margin-top: 3px; }
+.acts { display: flex; gap: 8px; margin-top: 14px; }
+.small { border: 1px solid var(--ib-line, #cbd8ec); background: rgba(255,255,255,.66); color: inherit; border-radius: 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.empty { text-align: center; color: var(--ib-tx3, #7d92b5); font-size: 13px; padding: 40px 16px; line-height: 1.8; }
+.toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: rgba(10,30,66,.86); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; }
+.toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar"><button class="back" id="back" aria-label="返回">←</button><h2 id="title">小故事</h2></div>
+  <div id="view"></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  'use strict';
+  var view = document.getElementById('view'), heading = document.getElementById('title');
+  var params = new URLSearchParams(location.search);
+  var kind = params.get('kind'), source = params.get('id'), around = params.get('around') || '';
+  var pollTimer = 0, screen = 'list';
+  var STATUS = { writing: '正在讲…', failed: '没讲成', partial: '讲到一半断了' };
+  var MAX_PICK = 40;
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function toast(t) { var n = document.getElementById('toast'); n.textContent = t; n.classList.add('on'); clearTimeout(n._t); n._t = setTimeout(function () { n.classList.remove('on'); }, 2400); }
+  function api(url, opts) {
+    return fetch(url, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; });
+    });
+  }
+  function when(ts) { var d = new Date(ts * 1000); return (d.getMonth() + 1) + '月' + d.getDate() + '日'; }
+
+  function showList() {
+    screen = 'list'; clearTimeout(pollTimer);
+    heading.textContent = '小故事'; view.textContent = '';
+    api('/api/story-spark/stories').then(function (d) {
+      if (screen !== 'list') return;
+      view.textContent = '';
+      if (!d.stories.length) { view.appendChild(el('div', 'empty', '还没有故事。\n聊天时点一条消息右边的「⋯」，选「变成小故事」。')); return; }
+      d.stories.forEach(function (s) {
+        var c = el('button', 'card story'); c.type = 'button';
+        c.appendChild(el('b', '', s.title));
+        c.appendChild(el('small', '', s.narrator + ' · ' + when(s.created_at) + (STATUS[s.status] ? ' · ' + STATUS[s.status] : '')));
+        c.onclick = function () { showStory(s.id); };
+        view.appendChild(c);
+      });
+    }).catch(function () { toast('读取失败'); });
+  }
+
+  function showStory(id) {
+    screen = 'story'; clearTimeout(pollTimer);
+    api('/api/story-spark/stories/' + encodeURIComponent(id)).then(function (s) {
+      if (screen !== 'story') return;
+      heading.textContent = s.title; view.textContent = '';
+      var card = el('div', 'card');
+      card.appendChild(el('div', 'hint', s.narrator + ' 讲 · ' + when(s.created_at) + (s.idea ? ' · ' + s.idea : '')));
+      s.segments.forEach(function (seg) {
+        var box = el('div', 'seg');
+        if (s.segments.length > 1) box.appendChild(el('b', '', seg.name));
+        box.appendChild(el('p', '', seg.text));
+        card.appendChild(box);
+      });
+      if (s.status === 'writing') card.appendChild(el('div', 'empty', '正在讲，稍等一下…'));
+      if (s.error) card.appendChild(el('div', 'hint', s.error));
+      var acts = el('div', 'acts');
+      var del = el('button', 'small', '删除');
+      del.onclick = function () {
+        if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = '再点一下删除'; return; }
+        api('/api/story-spark/stories/' + encodeURIComponent(id), { method: 'DELETE' }).then(showList).catch(function () { toast('没删掉'); });
+      };
+      acts.appendChild(del); card.appendChild(acts); view.appendChild(card);
+      if (s.status === 'writing') pollTimer = setTimeout(function () { showStory(id); }, 3000);
+    }).catch(function () { toast('读取失败'); });
+  }
+
+  function showPicker() {
+    screen = 'pick'; heading.textContent = '变成小故事'; view.textContent = '';
+    var picked = {}, mode = '', actor = '', count;
+    var pickCard = el('div', 'card');
+    pickCard.appendChild(el('h3', '', '带哪几条？'));
+    count = el('div', 'hint', '点消息来选，已选 0 条');
+    pickCard.appendChild(count);
+    var box = el('div', 'msgs'); pickCard.appendChild(box); view.appendChild(pickCard);
+
+    var whoCard = el('div', 'card'); whoCard.appendChild(el('h3', '', '谁来讲？'));
+    var chips = el('div', 'chips'); whoCard.appendChild(chips);
+    var modelSelect = el('select'); modelSelect.style.display = 'none'; whoCard.appendChild(modelSelect);
+    view.appendChild(whoCard);
+
+    var ideaCard = el('div', 'card'); ideaCard.appendChild(el('h3', '', '想要什么样的故事？（可以不写）'));
+    var idea = el('textarea'); idea.maxLength = 300; idea.placeholder = '比如：想要童话感，结局温柔一点'; ideaCard.appendChild(idea);
+    ideaCard.appendChild(el('div', 'hint', '故事单独存放，不会进记忆，也不会出现在聊天里。'));
+    view.appendChild(ideaCard);
+
+    var go = el('button', 'go', '开始讲'); view.appendChild(go);
+
+    function refreshCount() { count.textContent = '点消息来选，已选 ' + Object.keys(picked).length + ' 条'; }
+    function addChip(label, onPick) {
+      var c = el('button', 'chip', label); c.type = 'button';
+      c.onclick = function () {
+        Array.prototype.forEach.call(chips.children, function (x) { x.classList.toggle('on', x === c); });
+        onPick();
+      };
+      chips.appendChild(c);
+    }
+
+    api('/api/story-spark/source?kind=' + encodeURIComponent(kind) + '&id=' + encodeURIComponent(source) + '&around=' + encodeURIComponent(around)).then(function (d) {
+      var target = null;
+      d.messages.forEach(function (m) {
+        var b = el('button', 'pick'); b.type = 'button';
+        b.appendChild(el('b', '', m.name)); b.appendChild(el('span', '', m.text));
+        function toggle() {
+          if (picked[m.id]) delete picked[m.id];
+          else if (Object.keys(picked).length >= MAX_PICK) { toast('最多选 ' + MAX_PICK + ' 条'); return; }
+          else picked[m.id] = 1;
+          b.classList.toggle('on', !!picked[m.id]); refreshCount();
+        }
+        b.onclick = toggle;
+        box.appendChild(b);
+        if (m.id === around) { target = b; toggle(); }
+      });
+      if (target) box.scrollTop = target.offsetTop - box.offsetTop - 60; else box.scrollTop = box.scrollHeight;
+    }).catch(function () { toast('消息读取失败'); });
+
+    api('/api/story-spark/narrators').then(function (d) {
+      d.seats.forEach(function (s) { addChip(s.name, function () { mode = 'actor'; actor = s.id; modelSelect.style.display = 'none'; }); });
+      if (d.seats.length > 1) addChip('大家一起讲', function () { mode = 'all'; modelSelect.style.display = 'none'; });
+      addChip('NPC 模型', function () { mode = 'model'; modelSelect.style.display = 'block'; });
+    }).catch(function () { toast('读取讲述者失败'); });
+    api('/api/models').then(function (m) {
+      (Array.isArray(m) ? m : []).forEach(function (x) { var k = x.key || x; var o = el('option', '', k); o.value = k; modelSelect.appendChild(o); });
+    }).catch(function () {});
+
+    go.onclick = function () {
+      var ids = Object.keys(picked);
+      if (!ids.length) { toast('先选几条消息'); return; }
+      if (!mode) { toast('选一下谁来讲'); return; }
+      go.disabled = true;
+      api('/api/story-spark/stories', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: kind, id: source, around: around, message_ids: ids, mode: mode, actor: actor, model: modelSelect.value, idea: idea.value }) })
+        .then(function (j) { kind = null; history.replaceState(null, '', '/story-spark'); showStory(j.id); })
+        .catch(function (e) { go.disabled = false; toast(e.message); });
+    };
+  }
+
+  document.getElementById('back').onclick = function () {
+    if (screen === 'story') { showList(); return; }
+    if (screen === 'pick' && document.referrer) { history.back(); return; }
+    if (screen === 'list' && document.referrer.indexOf('/theater') >= 0) { history.back(); return; }
+    location.href = '/';
+  };
+  if (kind && source) showPicker(); else showList();
+})();
+</script>
+</body>
+</html>

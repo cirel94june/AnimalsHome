@@ -2923,6 +2923,7 @@ function crMsgMenuHtml(sender, msgId, opts = {}) {
     <div class="msg-menu-wrap">
       <button class="msg-menu-btn" onclick="toggleMsgMenu(event)">\u22ef</button>
       <div class="msg-menu-dropdown">
+        ${sender === 'system' ? '' : `<button onclick="location.href='/story-spark?kind=room&id='+encodeURIComponent(currentRoom.id)+'&around=${msgId}'">变成小故事</button>`}
         ${editHtml}
         ${actionHtml}
         <button class="danger" onclick="deleteMsg('${msgId}', this)">\u5220\u9664</button>

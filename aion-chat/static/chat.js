@@ -1997,7 +1997,8 @@ function renderPrivateMessageHTML(m) {
   const roleLabel = isUser ? (worldBook.user_name || '你') : (worldBook.ai_name || 'AI');
   const time = m.created_at ? fmtTime(m.created_at) : '';
   const starLabel = m.starred ? '取消星标' : '⭐ 星标';
-  const actionsHtml = `${isUser ? `<button onclick="editMsg('${m.id}');closeMsgMenus()">编辑</button>` : `<button onclick="editAiMsg('${m.id}');closeMsgMenus()">编辑</button><button onclick="regenerateMsg('${m.id}');closeMsgMenus()">重新生成</button>`}<button onclick="delMsg('${m.id}');closeMsgMenus()">删除</button><button onclick="copyMsg('${m.id}');closeMsgMenus()">复制</button><button onclick="toggleStar('${m.id}');closeMsgMenus()">${starLabel}</button>`;
+  const storyHtml = `<button onclick="location.href='/story-spark?kind=conv&id='+encodeURIComponent('${m.conv_id || ''}'||currentConvId)+'&around=${m.id}'">变成小故事</button>`;
+  const actionsHtml = `${storyHtml}${isUser ? `<button onclick="editMsg('${m.id}');closeMsgMenus()">编辑</button>` : `<button onclick="editAiMsg('${m.id}');closeMsgMenus()">编辑</button><button onclick="regenerateMsg('${m.id}');closeMsgMenus()">重新生成</button>`}<button onclick="delMsg('${m.id}');closeMsgMenus()">删除</button><button onclick="copyMsg('${m.id}');closeMsgMenus()">复制</button><button onclick="toggleStar('${m.id}');closeMsgMenus()">${starLabel}</button>`;
   const starBadge = m.starred ? '<span class="msg-star-badge">✨</span>' : '';
   const dotsLeft = isUser ? `<button class="msg-dots" onclick="event.stopPropagation();toggleMsgMenu('${m.id}')">&#8943;</button>` : '';
   const dotsRight = !isUser ? `<button class="msg-dots" onclick="event.stopPropagation();toggleMsgMenu('${m.id}')">&#8943;</button>` : '';

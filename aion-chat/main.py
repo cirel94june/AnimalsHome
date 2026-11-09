@@ -242,6 +242,8 @@ async def lifespan(app: FastAPI):
     ha_event_listener.start()
     wechat_mode_dispatcher.start()
     openclaw_weixin_runtime.start()
+    import story_spark
+    story_spark.fail_interrupted()  # 重启时没写完的故事标成失败
     security_access_service.start(manager.broadcast)
     try:
         from billiards.service import get_service as billiards_service
@@ -437,6 +439,8 @@ from desk_notes import router as desk_notes_router
 app.include_router(actors_router)
 app.include_router(desk_notes_router)
 from outing_tools import router as outing_tools_router
+from story_spark import router as story_spark_router
+app.include_router(story_spark_router)  # 聊天灵感变成小故事
 from tg_group import router as tg_group_router
 app.include_router(tg_group_router)  # TG 大群同步
 app.include_router(outing_tools_router)  # TG 上的 bot 回家借工具
