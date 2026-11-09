@@ -8,6 +8,8 @@
 - 每段话都能点评（小猫或 AI），被点评段落的作者会回一两句。
 - 谁知道这个故事：只有讲过它的 AI。私下讲的只有那一位；NPC 讲的没有 AI 知道。
 - 大家一起讲的：写完后参与者隔一段随机时间各自「刷到」，自己决定评不评，每段最多评一次。
+- 小世界（11-09 小猫）：讲完能一直接着讲。正文之外有幕后闲聊和设定本；AI 想到的设定直接写进去，小猫可改可删。
+  只有小猫点了才推进，她不在时不往下讲。讲长了用前情提要，不让提示词越来越大。
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import sqlite3
 import time
 import uuid
@@ -39,6 +42,14 @@ SOURCE_LIMIT = 80
 SEGMENT_TIMEOUT_SECONDS = 300
 REMEMBER_PAUSED = False
 MAX_COMMENT_CHARS = 300
+MAX_PASSAGE_CHARS = 3000
+MAX_CHAT_CHARS = 500
+MAX_LORE_ITEMS = 80
+MAX_LORE_CHARS = 200
+MAX_NEW_LORE = 3
+RECENT_CHARS = 5000
+SUMMARY_TRIGGER_CHARS = 9000
+_NEW_LORE = re.compile(r"^\s*【新设定】\s*(.+?)\s*$", re.M)
 BROWSE_DELAY_SECONDS = (300, 10800)   # 几分钟到三小时
 BROWSE_TICK_SECONDS = 60
 BROWSE_PER_TICK = 3
@@ -57,12 +68,20 @@ def _connect() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS comments (
         id INTEGER PRIMARY KEY AUTOINCREMENT, story_id TEXT NOT NULL, seg INTEGER NOT NULL, para INTEGER NOT NULL,
         who TEXT NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS lore (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, story_id TEXT NOT NULL, who TEXT NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS chat (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, story_id TEXT NOT NULL, who TEXT NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS recap (
+        story_id TEXT PRIMARY KEY, text TEXT NOT NULL, upto INTEGER NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS browse (
         story_id TEXT NOT NULL, actor TEXT NOT NULL, due_at REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (story_id, actor))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS remembered (
         story_id TEXT NOT NULL, actor TEXT NOT NULL, note TEXT NOT NULL, created_at REAL NOT NULL,
         PRIMARY KEY (story_id, actor))""")
+    if "seg_count" not in {r[1] for r in conn.execute("PRAGMA table_info(remembered)")}:
+        conn.execute("ALTER TABLE remembered ADD COLUMN seg_count INTEGER NOT NULL DEFAULT 0")
     return conn
 
 
@@ -103,6 +122,8 @@ def delete_story(story_id: str) -> bool:
         conn.execute("DELETE FROM comments WHERE story_id=?", (story_id,))
         conn.execute("DELETE FROM remembered WHERE story_id=?", (story_id,))
         conn.execute("DELETE FROM browse WHERE story_id=?", (story_id,))
+        for table in ("lore", "chat", "recap"):
+            conn.execute(f"DELETE FROM {table} WHERE story_id=?", (story_id,))
         return conn.execute("DELETE FROM stories WHERE id=?", (story_id,)).rowcount == 1
 
 
@@ -119,8 +140,72 @@ def add_comment(story_id: str, seg: int, para: int, who: str, text: str, now: fl
 def story_extras(story_id: str) -> dict[str, Any]:
     with _connect() as conn:
         comments = conn.execute("SELECT seg, para, who, text, created_at FROM comments WHERE story_id=? ORDER BY id", (story_id,)).fetchall()
-        remembered = conn.execute("SELECT actor FROM remembered WHERE story_id=?", (story_id,)).fetchall()
-    return {"comments": [dict(c) for c in comments], "remembered": [r["actor"] for r in remembered]}
+        remembered = conn.execute("SELECT actor, seg_count FROM remembered WHERE story_id=?", (story_id,)).fetchall()
+        lore_rows = conn.execute("SELECT id, who, text FROM lore WHERE story_id=? ORDER BY id", (story_id,)).fetchall()
+        chat_rows = conn.execute("SELECT who, text, created_at FROM chat WHERE story_id=? ORDER BY id", (story_id,)).fetchall()
+        story = conn.execute("SELECT segments FROM stories WHERE id=?", (story_id,)).fetchone()
+    length = len(json.loads(story["segments"])) if story else 0
+    return {"comments": [dict(c) for c in comments], "remembered": [r["actor"] for r in remembered if r["seg_count"] >= length],
+            "lore": [dict(r) for r in lore_rows], "chat": [dict(r) for r in chat_rows]}
+
+
+def add_lore(story_id: str, who: str, text: str, now: float | None = None) -> bool:
+    text = text.strip()[:MAX_LORE_CHARS]
+    if not text:
+        return False
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = [r[0] for r in conn.execute("SELECT text FROM lore WHERE story_id=?", (story_id,))]
+        if text in rows or len(rows) >= MAX_LORE_ITEMS:
+            return False
+        conn.execute("INSERT INTO lore (story_id, who, text, created_at) VALUES (?,?,?,?)",
+                     (story_id, who, text, time.time() if now is None else now))
+    return True
+
+
+def edit_lore(story_id: str, lore_id: int, text: str) -> bool:
+    with _connect() as conn:
+        return conn.execute("UPDATE lore SET text=? WHERE id=? AND story_id=?", (text.strip()[:MAX_LORE_CHARS], lore_id, story_id)).rowcount == 1
+
+
+def delete_lore(story_id: str, lore_id: int) -> bool:
+    with _connect() as conn:
+        return conn.execute("DELETE FROM lore WHERE id=? AND story_id=?", (lore_id, story_id)).rowcount == 1
+
+
+def add_chat(story_id: str, who: str, text: str, now: float | None = None) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT INTO chat (story_id, who, text, created_at) VALUES (?,?,?,?)",
+                     (story_id, who, text[:MAX_CHAT_CHARS], time.time() if now is None else now))
+
+
+def get_recap(story_id: str) -> tuple[str, int]:
+    with _connect() as conn:
+        row = conn.execute("SELECT text, upto FROM recap WHERE story_id=?", (story_id,)).fetchone()
+    return (row["text"], row["upto"]) if row else ("", 0)
+
+
+def set_recap(story_id: str, text: str, upto: int) -> None:
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO recap (story_id, text, upto) VALUES (?,?,?)", (story_id, text, upto))
+
+
+def append_segment(story_id: str, segment: dict[str, str]) -> list[dict[str, Any]]:
+    """在事务里加一段，避免同时写时把别人那段盖掉。"""
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT segments FROM stories WHERE id=?", (story_id,)).fetchone()
+        segments = json.loads(row["segments"]) if row else []
+        segments.append(segment)
+        conn.execute("UPDATE stories SET segments=?, status=CASE WHEN status='writing' THEN status ELSE 'done' END, error='' WHERE id=?",
+                     (json.dumps(segments, ensure_ascii=False), story_id))
+    return segments
+
+
+def take_new_lore(text: str) -> tuple[str, list[str]]:
+    """把回复里的「【新设定】…」摘出来，正文里不留。"""
+    found = [m.group(1).strip() for m in _NEW_LORE.finditer(text)]
+    return _NEW_LORE.sub("", text).strip(), found[:MAX_NEW_LORE]
 
 
 def fail_interrupted() -> None:
@@ -252,7 +337,7 @@ def _segment_speaker(segment: dict[str, Any]) -> dict[str, str] | None:
 
 def audience(story: dict[str, Any], seats: list[dict[str, str]]) -> list[str]:
     """知道这个故事的 AI：只有讲过它的人（旧故事没存 id，按名字认）。"""
-    ids = {s.get("sid") for s in story["segments"]}
+    ids = {s.get("sid") for s in story["segments"]} - {"user"}
     names = {s.get("name") for s in story["segments"]}
     return [seat["id"] for seat in seats if seat["id"] in ids or (seat["name"] in names and not any(ids))]
 
@@ -351,7 +436,89 @@ def start_browse() -> None:
 
 
 def _story_text(story: dict[str, Any], limit: int = 4000) -> str:
-    return "\n\n".join(s["text"] for s in story["segments"])[:limit]
+    """讲长了只取最近的部分。"""
+    return "\n\n".join(s["text"] for s in story["segments"])[-limit:]
+
+
+def narrators(story: dict[str, Any], seats: list[dict[str, str]]) -> list[dict[str, str]]:
+    """能接着讲的：参与过的 AI；NPC 讲过的话还有 NPC（用它当时的模型）。"""
+    allowed = set(audience(story, seats))
+    out = [dict(seat) for seat in seats if seat["id"] in allowed]
+    for segment in story["segments"]:
+        if segment.get("sid") == "npc" and segment.get("model"):
+            out.append({"id": "npc", "name": "NPC", "model": segment["model"], "persona": ""})
+            break
+    return out
+
+
+def world_context(story: dict[str, Any]) -> str:
+    """设定本 + 前情提要 + 最近的正文 + 最近的幕后闲聊。"""
+    extras = story_extras(story["id"])
+    recap, upto = get_recap(story["id"])
+    recent = "\n\n".join(f"{s['name']}：{s['text']}" for s in story["segments"][upto:])[-RECENT_CHARS:]
+    parts = [f"这是一个你们一起编的虚构故事世界《{story['title']}》，里面的事都是编的。"]
+    if extras["lore"]:
+        parts.append("【设定本】\n" + "\n".join(f"- {x['text']}" for x in extras["lore"]))
+    if recap:
+        parts.append(f"【前情提要】\n{recap}")
+    parts.append(f"【最近的剧情】\n{recent}")
+    if extras["chat"]:
+        parts.append("【幕后闲聊，不是剧情】\n" + "\n".join(f"{c['who']}：{c['text']}" for c in extras["chat"][-15:]))
+    return "\n\n".join(parts)
+
+
+LORE_HINT = "如果想到了新的人物、地点或规则，可以在最后另起一行写「【新设定】内容」，最多 3 条，没有就不写。"
+
+
+async def _take_turn(story_id: str, speaker: dict[str, str], last: bool, nudge: str) -> None:
+    story = await asyncio.to_thread(get_story, story_id)
+    context = await asyncio.to_thread(world_context, story)
+    ending = "这一段留个口子，让后面的人能接。" if not last else "可以推进剧情，不用收尾，这个世界还会继续。"
+    prompt = (f"{context}\n\n" + (f"【{nudge}】\n\n" if nudge else "") +
+              f"请用你自己的口吻接着往下讲一段，300 到 500 字，不要重复前面的内容，符合设定本。{ending}{LORE_HINT}直接输出。")
+    raw = await _speak(prompt, speaker["model"], speaker.get("persona", ""), speaker["name"])
+    text, lore = take_new_lore(raw)
+    if not text:
+        raise ValueError("模型没有写出内容")
+    await asyncio.to_thread(append_segment, story_id, {"name": speaker["name"], "text": text, "sid": speaker["id"], "model": speaker["model"]})
+    for item in lore:
+        await asyncio.to_thread(add_lore, story_id, speaker["name"], item)
+
+
+async def _maybe_recap(story_id: str, speaker: dict[str, str]) -> None:
+    story = await asyncio.to_thread(get_story, story_id)
+    recap, upto = await asyncio.to_thread(get_recap, story_id)
+    segments = story["segments"]
+    if sum(len(s["text"]) for s in segments[upto:]) < SUMMARY_TRIGGER_CHARS or len(segments) - upto < 4:
+        return
+    cut = len(segments) - 2   # 最近两段留原文
+    old = "\n\n".join(f"{s['name']}：{s['text']}" for s in segments[upto:cut])
+    prompt = (f"这是一个虚构故事。之前的提要：\n{recap or '（无）'}\n\n后来发生的：\n{old}\n\n"
+              "把它们合成一份前情提要，800 字以内，保留人物关系、发生过的关键事件和伏笔。不写评价，直接输出。")
+    text = await _speak(prompt, speaker["model"])
+    if text:
+        await asyncio.to_thread(set_recap, story_id, text[:3000], cut)
+
+
+async def continue_job(story_id: str, speakers: list[dict[str, str]], nudge: str) -> None:
+    for index, speaker in enumerate(speakers):
+        await _take_turn(story_id, speaker, index == len(speakers) - 1, nudge)
+    await _maybe_recap(story_id, speakers[0])
+
+
+async def talk_job(story_id: str, speakers: list[dict[str, str]], user_name: str) -> None:
+    """大家聊聊：只聊，不推进剧情。每人说一次就停。"""
+    for speaker in speakers:
+        story = await asyncio.to_thread(get_story, story_id)
+        context = await asyncio.to_thread(world_context, story)
+        prompt = (f"{context}\n\n现在是幕后，大家和{user_name}一起聊这个故事：吐槽、猜剧情、提想法都行，不要写正文。"
+                  f"用你自己的口吻说一两句，不超过 80 字，不要加引号。{LORE_HINT}直接输出。")
+        raw = await _speak(prompt, speaker["model"], speaker.get("persona", ""), speaker["name"])
+        text, lore = take_new_lore(raw)
+        if text:
+            await asyncio.to_thread(add_chat, story_id, speaker["name"], text)
+        for item in lore:
+            await asyncio.to_thread(add_lore, story_id, speaker["name"], item)
 
 
 def _spawn(story_id: str, job) -> None:
@@ -410,15 +577,19 @@ async def ai_comment_job(story: dict[str, Any], seat: dict[str, str], user_name:
     await _author_reply(story, seg, para, seat["name"], text, user_name)
 
 
-def mark_remembered(story_id: str, actor: str, note: str, now: float | None = None) -> bool:
+def mark_remembered(story_id: str, actor: str, note: str, now: float | None = None, seg_count: int = 0) -> bool:
+    """故事有新进展（seg_count 变大）时可以再记一次。"""
     with _connect() as conn:
-        return conn.execute("INSERT OR IGNORE INTO remembered (story_id, actor, note, created_at) VALUES (?,?,?,?)",
-                            (story_id, actor, note, time.time() if now is None else now)).rowcount == 1
+        return conn.execute(
+            "INSERT INTO remembered (story_id, actor, note, created_at, seg_count) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(story_id, actor) DO UPDATE SET note=excluded.note, created_at=excluded.created_at, seg_count=excluded.seg_count "
+            "WHERE excluded.seg_count > remembered.seg_count",
+            (story_id, actor, note, time.time() if now is None else now, seg_count)).rowcount == 1
 
 
-def is_remembered(story_id: str, actor: str) -> bool:
+def is_remembered(story_id: str, actor: str, seg_count: int = 0) -> bool:
     with _connect() as conn:
-        return conn.execute("SELECT 1 FROM remembered WHERE story_id=? AND actor=?", (story_id, actor)).fetchone() is not None
+        return conn.execute("SELECT 1 FROM remembered WHERE story_id=? AND actor=? AND seg_count>=?", (story_id, actor, seg_count)).fetchone() is not None
 
 
 async def remember_job(story: dict[str, Any], seat: dict[str, str], user_name: str) -> None:
@@ -437,9 +608,9 @@ async def remember_job(story: dict[str, Any], seat: dict[str, str], user_name: s
     queued = bridge.schedule_remember(
         seat["id"],
         [{"content": note[:200], "fiction": True}],
-        request_key=f"story-{story['id']}-{seat['id']}", outcome=outcome)
+        request_key=f"story-{story['id']}-{seat['id']}-{len(story['segments'])}", outcome=outcome)
     if queued or outcome.get("duplicate"):
-        await asyncio.to_thread(mark_remembered, story["id"], seat["id"], note)
+        await asyncio.to_thread(mark_remembered, story["id"], seat["id"], note, None, len(story["segments"]))
     else:
         _notice[story["id"]] = f"{seat['name']} 这次没记上，再试一次吧"
 
@@ -519,6 +690,7 @@ async def api_get(story_id: str):
     extras = await asyncio.to_thread(story_extras, story_id)
     seats = await asyncio.to_thread(ready_seats)
     extras["audience"] = audience(story, seats)
+    extras["narrators"] = [{"id": n["id"], "name": n["name"]} for n in narrators(story, seats)]
     extras["remember_paused"] = REMEMBER_PAUSED
     return {**story, **extras, "busy": _busy.get(story_id, 0), "notice": _notice.get(story_id, "")}
 
@@ -577,6 +749,83 @@ async def api_comment(story_id: str, request: Request):
     return {"ok": True}
 
 
+def _not_busy(story: dict[str, Any]) -> None:
+    if story["status"] == "writing" or _busy.get(story["id"]):
+        raise HTTPException(409, "大家正在写，等一下")
+
+
+@router.post("/api/story-spark/stories/{story_id}/passage")
+async def api_passage(story_id: str, request: Request):
+    """小猫自己写一段正文。不调模型。"""
+    story = await _finished_story(story_id)
+    _not_busy(story)
+    text = str((await _body(request)).get("text") or "").strip()[:MAX_PASSAGE_CHARS]
+    if not text:
+        raise HTTPException(400, "写点什么吧")
+    await asyncio.to_thread(append_segment, story_id, {"name": _user_name(), "text": text, "sid": "user"})
+    return {"ok": True}
+
+
+@router.post("/api/story-spark/stories/{story_id}/chat")
+async def api_chat(story_id: str, request: Request):
+    await _finished_story(story_id)
+    text = str((await _body(request)).get("text") or "").strip()[:MAX_CHAT_CHARS]
+    if not text:
+        raise HTTPException(400, "写点什么吧")
+    await asyncio.to_thread(add_chat, story_id, _user_name(), text)
+    return {"ok": True}
+
+
+@router.post("/api/story-spark/stories/{story_id}/lore")
+async def api_lore_add(story_id: str, request: Request):
+    await _finished_story(story_id)
+    if not await asyncio.to_thread(add_lore, story_id, _user_name(), str((await _body(request)).get("text") or "")):
+        raise HTTPException(400, "没加上：内容是空的、重复了，或者设定本满了")
+    return {"ok": True}
+
+
+@router.put("/api/story-spark/stories/{story_id}/lore/{lore_id}")
+async def api_lore_edit(story_id: str, lore_id: int, request: Request):
+    text = str((await _body(request)).get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "内容不能是空的，不要了就删除")
+    if not await asyncio.to_thread(edit_lore, story_id, lore_id, text):
+        raise HTTPException(404, "这条找不到了")
+    return {"ok": True}
+
+
+@router.delete("/api/story-spark/stories/{story_id}/lore/{lore_id}")
+async def api_lore_delete(story_id: str, lore_id: int):
+    return {"ok": await asyncio.to_thread(delete_lore, story_id, lore_id)}
+
+
+async def _pick_speakers(story: dict[str, Any], who: str) -> list[dict[str, str]]:
+    seats = await asyncio.to_thread(ready_seats)
+    everyone = narrators(story, seats)
+    picked = everyone if who == "all" else [n for n in everyone if n["id"] == who]
+    if not picked:
+        raise HTTPException(400, "这位现在讲不了")
+    return picked
+
+
+@router.post("/api/story-spark/stories/{story_id}/continue")
+async def api_continue(story_id: str, request: Request):
+    story = await _finished_story(story_id)
+    _not_busy(story)
+    body = await _body(request)
+    speakers = await _pick_speakers(story, str(body.get("who") or ""))
+    _spawn(story_id, continue_job(story_id, speakers, str(body.get("nudge") or "").strip()[:MAX_CHAT_CHARS]))
+    return {"ok": True}
+
+
+@router.post("/api/story-spark/stories/{story_id}/talk")
+async def api_talk(story_id: str):
+    story = await _finished_story(story_id)
+    _not_busy(story)
+    _spawn(story_id, talk_job(story_id, await _pick_speakers(story, "all"), _user_name()))
+    return {"ok": True}
+
+
 @router.post("/api/story-spark/stories/{story_id}/ai-comment")
 async def api_ai_comment(story_id: str, request: Request):
     story = await _finished_story(story_id)
@@ -592,8 +841,8 @@ async def api_remember(story_id: str, request: Request):
     story = await _finished_story(story_id)
     actor = str((await _body(request)).get("actor") or "")
     seat = await _ready_seat(actor, story)
-    if await asyncio.to_thread(is_remembered, story_id, actor):
-        raise HTTPException(400, f"{seat['name']} 已经记住这个故事了")
+    if await asyncio.to_thread(is_remembered, story_id, actor, len(story["segments"])):
+        raise HTTPException(400, f"{seat['name']} 已经记住现在的进展了")
     _spawn(story_id, remember_job(story, seat, _user_name()))
     return {"ok": True}
 

@@ -106,7 +106,7 @@ def test_comments_extras_and_cleanup():
     extras = story_spark.story_extras("a")
     assert extras["comments"][0]["who"] == "小猫" and extras["remembered"] == ["aion"]
     story_spark.delete_story("a")
-    assert story_spark.story_extras("a") == {"comments": [], "remembered": []}
+    assert story_spark.story_extras("a") == {"comments": [], "remembered": [], "lore": [], "chat": []}
 
 
 def test_author_replies_but_not_to_self(monkeypatch):
@@ -196,3 +196,75 @@ def test_browse_skips_own_and_already_commented(monkeypatch):
 
 def test_remember_is_open_now_hub_is_ready():
     assert story_spark.REMEMBER_PAUSED is False
+
+
+def seeded(segments=None):
+    story_spark.insert_story("a", "大家一起", "", SEED)
+    story_spark.update_story("a", status="done", title="雪夜", segments=segments or [{"name": "甲", "text": "开头", "sid": "aion", "model": "m"}])
+
+
+def fake_speak(monkeypatch, replies):
+    prompts = []
+
+    async def speak(prompt, model, persona="", name=""):
+        prompts.append(prompt)
+        return replies.pop(0)
+    monkeypatch.setattr(story_spark, "_speak", speak)
+    return prompts
+
+
+SPK = [{"id": "aion", "name": "甲", "model": "m", "persona": ""}, {"id": "ai3", "name": "乙", "model": "n", "persona": ""}]
+
+
+def test_continue_appends_and_pulls_new_lore_out_of_text(monkeypatch):
+    seeded()
+    prompts = fake_speak(monkeypatch, ["第二段\n【新设定】猫会说话", "第三段"])
+    asyncio.run(story_spark.continue_job("a", SPK, "往北走"))
+    story = story_spark.get_story("a")
+    assert [s["text"] for s in story["segments"]] == ["开头", "第二段", "第三段"]
+    assert "往北走" in prompts[0] and "第二段" in prompts[1] and "猫会说话" in prompts[1]
+    assert [(x["who"], x["text"]) for x in story_spark.story_extras("a")["lore"]] == [("甲", "猫会说话")]
+
+
+def test_talk_does_not_advance_the_story(monkeypatch):
+    seeded()
+    fake_speak(monkeypatch, ["好看", "我猜是他"])
+    asyncio.run(story_spark.talk_job("a", SPK, "小猫"))
+    assert len(story_spark.get_story("a")["segments"]) == 1
+    assert [c["who"] for c in story_spark.story_extras("a")["chat"]] == ["甲", "乙"]
+
+
+def test_lore_edit_delete_dedupe_and_scope():
+    seeded()
+    assert story_spark.add_lore("a", "小猫", "设定一") and not story_spark.add_lore("a", "甲", "设定一")
+    lore_id = story_spark.story_extras("a")["lore"][0]["id"]
+    assert story_spark.edit_lore("other", lore_id, "x") is False
+    assert story_spark.edit_lore("a", lore_id, "改了") is True
+    assert story_spark.story_extras("a")["lore"][0]["text"] == "改了"
+    assert story_spark.delete_lore("a", lore_id) and not story_spark.story_extras("a")["lore"]
+
+
+def test_recap_limits_context_and_keeps_latest(monkeypatch):
+    long_text = "很长" * 2600
+    seeded([{"name": "甲", "text": f"{i}{long_text}", "sid": "aion", "model": "m"} for i in range(5)])
+    fake_speak(monkeypatch, ["前情"])
+    asyncio.run(story_spark._maybe_recap("a", SPK[0]))
+    assert story_spark.get_recap("a") == ("前情", 3)
+    context = story_spark.world_context(story_spark.get_story("a"))
+    assert "前情" in context and len(context) < story_spark.RECENT_CHARS + 500
+
+
+def test_new_progress_can_be_remembered_again():
+    seeded()
+    assert story_spark.mark_remembered("a", "aion", "n", seg_count=1)
+    assert story_spark.is_remembered("a", "aion", 1) and not story_spark.is_remembered("a", "aion", 2)
+    assert story_spark.mark_remembered("a", "aion", "n2", seg_count=2)
+    assert story_spark.mark_remembered("a", "aion", "n3", seg_count=1) is False
+
+
+def test_user_passage_does_not_join_audience_or_narrators():
+    seats = [{"id": "aion", "name": "甲", "model": "m", "persona": ""}, {"id": "ai3", "name": "乙", "model": "n", "persona": ""}]
+    story = {"segments": [{"name": "甲", "text": "x", "sid": "aion"}, {"name": "小猫", "text": "y", "sid": "user"}]}
+    assert [n["id"] for n in story_spark.narrators(story, seats)] == ["aion"]
+    npc = {"segments": [{"name": "NPC", "text": "x", "sid": "npc", "model": "z"}]}
+    assert story_spark.narrators(npc, seats) == [{"id": "npc", "name": "NPC", "model": "z", "persona": ""}]

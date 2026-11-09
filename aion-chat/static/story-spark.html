@@ -41,6 +41,16 @@ textarea { min-height: 62px; resize: vertical; }
 .box { display: flex; gap: 6px; margin: 4px 0 10px; }
 .box input { flex: 1; min-width: 0; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 10px; padding: 7px 10px; font: inherit; font-size: 14px; background: rgba(255,255,255,.75); color: inherit; }
 .tools h3 { margin-top: 12px; }
+details { margin-top: 12px; }
+summary { font-size: 14px; font-weight: 600; cursor: pointer; }
+.lore { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.lore input { flex: 1; min-width: 0; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 10px; padding: 6px 9px; font: inherit; font-size: 13.5px; background: rgba(255,255,255,.75); color: inherit; }
+.lore small { font-size: 11px; color: var(--ib-tx3, #7d92b5); flex: none; }
+.talk { font-size: 14px; line-height: 1.6; margin-top: 5px; white-space: pre-wrap; word-break: break-word; }
+.talk b { color: var(--ib-tx2, #3d5788); font-weight: 600; }
+.composer textarea { min-height: 70px; }
+.row3 { display: flex; gap: 6px; margin-top: 6px; }
+.row3 .small { flex: 1; }
 .chip.done { opacity: .55; }
 .acts { display: flex; gap: 8px; margin-top: 14px; }
 .small { border: 1px solid var(--ib-line, #cbd8ec); background: rgba(255,255,255,.66); color: inherit; border-radius: 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
@@ -91,7 +101,11 @@ textarea { min-height: 62px; resize: vertical; }
     }).catch(function () { toast('读取失败'); });
   }
 
-  var openSpot = '', draft = '', seats = null;
+  var openSpot = '', draft = '', seats = null, composing = '', openPanels = {};
+  function panel(name, title) {
+    var d = el('details'); d.open = !!openPanels[name]; d.ontoggle = function () { openPanels[name] = d.open; };
+    d.appendChild(el('summary', '', title)); return d;
+  }
   function typing() { var a = document.activeElement; return a && a.classList && a.classList.contains('cmt-input'); }
   function postStory(id, path, body) {
     return api('/api/story-spark/stories/' + encodeURIComponent(id) + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -137,6 +151,60 @@ textarea { min-height: 62px; resize: vertical; }
         });
         card.appendChild(box);
       });
+      if (s.status !== 'writing' && s.segments.length) {
+        var busy = !!s.busy, refresh = function () { showStory(id); };
+        var act = function (path, body, msg) { return postStory(id, path, body).then(function () { if (msg) toast(msg); refresh(); }).catch(function (e) { toast(e.message); }); };
+        var nar = s.narrators || [];
+        if (nar.length) {
+          card.appendChild(el('h3', '', '接下来'));
+          var next = el('div', 'chips');
+          nar.forEach(function (n) {
+            var c = el('button', 'chip', n.name + ' 接着讲'); c.type = 'button'; c.disabled = busy;
+            c.onclick = function () { c.disabled = true; act('/continue', { who: n.id, nudge: nudgeBox.value }, n.name + ' 在想'); };
+            next.appendChild(c);
+          });
+          if (nar.length > 1) {
+            var round = el('button', 'chip', '大家轮一圈'); round.type = 'button'; round.disabled = busy;
+            round.onclick = function () { round.disabled = true; act('/continue', { who: 'all', nudge: nudgeBox.value }, '大家在想'); };
+            next.appendChild(round);
+          }
+          var talk = el('button', 'chip', '大家聊聊'); talk.type = 'button'; talk.disabled = busy;
+          talk.onclick = function () { talk.disabled = true; act('/talk', {}, '大家在聊'); };
+          next.appendChild(talk);
+          card.appendChild(next);
+          var nudgeBox = el('input', 'cmt-input'); nudgeBox.placeholder = '想让剧情往哪走？（可以不写）'; nudgeBox.maxLength = 500; nudgeBox.style.cssText = 'width:100%;margin-top:6px;border:1px solid var(--ib-line,#cbd8ec);border-radius:10px;padding:7px 10px;font:inherit;font-size:14px;background:rgba(255,255,255,.75);color:inherit';
+          card.appendChild(nudgeBox);
+        }
+        var composer = el('div', 'composer');
+        var area = el('textarea', 'cmt-input'); area.placeholder = '写点什么：点评、加设定，或者自己写一段剧情'; area.value = composing; area.maxLength = 3000;
+        area.oninput = function () { composing = area.value; };
+        composer.appendChild(area);
+        var row = el('div', 'row3');
+        [['写进正文', '/passage', true], ['幕后说话', '/chat', false], ['加进设定', '/lore', false]].forEach(function (b) {
+          var btn = el('button', 'small', b[0]); btn.type = 'button'; btn.disabled = busy && b[2];
+          btn.onclick = function () {
+            var v = area.value.trim(); if (!v) return;
+            btn.disabled = true; area.blur();
+            postStory(id, b[1], { text: v }).then(function () { composing = ''; refresh(); }).catch(function (e) { btn.disabled = false; toast(e.message); });
+          };
+          row.appendChild(btn);
+        });
+        composer.appendChild(row); card.appendChild(composer);
+
+        var lorePanel = panel('lore', '设定本（' + (s.lore || []).length + '）');
+        if (!(s.lore || []).length) lorePanel.appendChild(el('div', 'hint', '还没有设定。AI 想到的会自己写进来，你可以改。'));
+        (s.lore || []).forEach(function (x) {
+          var line = el('div', 'lore'), input = el('input', 'cmt-input'); input.value = x.text; input.maxLength = 200;
+          input.onchange = function () { api('/api/story-spark/stories/' + encodeURIComponent(id) + '/lore/' + x.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input.value }) }).then(function () { toast('改好了'); }).catch(function (e) { toast(e.message); }); };
+          var del2 = el('button', 'small', '删'); del2.onclick = function () { api('/api/story-spark/stories/' + encodeURIComponent(id) + '/lore/' + x.id, { method: 'DELETE' }).then(refresh).catch(function (e) { toast(e.message); }); };
+          line.appendChild(input); line.appendChild(el('small', '', x.who)); line.appendChild(del2); lorePanel.appendChild(line);
+        });
+        card.appendChild(lorePanel);
+        var chatPanel = panel('chat', '幕后（' + (s.chat || []).length + '）');
+        if (!(s.chat || []).length) chatPanel.appendChild(el('div', 'hint', '这里聊的不算剧情。'));
+        (s.chat || []).forEach(function (c) { var d = el('div', 'talk'); d.appendChild(el('b', '', c.who + '：')); d.appendChild(document.createTextNode(c.text)); chatPanel.appendChild(d); });
+        card.appendChild(chatPanel);
+      }
       if (s.status !== 'writing' && s.segments.length && !list.length) {
         card.appendChild(el('div', 'hint', 'NPC 讲的故事，家里的 AI 不知道。点一段话可以写下你的感想。'));
       }
@@ -155,7 +223,7 @@ textarea { min-height: 62px; resize: vertical; }
         tools.appendChild(el('div', 'hint', list.length > 1 ? '参与的 AI 各记各的：记得一起编了什么、当时的感受，并知道情节是编的。' : '只有讲故事的 TA 记得：一起编了什么、当时的感受，并知道情节是编的。'));
         var b = el('div', 'chips'); b.style.marginTop = '6px';
         var waiting = list.filter(function (seat) { return (s.remembered || []).indexOf(seat.id) < 0; });
-        var memo = el('button', 'chip' + (waiting.length ? '' : ' done'), waiting.length ? '记住这个故事' : '已经记住了'); memo.type = 'button';
+        var memo = el('button', 'chip' + (waiting.length ? '' : ' done'), waiting.length ? '记住这个故事' : '已经记住现在的进展了'); memo.type = 'button';
         memo.disabled = !waiting.length || !!s.remember_paused || !!s.busy;
         memo.onclick = function () {
           memo.disabled = true;
