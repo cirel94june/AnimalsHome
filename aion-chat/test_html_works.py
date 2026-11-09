@@ -77,3 +77,43 @@ def test_festivals():
     assert festivals.hint(date(2026, 8, 19)) == "（今天是七夕）"
     assert festivals.hint(date(2026, 8, 17)) == "（再过2天是七夕）"
     assert festivals.hint(date(2026, 7, 7)) == ""
+
+
+def test_deleting_does_not_refund_quota():
+    work = html_works.save_work("aion", "小克", "a", "", DOC, "七夕", now=1000)
+    html_works.delete_work(work)
+    assert html_works.recent_count("aion", now=1001) == 1
+    assert html_works.occasion_done("aion", "七夕", now=1001)
+
+
+def test_outer_page_blocks_frames_from_navigating_away():
+    page = (html_works.BASE_DIR / "static" / "works.html").read_text(encoding="utf-8")
+    assert "frame-src 'none'" in page[:400]
+
+
+def test_seat_disabled_while_reading_hub_is_not_called(monkeypatch):
+    import asyncio
+    import sys
+    import types
+
+    state = {"ready": True, "calls": 0}
+    seat = {"id": "ai3", "name": "狗蛋", "model": "m", "persona": ""}
+    hub = types.ModuleType("hub_day")
+
+    async def day_text(*args):
+        state["ready"] = False
+        return ""
+    hub.day_text = day_text
+    story = types.ModuleType("story_spark")
+    story.ready_seats = lambda: [dict(seat)] if state["ready"] else []
+    provider = types.ModuleType("ai_providers")
+    provider.CLI_STATUS_PREFIX = "x"
+
+    async def stream(messages, model):
+        state["calls"] += 1
+        yield "不做"
+    provider.stream_ai = stream
+    for name, module in (("hub_day", hub), ("story_spark", story), ("ai_providers", provider)):
+        monkeypatch.setitem(sys.modules, name, module)
+    asyncio.run(html_works.consider(seat, "", "小猫"))
+    assert state["calls"] == 0

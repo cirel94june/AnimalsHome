@@ -3113,3 +3113,6 @@ festivals.py：公历节日 + 农历写死到 2030 + 桌面设置里的生日纪
 
 ### §217 小作品（11-09，待狐狸审，未部署）
 html_works.py + static/works.html：AI 每天最多想一次（临近节日或 10% 随机），滚动 7 天每人最多 2 个，写入事务内再核。网页在 sandbox=allow-scripts 的 iframe 里，前置 CSP。
+
+### §217a 狐狸审查 4 条（11-09）已修
+H1 外层页面 CSP frame-src none 拦自身跳转；M2 制作记录单独存，删作品不退额度；M3 读 Hub 后重新核对座位和模型；M4 超长即停止读取。另：记住这个故事按 Hub 要求暂停（REMEMBER_PAUSED）。

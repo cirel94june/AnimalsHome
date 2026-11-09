@@ -152,11 +152,11 @@ textarea { min-height: 62px; resize: vertical; }
         });
         tools.appendChild(a);
         tools.appendChild(el('h3', '', '记住这个故事'));
-        tools.appendChild(el('div', 'hint', '只记大概内容和当时的感受，并标明是虚构的。'));
+        tools.appendChild(el('div', 'hint', s.remember_paused ? '记忆方案商量中，先等等。' : '只记大概内容和当时的感受，并标明是虚构的。'));
         var b = el('div', 'chips'); b.style.marginTop = '6px';
         list.forEach(function (seat) {
           var done = (s.remembered || []).indexOf(seat.id) >= 0;
-          var c = el('button', 'chip' + (done ? ' done' : ''), seat.name + (done ? ' 已记住' : '')); c.type = 'button'; c.disabled = done;
+          var c = el('button', 'chip' + (done ? ' done' : ''), seat.name + (done ? ' 已记住' : '')); c.type = 'button'; c.disabled = done || !!s.remember_paused;
           c.onclick = function () { c.disabled = true; postStory(id, '/remember', { actor: seat.id }).then(function () { toast(seat.name + ' 在记'); showStory(id); }).catch(function (e) { c.disabled = false; toast(e.message); }); };
           b.appendChild(c);
         });

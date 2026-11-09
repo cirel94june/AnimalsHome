@@ -197,3 +197,7 @@ def test_browse_skips_own_and_already_commented(monkeypatch):
     count = len(prompts)
     asyncio.run(story_spark.browse_job("a", "aion", "小猫"))
     assert len(prompts) == count
+
+
+def test_remember_is_paused_until_hub_is_ready():
+    assert story_spark.REMEMBER_PAUSED is True

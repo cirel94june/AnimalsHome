@@ -37,6 +37,7 @@ MAX_SEED_CHARS = 12000
 MAX_IDEA_CHARS = 300
 SOURCE_LIMIT = 80
 SEGMENT_TIMEOUT_SECONDS = 300
+REMEMBER_PAUSED = True   # 11-09 Hub 请暂停写入，等 fiction 接口上线再打开
 MAX_COMMENT_CHARS = 300
 BROWSE_DELAY_SECONDS = (300, 10800)   # 几分钟到三小时
 BROWSE_TICK_SECONDS = 60
@@ -522,6 +523,7 @@ async def api_get(story_id: str):
     extras = await asyncio.to_thread(story_extras, story_id)
     seats = await asyncio.to_thread(ready_seats)
     extras["audience"] = audience(story, seats)
+    extras["remember_paused"] = REMEMBER_PAUSED
     return {**story, **extras, "busy": _busy.get(story_id, 0), "notice": _notice.get(story_id, "")}
 
 
@@ -589,6 +591,8 @@ async def api_ai_comment(story_id: str, request: Request):
 
 @router.post("/api/story-spark/stories/{story_id}/remember")
 async def api_remember(story_id: str, request: Request):
+    if REMEMBER_PAUSED:
+        raise HTTPException(409, "记忆方案商量中，先等等")
     story = await _finished_story(story_id)
     actor = str((await _body(request)).get("actor") or "")
     seat = await _ready_seat(actor, story)

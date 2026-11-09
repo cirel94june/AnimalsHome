@@ -30,6 +30,7 @@ log = logging.getLogger("uvicorn.error")
 DB_PATH = DATA_DIR / "html_works.db"
 WEEKLY_LIMIT = 2
 MAX_HTML_CHARS = 120_000
+MAX_RAW_CHARS = MAX_HTML_CHARS + 2_000
 RANDOM_DAY_CHANCE = 0.1
 TICK_SECONDS = 600
 OCCASION_WITHIN_DAYS = 3
@@ -45,6 +46,9 @@ def _connect() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS works (
         id TEXT PRIMARY KEY, actor TEXT NOT NULL, name TEXT NOT NULL, title TEXT NOT NULL, note TEXT NOT NULL,
         html TEXT NOT NULL, occasion TEXT NOT NULL, created_at REAL NOT NULL, opened_at REAL)""")
+    # 做过的记录单独存：删掉作品不退额度（狐狸 §217 M2）
+    conn.execute("""CREATE TABLE IF NOT EXISTS made (
+        actor TEXT NOT NULL, occasion TEXT NOT NULL, created_at REAL NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS plans (
         actor TEXT NOT NULL, day TEXT NOT NULL, due_at REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (actor, day))""")
@@ -54,13 +58,13 @@ def _connect() -> sqlite3.Connection:
 def recent_count(actor: str, now: float | None = None) -> int:
     now = time.time() if now is None else now
     with _connect() as conn:
-        return conn.execute("SELECT COUNT(*) FROM works WHERE actor=? AND created_at>?", (actor, now - 7 * 86400)).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM made WHERE actor=? AND created_at>?", (actor, now - 7 * 86400)).fetchone()[0]
 
 
 def occasion_done(actor: str, occasion: str, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     with _connect() as conn:
-        return conn.execute("SELECT 1 FROM works WHERE actor=? AND occasion=? AND created_at>?",
+        return conn.execute("SELECT 1 FROM made WHERE actor=? AND occasion=? AND created_at>?",
                             (actor, occasion, now - OCCASION_MEMORY_DAYS * 86400)).fetchone() is not None
 
 
@@ -70,9 +74,10 @@ def save_work(actor: str, name: str, title: str, note: str, html: str, occasion:
     work_id = f"w_{uuid.uuid4().hex[:16]}"
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        count = conn.execute("SELECT COUNT(*) FROM works WHERE actor=? AND created_at>?", (actor, now - 7 * 86400)).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM made WHERE actor=? AND created_at>?", (actor, now - 7 * 86400)).fetchone()[0]
         if count >= WEEKLY_LIMIT:
             return None
+        conn.execute("INSERT INTO made (actor, occasion, created_at) VALUES (?,?,?)", (actor, occasion, now))
         conn.execute("INSERT INTO works (id, actor, name, title, note, html, occasion, created_at) VALUES (?,?,?,?,?,?,?,?)",
                      (work_id, actor, name, title[:40] or "小作品", note[:200], html, occasion, now))
     return work_id
@@ -151,8 +156,11 @@ def build_prompt(user_name: str, occasion: str, recent: str, left: int) -> str:
 
 
 async def consider(seat: dict[str, str], occasion_key: str, user_name: str) -> None:
+    from contextlib import aclosing
+
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
     from hub_day import day_text
+    from story_spark import ready_seats
 
     left = WEEKLY_LIMIT - await asyncio.to_thread(recent_count, seat["id"])
     if left <= 0:
@@ -161,6 +169,10 @@ async def consider(seat: dict[str, str], occasion_key: str, user_name: str) -> N
         recent = await day_text(seat["id"], user_name)
     except Exception:
         recent = ""
+    # 读 Hub 要等一会儿：这期间停用或换了模型的，不用旧设置开口（狐狸 §217 M3）
+    current = next((s for s in await asyncio.to_thread(ready_seats) if s["id"] == seat["id"]), None)
+    if current is None or current["model"] != seat["model"]:
+        return
     messages = []
     if seat.get("persona"):
         messages += [{"role": "user", "content": f"[你的角色设定]\n你是{seat['name']}。\n\n{seat['persona']}"},
@@ -168,9 +180,13 @@ async def consider(seat: dict[str, str], occasion_key: str, user_name: str) -> N
     messages.append({"role": "user", "content": build_prompt(user_name, occasion_key, recent, left)})
     raw = ""
     async with asyncio.timeout(420):
-        async for chunk in stream_ai(messages, seat["model"]):
-            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
-                raw += chunk
+        async with aclosing(stream_ai(messages, seat["model"])) as chunks:
+            async for chunk in chunks:
+                if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                    raw += chunk
+                    if len(raw) > MAX_RAW_CHARS:  # 超长就不读了，免得白花（狐狸 §217 M4）
+                        log.info("[html_works] %s 写得太长，停了", seat["id"])
+                        return
     parsed = parse_reply(raw)
     if not parsed:
         return
