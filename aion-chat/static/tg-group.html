@@ -25,6 +25,7 @@ body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #
 .bar textarea { flex: 1; min-height: 40px; max-height: 110px; resize: none; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 14px; padding: 9px 12px; font: inherit; font-size: 15px; background: rgba(255,255,255,.75); color: inherit; }
 .bar button { border: none; border-radius: 14px; padding: 10px 14px; font-size: 14px; color: #fff; background: var(--ib-acc, #2a6bb0); cursor: pointer; flex: none; }
 .bar button:disabled { opacity: .5; }
+.bar button.confirm { background: #c0563f; }
 #home { display: none; }
 #home.on { display: block; }
 .empty { text-align: center; color: var(--ib-tx3, #7d92b5); font-size: 13px; padding: 48px 20px; line-height: 1.7; }
@@ -34,12 +35,12 @@ body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #
 </head>
 <body>
 <div class="top-bar"><a href="/" aria-label="返回">←</a><h2>TG 大群</h2></div>
-<div class="note">这里的话默认不给 AI 看。点几条选中，再点「带回家」，AI 才接得上。</div>
+<div class="note">这里的话默认不给 AI 看。点几条选中，再点「带回家」，就能回家里的群聊和 AI 讨论，不会发到 TG。</div>
 <div id="list"></div>
 <div class="bar">
-  <textarea id="text" rows="1" placeholder="发到大群，会显示「小猫：…」"></textarea>
+  <textarea id="text" rows="1" placeholder="只有想说给 TG 群里所有人才写这里"></textarea>
   <button id="home" type="button">带回家</button>
-  <button id="send" type="button">发送</button>
+  <button id="send" type="button">发到 TG</button>
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -136,9 +137,24 @@ body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #
       return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; });
     });
   }
+  var confirmTimer = 0;
+  function resetSend() {
+    clearTimeout(confirmTimer);
+    sendBtn.classList.remove('confirm');
+    sendBtn.textContent = '发到 TG';
+  }
+  text.addEventListener('input', resetSend);
   sendBtn.onclick = function () {
     var value = text.value.trim();
     if (!value) return;
+    // 这句话群里的朋友都看得到：第一下只是问一声，再点一下才发
+    if (!sendBtn.classList.contains('confirm')) {
+      sendBtn.classList.add('confirm');
+      sendBtn.textContent = '朋友都能看到，确认发';
+      confirmTimer = setTimeout(resetSend, 4000);
+      return;
+    }
+    resetSend();
     sendBtn.disabled = true;
     post('/api/tg-group/send', { text: value }).then(function () { text.value = ''; toast('已交给 bot，几秒后发出'); })
       .catch(function (e) { toast('没发出去：' + e.message); })
