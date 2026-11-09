@@ -244,6 +244,8 @@ async def lifespan(app: FastAPI):
     openclaw_weixin_runtime.start()
     import story_spark
     story_spark.fail_interrupted()  # 重启时没写完的故事标成失败
+    import html_works
+    html_works.start()  # AI 自己决定要不要给小猫做小作品
     story_spark.start_browse()  # 大家一起讲的故事，AI 隔一会儿自己刷到
     security_access_service.start(manager.broadcast)
     try:
@@ -440,6 +442,8 @@ from desk_notes import router as desk_notes_router
 app.include_router(actors_router)
 app.include_router(desk_notes_router)
 from outing_tools import router as outing_tools_router
+from html_works import router as html_works_router
+app.include_router(html_works_router)  # AI 做的小网页
 from story_spark import router as story_spark_router
 app.include_router(story_spark_router)  # 聊天灵感变成小故事
 from tg_group import router as tg_group_router
