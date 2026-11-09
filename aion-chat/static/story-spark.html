@@ -33,6 +33,15 @@ textarea { min-height: 62px; resize: vertical; }
 .seg { margin-top: 12px; }
 .seg b { font-size: 12px; color: var(--ib-acc, #2a6bb0); font-weight: 600; }
 .seg p { font-size: 15.5px; line-height: 1.85; white-space: pre-wrap; word-break: break-word; margin-top: 3px; }
+.para { cursor: pointer; border-radius: 8px; }
+.para.open { background: rgba(127,166,221,.18); }
+.cmts { margin: 4px 0 10px 10px; padding-left: 9px; border-left: 2px solid var(--ib-line, #cbd8ec); font-size: 13.5px; line-height: 1.6; }
+.cmts b { color: var(--ib-tx2, #3d5788); font-weight: 600; font-size: 13.5px; }
+.cmts div { white-space: pre-wrap; word-break: break-word; }
+.box { display: flex; gap: 6px; margin: 4px 0 10px; }
+.box input { flex: 1; min-width: 0; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 10px; padding: 7px 10px; font: inherit; font-size: 14px; background: rgba(255,255,255,.75); color: inherit; }
+.tools h3 { margin-top: 12px; }
+.chip.done { opacity: .55; }
 .acts { display: flex; gap: 8px; margin-top: 14px; }
 .small { border: 1px solid var(--ib-line, #cbd8ec); background: rgba(255,255,255,.66); color: inherit; border-radius: 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
 .empty { text-align: center; color: var(--ib-tx3, #7d92b5); font-size: 13px; padding: 40px 16px; line-height: 1.8; }
@@ -82,19 +91,77 @@ textarea { min-height: 62px; resize: vertical; }
     }).catch(function () { toast('读取失败'); });
   }
 
+  var openSpot = '', draft = '', seats = null;
+  function typing() { var a = document.activeElement; return a && a.classList && a.classList.contains('cmt-input'); }
+  function postStory(id, path, body) {
+    return api('/api/story-spark/stories/' + encodeURIComponent(id) + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  }
   function showStory(id) {
     screen = 'story'; clearTimeout(pollTimer);
-    api('/api/story-spark/stories/' + encodeURIComponent(id)).then(function (s) {
+    var loadSeats = seats ? Promise.resolve(seats) : api('/api/story-spark/narrators').then(function (d) { seats = d.seats; return seats; }).catch(function () { return []; });
+    Promise.all([api('/api/story-spark/stories/' + encodeURIComponent(id)), loadSeats]).then(function (both) {
+      var s = both[0], list = both[1];
       if (screen !== 'story') return;
+      if (typing() && (s.status === 'writing' || s.busy)) {  // 正在打字时不重画，免得字没了
+        pollTimer = setTimeout(function () { showStory(id); }, 3000); return;
+      }
       heading.textContent = s.title; view.textContent = '';
       var card = el('div', 'card');
       card.appendChild(el('div', 'hint', s.narrator + ' 讲 · ' + when(s.created_at) + (s.idea ? ' · ' + s.idea : '')));
-      s.segments.forEach(function (seg) {
+      s.segments.forEach(function (seg, si) {
         var box = el('div', 'seg');
         if (s.segments.length > 1) box.appendChild(el('b', '', seg.name));
-        box.appendChild(el('p', '', seg.text));
+        seg.text.split('\n').map(function (t) { return t.trim(); }).filter(Boolean).forEach(function (line, pi) {
+          var spot = si + ':' + pi;
+          var p = el('p', 'para' + (openSpot === spot ? ' open' : ''), line);
+          p.onclick = function () { openSpot = openSpot === spot ? '' : spot; draft = ''; showStory(id); };
+          box.appendChild(p);
+          var here = (s.comments || []).filter(function (c) { return c.seg === si && c.para === pi; });
+          if (here.length) {
+            var cm = el('div', 'cmts');
+            here.forEach(function (c) { var d = el('div'); d.appendChild(el('b', '', c.who + '：')); d.appendChild(document.createTextNode(c.text)); cm.appendChild(d); });
+            box.appendChild(cm);
+          }
+          if (openSpot === spot && s.status !== 'writing') {
+            var row = el('div', 'box'), input = el('input', 'cmt-input'); input.maxLength = 300; input.placeholder = '说点什么…'; input.value = draft;
+            input.oninput = function () { draft = input.value; };
+            var send = el('button', 'small', '发送');
+            send.onclick = function () {
+              var v = input.value.trim(); if (!v) return;
+              send.disabled = true;
+              postStory(id, '/comments', { seg: si, para: pi, text: v }).then(function () { openSpot = ''; draft = ''; input.blur(); showStory(id); })
+                .catch(function (e) { send.disabled = false; toast(e.message); });
+            };
+            row.appendChild(input); row.appendChild(send); box.appendChild(row);
+          }
+        });
         card.appendChild(box);
       });
+      if (s.status !== 'writing' && s.segments.length) {
+        var tools = el('div', 'tools');
+        tools.appendChild(el('div', 'hint', '点任意一段话就能评论，讲这段的人会回你。'));
+        tools.appendChild(el('h3', '', '请谁来点评一段'));
+        var a = el('div', 'chips');
+        list.forEach(function (seat) {
+          var c = el('button', 'chip', seat.name); c.type = 'button';
+          c.onclick = function () { c.disabled = true; postStory(id, '/ai-comment', { actor: seat.id }).then(function () { toast(seat.name + ' 在看了'); showStory(id); }).catch(function (e) { c.disabled = false; toast(e.message); }); };
+          a.appendChild(c);
+        });
+        tools.appendChild(a);
+        tools.appendChild(el('h3', '', '记住这个故事'));
+        tools.appendChild(el('div', 'hint', '只记大概内容和当时的感受，并标明是虚构的。'));
+        var b = el('div', 'chips'); b.style.marginTop = '6px';
+        list.forEach(function (seat) {
+          var done = (s.remembered || []).indexOf(seat.id) >= 0;
+          var c = el('button', 'chip' + (done ? ' done' : ''), seat.name + (done ? ' 已记住' : '')); c.type = 'button'; c.disabled = done;
+          c.onclick = function () { c.disabled = true; postStory(id, '/remember', { actor: seat.id }).then(function () { toast(seat.name + ' 在记'); showStory(id); }).catch(function (e) { c.disabled = false; toast(e.message); }); };
+          b.appendChild(c);
+        });
+        tools.appendChild(b);
+        card.appendChild(tools);
+      }
+      if (s.busy) card.appendChild(el('div', 'hint', '有人在写，稍等一下…'));
+      if (s.notice) card.appendChild(el('div', 'hint', s.notice));
       if (s.status === 'writing') card.appendChild(el('div', 'empty', '正在讲，稍等一下…'));
       if (s.error) card.appendChild(el('div', 'hint', s.error));
       var acts = el('div', 'acts');
@@ -104,7 +171,7 @@ textarea { min-height: 62px; resize: vertical; }
         api('/api/story-spark/stories/' + encodeURIComponent(id), { method: 'DELETE' }).then(showList).catch(function () { toast('没删掉'); });
       };
       acts.appendChild(del); card.appendChild(acts); view.appendChild(card);
-      if (s.status === 'writing') pollTimer = setTimeout(function () { showStory(id); }, 3000);
+      if (s.status === 'writing' || s.busy) pollTimer = setTimeout(function () { showStory(id); }, 3000);
     }).catch(function () { toast('读取失败'); });
   }
 

@@ -590,7 +590,7 @@ def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str, *,
 # ── AI 明确要记的事：Hub 的 remember（2026-10-20 Hub 窗口约定）──
 # 一条只写一件事、第三人称、200 字内；不自动进客厅（living_room 只放小猫的核心身份，AI 不能指定）
 REMEMBER_ROOMS = ("preferences", "people", "bond", "health", "career", "psychology", "learning", "social",
-                  "animal_dorm")
+                  "animal_dorm", "game_room")
 REMEMBER_MAX_CHARS = 200
 REMEMBER_MAX_PER_REPLY = 3
 REMEMBER_DEDUP_SECONDS = 24 * 3600

@@ -3101,3 +3101,6 @@ security_access.observe：经 Cloudflare 且走 /api/outing/ 的请求（外层 
 
 ### §215 小故事（11-09）
 story_spark.py + static/story-spark.html：聊天和群聊的消息菜单「变成小故事」，自选消息，讲述者可选某位 AI / NPC 模型 / 大家接力。故事存 data/story_sparks.db，不写聊天、不进 Hub。小剧场侧栏有入口。
+
+### §215a 小故事：记住与逐段点评（11-09）
+记住：小猫点按钮后 AI 自己写大概内容和感受，经现有 schedule_remember 进 Hub，room=game_room，正文前缀「虚构故事，不是真实发生的事」。评论存 story_sparks.db，不进 Hub。注意：Hub remember 工具没有 provenance 参数，虚构标记靠正文前缀和房间。

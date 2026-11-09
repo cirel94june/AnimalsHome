@@ -36,7 +36,7 @@ def speakers(*names):
 def test_single_narrator_title_and_status(monkeypatch):
     story, calls = run_story(monkeypatch, ["标题：雪夜\n正文"], speakers("狗蛋"))
     assert story["status"] == "done" and story["title"] == "雪夜"
-    assert story["segments"] == [{"name": "狗蛋", "text": "正文"}]
+    assert story["segments"] == [{"name": "狗蛋", "text": "正文", "sid": "狗蛋", "model": "m-狗蛋"}]
     assert calls[0]["model"] == "m-狗蛋" and calls[0]["persona"] == "p-狗蛋"
 
 
@@ -72,7 +72,7 @@ def test_stories_are_kept_and_deletable():
 
 def test_module_never_touches_hub_or_chat_tables():
     src = (story_spark.BASE_DIR / "story_spark.py").read_text(encoding="utf-8")
-    assert "memory_hub_bridge" not in src and "INSERT INTO messages" not in src and "INSERT INTO chatroom" not in src
+    assert "INSERT INTO messages" not in src and "INSERT INTO chatroom" not in src
 
 
 def test_builtin_seats_use_own_model_and_persona(monkeypatch):
@@ -96,3 +96,55 @@ def test_builtin_seat_without_model_cannot_narrate(monkeypatch):
     monkeypatch.setattr(memory_hub_jobs, "own_model", lambda a: "")
     with pytest.raises(Exception):
         story_spark._seat("aion")
+
+
+def test_remember_is_labelled_fiction():
+    text = story_spark.build_memory("雪夜", "讲了一场雪，我有点想哭")
+    assert text.startswith("[虚构故事，不是真实发生的事]") and "雪夜" in text
+
+
+def test_comments_extras_and_cleanup():
+    story_spark.insert_story("a", "x", "", SEED)
+    story_spark.add_comment("a", 0, 1, "小猫", "好看")
+    assert story_spark.mark_remembered("a", "aion", "n") is True
+    assert story_spark.mark_remembered("a", "aion", "n") is False
+    extras = story_spark.story_extras("a")
+    assert extras["comments"][0]["who"] == "小猫" and extras["remembered"] == ["aion"]
+    story_spark.delete_story("a")
+    assert story_spark.story_extras("a") == {"comments": [], "remembered": []}
+
+
+def test_author_replies_but_not_to_self(monkeypatch):
+    story_spark.insert_story("a", "x", "", SEED)
+    story = {"id": "a", "title": "雪夜", "segments": [{"name": "狗蛋", "text": "第一句\n第二句", "sid": "ai3"}]}
+    monkeypatch.setattr(story_spark, "_seat", lambda s: {"id": s, "name": "狗蛋", "model": "m", "persona": ""})
+    prompts = []
+
+    async def speak(prompt, model, persona="", name=""):
+        prompts.append(prompt)
+        return "谢谢"
+    monkeypatch.setattr(story_spark, "_speak", speak)
+    asyncio.run(story_spark._author_reply(story, 0, 1, "小猫", "喜欢", "小猫"))
+    asyncio.run(story_spark._author_reply(story, 0, 1, "狗蛋", "自评", "小猫"))
+    assert len(prompts) == 1 and "第二句" in prompts[0]
+    assert [c["who"] for c in story_spark.story_extras("a")["comments"]] == ["狗蛋"]
+
+
+def test_remember_job_marks_only_when_queued(monkeypatch):
+    import memory_hub_bridge as bridge
+    story_spark.insert_story("a", "x", "", SEED)
+    story = {"id": "a", "title": "雪夜", "segments": [{"name": "狗蛋", "text": "正文"}]}
+    seat = {"id": "ai3", "name": "狗蛋", "model": "m", "persona": ""}
+    monkeypatch.setattr(bridge, "can_remember", lambda a: True)
+
+    async def speak(prompt, model, persona="", name=""):
+        return "一个雪夜的故事，我很安静"
+    monkeypatch.setattr(story_spark, "_speak", speak)
+    sent = []
+    monkeypatch.setattr(bridge, "schedule_remember", lambda actor, items, request_key, outcome: sent.append(items) or [])
+    asyncio.run(story_spark.remember_job(story, seat, "小猫"))
+    assert not story_spark.is_remembered("a", "ai3")
+    assert sent[0][0]["room"] == "game_room" and sent[0][0]["content"].startswith("[虚构故事")
+    monkeypatch.setattr(bridge, "schedule_remember", lambda actor, items, request_key, outcome: ["ok"])
+    asyncio.run(story_spark.remember_job(story, seat, "小猫"))
+    assert story_spark.is_remembered("a", "ai3")
