@@ -6,6 +6,8 @@
 - 故事是虚构的：只存在 data/story_sparks.db，不写聊天记录、不进日记，默认不进 Hub。
 - 小猫点「记住这个故事」才写一条进 Hub，由那位 AI 自己写大概内容和感受，并标明是虚构的。
 - 每段话都能点评（小猫或 AI），被点评段落的作者会回一两句。
+- 谁知道这个故事：只有讲过它的 AI。私下讲的只有那一位；NPC 讲的没有 AI 知道。
+- 大家一起讲的：写完后参与者隔一段随机时间各自「刷到」，自己决定评不评，每段最多评一次。
 """
 
 from __future__ import annotations
@@ -36,6 +38,9 @@ MAX_IDEA_CHARS = 300
 SOURCE_LIMIT = 80
 SEGMENT_TIMEOUT_SECONDS = 300
 MAX_COMMENT_CHARS = 300
+BROWSE_DELAY_SECONDS = (300, 10800)   # 几分钟到三小时
+BROWSE_TICK_SECONDS = 60
+BROWSE_PER_TICK = 3
 _tasks: set[asyncio.Task] = set()
 _busy: dict[str, int] = {}      # 这个故事还有几件事在后台做（页面据此继续刷新）
 _notice: dict[str, str] = {}    # 后台没办成时告诉页面
@@ -51,6 +56,9 @@ def _connect() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS comments (
         id INTEGER PRIMARY KEY AUTOINCREMENT, story_id TEXT NOT NULL, seg INTEGER NOT NULL, para INTEGER NOT NULL,
         who TEXT NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS browse (
+        story_id TEXT NOT NULL, actor TEXT NOT NULL, due_at REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (story_id, actor))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS remembered (
         story_id TEXT NOT NULL, actor TEXT NOT NULL, note TEXT NOT NULL, created_at REAL NOT NULL,
         PRIMARY KEY (story_id, actor))""")
@@ -93,6 +101,7 @@ def delete_story(story_id: str) -> bool:
     with _connect() as conn:
         conn.execute("DELETE FROM comments WHERE story_id=?", (story_id,))
         conn.execute("DELETE FROM remembered WHERE story_id=?", (story_id,))
+        conn.execute("DELETE FROM browse WHERE story_id=?", (story_id,))
         return conn.execute("DELETE FROM stories WHERE id=?", (story_id,)).rowcount == 1
 
 
@@ -221,6 +230,8 @@ async def write_story(story_id: str, speakers: list[dict[str, str]], seed: list[
             segments.append({"name": speaker["name"], "text": text, "sid": speaker["id"], "model": speaker["model"]})
             update_story(story_id, segments=segments, **({"title": title} if title else {}))
         await asyncio.to_thread(update_story, story_id, status="done")
+        if len(speakers) > 1:
+            await asyncio.to_thread(schedule_browse, story_id, [s["id"] for s in speakers])
     except Exception as error:
         log.warning("[story_spark] %s 没写完：%s", story_id, type(error).__name__)
         reason = "这条线路这次没讲完，再讲一次吧" if segments else "线路没连上，再讲一次吧"
@@ -236,6 +247,106 @@ def _segment_speaker(segment: dict[str, Any]) -> dict[str, str] | None:
         return _seat(sid) if sid else None
     except Exception:
         return None
+
+
+def audience(story: dict[str, Any], seats: list[dict[str, str]]) -> list[str]:
+    """知道这个故事的 AI：只有讲过它的人（旧故事没存 id，按名字认）。"""
+    ids = {s.get("sid") for s in story["segments"]}
+    names = {s.get("name") for s in story["segments"]}
+    return [seat["id"] for seat in seats if seat["id"] in ids or (seat["name"] in names and not any(ids))]
+
+
+def schedule_browse(story_id: str, actors: list[str], now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    with _connect() as conn:
+        for actor in actors:
+            conn.execute("INSERT OR IGNORE INTO browse (story_id, actor, due_at) VALUES (?,?,?)",
+                         (story_id, actor, now + random.uniform(*BROWSE_DELAY_SECONDS)))
+
+
+def claim_due_browse(now: float | None = None, limit: int = BROWSE_PER_TICK) -> list[tuple[str, str]]:
+    """取到期的「刷到」，取走就算用掉，失败也不重来（每人每个故事只刷一次）。"""
+    now = time.time() if now is None else now
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute("SELECT story_id, actor FROM browse WHERE done=0 AND due_at<=? ORDER BY due_at LIMIT ?", (now, limit)).fetchall()
+        for r in rows:
+            conn.execute("UPDATE browse SET done=1 WHERE story_id=? AND actor=?", (r["story_id"], r["actor"]))
+    return [(r["story_id"], r["actor"]) for r in rows]
+
+
+def commented_segments(story_id: str, who: str) -> set[int]:
+    with _connect() as conn:
+        return {r["seg"] for r in conn.execute("SELECT DISTINCT seg FROM comments WHERE story_id=? AND who=?", (story_id, who))}
+
+
+def parse_picks(raw: str, story: dict[str, Any], allowed: set[int]) -> list[tuple[int, int, str]]:
+    """模型回的 [{"seg":0,"para":1,"text":"…"}]：对不上的丢掉，每段只留一条。回 [] 就是这次不评。"""
+    text = raw.strip()
+    start, end = text.find("["), text.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    try:
+        items = json.loads(text[start:end + 1])
+    except ValueError:
+        return []
+    picks: list[tuple[int, int, str]] = []
+    used: set[int] = set()
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            seg, para = int(item.get("seg")), int(item.get("para"))
+        except (TypeError, ValueError):
+            continue
+        comment = str(item.get("text") or "").strip()[:MAX_COMMENT_CHARS]
+        if seg in used or seg not in allowed or not comment or para < 0 or para >= len(paragraphs(story["segments"][seg]["text"])):
+            continue
+        used.add(seg)
+        picks.append((seg, para, comment))
+    return picks
+
+
+async def browse_job(story_id: str, actor: str, user_name: str) -> None:
+    story = await asyncio.to_thread(get_story, story_id)
+    if not story or story["status"] != "done":
+        return
+    seat = await asyncio.to_thread(_seat, actor)
+    done = await asyncio.to_thread(commented_segments, story_id, seat["name"])
+    allowed = {i for i, s in enumerate(story["segments"]) if s.get("sid") != actor and i not in done}
+    if not allowed:
+        return
+    blocks = []
+    for i in sorted(allowed):
+        lines = "\n".join(f"  第{j}句：{line}" for j, line in enumerate(paragraphs(story["segments"][i]["text"])))
+        blocks.append(f"[第{i}段，{story['segments'][i]['name']}讲的]\n{lines}")
+    prompt = (f"你和大家前些时候一起接力编了一个虚构的小故事《{story['title']}》。这会儿你像刷朋友圈一样又看到了它：\n\n"
+              + "\n\n".join(blocks) +
+              "\n\n有想说的就在下面评论，没感觉就不评，不用勉强，这很正常。每段最多评一句，每句不超过 60 字，用你自己的口吻。\n"
+              '只输出 JSON 数组，比如 [{"seg":0,"para":1,"text":"评论"}]；不想评就输出 []。')
+    raw = await _speak(prompt, seat["model"], seat.get("persona", ""), seat["name"])
+    for seg, para, comment in parse_picks(raw, story, allowed):
+        await asyncio.to_thread(add_comment, story_id, seg, para, seat["name"], comment)
+        await _author_reply(story, seg, para, seat["name"], comment, user_name)
+
+
+async def browse_loop() -> None:
+    while True:
+        await asyncio.sleep(BROWSE_TICK_SECONDS)
+        try:
+            for story_id, actor in await asyncio.to_thread(claim_due_browse):
+                try:
+                    await browse_job(story_id, actor, _user_name())
+                except Exception as error:
+                    log.warning("[story_spark] %s 这次没刷成：%s", actor, type(error).__name__)
+        except Exception as error:
+            log.warning("[story_spark] 刷故事循环出错：%s", type(error).__name__)
+
+
+def start_browse() -> None:
+    task = asyncio.create_task(browse_loop())
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
 
 
 def _story_text(story: dict[str, Any], limit: int = 4000) -> str:
@@ -280,7 +391,12 @@ async def user_comment_job(story: dict[str, Any], seg: int, para: int, comment: 
 
 
 async def ai_comment_job(story: dict[str, Any], seat: dict[str, str], user_name: str) -> None:
-    spots = [(i, j) for i, s in enumerate(story["segments"]) for j in range(len(paragraphs(s["text"])))]
+    done = await asyncio.to_thread(commented_segments, story["id"], seat["name"])
+    others = [i for i, s in enumerate(story["segments"]) if s.get("sid") != seat["id"]] or list(range(len(story["segments"])))
+    spots = [(i, j) for i in others if i not in done for j in range(len(paragraphs(story["segments"][i]["text"])))]
+    if not spots:
+        _notice[story["id"]] = f"{seat['name']} 每段都评过了"
+        return
     seg, para = random.choice(spots)
     line = paragraphs(story["segments"][seg]["text"])[para]
     prompt = (f"{user_name}给你看了一个小故事《{story['title']}》，是虚构的：\n{_story_text(story)}\n\n"
@@ -315,8 +431,8 @@ async def remember_job(story: dict[str, Any], seat: dict[str, str], user_name: s
         _notice[story["id"]] = f"{seat['name']} 现在连不上记忆库，这次没记上"
         return
     prompt = (f"这是一个虚构的小故事《{story['title']}》：\n{_story_text(story)}\n\n"
-              "这个故事不是真事，它是你和" + user_name + "一起玩出来的。用第一人称写一两句话记下来：这个故事大概讲了什么，"
-              "它给你带来了什么感受。不超过 100 字，不要把故事情节写成发生在现实里的事。直接输出。")
+              "这个故事不是真事，它是你和" + user_name + "一起编出来的。用第一人称写一两句话记下这件事：你们一起编了个什么故事，"
+              "大概讲了什么，它给你带来了什么感受。不超过 100 字，不要把情节写成现实里发生过的事。直接输出。")
     note = await _speak(prompt, seat["model"], seat.get("persona", ""), seat["name"])
     if not note:
         raise ValueError("没有写出内容")
@@ -404,6 +520,8 @@ async def api_get(story_id: str):
     if not story:
         raise HTTPException(404, "没有这个故事")
     extras = await asyncio.to_thread(story_extras, story_id)
+    seats = await asyncio.to_thread(ready_seats)
+    extras["audience"] = audience(story, seats)
     return {**story, **extras, "busy": _busy.get(story_id, 0), "notice": _notice.get(story_id, "")}
 
 
@@ -431,11 +549,14 @@ def _user_name() -> str:
     return (load_worldbook().get("user_name") or "用户").strip() or "用户"
 
 
-async def _ready_seat(actor: str) -> dict[str, str]:
+async def _ready_seat(actor: str, story: dict[str, Any]) -> dict[str, str]:
     try:
-        return await asyncio.to_thread(_seat, actor)
+        seat = await asyncio.to_thread(_seat, actor)
     except Exception as error:
         raise HTTPException(400, str(error) or "这位现在来不了") from None
+    if actor not in audience(story, [seat]):
+        raise HTTPException(403, f"{seat['name']} 不知道这个故事")
+    return seat
 
 
 @router.post("/api/story-spark/stories/{story_id}/comments")
@@ -461,7 +582,7 @@ async def api_comment(story_id: str, request: Request):
 @router.post("/api/story-spark/stories/{story_id}/ai-comment")
 async def api_ai_comment(story_id: str, request: Request):
     story = await _finished_story(story_id)
-    seat = await _ready_seat(str((await _body(request)).get("actor") or ""))
+    seat = await _ready_seat(str((await _body(request)).get("actor") or ""), story)
     _spawn(story_id, ai_comment_job(story, seat, _user_name()))
     return {"ok": True}
 
@@ -470,7 +591,7 @@ async def api_ai_comment(story_id: str, request: Request):
 async def api_remember(story_id: str, request: Request):
     story = await _finished_story(story_id)
     actor = str((await _body(request)).get("actor") or "")
-    seat = await _ready_seat(actor)
+    seat = await _ready_seat(actor, story)
     if await asyncio.to_thread(is_remembered, story_id, actor):
         raise HTTPException(400, f"{seat['name']} 已经记住这个故事了")
     _spawn(story_id, remember_job(story, seat, _user_name()))

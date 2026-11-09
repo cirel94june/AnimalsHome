@@ -100,7 +100,7 @@ textarea { min-height: 62px; resize: vertical; }
     screen = 'story'; clearTimeout(pollTimer);
     var loadSeats = seats ? Promise.resolve(seats) : api('/api/story-spark/narrators').then(function (d) { seats = d.seats; return seats; }).catch(function () { return []; });
     Promise.all([api('/api/story-spark/stories/' + encodeURIComponent(id)), loadSeats]).then(function (both) {
-      var s = both[0], list = both[1];
+      var s = both[0], list = both[1].filter(function (x) { return (both[0].audience || []).indexOf(x.id) >= 0; });
       if (screen !== 'story') return;
       if (typing() && (s.status === 'writing' || s.busy)) {  // 正在打字时不重画，免得字没了
         pollTimer = setTimeout(function () { showStory(id); }, 3000); return;
@@ -137,10 +137,13 @@ textarea { min-height: 62px; resize: vertical; }
         });
         card.appendChild(box);
       });
-      if (s.status !== 'writing' && s.segments.length) {
+      if (s.status !== 'writing' && s.segments.length && !list.length) {
+        card.appendChild(el('div', 'hint', 'NPC 讲的故事，家里的 AI 不知道。点一段话可以写下你的感想。'));
+      }
+      if (s.status !== 'writing' && s.segments.length && list.length) {
         var tools = el('div', 'tools');
         tools.appendChild(el('div', 'hint', '点任意一段话就能评论，讲这段的人会回你。'));
-        tools.appendChild(el('h3', '', '请谁来点评一段'));
+        tools.appendChild(el('h3', '', s.segments.length > 1 ? '想听谁现在说说' : '想听 TA 说说'));
         var a = el('div', 'chips');
         list.forEach(function (seat) {
           var c = el('button', 'chip', seat.name); c.type = 'button';

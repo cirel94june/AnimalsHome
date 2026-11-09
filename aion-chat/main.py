@@ -244,6 +244,7 @@ async def lifespan(app: FastAPI):
     openclaw_weixin_runtime.start()
     import story_spark
     story_spark.fail_interrupted()  # 重启时没写完的故事标成失败
+    story_spark.start_browse()  # 大家一起讲的故事，AI 隔一会儿自己刷到
     security_access_service.start(manager.broadcast)
     try:
         from billiards.service import get_service as billiards_service

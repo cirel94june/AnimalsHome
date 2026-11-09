@@ -148,3 +148,52 @@ def test_remember_job_marks_only_when_queued(monkeypatch):
     monkeypatch.setattr(bridge, "schedule_remember", lambda actor, items, request_key, outcome: ["ok"])
     asyncio.run(story_spark.remember_job(story, seat, "小猫"))
     assert story_spark.is_remembered("a", "ai3")
+
+
+STORY = {"id": "a", "title": "雪夜", "status": "done", "segments": [
+    {"name": "甲", "text": "一\n二", "sid": "aion"}, {"name": "乙", "text": "三", "sid": "ai3"}]}
+
+
+def test_only_narrators_know_the_story():
+    seats = [{"id": "aion", "name": "甲"}, {"id": "ai3", "name": "乙"}, {"id": "connor", "name": "丙"}]
+    assert story_spark.audience(STORY, seats) == ["aion", "ai3"]
+    private = {"segments": [{"name": "甲", "text": "x", "sid": "aion"}]}
+    assert story_spark.audience(private, seats) == ["aion"]
+    npc = {"segments": [{"name": "NPC", "text": "x", "sid": "npc"}]}
+    assert story_spark.audience(npc, seats) == []
+
+
+def test_private_story_is_never_browsed(monkeypatch):
+    run_story(monkeypatch, ["标题：私下\n正文"], speakers("甲"))
+    assert story_spark.claim_due_browse(now=10**12) == []
+
+
+def test_relay_story_is_browsed_once_each(monkeypatch):
+    run_story(monkeypatch, ["标题：接力\n一", "二"], speakers("甲", "乙"))
+    assert sorted(a for _, a in story_spark.claim_due_browse(now=10**12)) == ["乙", "甲"]
+    assert story_spark.claim_due_browse(now=10**12) == []
+
+
+def test_parse_picks_limits_one_per_segment_and_drops_bad():
+    raw = '好的 [{"seg":0,"para":1,"text":"a"},{"seg":0,"para":0,"text":"b"},{"seg":1,"para":9,"text":"c"},{"seg":5,"para":0,"text":"d"}]'
+    assert story_spark.parse_picks(raw, STORY, {0, 1}) == [(0, 1, "a")]
+    assert story_spark.parse_picks("[]", STORY, {0, 1}) == []
+    assert story_spark.parse_picks("不评了", STORY, {0, 1}) == []
+
+
+def test_browse_skips_own_and_already_commented(monkeypatch):
+    story_spark.insert_story("a", "大家一起", "", SEED)
+    story_spark.update_story("a", status="done", title="雪夜", segments=STORY["segments"])
+    monkeypatch.setattr(story_spark, "_seat", lambda a: {"id": a, "name": "甲" if a == "aion" else "乙", "model": "m", "persona": ""})
+    prompts = []
+
+    async def speak(prompt, model, persona="", name=""):
+        prompts.append(prompt)
+        return '[{"seg":1,"para":0,"text":"好"}]' if len(prompts) == 1 else "谢"
+    monkeypatch.setattr(story_spark, "_speak", speak)
+    asyncio.run(story_spark.browse_job("a", "aion", "小猫"))
+    assert "三" in prompts[0] and "第0段" not in prompts[0]
+    assert [c["who"] for c in story_spark.story_extras("a")["comments"]] == ["甲", "乙"]
+    count = len(prompts)
+    asyncio.run(story_spark.browse_job("a", "aion", "小猫"))
+    assert len(prompts) == count

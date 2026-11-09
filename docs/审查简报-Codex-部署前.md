@@ -3104,3 +3104,6 @@ story_spark.py + static/story-spark.html：聊天和群聊的消息菜单「变�
 
 ### §215a 小故事：记住与逐段点评（11-09）
 记住：小猫点按钮后 AI 自己写大概内容和感受，经现有 schedule_remember 进 Hub，room=game_room，正文前缀「虚构故事，不是真实发生的事」。评论存 story_sparks.db，不进 Hub。注意：Hub remember 工具没有 provenance 参数，虚构标记靠正文前缀和房间。
+
+### §215b 小故事：记忆拆分与自然点评（11-09）
+只有讲过的 AI 知道故事（audience）：私下讲的仅一位，NPC 无 AI。大家一起讲的写完后参与者隔 5 分钟到 3 小时各刷一次（browse 表，取走即用掉），自己决定评不评，每段最多一条，作者回一句即止。
