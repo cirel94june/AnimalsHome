@@ -102,6 +102,7 @@ body[data-theme="dark"] .clock-widget {
   align-items: flex-start;
   position: relative;
 }
+.app-pages.awaiting-widgets { visibility: hidden; }
 .app-pages.mixed .app-page { align-content: start; }  /* 混排从上往下排，放不满的空隙留在下面，不在小组件头顶 */
 .widget-slot { display: block; padding: 0 6px; touch-action: none; }
 .widget-slot .wgt { height: 100%; }
@@ -813,6 +814,28 @@ function gridItems(layout) {
   ];
 }
 
+// 存档里的格子序号是按「当时一页几行」算的。屏幕可用高度一变（顶部卡片出现、小组件加载完），
+// 同一个序号就会落到别的页，所以记下行数，显示时按页/行/列换算；只有真的拖动才改存档。
+let savedLayout = { positions: null, rows: 0 };
+let widgetWaitTimer = 0;
+let appLayoutRows = 0;
+
+function rememberSavedLayout(positions, rows) {
+  const { __rows, ...cells } = positions || {};
+  savedLayout = { positions: cells, rows: Number(rows || __rows) || 0 };
+}
+
+function savedLayoutForRows(rows) {
+  const { positions, rows: from } = savedLayout;
+  if (!positions || !from || from === rows) return positions;
+  const out = {};
+  Object.keys(positions).forEach(id => {
+    const at = window.HomeGridSolver.split(Number(positions[id]), PAGE_COLUMNS, from);
+    out[id] = at.page * PAGE_COLUMNS * rows + Math.min(at.row, rows - 1) * PAGE_COLUMNS + at.col;
+  });
+  return out;
+}
+
 function solveLayout(layout, pinnedId) {
   return window.HomeGridSolver.place(gridItems(layout), PAGE_COLUMNS, getRowsPerPage(), pinnedId);
 }
@@ -821,7 +844,12 @@ function applyWidgets(list) {
   const oldKeys = [...homeWidgets.keys()].join();
   homeWidgets.clear();
   list.forEach(item => homeWidgets.set('w:' + item.key, { w: item.w, h: item.h, node: item.node, material: item.material }));
-  if ([...homeWidgets.keys()].join() !== oldKeys) appLayout = normalizeLayout(appLayout);
+  if ([...homeWidgets.keys()].join() !== oldKeys) {
+    const rows = getRowsPerPage();
+    appLayout = normalizeLayout(savedLayoutForRows(rows) || appLayout);
+    appLayoutRows = rows;
+  }
+  markWidgetsReady();
   renderApps();
 }
 
@@ -882,6 +910,11 @@ function attachWidgetNodes() {
     const item = homeWidgets.get(slot.dataset.widget);
     if (item) slot.appendChild(item.node);
   });
+}
+
+function markWidgetsReady() {
+  clearTimeout(widgetWaitTimer);
+  document.getElementById('appPages')?.classList.remove('awaiting-widgets');
 }
 
 function escapeAttr(value) {
@@ -954,6 +987,11 @@ function normalizeLayout(rawLayout) {
   const appIds = getGridAppIds();
   const allowed = new Set(appIds);
   const layout = {};
+  // 桌面刚打开时小组件脚本还没到：它们的位置要原样留着，等到了再摆
+  Object.keys(rawLayout || {}).forEach(id => {
+    const cell = Number(rawLayout[id]);
+    if (id.startsWith('w:') && Number.isInteger(cell) && cell >= 0) layout[id] = cell;
+  });
   const used = new Set();
   let highest = -1;
 
@@ -998,13 +1036,14 @@ function loadLayout() {
     } catch(e) {}
   }
 
-  appLayout = normalizeLayout(rawLayout || buildSequentialLayout(getGridAppIds()));
+  rememberSavedLayout(rawLayout || buildSequentialLayout(getGridAppIds()));
+  appLayout = normalizeLayout(savedLayout.positions);
 }
 
 function saveLayoutLocal() {
   localStorage.setItem(HOME_LAYOUT_KEY, JSON.stringify({
     version: 2,
-    positions: appLayout,
+    positions: { ...appLayout, __rows: getRowsPerPage() },
   }));
   localLayoutFromStorage = true;
 }
@@ -1023,7 +1062,7 @@ async function saveLayoutServer(snapshot, options = {}) {
 let layoutSaveIsMigration = false;
 
 function scheduleLayoutServerSave(options = {}) {
-  const snapshot = { ...appLayout };
+  const snapshot = { ...appLayout, __rows: getRowsPerPage() };
   const migration = Boolean(options.migration);
   clearTimeout(layoutSaveTimer);
   layoutSaveIsMigration = migration;
@@ -1043,6 +1082,7 @@ function cancelPendingMigrationSave() {
 }
 
 function saveLayout() {
+  rememberSavedLayout(appLayout, getRowsPerPage());
   saveLayoutLocal();
   scheduleLayoutServerSave();
 }
@@ -1061,12 +1101,17 @@ async function syncLayoutFromServer(options = {}) {
     }
     cancelPendingMigrationSave();
     if (!options.force && (layoutRevision !== revisionAtStart || dragState.active)) return;
-    const nextLayout = normalizeLayout(serverPositions);
+    rememberSavedLayout(serverPositions);
+    const rows = getRowsPerPage();
+    const nextLayout = normalizeLayout(savedLayoutForRows(rows));
+    appLayoutRows = rows;
     if (!sameLayout(appLayout, nextLayout)) {
       appLayout = nextLayout;
-      saveLayoutLocal();
       renderApps();
     }
+    // 存的是服务器上的原样，小组件还没到时也不会把它们的位置弄丢
+    localStorage.setItem(HOME_LAYOUT_KEY, JSON.stringify({ version: 2, positions: { ...savedLayout.positions, __rows: savedLayout.rows || undefined } }));
+    localLayoutFromStorage = true;
   } catch(e) {}
 }
 
@@ -1118,6 +1163,10 @@ function renderApps() {
   const dock = document.getElementById('dock');
 
   const rows = getRowsPerPage();
+  if (homeWidgets.size && !dragState.active && rows !== appLayoutRows) {
+    if (appLayoutRows) appLayout = normalizeLayout(savedLayoutForRows(rows) || appLayout);
+    appLayoutRows = rows;
+  }
   document.documentElement.style.setProperty('--home-page-rows', rows);
   pageCapacity = PAGE_COLUMNS * rows;
   const placement = homeWidgets.size ? currentPlacement() : null;
@@ -1701,6 +1750,10 @@ function updateClock() {
 
 /* ── 初始化 ── */
 loadLayout();
+if (Object.keys(savedLayout.positions || {}).some(id => id.startsWith('w:'))) {
+  document.getElementById('appPages').classList.add('awaiting-widgets');
+  widgetWaitTimer = setTimeout(markWidgetsReady, 2000);  // 小组件出问题也不能一直空着
+}
 renderApps();
 fetch('/api/lounge-board/features').then(response => response.json()).then(features => {
   if (!features.board_enabled || features.chat_enabled) return;

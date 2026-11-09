@@ -53,3 +53,9 @@ def test_desk_look_only_trusts_checked_urls_and_ids():
     js = (STATIC / "ib" / "ib-skin.js").read_text(encoding="utf-8")
     assert "function deskLookCss" in js
     assert js.count("/^[\\w-]+$/.test(") == 2 and "cssUrl(it.url)" in js and "cssUrl(bgs[key])" in js
+
+
+def test_layout_keeps_widget_cells_before_widgets_arrive():
+    html = (STATIC / "home.html").read_text(encoding="utf-8")
+    assert "id.startsWith('w:') && Number.isInteger(cell)" in html
+    assert "__rows: getRowsPerPage()" in html and "function savedLayoutForRows" in html

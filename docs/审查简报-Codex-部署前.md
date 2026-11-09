@@ -3086,3 +3086,6 @@ Hub 窗口新上线了 `POST /api/memory/{id}/unarchive`，把已归档或自动
 
 ### §213 美化工作台「桌面」分页（11-09）
 skin.desk_look：桌面背景 bg/bg_blur、小组件 widget_blur/widget_veil/widget_bg、App 图标 icons（内置线条图案或上传图，上传图前端裁 256 方形）。复用已有 /api/skin 与 /api/skin/background，服务端未改；ib-skin.js 生成样式时地址过 cssUrl、键名过白名单正则。随方案槽/美化码一起存。
+
+### §213a 桌面位置丢失（11-09）
+两个原因：小组件脚本到达前 normalizeLayout 丢弃 w: 键（且服务器同步会把丢过的结果写回本机）；格子序号依赖一页行数，高度变化时跨页错位。修法：保留 w: 键；存档带 __rows，显示时按页/行/列换算，只有拖动才改存档；有小组件的桌面等小组件到位再显示（最多 2 秒）。
