@@ -442,6 +442,8 @@ from desk_notes import router as desk_notes_router
 app.include_router(actors_router)
 app.include_router(desk_notes_router)
 from outing_tools import router as outing_tools_router
+from hub_organize import router as hub_organize_router
+app.include_router(hub_organize_router)  # 三位 AI 的 Hub 整理记录
 from html_works import router as html_works_router
 app.include_router(html_works_router)  # AI 做的小网页
 from story_spark import router as story_spark_router

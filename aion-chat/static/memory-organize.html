@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>大家的整理</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); min-height: 100vh; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 0 14px calc(28px + env(safe-area-inset-bottom)); }
+.top-bar { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 2px 10px; }
+.top-bar button { color: inherit; font-size: 20px; border: none; background: none; cursor: pointer; }
+.top-bar h2 { flex: 1; font-size: 18px; font-weight: 600; }
+.hint { font-size: 12px; color: var(--ib-tx3, #7d92b5); line-height: 1.6; }
+.card { background: rgba(255,255,255,.55); border: 1px solid var(--ib-glass-line, rgba(255,255,255,.7)); border-radius: 16px; padding: 12px 14px; margin-top: 10px; }
+.card h3 { font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+.card h3 small { font-size: 12px; font-weight: 400; color: var(--ib-tx3, #7d92b5); }
+.item { padding: 9px 0; border-top: 1px dashed var(--ib-line, #cbd8ec); margin-top: 9px; }
+.item time { font-size: 12px; color: var(--ib-tx3, #7d92b5); }
+.item p { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+.more { border: none; background: none; color: var(--ib-acc, #2a6bb0); font-size: 13px; margin-top: 8px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar"><button id="back" aria-label="返回">←</button><h2>大家的整理</h2></div>
+  <div class="hint">这里是每位 AI 在记忆库（Hub）里的整理记录，大家都一样。「整理记忆」那一页是家里本地的，只有最早的两位。</div>
+  <div id="list"></div>
+</div>
+<script>
+(function () {
+  'use strict';
+  var list = document.getElementById('list');
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function when(at) { var d = new Date(at); return isNaN(d) ? at : (d.getMonth() + 1) + '月' + d.getDate() + '日'; }
+  function note(text) { var c = el('div', 'card'); c.appendChild(el('div', 'hint', text)); list.appendChild(c); }
+  document.getElementById('back').onclick = function () { if (document.referrer) history.back(); else location.href = '/memory'; };
+  fetch('/api/hub-organize', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (d) {
+    if (!d.ok) { note(d.reason || '读取失败'); return; }
+    if (!d.people.length) { note('还没有接上记忆库的 AI'); return; }
+    d.people.forEach(function (p) {
+      var card = el('div', 'card'), head = el('h3', '', p.name);
+      head.appendChild(el('small', '', p.ok ? '最近 ' + p.digests.length + ' 次整理' : '这次没读到'));
+      card.appendChild(head);
+      var shown = 3;
+      var box = el('div'); card.appendChild(box);
+      var more = el('button', 'more', '看更多');
+      function draw() {
+        box.textContent = '';
+        p.digests.slice(0, shown).forEach(function (x) {
+          var item = el('div', 'item'); item.appendChild(el('time', '', when(x.at))); item.appendChild(el('p', '', x.content)); box.appendChild(item);
+        });
+        more.style.display = p.digests.length > shown ? '' : 'none';
+      }
+      more.onclick = function () { shown += 10; draw(); };
+      draw(); card.appendChild(more); list.appendChild(card);
+    });
+  }).catch(function () { note('读取失败，稍后再试'); });
+})();
+</script>
+</body>
+</html>

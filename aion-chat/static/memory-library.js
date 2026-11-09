@@ -276,10 +276,11 @@
   function openTools() {
     const store = state.store;
     modal('记忆库工具', `<p class="note">当前：${esc(names[store])} 的记忆库</p>` +
-      [['compression','整理记忆','查看压缩任务与历史'],['digest','总结新消息','使用当前记忆库的独立锚点'],['anchor','总结锚点','查看与调整总结起点'],['rebuild','重建向量索引','更换向量模型后使用']].map(([id,title,description]) => `<button class="tool-row" data-tool="${id}"><div>${title}<small>${description}</small></div><span>›</span></button>`).join(''));
+      [['compression','整理记忆','查看压缩任务与历史'],['organize','大家的整理','每位 AI 在记忆库里的整理记录'],['digest','总结新消息','使用当前记忆库的独立锚点'],['anchor','总结锚点','查看与调整总结起点'],['rebuild','重建向量索引','更换向量模型后使用']].map(([id,title,description]) => `<button class="tool-row" data-tool="${id}"><div>${title}<small>${description}</small></div><span>›</span></button>`).join(''));
     el('dialogBody').querySelectorAll('[data-tool]').forEach(button => button.onclick = async () => {
       const tool = button.dataset.tool;
       if (tool === 'compression') { navigate(`/memory-compression?target=${store}&return=${encodeURIComponent('/memory?' + new URLSearchParams({store,return:params.get('return') || '/'}))}`); return; }
+      if (tool === 'organize') { location.href = '/memory-organize'; return; }
       if (tool === 'anchor') {
         try {
           const result = await request('GET', `${base(store)}/maintenance/anchor`);
