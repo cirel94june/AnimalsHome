@@ -141,6 +141,8 @@ def format_day(day: dict[str, Any], date: str, user_name: str) -> str:
             continue
         event_date = str(memory.get("event_date") or "")[:10]
         old = f"（今天才记下的旧事，发生在 {event_date}）" if event_date and event_date < date else ""
+        if memory.get("fiction") is True:
+            old = "（这是你们一起编的故事：今天真实发生的是「一起编了故事」，情节是虚构的，不是今天的事）"
         memory_lines.append(f"- {content}{old}")
     if not chat_lines and not memory_lines:
         return ""

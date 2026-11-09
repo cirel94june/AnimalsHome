@@ -590,7 +590,7 @@ def _enqueue(actor: str, user_message: str, ai_response: str, chat_type: str, *,
 # ── AI 明确要记的事：Hub 的 remember（2026-10-20 Hub 窗口约定）──
 # 一条只写一件事、第三人称、200 字内；不自动进客厅（living_room 只放小猫的核心身份，AI 不能指定）
 REMEMBER_ROOMS = ("preferences", "people", "bond", "health", "career", "psychology", "learning", "social",
-                  "animal_dorm", "game_room")
+                  "animal_dorm")
 REMEMBER_MAX_CHARS = 200
 REMEMBER_MAX_PER_REPLY = 3
 REMEMBER_DEDUP_SECONDS = 24 * 3600
@@ -659,6 +659,8 @@ def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: s
                     "subject_name": str(item.get("subject_name") or "").strip()[:40],
                     "importance": max(0.0, min(0.8, float(item.get("importance") or 0.5))),
                 }
+                if item.get("fiction") is True:  # 一起编的故事：房间、出处、前缀都由 Hub 定
+                    payload = {"content": content, "fiction": True}
                 conn.execute(
                     "INSERT INTO outbox (actor, user_message, ai_response, chat_type, created_at, next_at, event_id,"
                     " source_ai, platform, hub, kind, payload) VALUES (?,?,?,?,?,0,?,?,?,?,'remember',?)",

@@ -3116,3 +3116,6 @@ html_works.py + static/works.html：AI 每天最多想一次（临近节日或 1
 
 ### §217a 狐狸审查 4 条（11-09）已修
 H1 外层页面 CSP frame-src none 拦自身跳转；M2 制作记录单独存，删作品不退额度；M3 读 Hub 后重新核对座位和模型；M4 超长即停止读取。另：记住这个故事按 Hub 要求暂停（REMEMBER_PAUSED）。
+
+### §215c 小故事接 Hub fiction（11-09）
+schedule_remember 支持 fiction=true，只传 content，房间和前缀由 Hub 定；参与的 AI 各记各的；hub_day 对 fiction 记忆写明情节非当天事实。撤销 game_room。

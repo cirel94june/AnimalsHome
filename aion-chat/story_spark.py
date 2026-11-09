@@ -4,7 +4,7 @@
 - 讲述者：某位 AI（用 TA 自己的人设和模型）、NPC 模型（没有人设），或者大家接力。
 - 只用小猫勾选的消息，服务端按这个会话重新读取，不信前端传来的正文。
 - 故事是虚构的：只存在 data/story_sparks.db，不写聊天记录、不进日记，默认不进 Hub。
-- 小猫点「记住这个故事」才写一条进 Hub，由那位 AI 自己写大概内容和感受，并标明是虚构的。
+- 小猫点「记住这个故事」才写进 Hub：参与的 AI 各写各的，走 Hub 的 fiction=true（接口说明第 9 节），NPC 讲的不写。
 - 每段话都能点评（小猫或 AI），被点评段落的作者会回一两句。
 - 谁知道这个故事：只有讲过它的 AI。私下讲的只有那一位；NPC 讲的没有 AI 知道。
 - 大家一起讲的：写完后参与者隔一段随机时间各自「刷到」，自己决定评不评，每段最多评一次。
@@ -37,7 +37,7 @@ MAX_SEED_CHARS = 12000
 MAX_IDEA_CHARS = 300
 SOURCE_LIMIT = 80
 SEGMENT_TIMEOUT_SECONDS = 300
-REMEMBER_PAUSED = True   # 11-09 Hub 请暂停写入，等 fiction 接口上线再打开
+REMEMBER_PAUSED = False
 MAX_COMMENT_CHARS = 300
 BROWSE_DELAY_SECONDS = (300, 10800)   # 几分钟到三小时
 BROWSE_TICK_SECONDS = 60
@@ -410,10 +410,6 @@ async def ai_comment_job(story: dict[str, Any], seat: dict[str, str], user_name:
     await _author_reply(story, seg, para, seat["name"], text, user_name)
 
 
-def build_memory(title: str, note: str) -> str:
-    return f"[虚构故事，不是真实发生的事]《{title}》：{note}"
-
-
 def mark_remembered(story_id: str, actor: str, note: str, now: float | None = None) -> bool:
     with _connect() as conn:
         return conn.execute("INSERT OR IGNORE INTO remembered (story_id, actor, note, created_at) VALUES (?,?,?,?)",
@@ -432,15 +428,15 @@ async def remember_job(story: dict[str, Any], seat: dict[str, str], user_name: s
         _notice[story["id"]] = f"{seat['name']} 现在连不上记忆库，这次没记上"
         return
     prompt = (f"这是一个虚构的小故事《{story['title']}》：\n{_story_text(story)}\n\n"
-              "这个故事不是真事，它是你和" + user_name + "一起编出来的。用第一人称写一两句话记下这件事：你们一起编了个什么故事，"
-              "大概讲了什么，它给你带来了什么感受。不超过 100 字，不要把情节写成现实里发生过的事。直接输出。")
+              "这个故事不是真事，它是你和" + user_name + "一起编出来的。用第一人称记下这件真实发生的事：你们一起编了个什么故事，"
+              "大概讲了什么，当时你的感受。80 到 180 字，要写明情节是编的，不要把情节写成现实里发生过的事。直接输出。")
     note = await _speak(prompt, seat["model"], seat.get("persona", ""), seat["name"])
     if not note:
         raise ValueError("没有写出内容")
     outcome: dict[str, Any] = {}
     queued = bridge.schedule_remember(
         seat["id"],
-        [{"content": build_memory(story["title"], note[:150]), "room": "game_room", "speaker_name": seat["name"], "importance": 0.4}],
+        [{"content": note[:200], "fiction": True}],
         request_key=f"story-{story['id']}-{seat['id']}", outcome=outcome)
     if queued or outcome.get("duplicate"):
         await asyncio.to_thread(mark_remembered, story["id"], seat["id"], note)

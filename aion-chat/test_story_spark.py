@@ -98,11 +98,6 @@ def test_builtin_seat_without_model_cannot_narrate(monkeypatch):
         story_spark._seat("aion")
 
 
-def test_remember_is_labelled_fiction():
-    text = story_spark.build_memory("雪夜", "讲了一场雪，我有点想哭")
-    assert text.startswith("[虚构故事，不是真实发生的事]") and "雪夜" in text
-
-
 def test_comments_extras_and_cleanup():
     story_spark.insert_story("a", "x", "", SEED)
     story_spark.add_comment("a", 0, 1, "小猫", "好看")
@@ -144,7 +139,7 @@ def test_remember_job_marks_only_when_queued(monkeypatch):
     monkeypatch.setattr(bridge, "schedule_remember", lambda actor, items, request_key, outcome: sent.append(items) or [])
     asyncio.run(story_spark.remember_job(story, seat, "小猫"))
     assert not story_spark.is_remembered("a", "ai3")
-    assert sent[0][0]["room"] == "game_room" and sent[0][0]["content"].startswith("[虚构故事")
+    assert sent[0][0]["fiction"] is True and "room" not in sent[0][0]
     monkeypatch.setattr(bridge, "schedule_remember", lambda actor, items, request_key, outcome: ["ok"])
     asyncio.run(story_spark.remember_job(story, seat, "小猫"))
     assert story_spark.is_remembered("a", "ai3")
@@ -199,5 +194,5 @@ def test_browse_skips_own_and_already_commented(monkeypatch):
     assert len(prompts) == count
 
 
-def test_remember_is_paused_until_hub_is_ready():
-    assert story_spark.REMEMBER_PAUSED is True
+def test_remember_is_open_now_hub_is_ready():
+    assert story_spark.REMEMBER_PAUSED is False

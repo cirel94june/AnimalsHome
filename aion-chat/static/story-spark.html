@@ -152,14 +152,17 @@ textarea { min-height: 62px; resize: vertical; }
         });
         tools.appendChild(a);
         tools.appendChild(el('h3', '', '记住这个故事'));
-        tools.appendChild(el('div', 'hint', s.remember_paused ? '记忆方案商量中，先等等。' : '只记大概内容和当时的感受，并标明是虚构的。'));
+        tools.appendChild(el('div', 'hint', list.length > 1 ? '参与的 AI 各记各的：记得一起编了什么、当时的感受，并知道情节是编的。' : '只有讲故事的 TA 记得：一起编了什么、当时的感受，并知道情节是编的。'));
         var b = el('div', 'chips'); b.style.marginTop = '6px';
-        list.forEach(function (seat) {
-          var done = (s.remembered || []).indexOf(seat.id) >= 0;
-          var c = el('button', 'chip' + (done ? ' done' : ''), seat.name + (done ? ' 已记住' : '')); c.type = 'button'; c.disabled = done || !!s.remember_paused;
-          c.onclick = function () { c.disabled = true; postStory(id, '/remember', { actor: seat.id }).then(function () { toast(seat.name + ' 在记'); showStory(id); }).catch(function (e) { c.disabled = false; toast(e.message); }); };
-          b.appendChild(c);
-        });
+        var waiting = list.filter(function (seat) { return (s.remembered || []).indexOf(seat.id) < 0; });
+        var memo = el('button', 'chip' + (waiting.length ? '' : ' done'), waiting.length ? '记住这个故事' : '已经记住了'); memo.type = 'button';
+        memo.disabled = !waiting.length || !!s.remember_paused || !!s.busy;
+        memo.onclick = function () {
+          memo.disabled = true;
+          Promise.all(waiting.map(function (seat) { return postStory(id, '/remember', { actor: seat.id }); }))
+            .then(function () { toast('在记了'); showStory(id); }).catch(function (e) { memo.disabled = false; toast(e.message); showStory(id); });
+        };
+        b.appendChild(memo);
         tools.appendChild(b);
         card.appendChild(tools);
       }

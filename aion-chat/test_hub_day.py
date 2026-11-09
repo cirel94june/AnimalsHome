@@ -177,3 +177,8 @@ def test_all_three_diaries_put_it_in_their_prompts():
     for name, actor in (("memory.py", '"aion"'), ("chatroom.py", '"connor"'), ("seat_diary.py", "seat")):
         source = (root / name).read_text(encoding="utf-8")
         assert f"day_text({actor}, user_name)" in source, name
+
+
+def test_fiction_memory_is_marked_as_made_up():
+    text = hub_day.format_day({"chats": [], "memories": [{"content": "我和小猫一起编了雨夜邮局", "fiction": True}], "complete": True}, "2026-11-09", "小猫")
+    assert "情节是虚构的" in text and "一起编了故事" in text
