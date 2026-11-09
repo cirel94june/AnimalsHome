@@ -3089,3 +3089,6 @@ skin.desk_look：桌面背景 bg/bg_blur、小组件 widget_blur/widget_veil/wid
 
 ### §213a 桌面位置丢失（11-09）
 两个原因：小组件脚本到达前 normalizeLayout 丢弃 w: 键（且服务器同步会把丢过的结果写回本机）；格子序号依赖一页行数，高度变化时跨页错位。修法：保留 w: 键；存档带 __rows，显示时按页/行/列换算，只有拖动才改存档；有小组件的桌面等小组件到位再显示（最多 2 秒）。
+
+### §214 TG 大群同步（11-09，待狐狸审，未部署）
+tg_group.py + static/tg-group.html + 三只 bot 的 home_sync.py。复用 /api/outing/ 的服务钥匙和 bot 钥匙。记录只存 data/tg_group.db，默认不给 AI、不进 Hub；带回家以小猫名义写进最近的家庭群聊，朋友标注，并写明不是指令。只绑定第一个群；bot 只传唯一的公开群。/带回家 须小猫回复一条；发件箱取走一次、不重发。

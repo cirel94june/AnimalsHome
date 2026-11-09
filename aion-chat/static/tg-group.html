@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TG 大群</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #0a1e42); display: flex; flex-direction: column; height: 100dvh; }
+.top-bar { display: flex; align-items: center; gap: 10px; padding: calc(10px + env(safe-area-inset-top)) 16px 10px; }
+.top-bar a { color: inherit; text-decoration: none; font-size: 20px; }
+.top-bar h2 { flex: 1; font-size: 18px; font-weight: 600; }
+.note { font-size: 12px; color: var(--ib-tx3, #7d92b5); padding: 0 16px 8px; line-height: 1.5; }
+#list { flex: 1; overflow-y: auto; padding: 4px 12px 12px; }
+.more { display: block; margin: 4px auto 10px; border: none; background: none; color: var(--ib-acc, #2a6bb0); font-size: 13px; cursor: pointer; }
+.msg { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: rgba(255,255,255,.55); color: inherit; border-radius: 14px; padding: 8px 12px; margin-bottom: 6px; font: inherit; cursor: pointer; }
+.msg.owner { background: rgba(127,166,221,.3); }
+.msg.friend, .msg.friend_bot { background: rgba(255,255,255,.34); }
+.msg.on { border-color: var(--ib-acc, #2a6bb0); box-shadow: inset 0 0 0 1px var(--ib-acc, #2a6bb0); }
+.meta { font-size: 12px; color: var(--ib-tx3, #7d92b5); display: flex; gap: 6px; margin-bottom: 2px; }
+.meta b { font-weight: 600; color: var(--ib-tx2, #3d5788); }
+.body { font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.bar { padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: flex-end; }
+.bar textarea { flex: 1; min-height: 40px; max-height: 110px; resize: none; border: 1px solid var(--ib-line, #cbd8ec); border-radius: 14px; padding: 9px 12px; font: inherit; font-size: 15px; background: rgba(255,255,255,.75); color: inherit; }
+.bar button { border: none; border-radius: 14px; padding: 10px 14px; font-size: 14px; color: #fff; background: var(--ib-acc, #2a6bb0); cursor: pointer; flex: none; }
+.bar button:disabled { opacity: .5; }
+#home { display: none; }
+#home.on { display: block; }
+.empty { text-align: center; color: var(--ib-tx3, #7d92b5); font-size: 13px; padding: 48px 20px; line-height: 1.7; }
+.toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); background: rgba(10,30,66,.86); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; }
+.toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="top-bar"><a href="/" aria-label="返回">←</a><h2>TG 大群</h2></div>
+<div class="note">这里的话默认不给 AI 看。点几条选中，再点「带回家」，AI 才接得上。</div>
+<div id="list"></div>
+<div class="bar">
+  <textarea id="text" rows="1" placeholder="发到大群，会显示「小猫：…」"></textarea>
+  <button id="home" type="button">带回家</button>
+  <button id="send" type="button">发送</button>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(function () {
+  'use strict';
+  var list = document.getElementById('list'), text = document.getElementById('text');
+  var sendBtn = document.getElementById('send'), homeBtn = document.getElementById('home');
+  var LABEL = { friend: '朋友', friend_bot: '朋友的 AI' };
+  var MAX_PICK = 30;
+  var messages = [], picked = {}, oldest = null, hasMore = true, opened = Date.now() / 1000, reported = {};
+
+  function toast(t) {
+    var el = document.getElementById('toast'); el.textContent = t; el.classList.add('on');
+    clearTimeout(el._t); el._t = setTimeout(function () { el.classList.remove('on'); }, 2200);
+  }
+  function clock(ts) {
+    var d = new Date(ts * 1000), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function pickedIds() { return Object.keys(picked).map(Number); }
+  function syncHome() {
+    var n = pickedIds().length;
+    homeBtn.classList.toggle('on', n > 0);
+    homeBtn.textContent = '带回家 ' + n;
+  }
+  function render(keepBottom) {
+    var atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
+    var fromBottom = list.scrollHeight - list.scrollTop;
+    list.textContent = '';
+    if (hasMore && messages.length) {
+      var more = document.createElement('button'); more.className = 'more'; more.textContent = '看更早的';
+      more.onclick = loadOlder; list.appendChild(more);
+    }
+    if (!messages.length) {
+      var e = document.createElement('div'); e.className = 'empty';
+      e.textContent = 'bot 更新以后，大群里新说的话会出现在这里。';
+      list.appendChild(e);
+    }
+    messages.forEach(function (m) {
+      var b = document.createElement('button'); b.type = 'button';
+      b.className = 'msg ' + m.kind + (picked[m.message_id] ? ' on' : '');
+      var meta = document.createElement('div'); meta.className = 'meta';
+      var name = document.createElement('b'); name.textContent = m.name; meta.appendChild(name);
+      var info = (LABEL[m.kind] ? LABEL[m.kind] + ' · ' : '') + clock(m.ts) + (m.brought ? ' · 已带回家' : '');
+      var s = document.createElement('span'); s.textContent = info; meta.appendChild(s);
+      var body = document.createElement('div'); body.className = 'body'; body.textContent = m.text;
+      b.appendChild(meta); b.appendChild(body);
+      b.onclick = function () {
+        if (picked[m.message_id]) delete picked[m.message_id];
+        else if (pickedIds().length >= MAX_PICK) { toast('一次最多带 ' + MAX_PICK + ' 条'); return; }
+        else picked[m.message_id] = 1;
+        b.classList.toggle('on', !!picked[m.message_id]);
+        syncHome();
+      };
+      list.appendChild(b);
+    });
+    if (keepBottom === 'keep') list.scrollTop = list.scrollHeight - fromBottom;
+    else if (atBottom || keepBottom) list.scrollTop = list.scrollHeight;
+  }
+  function merge(items) {
+    var map = {};
+    messages.concat(items).forEach(function (m) { map[m.message_id] = m; });
+    messages = Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return a.ts - b.ts || a.message_id - b.message_id; });
+    oldest = messages.length ? messages[0].ts : null;
+  }
+  function fetchPage(query) {
+    return fetch('/api/tg-group/messages?' + query, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    });
+  }
+  function refresh(first) {
+    return fetchPage('limit=60&failed_since=' + opened).then(function (d) {
+      var before = JSON.stringify(messages);
+      merge(d.messages);
+      if (first) hasMore = d.messages.length >= 60;
+      if (first || JSON.stringify(messages) !== before) render(first);
+      d.failed.forEach(function (f) {
+        if (reported[f.id]) return;
+        reported[f.id] = 1; toast('有一条没发出去：' + f.text.slice(0, 16));
+      });
+    }).catch(function () { if (first) toast('读取失败，稍后再试'); });
+  }
+  function loadOlder() {
+    if (oldest === null) return;
+    fetchPage('limit=60&before=' + oldest).then(function (d) {
+      hasMore = d.messages.length >= 60;
+      merge(d.messages);
+      render('keep');
+    }).catch(function () { toast('读取失败'); });
+  }
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; });
+    });
+  }
+  sendBtn.onclick = function () {
+    var value = text.value.trim();
+    if (!value) return;
+    sendBtn.disabled = true;
+    post('/api/tg-group/send', { text: value }).then(function () { text.value = ''; toast('已交给 bot，几秒后发出'); })
+      .catch(function (e) { toast('没发出去：' + e.message); })
+      .then(function () { sendBtn.disabled = false; });
+  };
+  homeBtn.onclick = function () {
+    var ids = pickedIds();
+    if (!ids.length) return;
+    homeBtn.disabled = true;
+    post('/api/tg-group/bring-home', { message_ids: ids }).then(function (j) {
+      picked = {}; syncHome(); toast('带回家了 ' + j.count + ' 条，在家里的群聊能看到');
+      return refresh(false).then(function () { render(false); });
+    }).catch(function (e) { toast('没带成：' + e.message); }).then(function () { homeBtn.disabled = false; });
+  };
+  refresh(true);
+  setInterval(function () { if (!document.hidden) refresh(false); }, 4000);
+})();
+</script>
+</body>
+</html>

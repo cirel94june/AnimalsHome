@@ -437,6 +437,8 @@ from desk_notes import router as desk_notes_router
 app.include_router(actors_router)
 app.include_router(desk_notes_router)
 from outing_tools import router as outing_tools_router
+from tg_group import router as tg_group_router
+app.include_router(tg_group_router)  # TG 大群同步
 app.include_router(outing_tools_router)  # TG 上的 bot 回家借工具
 from routes.mcp_tools import router as mcp_tools_router
 app.include_router(mcp_tools_router)
