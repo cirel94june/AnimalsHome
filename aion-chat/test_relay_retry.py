@@ -48,9 +48,9 @@ def test_no_retry_after_text_started(monkeypatch):
         run([["说了一半", DROP], ["不该到这"]], monkeypatch)
 
 
-def test_gives_up_after_second_drop(monkeypatch):
+def test_gives_up_after_third_drop(monkeypatch):
     with pytest.raises(httpx.RemoteProtocolError):
-        run([[DROP], [DROP], ["不该到这"]], monkeypatch)
+        run([[DROP], [DROP], [DROP], ["不该到这"]], monkeypatch)
 
 
 def test_slow_reply_is_not_retried(monkeypatch):
