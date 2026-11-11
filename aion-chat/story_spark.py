@@ -242,7 +242,10 @@ def build_prompt(seed_text: str, idea: str, user_name: str, story_so_far: str = 
 
 
 async def _speak(prompt: str, model_key: str, persona: str = "", name: str = "") -> str:
+    from contextlib import aclosing
+
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
+    from text_only import TEXT_ONLY
 
     messages: list[dict[str, str]] = []
     if persona:
@@ -250,10 +253,15 @@ async def _speak(prompt: str, model_key: str, persona: str = "", name: str = "")
                      {"role": "assistant", "content": "收到，我会按照设定做自己。"}]
     messages.append({"role": "user", "content": prompt})
     out = ""
-    async with asyncio.timeout(SEGMENT_TIMEOUT_SECONDS):
-        async for chunk in stream_ai(messages, model_key):
-            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
-                out += chunk
+    token = TEXT_ONLY.set(True)  # 故事材料不受信任：只生成文字，不给执行工具的权限
+    try:
+        async with asyncio.timeout(SEGMENT_TIMEOUT_SECONDS):
+            async with aclosing(stream_ai(messages, model_key)) as chunks:
+                async for chunk in chunks:
+                    if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                        out += chunk
+    finally:
+        TEXT_ONLY.reset(token)
     return out.strip()
 
 
@@ -335,11 +343,29 @@ def _segment_speaker(segment: dict[str, Any]) -> dict[str, str] | None:
         return None
 
 
+def _name_owners(seats: list[dict[str, str]]) -> dict[str, set[str]]:
+    """名字 → 叫这个名字的所有座位（含没启用的）。"""
+    owners: dict[str, set[str]] = {}
+    for seat in seats:
+        owners.setdefault(seat["name"], set()).add(seat["id"])
+    try:
+        import actors
+        for actor in actors.list_actors():
+            owners.setdefault(actor["name"], set()).add(actor["id"])
+    except Exception:
+        pass
+    return owners
+
+
 def audience(story: dict[str, Any], seats: list[dict[str, str]]) -> list[str]:
-    """知道这个故事的 AI：只有讲过它的人（旧故事没存 id，按名字认）。"""
-    ids = {s.get("sid") for s in story["segments"]} - {"user"}
+    """知道这个故事的 AI：只有讲过它的人。
+    最早的故事没存 id，只能按名字认：这个名字在全家只对应一位时才算，重名就谁都不算（狐狸 §219 H3）。"""
+    ids = {s.get("sid") for s in story["segments"]} - {"user", None, ""}
+    if ids:
+        return [seat["id"] for seat in seats if seat["id"] in ids]
     names = {s.get("name") for s in story["segments"]}
-    return [seat["id"] for seat in seats if seat["id"] in ids or (seat["name"] in names and not any(ids))]
+    owners = _name_owners(seats)
+    return [seat["id"] for seat in seats if seat["name"] in names and owners.get(seat["name"]) == {seat["id"]}]
 
 
 def schedule_browse(story_id: str, actors: list[str], now: float | None = None) -> None:
@@ -521,8 +547,24 @@ async def talk_job(story_id: str, speakers: list[dict[str, str]], user_name: str
             await asyncio.to_thread(add_lore, story_id, speaker["name"], item)
 
 
-def _spawn(story_id: str, job) -> None:
-    _busy[story_id] = _busy.get(story_id, 0) + 1
+def _claim(story: dict[str, Any]) -> None:
+    """推进剧情前占位。检查和占位之间没有 await，两个同时来的请求只有一个能过（狐狸 §219 M3）。"""
+    if story["status"] == "writing" or _busy.get(story["id"]):
+        raise HTTPException(409, "大家正在写，等一下")
+    _busy[story["id"]] = 1
+
+
+def _release(story_id: str) -> None:
+    left = _busy.get(story_id, 1) - 1
+    if left > 0:
+        _busy[story_id] = left
+    else:
+        _busy.pop(story_id, None)
+
+
+def _spawn(story_id: str, job, claimed: bool = False) -> None:
+    if not claimed:
+        _busy[story_id] = _busy.get(story_id, 0) + 1
     _notice.pop(story_id, None)
 
     async def run() -> None:
@@ -532,11 +574,7 @@ def _spawn(story_id: str, job) -> None:
             log.warning("[story_spark] %s 后台没办成：%s", story_id, type(error).__name__)
             _notice[story_id] = "线路没连上，这次没成，再试一次吧"
         finally:
-            left = _busy.get(story_id, 1) - 1
-            if left > 0:
-                _busy[story_id] = left
-            else:
-                _busy.pop(story_id, None)
+            _release(story_id)
     task = asyncio.create_task(run())
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
@@ -724,7 +762,8 @@ async def _ready_seat(actor: str, story: dict[str, Any]) -> dict[str, str]:
         seat = await asyncio.to_thread(_seat, actor)
     except Exception as error:
         raise HTTPException(400, str(error) or "这位现在来不了") from None
-    if actor not in audience(story, [seat]):
+    everyone = await asyncio.to_thread(ready_seats)
+    if actor not in audience(story, [seat] + [s for s in everyone if s["id"] != actor]):
         raise HTTPException(403, f"{seat['name']} 不知道这个故事")
     return seat
 
@@ -749,20 +788,18 @@ async def api_comment(story_id: str, request: Request):
     return {"ok": True}
 
 
-def _not_busy(story: dict[str, Any]) -> None:
-    if story["status"] == "writing" or _busy.get(story["id"]):
-        raise HTTPException(409, "大家正在写，等一下")
-
-
 @router.post("/api/story-spark/stories/{story_id}/passage")
 async def api_passage(story_id: str, request: Request):
     """小猫自己写一段正文。不调模型。"""
     story = await _finished_story(story_id)
-    _not_busy(story)
-    text = str((await _body(request)).get("text") or "").strip()[:MAX_PASSAGE_CHARS]
-    if not text:
-        raise HTTPException(400, "写点什么吧")
-    await asyncio.to_thread(append_segment, story_id, {"name": _user_name(), "text": text, "sid": "user"})
+    _claim(story)
+    try:
+        text = str((await _body(request)).get("text") or "").strip()[:MAX_PASSAGE_CHARS]
+        if not text:
+            raise HTTPException(400, "写点什么吧")
+        await asyncio.to_thread(append_segment, story_id, {"name": _user_name(), "text": text, "sid": "user"})
+    finally:
+        _release(story_id)
     return {"ok": True}
 
 
@@ -811,18 +848,27 @@ async def _pick_speakers(story: dict[str, Any], who: str) -> list[dict[str, str]
 @router.post("/api/story-spark/stories/{story_id}/continue")
 async def api_continue(story_id: str, request: Request):
     story = await _finished_story(story_id)
-    _not_busy(story)
-    body = await _body(request)
-    speakers = await _pick_speakers(story, str(body.get("who") or ""))
-    _spawn(story_id, continue_job(story_id, speakers, str(body.get("nudge") or "").strip()[:MAX_CHAT_CHARS]))
+    _claim(story)
+    try:
+        body = await _body(request)
+        speakers = await _pick_speakers(story, str(body.get("who") or ""))
+    except BaseException:
+        _release(story_id)
+        raise
+    _spawn(story_id, continue_job(story_id, speakers, str(body.get("nudge") or "").strip()[:MAX_CHAT_CHARS]), claimed=True)
     return {"ok": True}
 
 
 @router.post("/api/story-spark/stories/{story_id}/talk")
 async def api_talk(story_id: str):
     story = await _finished_story(story_id)
-    _not_busy(story)
-    _spawn(story_id, talk_job(story_id, await _pick_speakers(story, "all"), _user_name()))
+    _claim(story)
+    try:
+        speakers = await _pick_speakers(story, "all")
+    except BaseException:
+        _release(story_id)
+        raise
+    _spawn(story_id, talk_job(story_id, speakers, _user_name()), claimed=True)
     return {"ok": True}
 
 

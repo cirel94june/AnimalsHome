@@ -268,3 +268,42 @@ def test_user_passage_does_not_join_audience_or_narrators():
     assert [n["id"] for n in story_spark.narrators(story, seats)] == ["aion"]
     npc = {"segments": [{"name": "NPC", "text": "x", "sid": "npc", "model": "z"}]}
     assert story_spark.narrators(npc, seats) == [{"id": "npc", "name": "NPC", "model": "z", "persona": ""}]
+
+
+def test_story_calls_are_text_only_and_flag_is_reset(monkeypatch):
+    import sys
+    import types
+    seen = []
+    provider = types.ModuleType("ai_providers")
+    from text_only import TEXT_ONLY
+    provider.CLI_STATUS_PREFIX = "\x00"
+
+    async def stream(messages, model):
+        seen.append(TEXT_ONLY.get())
+        yield "好"
+    provider.stream_ai = stream
+    monkeypatch.setitem(sys.modules, "ai_providers", provider)
+    assert asyncio.run(story_spark._speak("x", "m")) == "好"
+    assert seen == [True] and TEXT_ONLY.get() is False
+
+
+def test_legacy_story_with_duplicate_names_authorizes_nobody(monkeypatch):
+    import actors
+    monkeypatch.setattr(actors, "list_actors", lambda *a, **k: [])
+    old = {"segments": [{"name": "甲", "text": "x"}]}
+    twins = [{"id": "aion", "name": "甲"}, {"id": "ai3", "name": "甲"}]
+    assert story_spark.audience(old, twins) == []
+    assert story_spark.audience(old, [twins[0]]) == ["aion"]
+    monkeypatch.setattr(actors, "list_actors", lambda *a, **k: [{"id": "ai5", "name": "甲"}])
+    assert story_spark.audience(old, [twins[0]]) == []
+
+
+def test_claim_admits_one_and_release_frees():
+    from fastapi import HTTPException
+    story = {"id": "c", "status": "done"}
+    story_spark._claim(story)
+    with pytest.raises(HTTPException):
+        story_spark._claim(story)
+    story_spark._release("c")
+    story_spark._claim(story)
+    story_spark._release("c")
