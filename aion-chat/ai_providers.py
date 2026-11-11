@@ -2,6 +2,7 @@
 AI 模型调用：硅基流动 / Gemini 流式 + 多模态消息构建
 """
 
+from text_only import TEXT_ONLY
 import sys
 import json, base64, mimetypes, asyncio, shutil, subprocess, os, re, time, uuid
 from functools import lru_cache
@@ -1306,7 +1307,8 @@ async def call_gemini_cli(messages: list, model: str, meta: dict | None = None,
     # --approval-mode yolo 允许 CLI 自动执行文件读写和工具调用（如下载图片存盘），
     # plan 模式下非交互模式 write_file 等工具默认被拒绝。
     # 通过前端「允许调用工具」开关控制。
-    approval = "yolo" if SETTINGS.get("gemini_cli_tools_enabled", False) else "plan"
+    # TEXT_ONLY：这次调用处理的是不受信任的材料（小故事、小作品），不管开关怎样都不给执行权限（狐狸 §219 H2）
+    approval = "yolo" if SETTINGS.get("gemini_cli_tools_enabled", False) and not TEXT_ONLY.get() else "plan"
     cmd.extend(["--skip-trust", "--approval-mode", approval, "-o", "stream-json", "-p", " "])
 
     try:

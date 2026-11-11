@@ -159,6 +159,7 @@ async def consider(seat: dict[str, str], occasion_key: str, user_name: str) -> N
     from contextlib import aclosing
 
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
+    from text_only import TEXT_ONLY
     from hub_day import day_text
     from story_spark import ready_seats
 
@@ -179,14 +180,18 @@ async def consider(seat: dict[str, str], occasion_key: str, user_name: str) -> N
                      {"role": "assistant", "content": "收到，我会按照设定做自己。"}]
     messages.append({"role": "user", "content": build_prompt(user_name, occasion_key, recent, left)})
     raw = ""
-    async with asyncio.timeout(420):
-        async with aclosing(stream_ai(messages, seat["model"])) as chunks:
-            async for chunk in chunks:
-                if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
-                    raw += chunk
-                    if len(raw) > MAX_RAW_CHARS:  # 超长就不读了，免得白花（狐狸 §217 M4）
-                        log.info("[html_works] %s 写得太长，停了", seat["id"])
-                        return
+    token = TEXT_ONLY.set(True)  # 提示词里有 Hub 的当天经历：只生成文字，不给执行工具的权限
+    try:
+        async with asyncio.timeout(420):
+            async with aclosing(stream_ai(messages, seat["model"])) as chunks:
+                async for chunk in chunks:
+                    if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                        raw += chunk
+                        if len(raw) > MAX_RAW_CHARS:  # 超长就不读了，免得白花（狐狸 §217 M4）
+                            log.info("[html_works] %s 写得太长，停了", seat["id"])
+                            return
+    finally:
+        TEXT_ONLY.reset(token)
     parsed = parse_reply(raw)
     if not parsed:
         return
