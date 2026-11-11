@@ -204,3 +204,56 @@ def test_signature_is_stable_and_uses_utc_day():
     one = ob.auth_headers("GET", "h", "/b", {"list-type": "2"}, "AK", "SK", now)
     two = ob.auth_headers("GET", "h", "/b", {"list-type": "2"}, "AK", "SK", now)
     assert one == two and "AK/20261109/auto/s3/aws4_request" in one["Authorization"] and "SK" not in one["Authorization"].split("Signature=")[1][:2]
+
+
+def test_real_database_backup_failure_aborts(tmp_path, monkeypatch):
+    src = tmp_path / "d"
+    src.mkdir()
+    conn = sqlite3.connect(src / "a.db")
+    conn.execute("create table t(a)")
+    conn.commit()
+    conn.close()
+    (src / "fake.db").write_text("not sqlite")
+    (src / "empty.db").write_bytes(b"")
+
+    def boom(*a):
+        raise sqlite3.OperationalError("io")
+    monkeypatch.setattr(ob, "_copy_database", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        ob.snapshot(src, tmp_path / "out")
+    (src / "a.db").unlink()
+    assert ob.snapshot(src, tmp_path / "out2") == 2
+
+
+def test_failed_backup_never_prunes(tmp_path, monkeypatch):
+    ob._write_private(ob.CONFIG_PATH, CFG)
+    store = FakeStore()
+    for i in range(20):
+        store.files[f"aionshome/202611{i + 1:02d}T000000Z.tar.gz.enc"] = b""
+
+    def boom(*a):
+        raise sqlite3.OperationalError("io")
+    monkeypatch.setattr(ob, "snapshot", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        ob.run_backup(store, [(tmp_path, "data")])
+    assert len(store.files) == 20
+
+
+def test_changing_requests_need_same_origin_marker():
+    from starlette.requests import Request
+
+    def req(headers):
+        raw = [(k.encode(), v.encode()) for k, v in headers.items()]
+        return Request({"type": "http", "method": "POST", "path": "/", "headers": raw})
+    ob.same_origin(req({"x-ah-request": "1", "host": "home.example", "origin": "https://home.example", "sec-fetch-site": "same-origin"}))
+    ob.same_origin(req({"x-ah-request": "1", "host": "home.example"}))
+    for bad in ({"host": "home.example"},
+                {"x-ah-request": "1", "host": "home.example", "origin": "https://evil.example"},
+                {"x-ah-request": "1", "host": "home.example", "sec-fetch-site": "cross-site"}):
+        with pytest.raises(HTTPException):
+            ob.same_origin(req(bad))
+
+
+def test_page_sends_the_marker():
+    page = (ob.BASE_DIR / "static" / "offsite-backup.html").read_text(encoding="utf-8")
+    assert "'X-AH-Request': '1'" in page

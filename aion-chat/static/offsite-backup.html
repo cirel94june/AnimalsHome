@@ -52,7 +52,10 @@ button:disabled { opacity: .5; }
   var $ = function (id) { return document.getElementById(id); };
   var FIELDS = ['account_id', 'access_key_id', 'secret_access_key', 'passphrase'];
   function toast(t) { var n = $('toast'); n.textContent = t; n.classList.add('on'); clearTimeout(n._t); n._t = setTimeout(function () { n.classList.remove('on'); }, 2800); }
-  function api(url, opts) { return fetch(url, opts).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); }); }
+  function api(url, opts) {
+    if (opts && opts.method) opts.headers = Object.assign({ 'X-AH-Request': '1' }, opts.headers || {});
+    return fetch(url, opts).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.detail || r.status); return j; }); });
+  }
   function when(ts) { var d = new Date(ts * 1000); return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
   function row(text, warn) { var d = document.createElement('div'); if (warn) d.className = 'warn'; d.textContent = text; return d; }
   function render(s) {

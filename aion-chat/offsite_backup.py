@@ -73,6 +73,8 @@ _KEY_ID = re.compile(r"^[A-Za-z0-9]{16,128}$")
 _NAME = re.compile(r"^aionshome/\d{8}T\d{6}Z\.tar\.gz\.enc$")
 _SKIP_SUFFIX = ("-wal", "-shm", "-journal", ".tmp")
 _lock = threading.Lock()
+_status_lock = threading.Lock()
+SQLITE_HEADER = b"SQLite format 3\x00"
 _tasks: set[asyncio.Task] = set()
 
 
@@ -91,11 +93,18 @@ def load_config() -> dict[str, str]:
 
 
 def _write_private(path: Path, value: dict[str, Any]) -> None:
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(value, handle, ensure_ascii=False)
-    os.replace(tmp, path)
+    """每次用独占创建的临时文件（权限 600），同时写也不会互相踩（狐狸 §218 M2）。"""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def is_ready(cfg: dict[str, str]) -> bool:
@@ -130,7 +139,8 @@ def load_status() -> dict[str, Any]:
 
 
 def _update_status(**fields: Any) -> None:
-    _write_private(STATUS_PATH, {**load_status(), **fields})
+    with _status_lock:  # 读、合并、写是一整步，不丢别人刚写的字段
+        _write_private(STATUS_PATH, {**load_status(), **fields})
 
 
 # ── 打包 ──
@@ -147,15 +157,19 @@ def snapshot(source: Path, target: Path) -> int:
             if src.is_symlink() or name in secrets or name.endswith(_SKIP_SUFFIX):
                 continue
             dst = target / rel / name
-            if name.endswith(DB_SUFFIXES):
-                try:
-                    _copy_database(src, dst)
-                except sqlite3.DatabaseError:  # 名字叫 .db 但不是 SQLite 的文件，照常拷
-                    shutil.copy2(src, dst)
+            if name.endswith(DB_SUFFIXES) and _is_sqlite(src):
+                # 真数据库拷不成就整次备份失败：直接复制可能缺还没落盘的数据，不能当成功（狐狸 §218 H1）
+                _copy_database(src, dst)
             else:
                 shutil.copy2(src, dst)
             count += 1
     return count
+
+
+def _is_sqlite(path: Path) -> bool:
+    """看文件头。名字叫 .db 但不是 SQLite 的（或者空文件）按普通文件拷。"""
+    with open(path, "rb") as handle:
+        return handle.read(len(SQLITE_HEADER)) == SQLITE_HEADER
 
 
 def _copy_database(src: Path, dst: Path) -> None:
@@ -470,8 +484,21 @@ async def api_state():
     return await asyncio.to_thread(public_state)
 
 
+def same_origin(request: Request) -> None:
+    """改东西的请求只认本站页面发的：别的网站让浏览器发来的一律拒绝（狐狸 §218 M1）。
+    页面的 fetch 会带 X-AH-Request；外站的表单带不了这个头，带了也过不了浏览器的跨站预检。"""
+    if request.headers.get("x-ah-request") != "1":
+        raise HTTPException(403, "只能从备份页面操作")
+    if request.headers.get("sec-fetch-site") not in (None, "same-origin"):
+        raise HTTPException(403, "只能从备份页面操作")
+    origin = request.headers.get("origin")
+    if origin is not None and origin.split("://", 1)[-1] != request.headers.get("host"):
+        raise HTTPException(403, "只能从备份页面操作")
+
+
 @router.put("/api/offsite-backup")
 async def api_save(request: Request):
+    same_origin(request)
     try:
         body = json.loads(await read_body_limited(request, MAX_BODY_BYTES, "内容太长"))
     except ValueError:
@@ -484,10 +511,12 @@ async def api_save(request: Request):
 
 
 @router.post("/api/offsite-backup/run")
-async def api_run():
+async def api_run(request: Request):
+    same_origin(request)
     return await asyncio.to_thread(backup_now)
 
 
 @router.post("/api/offsite-backup/drill")
-async def api_drill():
+async def api_drill(request: Request):
+    same_origin(request)
     return await asyncio.to_thread(drill_now)

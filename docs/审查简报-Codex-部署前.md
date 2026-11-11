@@ -3128,3 +3128,9 @@ offsite_backup.py、static/offsite-backup.html、tools/offsite_restore.py。data
 
 ### §218a 会客室数据一起备（11-11，灾备窗口提）
 sources() 加 AionsHome-Visitor-Lounge/data，包里放 lounge/；.sqlite3 也走 SQLite backup 接口；演练检查两处数据库。仍未部署，和 §218 一起审。
+
+### §219a 狐狸审查小故事 4 条（11-11，已上线）
+H2 text_only.TEXT_ONLY（contextvar）：故事和小作品调用时 Gemini CLI 强制 plan，不带 yolo；Codex、AGY 本来就禁工具。H3 旧故事按名字认人须全家唯一。M3 _claim 检查即占位。M4 fiction 去重键加前缀。
+
+### §218b 狐狸审查备份 3 条（11-11，已修，未部署）
+H1 文件头是 SQLite 的库 backup 失败即中止整次备份，不上传不清理；M1 改动接口要求 X-AH-Request 头、同源 Origin、Sec-Fetch-Site；M2 mkstemp 唯一临时文件 + 状态读写加锁。
