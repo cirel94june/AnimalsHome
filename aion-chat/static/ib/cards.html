@@ -143,7 +143,7 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
     var mask = document.createElement('div'); mask.className = 'ib-sheet-mask';
     var box = document.createElement('div'); box.className = 'ib-sheet';
     var nameField = a.builtin
-      ? '<div class="hint">名字在' + (a.id === 'aion' ? '「世界书」' : '「聊天室设置」') + '里改，这里会自动同步。</div>'
+      ? '<div class="hint">名字在' + (a.id === 'aion' ? '桌面「家里的开关」里的「世界书」' : '群聊页左边栏的「🎭 人设」') + '里改，这里会自动同步。</div>'
       : '<label class="field">名字<input type="text" id="f-name" maxlength="24"></label>';
     box.innerHTML = '<h3>' + esc(a.name) + '<small>No. ' + a.seat + '</small></h3>' +
       '<div class="sec"><b>头像</b><div class="row2"><img id="f-ava" src="' + esc(a.avatar || '/public/AIIcon.png') + '" alt="">' +
