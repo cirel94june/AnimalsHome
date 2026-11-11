@@ -3061,6 +3061,9 @@ async def _process_outing(text: str, conv_id: str) -> str:
             await db.commit()
         await manager.broadcast({"type": "msg_created", "data": {
             "id": msg_id, "conv_id": conv_id, "role": "system", "content": message, "created_at": now, "attachments": []}})
+    if text and "签名" in text:
+        import self_sign
+        text = self_sign.process(text, "aion")
     if text and "看看" in text:
         import autonomy
         import world_window

@@ -71,6 +71,12 @@ async def disconnect(actor: str):
     return {"ok": True}
 
 
+@router.post("/{actor}/games")
+async def games(actor: str, body: Notify):
+    garden_wake.set_games(_actor(actor), body.on)
+    return {"ok": True, "games": body.on}
+
+
 @router.post("/{actor}/notify")
 async def notify(actor: str, body: Notify):
     garden_wake.set_notify(_actor(actor), body.on)

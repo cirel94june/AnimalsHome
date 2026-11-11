@@ -587,6 +587,8 @@ async def run_outing(
     if mcp_policy.site_of(server) == "galatea.abysslumina.com":
         import garden_wake
         games = await asyncio.to_thread(garden_wake.bridge_active, actor)
+        if not wake and not garden_wake.games_on(actor):
+            games = False  # 小猫关了「可以去打牌」：自己出门时不上牌桌；被叫去出牌的那一趟不受影响
     guard = mcp_policy.TripGuard(server, can_write=bool(server.get("can_write", True)),
                                  allow_unknown=bool(server.get("allow_unknown", True)), games=games)
     deadline = time.monotonic() + OUTING_TIMEOUT_SECONDS
