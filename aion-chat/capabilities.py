@@ -713,6 +713,8 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
     if is_capability_enabled("world_window"):
         import world_window
         texts.append(world_window.ability_text(user_name))
+    import self_sign
+    texts.append(self_sign.ability_text(user_name))
     if is_capability_enabled("wechat_message"):
         texts.append(wechat_message_ability_text(user_name))
     if is_capability_enabled("poi_search") and _is_location_known():
@@ -843,6 +845,8 @@ async def build_capability_prompt_items(
     if is_capability_enabled("world_window"):
         import world_window
         abilities.append(world_window.ability_text(user_name))
+    import self_sign
+    abilities.append(self_sign.ability_text(user_name))
 
     if is_capability_enabled("poi_search") and _is_location_known():
         abilities.append(poi_search_ability_text(user_name))

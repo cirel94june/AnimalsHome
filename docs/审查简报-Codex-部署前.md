@@ -3134,3 +3134,6 @@ H2 text_only.TEXT_ONLY（contextvar）：故事和小作品调用时 Gemini CLI 
 
 ### §218b 狐狸审查备份 3 条（11-11，已修，未部署）
 H1 文件头是 SQLite 的库 backup 失败即中止整次备份，不上传不清理；M1 改动接口要求 X-AH-Request 头、同源 Origin、Sec-Fetch-Site；M2 mkstemp 唯一临时文件 + 状态读写加锁。
+
+### §220 聊天五项（11-11，已上线）
+重新生成只删目标那条、上下文只取它之前、新回复挪回原 created_at；群里座位重新生成补传 actor。前端：回复看起来已结束（无流式气泡、6 秒无事件）且输入框有字时，点发送=停止后自动发送；服务端记录收尾超过 8 秒的情况。self_sign.py：[签名:…] 改名片签名，每天最多 3 次。garden_wake games 开关：关了自己出门不上牌桌，被叫去出牌不受影响。

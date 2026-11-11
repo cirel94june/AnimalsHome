@@ -3513,11 +3513,21 @@ const _crControl = new ChatGenerationControl({
 });
 
 // Capture the button before the composer submit handler; it also covers followups.
+// 回复其实已经说完、只是后台还在收尾时（没有正在出字的气泡，安静了 6 秒以上），
+// 输入框里有字就点一下直接发，不用先手动停（11-11 小猫）。
+let crLastStreamEventAt = 0;
+function crReplyLooksFinished() {
+  return !streamingBubble && !pendingStreamSender && !document.getElementById('chatroomReplyPreparation')
+    && !messagesEl.querySelector('.typing-indicator') && Date.now() - crLastStreamEventAt > 6000;
+}
 sendBtn.addEventListener('click', event => {
   if (_crControl.active || _crControl.retryStop) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    _crControl.stop();
+    const resend = _crControl.active && inputEl.value.trim() && crReplyLooksFinished();
+    Promise.resolve(_crControl.stop()).then(() => {
+      if (resend && !_crControl.active && !_crControl.retryStop) sendBtn.click();
+    });
   }
 }, true);
 
@@ -3694,7 +3704,8 @@ async function regenerateChatroomMsg(msgId) {
   isSending = true;
   crShowGenerationStop();
   const row = document.querySelector(`[data-msg-id="${msgId}"]`);
-  removeRowsAfter(row, true);
+  const hadLater = !!row?.nextElementSibling?.closest?.('[data-msg-id]') || !!row?.nextElementSibling?.dataset?.msgId;
+  if (row) { delete crMessagesById[msgId]; row.remove?.(); }  // 只换这一条，后面别人的回复留着
   try {
     const resp = await _crControl.fetch(generation, `${API}/messages/${msgId}/regenerate`, {
       method: 'POST',
@@ -3719,6 +3730,7 @@ async function regenerateChatroomMsg(msgId) {
       crShowGenerationSend();
       endStreamingBubble();
       _crControl.finish(generation);
+      if (hadLater) loadMessages();  // 新回复放回原来的位置
     }
   }
 }
@@ -4108,6 +4120,7 @@ function crHandleReplyFailure(data) {
 }
 
 function handleSSE(data) {
+  crLastStreamEventAt = Date.now();
   switch (data.type) {
     case 'aion_start':
       crRememberTTSMsgSender(data.id, 'aion');

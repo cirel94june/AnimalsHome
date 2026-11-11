@@ -176,6 +176,8 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
           '<span class="tag' + (on ? '' : ' muted') + '">' + esc(STATE[a.state] || a.state) + '</span>' +
           '<label class="wake-notify"><input type="checkbox" data-notify="' + esc(a.id) + '"' + (a.notify ? ' checked' : '') +
           '>有人找他就去看</label>' +
+          '<label class="wake-notify"><input type="checkbox" data-games="' + esc(a.id) + '"' + (a.games ? ' checked' : '') +
+          '>可以去打牌</label>' +
           (on ? '<button data-gstop="' + esc(a.id) + '">断开</button>'
               : '<button class="primary" data-gstart="' + esc(a.id) + '">' + (a.want || a.state === 'failed' ? '重新连接' : '连接') + '</button>') +
           '</div>';
@@ -192,6 +194,13 @@ body { font-family: var(--ib-sys, system-ui, sans-serif); color: var(--ib-tx, #0
       .then(function () { setTimeout(loadGarden, 1500); });
   });
   document.getElementById('garden').addEventListener('change', function (e) {
+    var gid = e.target.getAttribute('data-games');
+    if (gid) {
+      api('/api/garden-wake/' + encodeURIComponent(gid) + '/games', { method: 'POST', body: JSON.stringify({ on: e.target.checked }) })
+        .then(function () { toast(e.target.checked ? '出门时可以自己去打牌' : '出门时不去打牌了（已经在打的那局照样叫）'); })
+        .catch(function (err) { e.target.checked = !e.target.checked; alert(err.message); });
+      return;
+    }
     var id = e.target.getAttribute('data-notify'); if (!id) return;
     api('/api/garden-wake/' + encodeURIComponent(id) + '/notify', { method: 'POST', body: JSON.stringify({ on: e.target.checked }) })
       .then(function () { toast(e.target.checked ? '有人找他会去看' : '有人找他先不去看（轮到出牌照样叫）'); })

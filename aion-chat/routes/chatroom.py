@@ -828,6 +828,9 @@ async def _process_outing(text: str, actor: str, room_id: str, queue, msg_id: st
 
     async def notify(message: str) -> None:
         await _chatroom_sys_msg(room_id, message, queue, after_msg_id=msg_id)
+    if text and "签名" in text:
+        import self_sign
+        text = self_sign.process(text, actor, allowed=allowed)
     if text and "看看" in text:
         import world_window
 
@@ -3690,10 +3693,14 @@ async def send_message(room_id: str, body: MsgSend):
     spawn_generation_task(_bg_generate())
 
     async def generate():
+        last = time.monotonic()
         while True:
             data = await _q.get()
             if data.get("type") == "done":
+                if time.monotonic() - last > 8:
+                    print(f"[chatroom] 回复说完后又等了 {time.monotonic() - last:.0f} 秒才结束")
                 break
+            last = time.monotonic()
             yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -3982,7 +3989,8 @@ async def edit_resend_chatroom_message(msg_id: str, body: MsgEditResend):
 @router.post("/messages/{msg_id}/regenerate")
 @cancellable("chatroom", _save_cancelled_reply)
 async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
-    """重新生成一条 AI 消息：删除该消息及其后的消息，再让同一位 AI 重答。"""
+    """重新生成一条 AI 消息：只换这一条，后面别人已经回的留着（11-11 小猫）。
+    重答时只看这条之前的对话；新回复放回原来的位置。"""
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT * FROM chatroom_messages WHERE id=?", (msg_id,))
@@ -3993,12 +4001,8 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
             return {"error": "only AI messages can be regenerated"}
         room_id = target["room_id"]
         msg_created_at = target["created_at"]
-        cur2 = await db.execute(
-            "SELECT id FROM chatroom_messages WHERE room_id=? AND created_at>=?",
-            (room_id, msg_created_at),
-        )
-        later_msgs = await cur2.fetchall()
-        await db.execute("DELETE FROM chatroom_messages WHERE room_id=? AND created_at>=?", (room_id, msg_created_at))
+        later_msgs = [target]
+        await db.execute("DELETE FROM chatroom_messages WHERE id=?", (msg_id,))
         await db.execute("UPDATE chatroom_rooms SET updated_at=? WHERE id=?", (time.time(), room_id))
         await db.commit()
 
@@ -4008,16 +4012,33 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
     room, msgs = await _load_room_and_messages(room_id)
     if not room:
         return {"error": "房间不存在"}
+    msgs = [m for m in msgs if float(m.get("created_at") or 0) < float(msg_created_at)]
+    regen_started = time.time()
 
     context_limit = room.get("context_minutes", 30)
     query_text = memory_hub_bridge.spoken_text(msgs[-1]["content"], msgs[-1].get("attachments")) if msgs else ""
     model_key, connor_model_key = _room_models(body)
     _q: asyncio.Queue = GenerationQueue()
 
+    async def _put_back() -> None:
+        """新回复挪回原来的位置（后面还有别人的话时才需要）。"""
+        async with get_db() as db:
+            cur = await db.execute("SELECT 1 FROM chatroom_messages WHERE room_id=? AND created_at>? AND created_at<? LIMIT 1",
+                                   (room_id, msg_created_at, regen_started))
+            if not await cur.fetchone():
+                return
+            cur = await db.execute("SELECT id FROM chatroom_messages WHERE room_id=? AND sender=? AND created_at>=? ORDER BY created_at",
+                                   (room_id, target["sender"], regen_started))
+            rows = await cur.fetchall()
+            for index, row in enumerate(rows):
+                await db.execute("UPDATE chatroom_messages SET created_at=? WHERE id=?", (msg_created_at + index * 0.001, row[0]))
+            await db.commit()
+
     async def _bg_generate():
         try:
             if target["sender"] in seat_chat.SEAT_ACTORS:
-                await _generate_seat_reply(room_id, room, msgs, _q, context_limit)
+                await _generate_seat_reply(room_id, room, msgs, _q, context_limit, actor=target["sender"],
+                                           group=room.get("type") == "group")
             elif target["sender"] == "aion":
                 await _reply_aion(
                     room_id, msgs, context_limit, query_text, model_key, _q,
@@ -4038,6 +4059,10 @@ async def regenerate_chatroom_message(msg_id: str, body: MsgRegenerate):
             traceback.print_exc()
             await _save_chatroom_generation_failure(room_id, _q, e)
         finally:
+            try:
+                await _put_back()
+            except Exception as error:
+                print(f"[chatroom] 重新生成的回复没挪回原位：{type(error).__name__}")
             await _q.put({"type": "done"})
 
     spawn_generation_task(_bg_generate())

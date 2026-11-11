@@ -213,6 +213,19 @@ def remove_seat_api(actor_id: str) -> None:
     _write_routes([r for r in _seat_routes() if r.get("id") != rid])
 
 
+def set_sign(actor_id: str, sign: str) -> bool:
+    """AI 自己换签名（self_sign.py）。只动 sign 这一项。"""
+    if actor_id not in SEAT_IDS:
+        return False
+    data = _load_raw()
+    seat = data.setdefault("seats", {}).setdefault(actor_id, {})
+    if seat.get("sign") == sign:
+        return False
+    seat["sign"] = sign
+    _save_raw(data)
+    return True
+
+
 def set_own_model_from_elsewhere(actor_id: str, model: str) -> None:
     """在私聊页、群聊设置里给小克 / Lucien 换模型时，名片上的「TA 自己的模型」也跟着换。
     11-03 小猫：在名片里换了模型，开着的群聊和私聊还在用旧的、报旧渠道的错。现在三处是同一个设置。"""

@@ -84,6 +84,15 @@ def set_notify(actor: str, on: bool) -> None:
     _update(actor, notify=bool(on))
 
 
+def games_on(actor: str) -> bool:
+    """出门逛的时候能不能自己上牌桌（11-11 小猫）。默认开。关了以后已经在打的那局照样叫他出牌。"""
+    return bool(_actor_settings(actor).get("games", True))
+
+
+def set_games(actor: str, on: bool) -> None:
+    _update(actor, games=bool(on))
+
+
 def server_for(actor: str) -> dict[str, Any] | None:
     """这位 AI 自己的花园连接：花园的地址，只给他一个人用。"""
     import mcp_outings
@@ -151,7 +160,7 @@ def status() -> list[dict[str, Any]]:
         server = server_for(actor)
         entry = _actor_settings(actor)
         out.append({"id": actor, "name": actors_registry.display_name(actor), "garden": (server or {}).get("name") or "",
-                    "state": bridge_state(actor) if server else "", "notify": notify_on(actor),
+                    "state": bridge_state(actor) if server else "", "notify": notify_on(actor), "games": games_on(actor),
                     "want": bool(entry.get("want")), "waiting": len(_pending.get(actor) or {}),
                     "last_wake": entry.get("last_wake") or 0})
     return out
