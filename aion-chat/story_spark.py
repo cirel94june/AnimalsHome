@@ -348,12 +348,9 @@ def _name_owners(seats: list[dict[str, str]]) -> dict[str, set[str]]:
     owners: dict[str, set[str]] = {}
     for seat in seats:
         owners.setdefault(seat["name"], set()).add(seat["id"])
-    try:
-        import actors
-        for actor in actors.list_actors():
-            owners.setdefault(actor["name"], set()).add(actor["id"])
-    except Exception:
-        pass
+    import actors
+    for actor in actors.list_actors():  # 读不到名单就让它报错：没法确认重名时不能放行（狐狸复审）
+        owners.setdefault(actor["name"], set()).add(actor["id"])
     return owners
 
 
@@ -364,7 +361,10 @@ def audience(story: dict[str, Any], seats: list[dict[str, str]]) -> list[str]:
     if ids:
         return [seat["id"] for seat in seats if seat["id"] in ids]
     names = {s.get("name") for s in story["segments"]}
-    owners = _name_owners(seats)
+    try:
+        owners = _name_owners(seats)
+    except Exception:
+        return []  # 名单读不到：旧故事先谁都不认，等读得到再说
     return [seat["id"] for seat in seats if seat["name"] in names and owners.get(seat["name"]) == {seat["id"]}]
 
 

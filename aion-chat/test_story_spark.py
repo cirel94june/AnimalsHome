@@ -307,3 +307,13 @@ def test_claim_admits_one_and_release_frees():
     story_spark._release("c")
     story_spark._claim(story)
     story_spark._release("c")
+
+
+def test_legacy_story_denied_when_registry_unreadable(monkeypatch):
+    import actors
+
+    def boom(*a, **k):
+        raise OSError("x")
+    monkeypatch.setattr(actors, "list_actors", boom)
+    assert story_spark.audience({"segments": [{"name": "甲", "text": "x"}]}, [{"id": "aion", "name": "甲"}]) == []
+    assert story_spark.audience({"segments": [{"name": "甲", "text": "x", "sid": "aion"}]}, [{"id": "aion", "name": "甲"}]) == ["aion"]
