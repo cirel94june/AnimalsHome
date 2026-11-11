@@ -641,8 +641,8 @@ def schedule_remember(actor: str, items: list[dict[str, Any]], *, request_key: s
                 digest = _memory_digest(content)
                 if not digest:
                     continue
-                if item.get("fiction") is True:
-                    digest = "fiction:" + digest  # 一起编的故事和真实的事分开算，互不顶掉（狐狸 §219 M4）
+                # 故事和真实的事各带自己的前缀，互不顶掉；升级前没前缀的旧缓存两边都不认（狐狸 §219 M4、复审）
+                digest = ("fiction:" if item.get("fiction") is True else "real:") + digest
                 if conn.execute("SELECT 1 FROM remembered WHERE source_ai=? AND digest=?",
                                 (source_ai, digest)).fetchone():
                     result["duplicate"] += 1
