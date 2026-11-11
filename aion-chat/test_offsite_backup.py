@@ -102,10 +102,42 @@ def make_data(tmp_path):
 def test_backup_then_drill(tmp_path):
     ob._write_private(ob.CONFIG_PATH, CFG)
     store = FakeStore()
-    result = ob.run_backup(store, make_data(tmp_path))
+    lounge = tmp_path / "lounge"
+    lounge.mkdir()
+    conn = sqlite3.connect(lounge / "visitor-lounge.sqlite3")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("create table v(a)")
+    conn.execute("insert into v values (1)")
+    conn.commit()
+    result = ob.run_backup(store, [(make_data(tmp_path), "data"), (lounge, "lounge")])
+    conn.close()
     assert ob._NAME.match(result["name"]) and PASS.encode() not in store.files[result["name"]]
     drill = ob.run_drill(store)
-    assert drill["databases"] == 1 and drill["bad"] == 0
+    assert drill["databases"] == 2 and drill["bad"] == 0
+
+
+def test_archive_keeps_both_folders(tmp_path):
+    import tarfile
+    tree = tmp_path / "tree"
+    (tree / "data").mkdir(parents=True)
+    (tree / "lounge").mkdir()
+    (tree / "data" / "a.txt").write_text("a")
+    (tree / "lounge" / "b.sqlite3").write_bytes(b"")
+    ob.make_archive(tree, tmp_path / "x.tar.gz")
+    with tarfile.open(tmp_path / "x.tar.gz") as tar:
+        names = tar.getnames()
+    assert "data/a.txt" in names and "lounge/b.sqlite3" in names
+
+
+def test_sources_include_lounge_when_present(tmp_path, monkeypatch):
+    base = tmp_path / "app" / "aion-chat"
+    lounge = tmp_path / "app" / "AionsHome-Visitor-Lounge" / "data"
+    lounge.mkdir(parents=True)
+    base.mkdir(parents=True)
+    monkeypatch.setattr(ob, "BASE_DIR", base)
+    monkeypatch.setattr(ob, "DATA_DIR", tmp_path / "data")
+    (tmp_path / "data").mkdir()
+    assert [name for _, name in ob.sources()] == ["data", "lounge"]
 
 
 def test_prune_keeps_newest():

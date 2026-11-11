@@ -3125,3 +3125,6 @@ offsite_backup.py、static/offsite-backup.html、tools/offsite_restore.py。data
 
 ### §219 小世界（11-09，已上线）
 故事可继续讲、小猫写正文、幕后闲聊、设定本（AI 用【新设定】直接写入，小猫可改）、前情提要；仅小猫点击时推进。为绕开未审的 §218，经 deploy/story-world 单独上线后并回。
+
+### §218a 会客室数据一起备（11-11，灾备窗口提）
+sources() 加 AionsHome-Visitor-Lounge/data，包里放 lounge/；.sqlite3 也走 SQLite backup 接口；演练检查两处数据库。仍未部署，和 §218 一起审。

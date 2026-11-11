@@ -1,5 +1,6 @@
 """
 异地备份（11-09 小猫）：每天把 data/ 打包、用小猫的备份密码加密，传到 Cloudflare R2。
+11-11 灾备窗口：会客室的 AionsHome-Visitor-Lounge/data/ 也一起备（包里在 lounge/ 下）。
 
 - 数据库用 SQLite 的备份接口拷一致的快照，不直接复制正在写的文件。
 - 钥匙和密码由小猫在页面上填，存在 data/offsite_backup.json（权限 600），接口只回「填过没有」，不写日志、不进备份包。
@@ -57,6 +58,15 @@ MAX_BODY_BYTES = 8 * 1024
 CHUNK_SIZE = 1024 * 1024
 MAGIC = b"AHBK1"
 BEIJING = ZoneInfo("Asia/Shanghai")
+DB_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+
+
+def sources() -> list[tuple[Path, str]]:
+    """要备份的目录和它在包里的名字。不存在的跳过（本机开发时没有会客室）。"""
+    lounge = BASE_DIR.parent / "AionsHome-Visitor-Lounge" / "data"
+    return [(path, name) for path, name in ((DATA_DIR, "data"), (lounge, "lounge")) if path.is_dir()]
+
+
 _ACCOUNT = re.compile(r"^[0-9a-f]{32}$")
 _BUCKET = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 _KEY_ID = re.compile(r"^[A-Za-z0-9]{16,128}$")
@@ -137,7 +147,7 @@ def snapshot(source: Path, target: Path) -> int:
             if src.is_symlink() or name in secrets or name.endswith(_SKIP_SUFFIX):
                 continue
             dst = target / rel / name
-            if name.endswith(".db"):
+            if name.endswith(DB_SUFFIXES):
                 try:
                     _copy_database(src, dst)
                 except sqlite3.DatabaseError:  # 名字叫 .db 但不是 SQLite 的文件，照常拷
@@ -159,8 +169,10 @@ def _copy_database(src: Path, dst: Path) -> None:
 
 
 def make_archive(folder: Path, archive: Path) -> None:
+    """folder 下每个子目录（data、lounge）各占包里的一层。"""
     with tarfile.open(archive, "w:gz", compresslevel=6) as tar:
-        tar.add(folder, arcname="data", recursive=True)
+        for child in sorted(folder.iterdir()):
+            tar.add(child, arcname=child.name, recursive=True)
 
 
 # ── 加密：分块 AES-GCM，最后一块带标记，截断或改动都解不开 ──
@@ -322,7 +334,7 @@ def prune(store: R2, keep: int = KEEP) -> int:
 
 # ── 备份和演练 ──
 
-def run_backup(store: R2 | None = None, source: Path | None = None) -> dict[str, Any]:
+def run_backup(store: R2 | None = None, source: list[tuple[Path, str]] | None = None) -> dict[str, Any]:
     cfg = load_config()
     if not is_ready(cfg):
         raise BackupError("钥匙和密码还没填全")
@@ -332,8 +344,10 @@ def run_backup(store: R2 | None = None, source: Path | None = None) -> dict[str,
         store = store or R2(cfg)
         with tempfile.TemporaryDirectory(prefix="ahbk-") as tmp:
             work = Path(tmp)
-            copy = work / "data"
-            files = snapshot(source or DATA_DIR, copy)
+            copy = work / "tree"
+            files = 0
+            for path, name in source or sources():
+                files += snapshot(path, copy / name)
             archive, sealed = work / "data.tar.gz", work / "data.enc"
             make_archive(copy, archive)
             with open(archive, "rb") as plain, open(sealed, "wb") as out:
@@ -349,7 +363,7 @@ def run_backup(store: R2 | None = None, source: Path | None = None) -> dict[str,
 
 def check_restored(folder: Path) -> dict[str, int]:
     databases = bad = 0
-    for path in folder.rglob("*.db"):
+    for path in (p for p in folder.rglob("*") if p.is_file() and p.name.endswith(DB_SUFFIXES)):
         databases += 1
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:

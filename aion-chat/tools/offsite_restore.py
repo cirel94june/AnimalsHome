@@ -1,4 +1,4 @@
-"""把从 R2 下载的备份解密解包到一个新目录（真要恢复时用）。不会碰已有的 data/。
+"""把从 R2 下载的备份解密解包到一个新目录（真要恢复时用）。不会碰已有的 data/。包里 data/ 是 aion-chat/data，lounge/ 是会客室的 data。
 
     python tools/offsite_restore.py 备份文件.tar.gz.enc 解到哪个新目录
 
