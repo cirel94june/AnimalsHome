@@ -186,10 +186,58 @@
       suffix.focus();
     }
 
+    // 点一下头像看名片，连点两下还是拍一拍（11-12 小猫）。等一小会儿确认不是连点再弹。
+    let cardTimer = 0;
+    function planCard(avatar) {
+      clearTimeout(cardTimer);
+      const target = avatar.dataset.patTarget;
+      if (!target || target === 'user' || dialog) return;
+      cardTimer = setTimeout(() => showCard(target), 380);
+    }
+    function showCard(target) {
+      if (dialog || document.querySelector('.ai-mini-card')) return;
+      fetch('/api/actors', { cache: 'no-store' }).then(r => r.json()).then(data => {
+        const list = Array.isArray(data) ? data : (data.actors || []);
+        const actor = list.find(a => a.id === target);
+        if (!actor) return;
+        const card = document.createElement('dialog');
+        card.className = 'ai-mini-card';
+        card.style.cssText = 'border:none;border-radius:20px;padding:22px 22px 16px;max-width:280px;width:78vw;text-align:center;background:var(--ib-base,#f4f7fb);color:var(--ib-tx,#0a1e42);box-shadow:0 18px 50px rgba(30,50,90,.3)';
+        const add = (tag, text, css) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (css) n.style.cssText = css; card.appendChild(n); return n; };
+        if (actor.avatar && /^\/[\w\-./%?=&]*$/.test(actor.avatar)) {
+          const img = add('img', null, 'width:84px;height:84px;border-radius:50%;object-fit:cover;display:block;margin:0 auto 10px');
+          img.src = actor.avatar; img.alt = '';
+        }
+        add('div', actor.name, 'font-size:20px;font-weight:600');
+        add('div', actor.sign || '还没有签名', 'font-size:13.5px;font-style:italic;opacity:.75;margin-top:6px;line-height:1.6;word-break:break-word');
+        if (actor.meet_since) {
+          const since = new Date(actor.meet_since + 'T00:00:00');
+          const days = Math.max(0, Math.round((new Date().setHours(0, 0, 0, 0) - since) / 86400000));
+          if (!isNaN(days)) add('div', '在一起 ' + days + ' 天', 'font-size:12.5px;opacity:.6;margin-top:8px');
+        }
+        const row = add('div', null, 'display:flex;gap:8px;margin-top:16px');
+        const btn = (text, primary, fn) => {
+          const b = document.createElement('button'); b.type = 'button'; b.textContent = text;
+          b.style.cssText = 'flex:1;border-radius:12px;padding:9px;font-size:14px;cursor:pointer;border:1px solid var(--ib-line,#cbd8ec);' + (primary ? 'background:var(--ib-acc,#2a6bb0);color:#fff;border-color:transparent' : 'background:rgba(255,255,255,.7);color:inherit');
+          b.onclick = fn; row.appendChild(b);
+        };
+        btn('关闭', false, () => card.close());
+        btn('打开名片', true, () => { location.href = '/ai-cards'; });
+        card.addEventListener('click', e => { if (e.target === card) card.close(); });
+        card.addEventListener('close', () => card.remove());
+        document.body.appendChild(card);
+        card.showModal();
+      }).catch(() => {});
+    }
+    container.addEventListener('click', e => {
+      const avatar = e.target.closest('[data-pat-target]');
+      if (avatar && e.detail === 1 && e.pointerType !== 'touch') planCard(avatar);
+    });
     container.addEventListener('dblclick', e => {
       const avatar = e.target.closest('[data-pat-target]');
       if (!avatar) return;
       e.preventDefault();
+      clearTimeout(cardTimer);
       open(avatar);
     });
     container.addEventListener('pointerdown', e => {
@@ -210,9 +258,11 @@
       if (lastTap?.avatar === avatar && e.timeStamp - lastTap.at < 360) {
         lastTap = null;
         e.preventDefault();
+        clearTimeout(cardTimer);
         open(avatar);
       } else {
         lastTap = { avatar, at: e.timeStamp };
+        planCard(avatar);
       }
     });
     container.addEventListener('keydown', e => {
