@@ -80,3 +80,16 @@ def test_outing_model_call_retries_empty_reply(monkeypatch):
         assert False
     except RuntimeError as error:
         assert "空内容" in str(error)
+
+
+def test_tool_result_falls_back_to_structured_content():
+    import asyncio
+    import types
+    import mcp_outings
+
+    class Fake:
+        async def call_tool(self, name, args):
+            return types.SimpleNamespace(content=[types.SimpleNamespace(text="")], structuredContent={"posts": [1]}, isError=False)
+    holder = types.SimpleNamespace(session=Fake())
+    text, is_error = asyncio.run(mcp_outings._Session.call_result(holder, "list_posts", {}))
+    assert '"posts"' in text and is_error is False

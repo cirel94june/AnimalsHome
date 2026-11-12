@@ -497,7 +497,15 @@ class _Session:
         for item in result.content or []:
             text = getattr(item, "text", None)
             parts.append(text if isinstance(text, str) else f"[{getattr(item, 'type', '内容')}]")
-        return "\n".join(parts) or "（没有返回内容）", bool(getattr(result, "isError", False))
+        body = "\n".join(part for part in parts if part.strip())
+        structured = getattr(result, "structuredContent", None)
+        if not body and structured:
+            # 有的工具把结果只放在结构化字段里，文字那栏是空的（11-12 小克逛花园看到空白）
+            body = json.dumps(structured, ensure_ascii=False)
+        failed = bool(getattr(result, "isError", False))
+        # 只记工具名和长度，不记内容：以后再有空白，能分清是论坛没给还是家里弄丢的
+        print(f"[MCP] 工具 {name} 返回 {len(body)} 字，文字块 {len(parts)}，结构化 {'有' if structured else '无'}，出错={failed}")
+        return body or "（论坛这次没有返回内容，可以换个参数或稍后再试）", failed
 
 
 async def test_tool(name: str) -> dict[str, Any]:
