@@ -297,6 +297,9 @@ def _endpoint(model_key: str) -> tuple[str, dict[str, str], str]:
     return url, headers, cfg["model"]
 
 
+RELAY_RETRY_SECONDS = 2.0
+
+
 async def call_model(model_key: str, messages: list[dict], tools: list[dict] | None = None) -> dict[str, Any]:
     """非流式调用；返回 {"content": str|None, "tool_calls": list|None}。"""
     import usage_log
@@ -305,11 +308,28 @@ async def call_model(model_key: str, messages: list[dict], tools: list[dict] | N
     payload: dict[str, Any] = {"model": model, "messages": messages, "temperature": 0.8}
     if tools:
         payload["tools"] = tools
-    async with httpx.AsyncClient(timeout=180) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-    if resp.status_code != 200:
-        raise RuntimeError(f"模型调用失败 [{resp.status_code}]: {resp.text[:300]}")
-    data = resp.json()
+    # 中转站有时回 200 但内容是空的或不是 JSON（11-11 小克去花园没去成）：再试一次，还不行就说清楚原因
+    data = None
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=180) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError) as error:
+            if attempt == 2:
+                raise RuntimeError(f"模型线路没连上（{type(error).__name__}）") from None
+            await asyncio.sleep(RELAY_RETRY_SECONDS)
+            continue
+        if resp.status_code != 200:
+            raise RuntimeError(f"模型调用失败 [{resp.status_code}]: {resp.text[:300]}")
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict) and data.get("choices"):
+            break
+        if attempt == 2:
+            raise RuntimeError("模型线路回了空内容（中转站这次没给出回复），过一会儿再试")
+        await asyncio.sleep(RELAY_RETRY_SECONDS)
     msg = ((data.get("choices") or [{}])[0]).get("message") or {}
     usage_log.record_json(model_key, "出门逛", data, usage_log.messages_text(messages), str(msg.get("content") or ""),
                           route=route)

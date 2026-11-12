@@ -50,3 +50,33 @@ def test_regenerate_only_removes_the_one_message():
     block = src[start:src.index("@router", start)]
     assert 'DELETE FROM chatroom_messages WHERE id=?' in block and "created_at>=?\", (room_id, msg_created_at))" not in block
     assert "actor=target[\"sender\"]" in block
+
+
+def test_outing_model_call_retries_empty_reply(monkeypatch):
+    import asyncio
+    import sys
+    import types
+    import httpx
+    import mcp_outings
+    usage = types.ModuleType("usage_log")
+    usage.route_for_model = lambda *a: {}
+    usage.record_json = lambda *a, **k: None
+    usage.messages_text = lambda *a: ""
+    monkeypatch.setitem(sys.modules, "usage_log", usage)
+    monkeypatch.setattr(mcp_outings, "_endpoint", lambda key: ("https://relay.invalid/v1/chat/completions", {}, "m"))
+    monkeypatch.setattr(mcp_outings, "RELAY_RETRY_SECONDS", 0)
+    replies = [httpx.Response(200, content=b""), httpx.Response(200, json={"choices": [{"message": {"content": "好"}}]})]
+
+    class Client:
+        def __init__(self, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): return replies.pop(0)
+    monkeypatch.setattr(mcp_outings.httpx, "AsyncClient", Client)
+    assert asyncio.run(mcp_outings.call_model("k", []))["content"] == "好"
+    replies[:] = [httpx.Response(200, content=b""), httpx.Response(200, content=b"<html>")]
+    try:
+        asyncio.run(mcp_outings.call_model("k", []))
+        assert False
+    except RuntimeError as error:
+        assert "空内容" in str(error)
