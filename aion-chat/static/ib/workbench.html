@@ -128,7 +128,7 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
     </div>
     <div class="card">
       <h3>恢复默认</h3>
-      <div class="hint">回到 IB 雾蓝默认外观（方案槽保留，可随时撤销）。</div>
+      <div class="hint">回到 IB 雾蓝默认外观；保留方案槽、小组件选择、生日和纪念日，可随时撤销。</div>
       <div class="btns"><button class="btn" id="reset">恢复默认</button></div>
     </div>
   </section>
@@ -553,7 +553,7 @@ textarea.code { width: 100%; min-height: 96px; margin-top: 8px; padding: 10px 12
     $('#reset').onclick = function () {
       pushUndo();
       var slots = skin.slots;
-      skin = normalize({ enabled: true, preset: 'internal', vars: {}, slots: slots });
+      skin = normalize({ enabled: true, preset: 'internal', vars: {}, slots: slots, desk: skin.desk });
       renderAll(); apply(true); toast('已恢复默认，可在「美化码」里撤销');
     };
 
