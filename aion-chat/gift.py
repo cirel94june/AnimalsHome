@@ -1,16 +1,15 @@
 """
-礼物系统：AI 判断送礼 + 硅基流动 Kolors 生图 + 礼物数据 CRUD
+礼物系统：AI 判断送礼 + 共用三种画图方式 + 礼物数据 CRUD
 """
 
 from clock_text import now_text
 import json, time
 from datetime import datetime
 
-import httpx, aiosqlite
+import aiosqlite
 
-from config import get_key, load_worldbook
+from config import load_worldbook
 from database import get_db
-from album import save_generated_image
 from model_json import extract_json_object
 from ws import manager
 
@@ -114,7 +113,7 @@ async def send_gift_from_decision(
 
     print(f"[gift] AI 决定送礼！生图中... prompt: {image_prompt[:80]}")
 
-    # 调用硅基流动 Kolors 生图
+    # 和聊天共用主人配置的画图方式
     image_path = await _generate_image(image_prompt, source_identity=sender)
     if not image_path:
         print("[gift] 生图失败，跳过送礼")
@@ -145,57 +144,35 @@ async def send_gift_from_decision(
     print(f"[gift] 礼物已创建: {gift_id}")
 
 
-# ── 硅基流动 Kolors 生图 ──────────────────────────
+# ── 与聊天共用图片生成 ──────────────────────────
 async def _generate_image(prompt: str, source_identity: str = "") -> str | None:
-    """调用硅基流动 Kwai-Kolors/Kolors 生成图片，下载保存到本地，返回相对路径"""
-    api_key = get_key("siliconflow")
-    if not api_key:
-        print("[gift] 没有硅基流动 API Key，无法生图")
-        return None
-
-    url = "https://api.siliconflow.cn/v1/images/generations"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": "Kwai-Kolors/Kolors",
-        "prompt": prompt,
-        "negative_prompt": "realistic human, real person, photo, ugly, blurry, low quality, deformed",
-        "image_size": "1024x1024",
-        "batch_size": 1,
-        "num_inference_steps": 20,
-        "guidance_scale": 7.5,
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-
-            images = data.get("images", [])
-            if not images:
-                print("[gift] 生图 API 返回空 images")
-                return None
-
-            image_url = images[0].get("url", "")
-            if not image_url:
-                print("[gift] 生图 API 返回空 URL")
-                return None
-
-            # 下载图片（URL 1 小时过期，必须立即下载）
-            img_resp = await client.get(image_url)
-            img_resp.raise_for_status()
-
-            return await save_generated_image(img_resp.content, prompt=prompt, model="Kwai-Kolors/Kolors",
-                                              actor=source_identity, kind="gift")
-
-    except Exception as e:
-        print(f"[gift] 生图异常: {e}")
-        return None
+    """送礼和聊天共用三种画图方式，不再额外要求硅基流动 Key。"""
+    from image_gen import generate_image
+    return await generate_image(prompt, source_identity=source_identity or 'aion')
 
 
+async def archive_chat_image(filename: str, actor: str, message: str = '') -> str:
+    """聊天里收到的生成图片自动入陈列馆；重试不会收藏两份。"""
+    import hashlib
+    from pathlib import Path
+    from config import ALBUM_IMAGES_DIR
+    from actors import SEAT_IDS
+    if actor not in SEAT_IDS:
+        raise ValueError('未知的送画者')
+    if not filename.startswith('album/'):
+        raise ValueError('只能收藏已保存到相册的生成图片')
+    root = ALBUM_IMAGES_DIR.resolve()
+    path = (root / filename[len('album/'):]).resolve()
+    if root not in path.parents or not path.is_file():
+        raise ValueError('图片不存在')
+    gift_id = 'chat_' + hashlib.sha256((actor + ':' + filename).encode()).hexdigest()[:24]
+    now = time.time()
+    async with get_db() as db:
+        await db.execute('PRAGMA busy_timeout=15000')
+        await db.execute("INSERT OR IGNORE INTO gifts (id,image_path,message,created_at,status,received_at,sender) VALUES (?,?,?,?,?,?,?)",
+                         (gift_id, filename, message[:200] or '在聊天里送给你的画', now, 'received', now, actor))
+        await db.commit()
+    return gift_id
 # ── 数据查询 ──────────────────────────────────────
 async def get_pending_gifts() -> list[dict]:
     """查询所有未领取的礼物"""

@@ -220,6 +220,7 @@ class SettingsUpdate(BaseModel):
     image_gen_base_url: Optional[str] = None
     image_gen_api_key: Optional[str] = None
     image_gen_model: Optional[str] = None
+    image_gen_profiles: Optional[Dict[str, Dict[str, str]]] = None
     luckin_mcp_enabled: Optional[bool] = None
     luckin_mcp_token: Optional[str] = None
     luckin_default_longitude: Optional[str] = None
@@ -309,6 +310,7 @@ async def get_settings():
         "image_gen_base_url": SETTINGS.get("image_gen_base_url", ""),
         "image_gen_api_key": SETTINGS.get("image_gen_api_key", ""),
         "image_gen_model": SETTINGS.get("image_gen_model", ""),
+        "image_gen_profiles": __import__('image_profiles').profiles_from(SETTINGS),
         "luckin_mcp_enabled": SETTINGS.get("luckin_mcp_enabled", False),
         "luckin_mcp_token": SETTINGS.get("luckin_mcp_token", ""),
         "luckin_default_longitude": SETTINGS.get("luckin_default_longitude", ""),
@@ -364,12 +366,19 @@ async def update_settings(body: SettingsUpdate):
     image_provider = SETTINGS.get("image_gen_provider", "") if new_image_provider is None else new_image_provider
     image_fields = ("image_gen_base_url", "image_gen_api_key", "image_gen_model")
     image_config = {}
+    if body.image_gen_profiles is not None:
+        from image_profiles import validate_profiles
+        try:
+            image_config['image_gen_profiles'] = validate_profiles(body.image_gen_profiles)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from None
     if any(getattr(body, key) is not None for key in image_fields):
-        image_config = {
+        image_config.update({
             key: (getattr(body, key) if getattr(body, key) is not None else SETTINGS.get(key) or "").strip()
             for key in image_fields
-        }
-        if image_provider in ("", "openai") and any(image_config.values()) and not all(image_config.values()):
+        })
+        legacy_values = [image_config[key] for key in image_fields]
+        if image_provider in ("", "openai") and any(legacy_values) and not all(legacy_values):
             raise HTTPException(status_code=400, detail="请完整填写生图 API 地址、Key 和模型名，或全部清空以使用 Gemini")
         base_url = image_config["image_gen_base_url"]
         if base_url:
@@ -379,6 +388,12 @@ async def update_settings(body: SettingsUpdate):
                     raise ValueError("invalid base URL")
             except (httpx.InvalidURL, ValueError):
                 raise HTTPException(status_code=400, detail="生图 API 地址须为 HTTP(S) 地址，不能包含账号、查询参数或片段")
+        if body.image_gen_profiles is None and image_provider in ('', 'openai', 'gemini'):
+            from image_profiles import profiles_from
+            profiles = profiles_from(SETTINGS)
+            active = 'gemini' if image_provider == 'gemini' else 'openai'
+            profiles[active] = {key: image_config['image_gen_' + key] for key in ('base_url', 'api_key', 'model')}
+            image_config['image_gen_profiles'] = profiles
     if body.elevenlabs_tts_model is not None and body.elevenlabs_tts_model not in elevenlabs_tts.MODELS:
         raise HTTPException(400, "ElevenLabs 模型无效")
     for field in ("elevenlabs_aion_voice_id", "elevenlabs_connor_voice_id"):

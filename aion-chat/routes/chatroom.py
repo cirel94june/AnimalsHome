@@ -2089,21 +2089,25 @@ async def _chatroom_image_gen(room_id: str, sender: str, prompt: str, is_selfie:
         filename = await generate_image(prompt, is_selfie=is_selfie, source_identity=sender)
         if filename:
             await _save_msg(room_id, sender, "", attachments=[f"/uploads/{filename}"])
+            try:
+                from gift import archive_chat_image
+                await archive_chat_image(filename, sender)
+            except Exception as error:
+                print(f'[CHATROOM_IMG_GEN] 图片已送达，收藏暂未完成（{type(error).__name__}）')
             print(f"[CHATROOM_IMG_GEN] {sender} 生图完成, room={room_id}")
         else:
             print(f"[CHATROOM_IMG_GEN] {sender} 生图失败, room={room_id}")
             await _seat_image_failed(room_id, sender)
     except Exception as e:
-        print(f"[CHATROOM_IMG_GEN] {sender} 生图异常: {e}")
+        print(f"[CHATROOM_IMG_GEN] {sender} 生图异常: {type(e).__name__}")
         await _seat_image_failed(room_id, sender)
 
 
 async def _seat_image_failed(room_id: str, sender: str) -> None:
     """座位 3～6 的图没生成出来时，房间里留一句（小克、Lucien 的行为不变）。"""
-    if sender not in seat_chat.SEAT_ACTORS:
-        return
     try:
-        await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的图没生成出来）", asyncio.Queue())
+        from image_gen import failure_reason
+        await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的图没生成出来：{failure_reason()}）", asyncio.Queue())
     except Exception as exc:
         print(f"[CHATROOM_IMG_GEN] 失败回执没写进去: {type(exc).__name__}")
 

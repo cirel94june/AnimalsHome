@@ -2010,7 +2010,8 @@ function renderPrivateMessageHTML(m) {
   const reasoningHtml = isAssistant && m.reasoning_content ? `<button class="msg-feedback-btn msg-reasoning-btn msg-reasoning-chip" onclick="openMsgReasoning(event,'${m.id}')" title="查看思考过程" aria-label="查看思考过程">💭 思考</button>` : '';
   const messageAttachments = withWishFallbackAttachments(m);
   const bandVibrationHtml = renderBandVibrationNote(messageAttachments);
-  const rawContent = isUser ? (m.content || '') : (m.content || '').replace(/<meta>[\s\S]*?<\/meta>/g, '').trim();
+  const chatWork = isAssistant ? window.ChatWorks?.prepare(m, 'conv') : null;
+  const rawContent = isUser ? (m.content || '') : (chatWork?.content ?? m.content ?? '').replace(/<meta>[\s\S]*?<\/meta>/g, '').trim();
   const inlineToy = !isUser && window.SystemNoticeUI?.splitInlineToyCommands?.(rawContent);
   const displayContent = stripWishFulfillmentMarker(inlineToy ? inlineToy.content : rawContent).trim();
   const hasVoiceAtt = messageAttachments.some(a => typeof a === 'object' && (a.type === 'voice' || a.type === 'video_clip'));
@@ -2035,6 +2036,7 @@ function renderPrivateMessageHTML(m) {
     contentHtml += renderAttachments(messageAttachments);
   }
   if (isEmptyMessage) contentHtml = `<div class="${isUser ? 'msg-bubble ' : 'private-ai-message-content '}empty-msg-bubble"></div>`;
+  if (chatWork) contentHtml += chatWork.card;
   if (inlineToy?.noticeHtml) contentHtml += `<div class="system-notice">${inlineToy.noticeHtml}</div>`;
   const avatarSrc = isUser ? '/public/UserIcon.png' : '/public/AIIcon.png';
   const ttsBtn = !isUser ? `<button class="tts-replay-btn" onclick="replayTTS('${m.id}')" title="重听语音">🔊</button>` : '';

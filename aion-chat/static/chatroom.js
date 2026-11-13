@@ -3228,7 +3228,8 @@ function msgHTML(m, nextMessage = null) {
   const name = crName(sender);
   const avatar = AVATARS[sender] || AVATARS.user;
   const isUser = sender === 'user';
-  const originalRaw = m.content || '';
+  const chatWork = !isUser ? window.ChatWorks?.prepare(m, 'room') : null;
+  const originalRaw = chatWork?.content ?? m.content ?? '';
   const inlineToy = !isUser && window.SystemNoticeUI?.splitInlineToyCommands?.(originalRaw);
   const raw = crStripWishFulfillmentMarker(inlineToy ? inlineToy.content : originalRaw);
   const messageAttachments = crWithWishFallbackAttachments(m);
@@ -3285,6 +3286,7 @@ function msgHTML(m, nextMessage = null) {
         <div class="msg-content">
           ${hasWishFulfillmentAtt || hasDateSummaryAtt ? attHtml : ''}
           ${bubblesHtml}
+          ${chatWork ? chatWork.card : ''}
           ${toyHtml}
           ${hasWishFulfillmentAtt || hasDateSummaryAtt || hasLoungeReportAtt || isVoiceOnly ? '' : attHtml}
           ${bandVibrationHtml}

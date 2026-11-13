@@ -3,7 +3,8 @@ AI 生图模块：可配置 OpenAI 兼容接口，未配置时沿用 Gemini
 支持 SELFIE（带参考图）和 DRAW（纯文本）两种模式
 """
 
-import base64, re, mimetypes
+import asyncio, base64, re, mimetypes
+from contextvars import ContextVar
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,15 @@ REFERENCE_IMAGE_PATH = PUBLIC_DIR / "生图锚点.jpg"
 SECONDARY_REFERENCE_IMAGE_PATH = PUBLIC_DIR / "2号机生图锚点.jpg"
 IMAGE_GEN_MODEL = "gemini-3.1-flash-lite-image"
 IMAGE_GEN_TIMEOUT = 300  # 生图超时秒数（gpt-image 这类图片接口常要一两分钟）
+_failure = ContextVar('image_generation_failure', default='')
+
+
+def failure_reason() -> str:
+    return _failure.get() or '这次没有生成出图片，请稍后再试。'
+
+
+def _fail(reason: str):
+    _failure.set(reason)
 
 
 def _selfie_reference_path(source_identity: str = "") -> Path:
@@ -120,6 +130,7 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
             response.raise_for_status()
             source = _openai_image_source(response.json())
             if not source:
+                _fail('OpenAI 线路没有返回图片，请确认填的是能生成图片的模型。')
                 print("[image_gen] 自定义接口响应中未找到图片")
                 return None
             if source.startswith("data:image/"):
@@ -139,6 +150,7 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
                                           actor=source_identity, kind="selfie" if is_selfie else "draw",
                                           reference_bytes=reference_bytes)
     except httpx.HTTPStatusError as exc:
+        _fail(f'OpenAI 图片服务这次返回 {exc.response.status_code}，请检查图片 Key、模型名和可用额度。')
         print(f"[image_gen] 自定义生图请求失败（HTTP {exc.response.status_code}），未切换至 Gemini")
     except Exception as exc:
         # 不打印请求 URL、响应正文等可能包含凭据的内容。
@@ -148,10 +160,8 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
 
 def _code_model(source_identity: str) -> str:
     """代码画图用这位 AI 平时聊天的模型。"""
-    import actors
-    from config import default_model_key
-    actor = actors.get_actor(source_identity or "aion") or {}
-    return str(actor.get("model") or "") or default_model_key()
+    from memory_hub_jobs import own_model
+    return own_model(source_identity or 'aion')
 
 
 async def _generate_code_image(prompt: str, is_selfie: bool, source_identity: str) -> str | None:
@@ -159,22 +169,38 @@ async def _generate_code_image(prompt: str, is_selfie: bool, source_identity: st
     import image_code
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
     from model_json import extract_json_object
+    from contextlib import aclosing
+    from text_only import TEXT_ONLY
     model_key = _code_model(source_identity)
+    if not model_key:
+        _fail('代码画图需要先在这位 AI 的名片里选好聊天模型。')
+        return None
     meta: dict = {}
     text = ""
+    token = TEXT_ONLY.set(True)
     try:
         ask = f"{image_code.instructions()}\n\n要画的内容：{prompt}"
-        async for chunk in stream_ai([{"role": "user", "content": ask}], model_key, meta):
-            if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
-                text += chunk
+        async with asyncio.timeout(IMAGE_GEN_TIMEOUT):
+            async with aclosing(stream_ai([{"role": "user", "content": ask}], model_key, meta)) as chunks:
+                async for chunk in chunks:
+                    if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                        text += chunk
+                        if len(text) > 180000:
+                            _fail('代码画图的内容太长，这次已停止，请让 AI 画简单一点。')
+                            return None
         if meta.get("provider_error"):
+            _fail('这位 AI 的聊天模型这次报错，代码画图没能完成。')
             print("[image_gen] 代码画图：模型报错")
             return None
-        data = image_code.render(extract_json_object(text))
+        data = await asyncio.to_thread(image_code.render, extract_json_object(text))
     except Exception as exc:
+        _fail('代码画图这次没完成，模型需要给出完整的画画清单，请稍后重试。')
         print(f"[image_gen] 代码画图失败（{type(exc).__name__}）")
         return None
+    finally:
+        TEXT_ONLY.reset(token)
     if not data:
+        _fail('AI 这次没有写出有效的画画清单，换个简单的画面再试。')
         print("[image_gen] 代码画图：模型没有给出能画的清单")
         return None
     return await save_generated_image(data, prompt=prompt, model=f"代码画图 · {model_key}", actor=source_identity,
@@ -187,24 +213,39 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
     is_selfie=True 时自动附带参考图。
     失败返回 None。
     """
+    _failure.set('')
+    requested = re.match(r'^\s*(code|代码|banana|gemini|openai)\s*[|｜]\s*([\s\S]+)$', prompt, re.I)
+    explicit = ''
+    if requested:
+        explicit = {'banana':'gemini', '代码':'code'}.get(requested[1].lower(), requested[1].lower())
+        prompt = requested[2].strip()
     custom = [(SETTINGS.get(key) or "").strip() for key in
               ("image_gen_base_url", "image_gen_api_key", "image_gen_model")]
-    provider = (SETTINGS.get("image_gen_provider") or "").strip()
+    provider = explicit or (SETTINGS.get("image_gen_provider") or "").strip()
+    if provider in ('openai', 'gemini'):
+        from image_profiles import profiles_from
+        profile = profiles_from(SETTINGS)[provider]
+        custom = [profile[key] for key in ('base_url', 'api_key', 'model')]
     if provider == "code":
         return await _generate_code_image(prompt, is_selfie, source_identity)
     if provider != "gemini" and any(custom):
         if not all(custom):
+            _fail('OpenAI 图片线路还没填完整：请在设置的「生图模型 → OpenAI」填写地址、图片 Key 和模型名。')
             print("[image_gen] 请完整填写生图 API 地址、Key 和模型名，或全部清空以使用 Gemini")
             return None
         if references:
             return await _generate_openai_image(prompt, is_selfie, source_identity, *custom, references=references)
         return await _generate_openai_image(prompt, is_selfie, source_identity, *custom)
 
+    if provider == 'openai' and not any(custom):
+        _fail('OpenAI 图片线路还没配置，请先在设置的「生图模型 → OpenAI」填写三项。')
+        return None
     # Gemini（Banana）：选了这一路时，生图页填的 Key、模型、地址优先；地址留空就是谷歌官方
     gemini_base, own_key, gemini_model = custom if provider == "gemini" else ("", "", "")
     gemini_model = gemini_model or IMAGE_GEN_MODEL
     api_key = own_key or get_key("gemini")
     if not api_key:
+        _fail('Banana 图片 Key 还没填。请在设置的「生图模型 → Banana」填写；代码画图不需要图片 Key。')
         print("[image_gen] 没有 Gemini API Key，无法生图")
         return None
 
@@ -236,7 +277,7 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
     root = gemini_base.rstrip("/") or "https://generativelanguage.googleapis.com"
     if not root.endswith(("/v1beta", "/v1")):
         root += "/v1beta"
-    url = f"{root}/models/{gemini_model}:generateContent?key={api_key}"
+    url = f"{root}/models/{gemini_model}:generateContent"
 
     payload = {
         "contents": [{"parts": parts}],
@@ -254,7 +295,7 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
     try:
         async with httpx.AsyncClient(timeout=IMAGE_GEN_TIMEOUT) as client:
             print(f"[image_gen] 开始生图... prompt: {prompt[:80]}")
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, json=payload, headers={'x-goog-api-key': api_key})
             resp.raise_for_status()
             data = resp.json()
 
@@ -283,6 +324,7 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
                                               kind="selfie" if is_selfie else "draw", reference_bytes=ref_bytes)
 
     except httpx.HTTPStatusError as e:
+        _fail(f'Banana 图片服务这次返回 {e.response.status_code}，请检查图片 Key、模型名和可用额度。')
         print(f"[image_gen] API 请求失败 ({e.response.status_code})")  # 不打印正文：可能带地址和 Key
         return None
     except Exception as e:

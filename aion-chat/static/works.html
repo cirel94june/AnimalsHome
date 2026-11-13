@@ -79,7 +79,8 @@ body { font-family: var(--ib-sans, system-ui, sans-serif); color: var(--ib-tx, #
   document.getElementById('back').onclick = function () {
     if (openId) showList(); else if (document.referrer) history.back(); else location.href = '/';
   };
-  showList();
+  var requested = new URLSearchParams(location.search).get('work');
+  if (requested && /^w_[a-f0-9]{16}$/.test(requested)) showWork(requested); else showList();
 })();
 </script>
 </body>

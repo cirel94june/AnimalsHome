@@ -450,6 +450,8 @@ from hub_organize import router as hub_organize_router
 app.include_router(hub_organize_router)  # 三位 AI 的 Hub 整理记录
 from html_works import router as html_works_router
 app.include_router(html_works_router)  # AI 做的小网页
+from chat_artifacts import router as chat_artifacts_router
+app.include_router(chat_artifacts_router)
 from story_spark import router as story_spark_router
 app.include_router(story_spark_router)  # 聊天灵感变成小故事
 from tg_group import router as tg_group_router

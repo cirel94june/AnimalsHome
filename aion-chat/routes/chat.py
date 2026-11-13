@@ -2634,7 +2634,7 @@ async def _do_image_gen(conv_id: str, trigger_msg_id: str, prompt: str, is_selfi
     from image_gen import generate_image
 
     try:
-        filename = await generate_image(prompt, is_selfie=is_selfie)
+        filename = await generate_image(prompt, is_selfie=is_selfie, source_identity='aion')
         if filename:
             # 生成成功 → 创建新的 assistant 消息（仅含图片）
             now = time.time()
@@ -2652,14 +2652,28 @@ async def _do_image_gen(conv_id: str, trigger_msg_id: str, prompt: str, is_selfi
             await manager.broadcast({"type": "msg_created", "data": img_msg})
             # 通知前端生图完成（移除占位）
             await manager.broadcast({"type": "image_gen_done", "data": {"conv_id": conv_id, "trigger_msg_id": trigger_msg_id, "img_msg_id": img_msg_id}})
+            try:
+                from gift import archive_chat_image
+                await archive_chat_image(filename, 'aion')
+            except Exception as error:
+                print(f'[image_gen] 图片已送达，收藏暂未完成（{type(error).__name__}）')
             await export_conversation(conv_id)
             print(f"[image_gen] 图片消息已创建: {img_msg_id}")
         else:
             # 生图失败 → 通知前端
-            await manager.broadcast({"type": "image_gen_failed", "data": {"conv_id": conv_id, "trigger_msg_id": trigger_msg_id}})
+            from image_gen import failure_reason
+            reason = failure_reason()
+            await manager.broadcast({"type": "image_gen_failed", "data": {"conv_id": conv_id, "trigger_msg_id": trigger_msg_id, 'reason': reason}})
+            now = time.time()
+            notice_id = f'msg_{time.time_ns()}_image_failed'
+            async with get_db() as db:
+                await db.execute('INSERT INTO messages (id,conv_id,role,content,created_at) VALUES (?,?,?,?,?)',
+                                 (notice_id, conv_id, 'system', reason, now))
+                await db.commit()
+            await manager.broadcast({'type':'msg_created','data':{'id':notice_id,'conv_id':conv_id,'role':'system','content':reason,'created_at':now,'attachments':[]}})
             print("[image_gen] 生图失败，已通知前端")
     except Exception as e:
-        print(f"[image_gen] 异步生图任务异常: {e}")
+        print(f"[image_gen] 异步生图任务异常: {type(e).__name__}")
         await manager.broadcast({"type": "image_gen_failed", "data": {"conv_id": conv_id, "trigger_msg_id": trigger_msg_id}})
 
 

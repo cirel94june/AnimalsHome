@@ -47,6 +47,12 @@ async def api_receive(gift_id: str):
 async def api_list():
     """查询所有已领取的礼物（陈列馆）"""
     gifts = await list_gifts()
+    from html_works import list_works
+    for work in await asyncio.to_thread(list_works):
+        gifts.append({'id':'web_' + work['id'], 'kind':'webpage', 'work_id':work['id'],
+                      'title':work['title'], 'message':work['note'], 'sender':work['actor'],
+                      'created_at':work['created_at'], 'image_path':''})
+    gifts.sort(key=lambda gift: gift['created_at'], reverse=True)
     return {"ok": True, "gifts": gifts}
 
 

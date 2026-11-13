@@ -97,7 +97,8 @@ def test_gemini_official_with_its_own_key_and_model(world, monkeypatch):
     answers.append({"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": B64}}]}}]})
     assert asyncio.run(image_gen.generate_image("猫")) == "album/x.png"
     assert calls[0][0] == ("https://generativelanguage.googleapis.com/v1beta/models/gemini-banana-pro"
-                           f":generateContent?key={KEY}")
+                           ":generateContent")
+    assert calls[0][1]['headers']['x-goog-api-key'] == KEY and KEY not in calls[0][0]
     assert saved[0][1]["model"] == "gemini-banana-pro"
 
 

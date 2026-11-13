@@ -214,6 +214,7 @@ body { background: #1a1412; color: #e8ddd4; overflow: hidden; }
 }
 .btn-confirm-del { background: #cf222e; color: #fff; }
 .btn-confirm-cancel { background: rgba(255,255,255,0.1); color: #e8ddd4; }
+.web-gift-cover{min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;background:linear-gradient(145deg,#dfe9f6,#b7cbe3);color:#284263;text-align:center}.web-gift-cover span{font-size:12px;letter-spacing:.18em}.web-gift-cover b{font-family:var(--ib-serif,serif);font-size:24px;overflow-wrap:anywhere}.web-gift-cover small{font-size:12px;line-height:1.6}
 </style>
 </head>
 <body class="gift-page" data-theme="dark">
@@ -318,9 +319,12 @@ function renderGrid() {
   list.innerHTML = _allGifts.map((g, i) => {
     const d = new Date(g.created_at * 1000);
     const dateStr = `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}`;
+    const cover = g.kind === 'webpage'
+      ? `<div class="web-gift-cover"><span>✦ 小网页</span><b>${escHtml(g.title || '小作品')}</b><small>点开看看 TA 做给你的世界</small></div>`
+      : `<img class="gift-thumb-img" src="/api/gift/thumbnail/${encodeURIComponent(g.id)}" alt="礼物" loading="lazy" />`;
     return `
       <div class="gift-thumb" id="thumb_${g.id}" onclick="openDetail(${i})">
-        <img class="gift-thumb-img" src="/api/gift/thumbnail/${encodeURIComponent(g.id)}" alt="礼物" loading="lazy" />
+        ${cover}
         <div class="gift-thumb-date">${dateStr}${g.sender ? ' · from ' + escHtml(giftSenderName(g.sender)) : ''}</div>
       </div>`;
   }).join('');
@@ -329,6 +333,10 @@ function renderGrid() {
 function openDetail(idx) {
   const g = _allGifts[idx];
   if (!g) return;
+  if (g.kind === 'webpage') {
+    location.href = '/works?work=' + encodeURIComponent(g.work_id);
+    return;
+  }
   const d = new Date(g.created_at * 1000);
   const dateStr = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
   const box = document.getElementById('detailBox');
@@ -394,6 +402,8 @@ async function testGift() {
 // 初始化
 connectCommonWS();
 loadGifts();
+window.onAionSubPageVisibilityChanged = visible => { if (visible) loadGifts(); };
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadGifts(); });
 </script>
 </body>
 </html>

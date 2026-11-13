@@ -52,6 +52,7 @@ def _connect() -> sqlite3.Connection:
     conn.execute("""CREATE TABLE IF NOT EXISTS plans (
         actor TEXT NOT NULL, day TEXT NOT NULL, due_at REAL NOT NULL, done INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (actor, day))""")
+    conn.execute("CREATE TABLE IF NOT EXISTS chat_sources (source_key TEXT PRIMARY KEY, work_id TEXT NOT NULL)")
     return conn
 
 
@@ -85,7 +86,7 @@ def save_work(actor: str, name: str, title: str, note: str, html: str, occasion:
 
 def list_works() -> list[dict[str, Any]]:
     with _connect() as conn:
-        rows = conn.execute("SELECT id, name, title, note, occasion, created_at, opened_at FROM works ORDER BY created_at DESC LIMIT 200").fetchall()
+        rows = conn.execute("SELECT id, actor, name, title, note, occasion, created_at, opened_at FROM works ORDER BY created_at DESC LIMIT 200").fetchall()
     return [dict(r) for r in rows]
 
 
@@ -100,6 +101,23 @@ def get_work(work_id: str, mark_opened: bool = True, now: float | None = None) -
 def delete_work(work_id: str) -> bool:
     with _connect() as conn:
         return conn.execute("DELETE FROM works WHERE id=?", (work_id,)).rowcount == 1
+
+
+def save_chat_work(source_key: str, actor: str, name: str, title: str, html: str) -> str:
+    """主人点开的聊天作品：按来源幂等收藏，不占 AI 自主送礼的每周额度。"""
+    from contextlib import closing
+    if not html or len(html) > MAX_HTML_CHARS:
+        raise ValueError("小网页为空或太长")
+    with closing(_connect()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT w.id FROM chat_sources s JOIN works w ON w.id=s.work_id WHERE s.source_key=?", (source_key,)).fetchone()
+        if row:
+            return row[0]
+        work_id = f"w_{uuid.uuid4().hex[:16]}"
+        conn.execute("INSERT INTO works (id,actor,name,title,note,html,occasion,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                     (work_id, actor, name, title[:40] or "聊天里的小网页", "在聊天里送给你的作品", html, "", time.time()))
+        conn.execute("INSERT OR REPLACE INTO chat_sources (source_key,work_id) VALUES (?,?)", (source_key, work_id))
+        return work_id
 
 
 def parse_reply(raw: str) -> tuple[str, str, str] | None:

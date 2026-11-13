@@ -666,14 +666,14 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       </summary>
       <div class="card-body settings-grid">
         <div class="field" data-rarely>
-          <label class="form-label">Gemini API Key</label>
-          <input class="form-input mono-input" type="text" id="geminiKeyInput" placeholder="输入 Gemini API Key..." autocomplete="off">
-          <p class="hint">谷歌官方的钥匙。用官方 Gemini 模型、默认画图、AI 唱歌时才要。你用中转聊天的话可以不填，不影响聊天。</p>
+          <label class="form-label">通用 Gemini Key（官方聊天、唱歌等）</label>
+          <input class="form-input mono-input" type="password" id="geminiKeyInput" placeholder="只用中转聊天可留空" autocomplete="off">
+          <p class="hint">这不是图片专用配置。只想用 Banana 画图时，填下面「生图模型 → Banana」里的图片 Key 即可，这里可以留空。旧版图片配置仍可复用此 Key。</p>
         </div>
         <div class="field" data-rarely>
-          <label class="form-label">Gemini Free Key（哨兵+向量）</label>
-          <input class="form-input mono-input" type="text" id="geminiFreeKeyInput" placeholder="留空则复用上方 Key" autocomplete="off">
-          <p class="hint">只给后台小任务用。你的哨兵走 Codex，记忆走 Hub，可以不填。</p>
+          <label class="form-label">Gemini 后台辅助 Key（可选）</label>
+          <input class="form-input mono-input" type="password" id="geminiFreeKeyInput" placeholder="不是画图 Key，可以留空" autocomplete="off">
+          <p class="hint">旧的哨兵、向量等后台功能用；留空会复用通用 Key。它不负责 Banana 图片服务。</p>
         </div>
         <div class="field">
           <label class="form-label">硅基流动 API Key</label>
@@ -747,21 +747,21 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       <summary>
         <div class="summary-title">
           <strong>🎨 生图模型</strong>
-          <span>OpenAI 兼容、Gemini Banana、代码画图，三选一</span>
+          <span>三种都保留、分别保存配置；这里选择默认方式，聊天也能单独指定</span>
         </div>
         <span class="summary-chevron">›</span>
       </summary>
       <div class="card-body">
         <div class="settings-grid">
           <div class="field full">
-            <label class="form-label" for="imageGenProviderInput">用哪种方式画</label>
+            <label class="form-label" for="imageGenProviderInput">默认用哪种方式画（切换不会清掉另外两种配置）</label>
             <select class="form-input" id="imageGenProviderInput" onchange="updateImageGenUi()">
-              <option value="">自动（填了下面三项就用，没填用 Gemini）</option>
               <option value="openai">OpenAI 兼容（官方或中转的图片模型）</option>
-              <option value="gemini">Gemini Banana（自拍保持长相）</option>
+              <option value="gemini">Gemini Banana（图片 / 参考照自拍）</option>
               <option value="code">代码画图（不用图片模型）</option>
             </select>
             <p class="hint" id="imageGenProviderHint"></p>
+            <p class="hint">聊天可说「用代码画」「用 Banana 画」「用 OpenAI 图片模型画」。没特别指定时用这里的默认方式。新画好的图会自动收进「爱的印记」；聊天小网页点「打开并收藏」。</p>
           </div>
         </div>
         <div id="imageGenFields">
@@ -771,7 +771,7 @@ body[data-theme="light"] .transport-mode-btn.is-active {
             <input class="form-input mono-input" type="text" id="imageGenBaseUrlInput" placeholder="https://example.com/v1" autocomplete="off">
           </div>
           <div class="field">
-            <label class="form-label" for="imageGenApiKeyInput">API Key</label>
+            <label class="form-label" id="imageGenKeyLabel" for="imageGenApiKeyInput">图片专用 API Key</label>
             <input class="form-input mono-input" type="password" id="imageGenApiKeyInput" placeholder="生图服务的 API Key" autocomplete="off">
           </div>
           <div class="field full">
@@ -1506,13 +1506,30 @@ async function fetchSentinelModels(button) {
   }
 }
 
+var imageProfiles = {}, imageDisplayedProfile = null;
+function rememberImageProfile() {
+  if (imageDisplayedProfile === 'openai' || imageDisplayedProfile === 'gemini') {
+    imageProfiles[imageDisplayedProfile] = {base_url: $("imageGenBaseUrlInput").value.trim(), api_key: $("imageGenApiKeyInput").value.trim(), model: $("imageGenModelInput").value.trim()};
+  }
+}
 function updateImageGenUi() {
+  rememberImageProfile();
   var way = $("imageGenProviderInput").value;
+  if (way === 'openai' || way === 'gemini') {
+    var profile = imageProfiles[way] || {};
+    $("imageGenBaseUrlInput").value = profile.base_url || '';
+    $("imageGenApiKeyInput").value = profile.api_key || '';
+    $("imageGenModelInput").value = profile.model || '';
+    $("imageGenKeyLabel").textContent = way === 'gemini' ? 'Banana 图片 Key（只填这里，不用再填通用 Key）' : 'OpenAI 格式图片服务的 Key';
+    $("imageGenBaseUrlInput").placeholder = way === 'gemini' ? '谷歌官方留空；中转填 Gemini 原生 API 地址' : '图片服务商给你的地址，例如 https://example.com/v1';
+    $("imageGenModelInput").placeholder = way === 'gemini' ? '留空用默认 Banana；中转填商家提供的图片模型名' : '服务商提供的图片模型名，不是普通聊天模型';
+  }
+  imageDisplayedProfile = way;
   $("imageGenFields").style.display = way === "code" ? "none" : "";
   $("imageGenProviderHint").textContent = {
     "": "下面三项填全就走 OpenAI 兼容；全空走 Gemini，需要 Gemini Key。",
     openai: "三项都要填。模型名带 gpt-image 或 dall-e 时用图片接口（慢一些），别的模型用聊天接口出图，要选能出图的模型。",
-    gemini: "Key 必填（留空就用「各种钥匙」里的 Gemini Key）。模型留空用默认。地址留空是谷歌官方，中转要支持 Gemini 原生格式。",
+    gemini: "谷歌官方：只填下面的 Banana 图片 Key 即可，地址和模型可留空。中转站：按商家说明填地址、图片 Key 和模型名，必须支持 Gemini 原生格式；只有 OpenAI 格式的中转请选另一项。",
     code: "不用填任何东西，AI 用平时聊天的模型画成图。适合插画、图标、小漫画，画不出照片感，也做不了像真人的自拍。"
   }[way] || "";
 }
@@ -1573,11 +1590,12 @@ function updateAsrProviderUi(usePreset) {
   $("embeddingBaseUrlInput").value = s.embedding_base_url || "";
   $("embeddingApiKeyInput").value = s.embedding_api_key || "";
   $("embeddingModelInput").value = s.embedding_model || "";
-  $("imageGenProviderInput").value = s.image_gen_provider || "";
+  imageProfiles = s.image_gen_profiles || {};
+  var legacyWay = s.image_gen_provider === 'gemini' ? 'gemini' : 'openai';
+  if (!imageProfiles[legacyWay]) imageProfiles[legacyWay] = {base_url:s.image_gen_base_url || '',api_key:s.image_gen_api_key || '',model:s.image_gen_model || ''};
+  imageDisplayedProfile = null;
+  $("imageGenProviderInput").value = s.image_gen_provider || (s.image_gen_api_key ? 'openai' : s.gemini_key ? 'gemini' : 'code');
   updateImageGenUi();
-  $("imageGenBaseUrlInput").value = s.image_gen_base_url || "";
-  $("imageGenApiKeyInput").value = s.image_gen_api_key || "";
-  $("imageGenModelInput").value = s.image_gen_model || "";
   $("asrProviderInput").value = s.asr_provider === "dashscope" ? "dashscope" : "openai";
   $("asrBaseUrlInput").value = s.asr_base_url || "";
   $("asrApiKeyInput").value = s.asr_api_key || "";
@@ -1653,25 +1671,32 @@ async function saveSettings() {
       return;
     }
   }
+  rememberImageProfile();
   var imageConfig = {
     image_gen_provider: $("imageGenProviderInput").value,
     image_gen_base_url: $("imageGenBaseUrlInput").value.trim(),
     image_gen_api_key: $("imageGenApiKeyInput").value.trim(),
-    image_gen_model: $("imageGenModelInput").value.trim()
+    image_gen_model: $("imageGenModelInput").value.trim(),
+    image_gen_profiles: imageProfiles
   };
-  var imageValues = Object.values(imageConfig);
-  if (imageValues.some(Boolean) && !imageValues.every(Boolean)) {
-    showToast("请完整填写生图 API 地址、Key 和模型名，或全部清空以使用 Gemini");
-    return;
+  if (imageConfig.image_gen_provider === 'code') {
+    imageConfig.image_gen_base_url = ''; imageConfig.image_gen_api_key = ''; imageConfig.image_gen_model = '';
   }
-  if (imageConfig.image_gen_base_url) {
+  for (var provider of ['openai', 'gemini']) {
+    var profile = imageProfiles[provider] || {};
+    var imageValues = [profile.base_url || '', profile.api_key || '', profile.model || ''];
+    if (provider === 'openai' && imageValues.some(Boolean) && !imageValues.every(Boolean)) {
+      showToast('OpenAI 图片线路需要地址、图片 Key 和模型名三项；不用时三项全留空'); return;
+    }
+  if (profile.base_url) {
     try {
-      var imageUrl = new URL(imageConfig.image_gen_base_url);
+      var imageUrl = new URL(profile.base_url);
       if (!["http:", "https:"].includes(imageUrl.protocol) || !imageUrl.hostname || imageUrl.search || imageUrl.hash || imageUrl.username || imageUrl.password) throw new Error("invalid URL");
     } catch (err) {
       showToast("生图 API 地址须为 HTTP(S) 地址，不能包含账号、查询参数或片段");
       return;
     }
+  }
   }
   var customRoutes = [];
   try {
@@ -1685,6 +1710,7 @@ async function saveSettings() {
   try {
   saved = await api("PUT", "/api/settings", {
     ...asrConfig,
+    ...imageConfig,
     gemini_key: $("geminiKeyInput").value.trim(),
     gemini_free_key: $("geminiFreeKeyInput").value.trim(),
     sentinel_route: $("sentinelRouteInput").value,
@@ -1697,9 +1723,6 @@ async function saveSettings() {
     embedding_base_url: $("embeddingBaseUrlInput").value.trim(),
     embedding_api_key: $("embeddingApiKeyInput").value.trim(),
     embedding_model: $("embeddingModelInput").value.trim(),
-    image_gen_base_url: imageConfig.image_gen_base_url,
-    image_gen_api_key: imageConfig.image_gen_api_key,
-    image_gen_model: imageConfig.image_gen_model,
     siliconflow_key: $("sfKeyInput").value.trim(),
     minimax_tts_key: $("minimaxTtsKeyInput").value.trim(),
     ...elevenSettings(),
