@@ -108,29 +108,42 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=TOTAL_SECONDS, follow_redirects=False, trust_env=False)
 
 
-async def fetch(base_url: str, api_key: str = "") -> list[str]:
+def gemini_models_url(base_url: str) -> httpx.URL:
+    base = (base_url or 'https://generativelanguage.googleapis.com').strip().rstrip('/')
+    try:
+        parsed = httpx.URL(base)
+        if parsed.scheme not in ('http','https') or not parsed.host or parsed.userinfo or parsed.query or parsed.fragment:
+            raise ValueError()
+    except (httpx.InvalidURL, ValueError):
+        raise RelayModelsError('Gemini 地址须为 HTTP(S)，不能带账号、查询参数或片段') from None
+    if not base.endswith(('/v1','/v1beta')): base += '/v1beta'
+    return httpx.URL(base + '/models')
+
+
+async def fetch(base_url: str, api_key: str = "", *, protocol: str = 'openai') -> list[str]:
     global _active
-    url = models_url(base_url)
+    url = gemini_models_url(base_url) if protocol == 'gemini' else models_url(base_url)
     if _active >= MAX_CONCURRENT:
         raise RelayModelsError("正在拉取别的线路，等一下再点")
     _active += 1
     try:
         async with asyncio.timeout(TOTAL_SECONDS):
-            return await _fetch(url, api_key)
+            return await _fetch(url, api_key, gemini=True) if protocol == 'gemini' else await _fetch(url, api_key)
     except TimeoutError:
         raise RelayModelsError("中转站 20 秒内没有给完回应")
     finally:
         _active -= 1
 
 
-async def _fetch(url: httpx.URL, api_key: str) -> list[str]:
+async def _fetch(url: httpx.URL, api_key: str, *, gemini: bool = False) -> list[str]:
     address = await _pick_address(url)
     # 直接连检查过的 IP；Host 头和 TLS 证书校验仍用原来的域名
     target = url.copy_with(host=address)
     headers = {"Accept": "application/json", "Accept-Encoding": "identity",
                "Host": url.netloc.decode("ascii")}
     if api_key.strip():
-        headers["Authorization"] = f"Bearer {api_key.strip()}"
+        if gemini: headers['x-goog-api-key'] = api_key.strip()
+        else: headers["Authorization"] = f"Bearer {api_key.strip()}"
     extensions = {"sni_hostname": url.host} if url.scheme == "https" else {}
     try:
         async with _client() as client:

@@ -222,9 +222,15 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
     custom = [(SETTINGS.get(key) or "").strip() for key in
               ("image_gen_base_url", "image_gen_api_key", "image_gen_model")]
     provider = explicit or (SETTINGS.get("image_gen_provider") or "").strip()
+    if provider == 'auto':
+        provider = 'code'  # 旧模型没写方式前缀时的兼容；新提示词要求 AI 自己选可用方式并注明前缀。
     if provider in ('openai', 'gemini'):
-        from image_profiles import profiles_from
-        profile = profiles_from(SETTINGS)[provider]
+        from image_profiles import resolve_profile
+        try:
+            profile = resolve_profile(SETTINGS,provider)
+        except ValueError as error:
+            _fail(str(error))
+            return None
         custom = [profile[key] for key in ('base_url', 'api_key', 'model')]
     if provider == "code":
         return await _generate_code_image(prompt, is_selfie, source_identity)

@@ -754,18 +754,22 @@ body[data-theme="light"] .transport-mode-btn.is-active {
       <div class="card-body">
         <div class="settings-grid">
           <div class="field full">
-            <label class="form-label" for="imageGenProviderInput">默认用哪种方式画（切换不会清掉另外两种配置）</label>
-            <select class="form-input" id="imageGenProviderInput" onchange="updateImageGenUi()">
+            <label class="form-label" for="imageGenProviderInput">画图方式（配置仍分别保留）</label>
+            <select class="form-input" id="imageGenProviderInput" onchange="updateImageGenUi(true)">
+              <option value="auto">让 AI 自己选（从已配置的方式里挑）</option>
               <option value="openai">OpenAI 兼容（官方或中转的图片模型）</option>
               <option value="gemini">Gemini Banana（图片 / 参考照自拍）</option>
               <option value="code">代码画图（不用图片模型）</option>
             </select>
             <p class="hint" id="imageGenProviderHint"></p>
-            <p class="hint">聊天可说「用代码画」「用 Banana 画」「用 OpenAI 图片模型画」。没特别指定时用这里的默认方式。新画好的图会自动收进「爱的印记」；聊天小网页点「打开并收藏」。</p>
+            <p class="hint">选「AI 自己选」后，不用每次指定：AI 会在已配好的代码、Banana、OpenAI 图片方式里决定。你也可以临时点名一种。新画好的图自动收进「爱的印记」。</p>
+            <label class="form-label" for="imageGenConfigProviderInput">下面要配置哪一种图片服务</label>
+            <select class="form-input" id="imageGenConfigProviderInput" onchange="updateImageGenUi()"><option value="openai">OpenAI 格式图片服务</option><option value="gemini">Banana / Gemini 原生图片服务</option></select>
           </div>
         </div>
         <div id="imageGenFields">
         <div class="settings-grid">
+          <div class="field full"><label class="form-label" for="imageGenRouteInput">复用已有中转站，或手动填图片 Key</label><select class="form-input" id="imageGenRouteInput" onchange="updateImageRouteUi()"><option value="">手动填写 / 谷歌官方</option></select><p class="hint">选已有中转站后，服务器复用它的地址和 Key；不用再复制。模型名可以拉取后选择。</p></div>
           <div class="field">
             <label class="form-label" for="imageGenBaseUrlInput">API 地址（Base URL）</label>
             <input class="form-input mono-input" type="text" id="imageGenBaseUrlInput" placeholder="https://example.com/v1" autocomplete="off">
@@ -776,7 +780,9 @@ body[data-theme="light"] .transport-mode-btn.is-active {
           </div>
           <div class="field full">
             <label class="form-label" for="imageGenModelInput">模型名称</label>
-            <input class="form-input mono-input" type="text" id="imageGenModelInput" placeholder="填写服务商提供的完整生图模型 ID" autocomplete="off">
+            <input class="form-input mono-input" type="text" id="imageGenModelInput" list="imageGenModelOptions" placeholder="填写服务商提供的完整生图模型 ID" autocomplete="off">
+            <datalist id="imageGenModelOptions"></datalist>
+            <button type="button" class="ghost-btn" id="imageGenFetchModels" onclick="fetchImageModels()">拉取图片服务的模型列表</button><p class="hint" id="imageGenModelsStatus" role="status">列表可能也有普通聊天模型，请选能出图的图片模型。</p>
           </div>
         </div>
         </div>
@@ -1510,28 +1516,77 @@ var imageProfiles = {}, imageDisplayedProfile = null;
 function rememberImageProfile() {
   if (imageDisplayedProfile === 'openai' || imageDisplayedProfile === 'gemini') {
     imageProfiles[imageDisplayedProfile] = {base_url: $("imageGenBaseUrlInput").value.trim(), api_key: $("imageGenApiKeyInput").value.trim(), model: $("imageGenModelInput").value.trim()};
+    if ($('imageGenRouteInput').value) imageProfiles[imageDisplayedProfile].route_id = $('imageGenRouteInput').value;
   }
 }
-function updateImageGenUi() {
+function updateImageRouteUi() {
+  ++imageModelFetchRevision;
+  $('imageGenFetchModels').disabled = false;
+  $('imageGenModelOptions').replaceChildren();
+  const bound = !!$('imageGenRouteInput').value;
+  $('imageGenBaseUrlInput').disabled = bound;
+  $('imageGenApiKeyInput').disabled = bound;
+}
+function renderImageRouteOptions() {
+  const select = $('imageGenRouteInput'), previous = select.value;
+  select.replaceChildren(new Option('手动填写 / 谷歌官方',''));
+  for (const route of customModelRoutes || []) select.add(new Option(route.name || '中转站',route.id));
+  select.value = previous;
+  if (previous && !select.value) {
+    select.add(new Option('原中转站已删除，请重新选择',previous)); select.value = previous;
+  }
+}
+let imageModelFetchRevision = 0;
+async function fetchImageModels() {
+  const revision = ++imageModelFetchRevision, way = imageDisplayedProfile;
   rememberImageProfile();
-  var way = $("imageGenProviderInput").value;
+  const button = $('imageGenFetchModels'), status = $('imageGenModelsStatus');
+  button.disabled = true; status.textContent = '正在拉取……';
+  try {
+    const profile = imageProfiles[way] || {};
+    const response = await fetch('/api/image-models',{method:'POST',headers:{'Content-Type':'application/json','X-AH-Request':'1'},body:JSON.stringify({provider:way,route_id:profile.route_id || '',base_url:profile.base_url || '',api_key:profile.api_key || ''})});
+    const data = await response.json();
+    if (revision !== imageModelFetchRevision || way !== imageDisplayedProfile) return;
+    if (!response.ok) throw new Error(data.detail || '这次没拉到模型');
+    const options = $('imageGenModelOptions'); options.replaceChildren();
+    for (const name of data.models || []) options.appendChild(new Option(name,name));
+    status.textContent = '已拉到 ' + (data.models || []).length + ' 个模型，请在模型名称里选一个能出图的。';
+  } catch(error) { if (revision === imageModelFetchRevision) status.textContent = error.message || '拉取失败，请再试一次'; }
+  finally { if (revision === imageModelFetchRevision) button.disabled = false; }
+}
+function updateImageGenUi(syncDefault = false) {
+  rememberImageProfile();
+  ++imageModelFetchRevision;
+  $('imageGenFetchModels').disabled = false;
+  const selectedDefault = $('imageGenProviderInput').value;
+  if (syncDefault && ['openai','gemini'].includes(selectedDefault)) $('imageGenConfigProviderInput').value = selectedDefault;
+  var way = $('imageGenConfigProviderInput').value;
   if (way === 'openai' || way === 'gemini') {
     var profile = imageProfiles[way] || {};
     $("imageGenBaseUrlInput").value = profile.base_url || '';
     $("imageGenApiKeyInput").value = profile.api_key || '';
     $("imageGenModelInput").value = profile.model || '';
+    $('imageGenRouteInput').value = profile.route_id || '';
+    if (profile.route_id && !$('imageGenRouteInput').value) {
+      $('imageGenRouteInput').add(new Option('原中转站已删除，请重新选择',profile.route_id));
+      $('imageGenRouteInput').value = profile.route_id;
+    }
+    $('imageGenModelOptions').replaceChildren();
+    $('imageGenModelsStatus').textContent = '可从中转站拉取模型；请选能出图的图片模型。';
     $("imageGenKeyLabel").textContent = way === 'gemini' ? 'Banana 图片 Key（只填这里，不用再填通用 Key）' : 'OpenAI 格式图片服务的 Key';
     $("imageGenBaseUrlInput").placeholder = way === 'gemini' ? '谷歌官方留空；中转填 Gemini 原生 API 地址' : '图片服务商给你的地址，例如 https://example.com/v1';
     $("imageGenModelInput").placeholder = way === 'gemini' ? '留空用默认 Banana；中转填商家提供的图片模型名' : '服务商提供的图片模型名，不是普通聊天模型';
   }
   imageDisplayedProfile = way;
-  $("imageGenFields").style.display = way === "code" ? "none" : "";
+  updateImageRouteUi();
+  $("imageGenFields").style.display = selectedDefault === "code" ? "none" : "";
   $("imageGenProviderHint").textContent = {
     "": "下面三项填全就走 OpenAI 兼容；全空走 Gemini，需要 Gemini Key。",
+    auto: "AI 会自己在已配置可用的方式里选；代码画图不用新 Key。图片模型还没配好时，AI 不会去调用那条线路。",
     openai: "三项都要填。模型名带 gpt-image 或 dall-e 时用图片接口（慢一些），别的模型用聊天接口出图，要选能出图的模型。",
     gemini: "谷歌官方：只填下面的 Banana 图片 Key 即可，地址和模型可留空。中转站：按商家说明填地址、图片 Key 和模型名，必须支持 Gemini 原生格式；只有 OpenAI 格式的中转请选另一项。",
     code: "不用填任何东西，AI 用平时聊天的模型画成图。适合插画、图标、小漫画，画不出照片感，也做不了像真人的自拍。"
-  }[way] || "";
+  }[selectedDefault] || "";
 }
 
 function updateSentinelRouteUi() {
@@ -1595,7 +1650,7 @@ function updateAsrProviderUi(usePreset) {
   if (!imageProfiles[legacyWay]) imageProfiles[legacyWay] = {base_url:s.image_gen_base_url || '',api_key:s.image_gen_api_key || '',model:s.image_gen_model || ''};
   imageDisplayedProfile = null;
   $("imageGenProviderInput").value = s.image_gen_provider || (s.image_gen_api_key ? 'openai' : s.gemini_key ? 'gemini' : 'code');
-  updateImageGenUi();
+  updateImageGenUi(true);
   $("asrProviderInput").value = s.asr_provider === "dashscope" ? "dashscope" : "openai";
   $("asrBaseUrlInput").value = s.asr_base_url || "";
   $("asrApiKeyInput").value = s.asr_api_key || "";
@@ -1624,6 +1679,9 @@ function updateAsrProviderUi(usePreset) {
   customModelRoutes = normalizeRoutesForUi(s.custom_model_routes || []);
   customRoutesRev = s.custom_routes_rev || 0;
   renderCustomRoutes();
+  renderImageRouteOptions();
+  $('imageGenRouteInput').value = (imageProfiles[imageDisplayedProfile] || {}).route_id || '';
+  updateImageRouteUi();
   renderModelTransportModes();
   refreshPhoneScreenStatus();
   refreshFloatingChatStatus();
@@ -1672,20 +1730,21 @@ async function saveSettings() {
     }
   }
   rememberImageProfile();
+  var defaultImageProfile = imageProfiles[$("imageGenProviderInput").value] || {};
   var imageConfig = {
     image_gen_provider: $("imageGenProviderInput").value,
-    image_gen_base_url: $("imageGenBaseUrlInput").value.trim(),
-    image_gen_api_key: $("imageGenApiKeyInput").value.trim(),
-    image_gen_model: $("imageGenModelInput").value.trim(),
+    image_gen_base_url: defaultImageProfile.base_url || '',
+    image_gen_api_key: defaultImageProfile.api_key || '',
+    image_gen_model: defaultImageProfile.model || '',
     image_gen_profiles: imageProfiles
   };
-  if (imageConfig.image_gen_provider === 'code') {
+  if (['code','auto'].includes(imageConfig.image_gen_provider)) {
     imageConfig.image_gen_base_url = ''; imageConfig.image_gen_api_key = ''; imageConfig.image_gen_model = '';
   }
   for (var provider of ['openai', 'gemini']) {
     var profile = imageProfiles[provider] || {};
     var imageValues = [profile.base_url || '', profile.api_key || '', profile.model || ''];
-    if (provider === 'openai' && imageValues.some(Boolean) && !imageValues.every(Boolean)) {
+    if (provider === 'openai' && !profile.route_id && imageValues.some(Boolean) && !imageValues.every(Boolean)) {
       showToast('OpenAI 图片线路需要地址、图片 Key 和模型名三项；不用时三项全留空'); return;
     }
   if (profile.base_url) {
@@ -1747,6 +1806,7 @@ async function saveSettings() {
   if (saved && typeof saved.custom_routes_rev === "number") customRoutesRev = saved.custom_routes_rev;
   customModelRoutes = normalizeRoutesForUi(customRoutes, collapsedState);
   renderCustomRoutes();
+  renderImageRouteOptions();
   showToast("✅ 已保存，模型列表刷新后可选择新模型");
 }
 

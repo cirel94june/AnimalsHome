@@ -114,3 +114,33 @@ test('Love Marks displays webpages beside pictures without executing webpage sou
   await page.waitForURL('**/works?work='+workId);
  }finally{await browser.close();}
 });
+
+test('auto default survives editing a bound relay; model list never copies its key',async()=>{
+ const browser=await launch();
+ try{
+  const page=await browser.newPage(),requests=[];
+  const source=read('static/settings.html'),markup=source.replace(/<script\b[\s\S]*?<\/script>/gi,'');
+  const functions=slice(source,'var imageProfiles = {}, imageDisplayedProfile = null;','function updateSentinelRouteUi()')+slice(source,'async function saveSettings() {','function enablePhoneScreenSupervision()');
+  const stubs=`const $=id=>document.getElementById(id);window.sent=[];let customRoutesRev=0,customModelRoutes=[{id:'saved',name:'Saved relay'}];const showToast=x=>window.toast=x,collectCustomRoutes=()=>customModelRoutes,currentRouteCollapsedState=()=>({}),elevenSettings=()=>({}),collectModelTransportModes=()=>({}),normalizeRoutesForUi=x=>x,renderCustomRoutes=()=>{};async function api(method,url,body){window.sent.push(body);return{}};`;
+  await page.route('**/*',route=>{
+   const url=new URL(route.request().url());
+   if(url.pathname==='/settings')return route.fulfill({contentType:'text/html',body:markup.replace('</body>',`<script>${stubs}${functions}</script></body>`)});
+   if(url.pathname==='/api/image-models'){requests.push(route.request().postDataJSON());return route.fulfill({json:{models:['gpt-image-test','other-model']}});}
+   return route.abort();
+  });
+  await page.goto('http://art.test/settings');
+  await page.evaluate(async()=>{
+   $('imageGenProviderInput').value='auto';$('imageGenConfigProviderInput').value='openai';
+   renderImageRouteOptions();updateImageGenUi();$('imageGenRouteInput').value='saved';updateImageRouteUi();
+   await fetchImageModels();$('imageGenModelInput').value='gpt-image-test';await saveSettings();
+  });
+  assert.equal(await page.locator('#imageGenModelOptions option').count(),2);
+  assert.equal(await page.locator('#imageGenApiKeyInput').isDisabled(),true);
+  assert.deepEqual(requests,[{provider:'openai',route_id:'saved',base_url:'',api_key:''}]);
+  const payload=await page.evaluate(()=>sent.at(-1));
+  assert.equal(payload.image_gen_provider,'auto');
+  assert.equal(payload.image_gen_profiles.openai.route_id,'saved');
+  assert.equal(payload.image_gen_profiles.openai.model,'gpt-image-test');
+  assert.equal(payload.image_gen_profiles.openai.api_key,'');
+ }finally{await browser.close();}
+});

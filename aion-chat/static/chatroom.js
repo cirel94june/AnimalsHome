@@ -42,6 +42,18 @@ let crRoomMessageGeneration = 0;
 let crRenderedRoomId = null;
 let crMessageRevision = 0;
 
+// 兼容旧 HTML 与新版主脚本混用的客户端；组件到达后重画已载入的旧消息。
+if (!window.ChatWorks) {
+  const script=document.createElement('script'); script.src='/static/chat-artifacts.js?v=20261113-bootstrap';
+  const style=document.createElement('link'); style.rel='stylesheet'; style.href='/static/chat-artifacts.css?v=20261113';
+  script.onload=function refreshWorksWhenIdle() {
+    if (!window.ChatWorks) return;
+    if (isSending || isAiChatting) { setTimeout(refreshWorksWhenIdle, 750); return; }
+    if (currentRoom) renderMessages(Object.values(crMessagesById).sort((a,b)=>Number(a.created_at||0)-Number(b.created_at||0)));
+  };
+  document.head.append(style,script);
+}
+
 window.addEventListener('aion-client-update-ready', () => {
   if (window.__aionClientUpdateScheduled) return;
   window.__aionClientUpdateScheduled = true;

@@ -55,15 +55,22 @@ async def collect(request: Request):
         body = CollectMessage.model_validate_json(await read_body_limited(request, 2048, '请求太长'))
     except ValueError:
         raise HTTPException(400, '请选择聊天里的作品') from None
+    return await collect_saved_message(body.kind, body.message_id)
+
+
+async def collect_saved_message(kind: str, message_id: str, *, dry_run: bool = False):
+    """同一取数路径用于主人点击与明确点名的旧作品补收；不改原聊天。"""
+    if kind not in ('conv','room') or not message_id or len(message_id)>128:
+        raise HTTPException(400,'请选择聊天里的作品')
     async with get_db() as db:
-        if body.kind == 'conv':
-            cur = await db.execute('SELECT role, content FROM messages WHERE id=?', (body.message_id,))
+        if kind == 'conv':
+            cur = await db.execute('SELECT role, content FROM messages WHERE id=?', (message_id,))
         else:
-            cur = await db.execute('SELECT sender, content FROM chatroom_messages WHERE id=?', (body.message_id,))
+            cur = await db.execute('SELECT sender, content FROM chatroom_messages WHERE id=?', (message_id,))
         row = await cur.fetchone()
     if not row:
         raise HTTPException(404, '这条消息还没保存好，稍后再点一次')
-    actor = 'aion' if body.kind == 'conv' and row[0] == 'assistant' else row[0] if body.kind == 'room' else ''
+    actor = 'aion' if kind == 'conv' and row[0] == 'assistant' else row[0] if kind == 'room' else ''
     import actors
     if actor not in actors.SEAT_IDS:
         raise HTTPException(400, '只能收藏 AI 发来的小网页')
@@ -71,7 +78,9 @@ async def collect(request: Request):
     if not parsed:
         raise HTTPException(400, '这条消息里没有完整的小网页，或网页太长了')
     title, code = parsed
-    source = hashlib.sha256(f'{body.kind}:{body.message_id}:{code}'.encode()).hexdigest()
+    if dry_run:
+        return {'ok':True, 'actor':actor, 'html_chars':len(code), 'dry_run':True}
+    source = hashlib.sha256(f'{kind}:{message_id}:{code}'.encode()).hexdigest()
     from html_works import save_chat_work
     work_id = await asyncio.to_thread(save_chat_work, source, actor, actors.display_name(actor), title, code)
     return {'ok': True, 'work_id': work_id, 'url': '/works?work=' + work_id}

@@ -5,7 +5,7 @@
 import json
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, FileResponse
 from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional
@@ -103,6 +103,39 @@ class RouteCreate(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+
+
+class ImageModelsRequest(BaseModel):
+    provider: str = 'openai'
+    route_id: str = Field(default='', max_length=200)
+    base_url: str = Field(default='', max_length=2048)
+    api_key: str = Field(default='', max_length=4096)
+
+
+@router.post('/api/image-models')
+async def fetch_image_models(request: Request):
+    if request.headers.get('x-ah-request') != '1' or request.headers.get('sec-fetch-site') not in (None,'same-origin'):
+        raise HTTPException(403,'请从画图设置拉取模型')
+    origin = request.headers.get('origin')
+    if origin is not None and origin.split('://',1)[-1] != request.headers.get('host'):
+        raise HTTPException(403,'请从画图设置拉取模型')
+    from request_limits import read_body_limited
+    try: body = ImageModelsRequest.model_validate_json(await read_body_limited(request,8192,'请求太长'))
+    except ValueError: raise HTTPException(400,'图片线路格式不正确') from None
+    if body.provider not in ('openai','gemini'): raise HTTPException(400,'请选择图片协议')
+    base,key = body.base_url,body.api_key
+    if body.route_id:
+        route = next((r for r in SETTINGS.get('custom_model_routes') or [] if r.get('id') == body.route_id),None)
+        if route is None: raise HTTPException(404,'图片中转站已不存在，请重新选择')
+        base,key = str(route.get('base_url') or '').strip().rstrip('/'),str(route.get('api_key') or '').strip()
+        if body.provider == 'gemini':
+            if base.endswith('/chat/completions'): base = base[:-len('/chat/completions')]
+            if base.endswith('/v1'): base = base[:-3]
+    elif body.provider == 'gemini' and not key:
+        key = get_key('gemini')
+    try: ids = await relay_models.fetch(base,key,protocol=body.provider)
+    except relay_models.RelayModelsError as error: raise HTTPException(400,str(error)) from None
+    return {'models':ids}
 
 
 def _clean_model_id(value: str) -> str:
@@ -362,7 +395,7 @@ async def update_settings(body: SettingsUpdate):
             asr_config = normalize_asr_settings(proposed)
         except (ValueError, httpx.InvalidURL) as error:
             raise HTTPException(status_code=400, detail=str(error))
-    new_image_provider = body.image_gen_provider if body.image_gen_provider in ("", "openai", "gemini", "code") else None
+    new_image_provider = body.image_gen_provider if body.image_gen_provider in ("", "auto", "openai", "gemini", "code") else None
     image_provider = SETTINGS.get("image_gen_provider", "") if new_image_provider is None else new_image_provider
     image_fields = ("image_gen_base_url", "image_gen_api_key", "image_gen_model")
     image_config = {}
@@ -370,9 +403,17 @@ async def update_settings(body: SettingsUpdate):
         from image_profiles import validate_profiles
         try:
             image_config['image_gen_profiles'] = validate_profiles(body.image_gen_profiles)
+            routes = new_routes if new_routes is not None else SETTINGS.get('custom_model_routes') or []
+            route_ids = {route.get('id') for route in routes}
+            if any(profile.get('route_id') and profile['route_id'] not in route_ids for profile in image_config['image_gen_profiles'].values()):
+                raise ValueError('所选图片中转站已不存在，请刷新后重新选择')
         except ValueError as error:
             raise HTTPException(400, str(error)) from None
-    if any(getattr(body, key) is not None for key in image_fields):
+    if body.image_gen_profiles is not None:
+        # 新客户端的配置分页与默认方式独立；旧字段只能来自默认线路。
+        active = image_config['image_gen_profiles'].get(image_provider) or {}
+        image_config.update({key: active.get(key.removeprefix('image_gen_'), '') for key in image_fields})
+    elif any(getattr(body, key) is not None for key in image_fields):
         image_config.update({
             key: (getattr(body, key) if getattr(body, key) is not None else SETTINGS.get(key) or "").strip()
             for key in image_fields
@@ -400,13 +441,6 @@ async def update_settings(body: SettingsUpdate):
         value = getattr(body, field)
         if value is not None and value.strip() and not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value.strip()):
             raise HTTPException(400, "ElevenLabs 音色 ID 格式不正确")
-    for field in ("elevenlabs_tts_key", "elevenlabs_tts_model", "elevenlabs_aion_voice_id", "elevenlabs_connor_voice_id"):
-        value = getattr(body, field)
-        if value is not None:
-            SETTINGS[field] = value.strip()
-    SETTINGS.update(image_config)
-    if new_image_provider is not None:  # 校验都过了才改
-        SETTINGS["image_gen_provider"] = new_image_provider
     if body.minimax_tts_model is not None and body.minimax_tts_model not in MINIMAX_TTS_MODELS:
         raise HTTPException(status_code=400, detail="MiniMax 语音模型无效")
     minimax_voice_pattern = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{7,255}$")
@@ -417,6 +451,13 @@ async def update_settings(body: SettingsUpdate):
         value = getattr(body, field)
         if value is not None and value.strip() and not minimax_voice_pattern.fullmatch(value.strip()):
             raise HTTPException(status_code=400, detail=f"{label}格式不正确")
+    for field in ("elevenlabs_tts_key", "elevenlabs_tts_model", "elevenlabs_aion_voice_id", "elevenlabs_connor_voice_id"):
+        value = getattr(body, field)
+        if value is not None:
+            SETTINGS[field] = value.strip()
+    SETTINGS.update(image_config)
+    if new_image_provider is not None:
+        SETTINGS["image_gen_provider"] = new_image_provider
     luckin_changed = False
     if body.gemini_key is not None:
         SETTINGS["gemini_key"] = body.gemini_key

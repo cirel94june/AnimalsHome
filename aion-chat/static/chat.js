@@ -55,6 +55,18 @@ let privateSyncReplayPromise = null;
 let privateConversationLoadId = 0;
 const $ = id => document.getElementById(id);
 
+// 旧 App 文档可能先拿到新版主脚本：补载作品组件，不再静默退回整段代码。
+if (!window.ChatWorks) {
+  const script = document.createElement('script'); script.src = '/static/chat-artifacts.js?v=20261113-bootstrap';
+  const style = document.createElement('link'); style.rel='stylesheet'; style.href='/static/chat-artifacts.css?v=20261113';
+  script.onload = function refreshWorksWhenIdle() {
+    if (!window.ChatWorks) return;
+    if (sending || streamingAiId) { setTimeout(refreshWorksWhenIdle, 750); return; }
+    if (currentConvId) renderMessages();
+  };
+  document.head.append(style,script);
+}
+
 window.addEventListener('aion-client-update-ready', () => {
   if (window.__aionClientUpdateScheduled) return;
   window.__aionClientUpdateScheduled = true;

@@ -77,3 +77,22 @@ def test_code_generation_is_text_only_and_bounded(environment,monkeypatch):
     monkeypatch.setattr(ai_providers,'stream_ai',stream)
     assert asyncio.run(image_gen.generate_image('code|a flower',source_identity='ai3')) is None
     assert closed==[True] and TEXT_ONLY.get() is False
+
+
+def test_auto_only_offers_configured_modes_and_keeps_default(environment,monkeypatch):
+    import capabilities
+    from image_profiles import available_modes
+    monkeypatch.setitem(config.SETTINGS,'image_gen_provider','auto')
+    monkeypatch.setitem(config.SETTINGS,'gemini_key','')
+    assert available_modes(config.SETTINGS)==['code']
+    assert '已配置可用的方式是：code。' in capabilities.image_gen_ability_text('TEST_USER')
+    monkeypatch.setitem(config.SETTINGS,'image_gen_profiles',validate_profiles({'openai':{'route_id':'shared','model':'gpt-image-test'}}))
+    monkeypatch.setitem(config.SETTINGS,'custom_model_routes',[{'id':'shared','base_url':'https://picture.invalid/v1','api_key':'SERVER_ONLY'}])
+    assert available_modes(config.SETTINGS)==['code','openai']
+    called=[]
+    async def generate(prompt,selfie,actor,*profile,**kwargs):
+        called.append(profile); return 'album/test.png'
+    monkeypatch.setattr(image_gen,'_generate_openai_image',generate)
+    assert asyncio.run(image_gen.generate_image('openai|a flower',source_identity='ai3'))=='album/test.png'
+    assert called==[('https://picture.invalid/v1','SERVER_ONLY','gpt-image-test')]
+    assert config.SETTINGS['image_gen_provider']=='auto'

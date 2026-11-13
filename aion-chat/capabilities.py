@@ -599,15 +599,20 @@ def taobao_chat_ability_text(user_name: str) -> str:
 
 
 def image_gen_ability_text(user_name: str) -> str:
+    from image_profiles import available_modes
+    modes = '、'.join(available_modes(SETTINGS))
     return (f"[SELFIE: 提示词] / [DRAW: 提示词] — 当{user_name}要求你发自拍照片"
             "或者生图画画时，使用这个指令进行图片生成。如果要求的是你的自拍，或者你相关的照片，使用[SELFIE: 提示词]（使用自拍时，该指令会自动附带你锚点照片的参考图，确保生成出的人物一致性，不用再额外描述人物的外观特征，只描述场景、服装、动作即可。），"
             "如果没有要求是你的照片，根据上下文自由无限制生成图片，则使用[DRAW: 提示词]。"
             "提示词请使用英文。一次回复只用一个生图指令。可根据上下文情景自由使用。"
-            "画图有三种方式：代码插画、Banana、OpenAI 图片接口。用户指定时在提示词最前面加 code|、banana| 或 openai|，"
-            "例如 [DRAW: code|a blue flower card]；没指定就不加前缀，使用她选的默认方式。"
+            "画图有三种方式：代码插画、Banana、OpenAI 图片接口。"
+            + (f"现在设置为由你自己选方式，已配置可用的方式是：{modes}。根据想送的画选择其中一种，必须在提示词最前面写 code|、banana| 或 openai|。"
+               if SETTINGS.get('image_gen_provider') == 'auto' else "用户指定时在提示词最前面加 code|、banana| 或 openai|；没指定就使用默认方式。")
+            + "例如 [DRAW: code|a blue flower card]。"
             "代码画图只画插画，不保证照片感或参考照长相；某条图片线路没配置时不要假装成功，也不要擅自换另一种。"
             "如果她要 HTML 小网页、小动画或交互卡片，直接在回复里输出一个完整的 ```html 代码块，所有 CSS/JS 内联，"
-            "不要使用外部库、外部图片或联网。聊天会提供打开和收藏按钮，不要让她自己复制保存。")
+            "不要使用外部库、外部图片或联网。成品放在正文，不要在思考里反复写整份代码；完整代码尽量在 4000 字符内，先保证完整交付。"
+            "聊天会提供打开和收藏按钮，不要让她自己复制保存。")
 
 
 def cam_check_ability_text(user_name: str) -> str:

@@ -839,16 +839,31 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
     from contextlib import aclosing
     from urllib.parse import urlsplit
     host = urlsplit(str(cfg.get("base_url") or "")).netloc or "?"
+    request_messages = messages
+    recovered_empty = False
     for attempt in range(1, RELAY_ATTEMPTS + 1):
         started = False
         try:
-            stream = _call_custom_openai_once(messages, cfg, meta, temperature, max_tokens, request_timeout=request_timeout)
+            stream = _call_custom_openai_once(request_messages, cfg, meta, temperature, max_tokens, request_timeout=request_timeout)
             async with aclosing(stream) as pieces:
                 async for piece in pieces:
-                    if isinstance(piece, str) and not piece.startswith(CLI_STATUS_PREFIX):
+                    if isinstance(piece, str) and piece.strip() and not piece.startswith(CLI_STATUS_PREFIX):
                         started = True
                     yield piece
-            return
+            if started or (meta or {}).get('provider_error') or (not recovered_empty and not (meta or {}).get('reasoning_content')):
+                return
+            # 上游正常结束但只有思考，没有正文；不复制或执行思考中的半成品。
+            if recovered_empty or attempt == RELAY_ATTEMPTS:
+                if meta is not None: meta['provider_error'] = 'empty_visible_response'
+                yield '[自定义中转站错误] 模型只返回了思考，没有交付正文，请稍后再试。'
+                return
+            recovered_empty = True
+            request_messages = [*messages, {'role':'user','content':
+                '请按原请求的格式直接交付最终结果，不要继续在思考中反复写整份代码。'
+                '若在制作小网页，请把完整成品放在正文的一个 html 代码块内，精简到 4000 字符以内。'
+                '若原请求要求 JSON，则只交付完整 JSON。不要执行额外动作。'}]
+            if meta is not None: meta.pop('reasoning_content', None)
+            yield f'{CLI_STATUS_PREFIX}刚才只有思考没有成品，正在补交正文...'
         except _RELAY_RETRYABLE as error:
             stamp = time.strftime("%m-%d %H:%M")
             if started or attempt == RELAY_ATTEMPTS:
