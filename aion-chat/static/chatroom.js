@@ -7325,17 +7325,23 @@ function crConfirmTransfer() {
   inputEl.focus();
 }
 
+let crWalletRequest = 0;
 async function crOpenWalletPanel() {
+  const request = ++crWalletRequest;
   document.getElementById('crWalletPanelOverlay').classList.add('show');
   closeSidebar();
   const seat = currentRoom?.type === 'seat_1v1' ? currentRoom.actor : '';  // 座位私聊看 TA 自己的钱包
   const walletApi = seat ? `/api/seat-wallet/${encodeURIComponent(seat)}` : '/api/connor-wallet';
   const walletOwner = seat ? crName(seat) : crConnorName;
+  document.querySelector('#crWalletPanelOverlay .wallet-panel-header span').textContent = `💰 ${walletOwner} 的钱包`;
+  document.getElementById('crWalletBalanceValue').textContent = '读取中…';
+  document.getElementById('crWalletTxList').textContent = '';
   try {
     const [balRes, txRes] = await Promise.all([
-      fetch(`${walletApi}/balance`).then(r => r.json()),
-      fetch(`${walletApi}/transactions?limit=50`).then(r => r.json())
+      fetch(`${walletApi}/balance`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+      fetch(`${walletApi}/transactions?limit=50`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     ]);
+    if (request !== crWalletRequest) return;
     document.getElementById('crWalletBalanceValue').textContent = `¥${(balRes.balance || 0).toFixed(2)}`;
     const list = document.getElementById('crWalletTxList');
     if (!txRes || txRes.length === 0) {
@@ -7353,11 +7359,14 @@ async function crOpenWalletPanel() {
       }).join('');
     }
   } catch(e) {
+    if (request !== crWalletRequest) return;
+    document.getElementById('crWalletBalanceValue').textContent = '—';
     document.getElementById('crWalletTxList').innerHTML = '<div class="wallet-tx-empty">加载失败</div>';
   }
 }
 
 function crCloseWalletPanel() {
+  ++crWalletRequest;
   document.getElementById('crWalletPanelOverlay').classList.remove('show');
 }
 

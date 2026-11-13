@@ -68,6 +68,7 @@ async def pay_user(actor: str, amount: float, description: str) -> bool:
     if cents <= 0:  # 不到一分的不转
         return False
     async with get_db() as db:
+        await db.execute("PRAGMA busy_timeout=15000")
         await db.execute("BEGIN IMMEDIATE")
         if _cents(await _balance(db, actor)) < cents:  # 按分比较，0.3-0.1 还能转 0.2
             await db.commit()

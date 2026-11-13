@@ -34,6 +34,7 @@ BRIEF_DESCRIPTION_CHARS = 160  # Codex 每轮都要把工具清单重发一遍�
 FULL_SCHEMA_CHARS = 3000       # 参数校验没过时，才把这个工具的完整说明给它
 MAX_ROUNDS = 40             # 兜底，不是预算：防打转靠 mcp_policy.TripGuard
 TOOL_TIMEOUT_SECONDS = 60
+CONNECT_TIMEOUT_SECONDS = 20
 OUTING_TIMEOUT_SECONDS = 1200
 WRAP_UP_ROUNDS = 5          # 剩这么多轮提醒收尾
 WRAP_UP_SECONDS = 180       # 或者剩这么多秒（慢工具可能等不到剩 5 轮）
@@ -314,26 +315,44 @@ async def call_model(model_key: str, messages: list[dict], tools: list[dict] | N
         try:
             async with httpx.AsyncClient(timeout=180) as client:
                 resp = await client.post(url, json=payload, headers=headers)
-        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError) as error:
+        except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.ReadError, httpx.TimeoutException) as error:
             if attempt == 2:
                 raise RuntimeError(f"模型线路没连上（{type(error).__name__}）") from None
             await asyncio.sleep(RELAY_RETRY_SECONDS)
             continue
         if resp.status_code != 200:
-            raise RuntimeError(f"模型调用失败 [{resp.status_code}]: {resp.text[:300]}")
+            try:
+                error_data = resp.json().get("error") or {}
+            except (ValueError, AttributeError):
+                error_data = {}
+            empty = isinstance(error_data, dict) and (error_data.get("code") == "empty_response" or error_data.get("type") == "empty_response")
+            if attempt == 1 and (empty or resp.status_code in {429, 502, 503, 504}):
+                await asyncio.sleep(RELAY_RETRY_SECONDS)
+                continue  # 只重新请求模型，不重新执行已经做过的工具动作
+            if empty:
+                raise RuntimeError("模型线路回了空内容，已经重试一次，暂时没能继续")
+            label = "模型线路拒绝了工具请求" if resp.status_code == 400 else "模型调用失败"
+            raise RuntimeError(f"{label} [{resp.status_code}]: {resp.text[:300]}")
         try:
             data = resp.json()
         except ValueError:
             data = None
-        if isinstance(data, dict) and data.get("choices"):
-            break
+        if isinstance(data, dict) and isinstance(data.get("choices"), list) and data["choices"]:
+            first = data["choices"][0]
+            msg = first.get("message") if isinstance(first, dict) else None
+            if isinstance(msg, dict):
+                if msg.get("refusal"):
+                    raise RuntimeError("模型这次拒绝了工具请求，没有继续执行")
+                if str(msg.get("content") or "").strip() or msg.get("tool_calls"):
+                    break
         if attempt == 2:
             raise RuntimeError("模型线路回了空内容（中转站这次没给出回复），过一会儿再试")
         await asyncio.sleep(RELAY_RETRY_SECONDS)
     msg = ((data.get("choices") or [{}])[0]).get("message") or {}
     usage_log.record_json(model_key, "出门逛", data, usage_log.messages_text(messages), str(msg.get("content") or ""),
                           route=route)
-    return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls")}
+    return {"content": msg.get("content"), "tool_calls": msg.get("tool_calls"),
+            **{key: msg[key] for key in ("extra_content", "reasoning_content") if key in msg}}
 
 
 # ── Codex 线路：文字协议（docs/施工方案-MCP出门.md 第三节）──
@@ -446,6 +465,22 @@ def _schema_problem(schema: Any, args: dict[str, Any]) -> str:
 
 # ── MCP 短连接 ──
 
+class _ConnectionLost(RuntimeError):
+    pass
+
+
+def _transient_connection_error(error: BaseException) -> bool:
+    """只恢复传输故障；账号、参数和站点业务错误不重复请求。"""
+    from mcp_client import _is_known_tool_transport_failure
+    if isinstance(error, _ConnectionLost):
+        return True
+    if isinstance(error, ExceptionGroup):
+        return bool(error.exceptions) and all(_transient_connection_error(child) for child in error.exceptions)
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code in {429, 502, 503, 504}
+    return isinstance(error, Exception) and _is_known_tool_transport_failure(error)
+
+
 class _Session:
     """一趟出门用的短连接：进入时连上并取工具，退出时关闭。"""
 
@@ -454,14 +489,66 @@ class _Session:
         self._stack = AsyncExitStack()
         self.session = None
         self.tools: list[dict] = []
+        self._broken = False
+        self._owner: asyncio.Task | None = None
+        self._requests: asyncio.Queue | None = None
 
     async def __aenter__(self):
+        return await self._connect()
+
+    async def _close(self):
+        if self._owner is not None:
+            self._owner.cancel()
+            await self._owner
+            self._owner = None
+
+    async def _serve(self, ready):
+        """SDK 的 TaskGroup 只可取消这一个拥有任务，不能把整趟出门也取消。"""
+        pending = None
+        error = None
         try:
-            return await self._open()
-        except BaseException:
-            # 连到一半失败（握手、列工具、超时、取消）：已打开的连接当场关掉，不等垃圾回收
-            await self._stack.aclose()
-            raise
+            await self._open()
+            ready.set_result(None)
+            while True:
+                name, arguments, pending = await self._requests.get()
+                result = await self.session.call_tool(name, arguments)
+                if not pending.done():
+                    pending.set_result(result)
+                pending = None
+        except BaseException as exc:
+            error = exc
+        finally:
+            # 创建和退出全部异步上下文始终在本任务内。关闭时才能拿到 SDK 真实的传输错误。
+            try:
+                await self._stack.aclose()
+            except BaseException as cleanup:
+                if error is None or isinstance(error, asyncio.CancelledError):
+                    error = cleanup
+            self.session = None
+            if isinstance(error, asyncio.CancelledError):
+                error = _ConnectionLost("工具连接已断开")
+            for future in (ready, pending):
+                if future is not None and not future.done():
+                    future.set_exception(error or _ConnectionLost("工具连接已关闭"))
+
+    async def _connect(self):
+        for attempt in range(2):
+            await self._close()
+            self._stack = AsyncExitStack()
+            self._requests = asyncio.Queue()
+            ready = asyncio.get_running_loop().create_future()
+            self._owner = asyncio.create_task(self._serve(ready))
+            try:
+                async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
+                    await asyncio.shield(ready)
+                self._broken = False
+                return self
+            except BaseException as error:
+                ready.cancel()
+                await self._close()
+                if attempt or not _transient_connection_error(error):
+                    raise
+                await asyncio.sleep(0.5)
 
     async def _open(self):
         from mcp import ClientSession
@@ -486,13 +573,34 @@ class _Session:
         return self
 
     async def __aexit__(self, *exc):
-        await self._stack.aclose()
+        await self._close()
 
     async def call(self, name: str, arguments: dict) -> str:
         return (await self.call_result(name, arguments))[0]
 
     async def call_result(self, name: str, arguments: dict) -> tuple[str, bool]:
-        result = await self.session.call_tool(name, arguments)
+        if self._broken:
+            await self._connect()
+        for attempt in range(2):
+            pending = asyncio.get_running_loop().create_future()
+            try:
+                if self._owner is None or self._owner.done():
+                    raise _ConnectionLost("工具连接已断开")
+                await self._requests.put((name, arguments, pending))
+                result = await asyncio.shield(pending)
+                break
+            except BaseException as error:
+                pending.cancel()
+                if isinstance(error, asyncio.CancelledError):
+                    self._broken = True
+                    await self._close()
+                    raise  # 用户取消或整趟超时：不重连、不重放
+                if _transient_connection_error(error):
+                    self._broken = True
+                # 仅已分类的只读查询可以自动再发一次。写入和游戏动作结果未知时交给上层查状态。
+                if attempt or not _transient_connection_error(error) or mcp_policy.classify(self.server, name, arguments) != mcp_policy.SEE:
+                    raise
+                await self._connect()
         parts = []
         for item in result.content or []:
             text = getattr(item, "text", None)
@@ -639,7 +747,9 @@ async def run_outing(
             full = json.dumps(known_tools[name], ensure_ascii=False)[:FULL_SCHEMA_CHARS]
             return f"参数不对，这次没有发出去：{problem}\n这个工具的完整参数说明：{full}"
         try:
-            text, is_error = await asyncio.wait_for(session.call_result(name, args), timeout=TOOL_TIMEOUT_SECONDS)
+            # MCP 的连接与关闭必须留在同一任务里；重连时不能用 wait_for 另开调用任务。
+            async with asyncio.timeout(TOOL_TIMEOUT_SECONDS):
+                text, is_error = await session.call_result(name, args)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -668,7 +778,8 @@ async def run_outing(
                     if result.get("content"):
                         messages.append({"role": "assistant", "content": result["content"]})
                     return
-                messages.append({"role": "assistant", "content": result.get("content") or "", "tool_calls": calls})
+                messages.append({"role": "assistant", "content": result.get("content") or "", "tool_calls": calls,
+                                 **{key: result[key] for key in ("extra_content", "reasoning_content") if key in result}})
                 for index, tc in enumerate(calls):
                     func = tc.get("function") or {}
                     name = func.get("name", "")

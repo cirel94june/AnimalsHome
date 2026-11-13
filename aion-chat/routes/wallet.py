@@ -4,12 +4,19 @@
 
 import time
 from fastapi import APIRouter
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
 from database import get_db
 
 router = APIRouter()
+
+
+@router.get("/wallets")
+async def wallets_page():
+    from config import BASE_DIR
+    return FileResponse(BASE_DIR / "static" / "wallets.html", headers={"Cache-Control": "no-cache"})
 
 
 async def _get_balance() -> float:

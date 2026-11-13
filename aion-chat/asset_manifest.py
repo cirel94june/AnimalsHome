@@ -70,6 +70,7 @@ _DOCUMENT_ROUTES = {
     "/mcp-tools": "mcp-tools.html",
     "/ai-cards": "ib/cards.html",
     "/skin": "ib/workbench.html",
+    "/wallets": "wallets.html",
 }
 
 

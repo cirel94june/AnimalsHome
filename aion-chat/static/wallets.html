@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f6">
+<title>小钱包</title>
+<style>
+*{box-sizing:border-box}body{margin:0;color:var(--ib-tx,#223953);font-family:var(--ib-sans,system-ui,sans-serif);background:var(--ib-base,#dfe9f6)}
+main{max-width:680px;margin:auto;padding:calc(18px + env(safe-area-inset-top)) 20px calc(30px + env(safe-area-inset-bottom))}
+button,a{color:inherit;font:inherit}button{cursor:pointer;min-height:44px}button:focus-visible,a:focus-visible{outline:3px solid #466fa7;outline-offset:3px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:30px}header a{text-decoration:none;display:grid;place-items:center;min-width:44px;min-height:44px;border-radius:50%;background:#ffffff80}header div{flex:1}h1{font-family:var(--ib-serif,Georgia,serif);font-size:30px;font-weight:500;margin:0}header p{font-size:12px;margin:5px 0 0;color:var(--ib-tx2,#526985)}
+.refresh{border:1px solid #fff;border-radius:30px;padding:0 16px;background:#ffffff70}.eyebrow{font-size:10px;letter-spacing:.22em;color:var(--ib-tx2,#526985);margin:0 0 10px}.intro{font-size:14px;line-height:1.8;color:var(--ib-tx2,#526985);margin:0 0 22px}
+.wallets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.wallet{position:relative;overflow:hidden;min-width:0;text-align:left;padding:18px 15px;border-radius:22px;border:1px solid #ffffffd9;background:linear-gradient(140deg,#ffffffb8,#ffffff55);backdrop-filter:blur(22px);box-shadow:0 8px 24px #57759913;color:var(--ib-tx,#223953)}
+.wallet::after{content:'';position:absolute;width:90px;height:90px;border-radius:50%;background:var(--accent,#7598c6);opacity:.1;right:-20px;bottom:-22px}.wallet[aria-pressed="true"]{border:2px solid var(--ib-acc,#6b8cbd);padding:17px 14px;box-shadow:0 8px 24px #57759925}.owner{display:flex;align-items:center;gap:8px;min-width:0}.owner img{width:30px;height:30px;object-fit:cover;border-radius:50%;background:#fff}.owner span{font-size:14px;overflow-wrap:anywhere}.balance{display:block;font-family:var(--ib-serif,Georgia,serif);font-variant-numeric:tabular-nums;font-size:27px;margin-top:16px;overflow-wrap:anywhere}.wallet small{font-size:11px;display:block;color:var(--ib-tx2,#526985);margin-top:8px;line-height:1.6}
+.ledger{margin-top:26px;border:1px solid #ffffffdc;background:#ffffff9c;border-radius:24px;padding:20px 17px;backdrop-filter:blur(24px)}.ledger-head{display:flex;justify-content:space-between;align-items:center;gap:10px}h2{font-family:var(--ib-serif,Georgia,serif);font-weight:500;font-size:22px;margin:0;overflow-wrap:anywhere}.stamp{font-size:11px;color:var(--ib-tx2,#526985);margin:8px 0 16px}.tx{display:flex;gap:12px;align-items:center;border-top:1px solid #8ba2c124;padding:16px 0}.tx-info{flex:1;min-width:0}.direction{font-size:14px;line-height:1.6;overflow-wrap:anywhere}.description{font-size:12px;color:var(--ib-tx2,#526985);margin-top:5px;overflow-wrap:anywhere}.time{font-size:11px;color:var(--ib-tx2,#526985);margin-top:7px}.amount{font-variant-numeric:tabular-nums;font-size:18px;white-space:nowrap;color:#46625c}.amount.out{color:#976452}.empty{font-size:14px;line-height:1.8;color:var(--ib-tx2,#526985);padding:24px 0;text-align:center}.more{width:100%;border:1px solid #bccce1;border-radius:14px;background:#ffffff80}.notice{font-size:12px;line-height:1.8;color:var(--ib-tx2,#526985);margin:20px 2px 0}#status{font-size:13px;line-height:1.7;color:var(--ib-tx2,#526985)}[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<header><a href="/" aria-label="回家">‹</a><div><h1>小钱包</h1><p>把每一份小心意，记得清清楚楚。</p></div><button class="refresh" id="refresh">刷新</button></header>
+<p class="eyebrow">OUR LITTLE POCKETS</p>
+<p class="intro">每个人都有自己的口袋。点开一张卡，看看钱从哪里来、给了谁。</p>
+<div id="status" role="status" aria-live="polite">正在打开小钱包……</div>
+<section class="wallets" id="wallets" aria-label="每个人的小钱包"></section>
+<section class="ledger" id="ledger" hidden aria-label="收支明细">
+<div class="ledger-head"><h2 id="ledger-title"></h2><span>收支明细</span></div>
+<p class="stamp" id="stamp"></p><div id="transactions" aria-live="polite"></div>
+<button class="more" id="more" hidden>再看一些</button>
+</section>
+<p class="notice">这里显示实际记下来的零花钱收支。聊天里只说“掏出钱”，没有产生转账记录时，钱包不会扣钱。</p>
+</main>
+<script src="/static/wallets.js"></script>
+</body>
+</html>

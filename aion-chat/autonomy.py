@@ -2083,12 +2083,18 @@ def _wish_result_completed(value: Any) -> bool:
 
 
 async def _wish_wallet_ability(actor: str, user_name: str) -> tuple[str, float]:
-    if actor == "connor":
+    from seat_chat import SEAT_ACTORS
+    if actor in SEAT_ACTORS:
+        from routes.seat_wallet import get_seat_balance
+        balance = await get_seat_balance(actor)
+    elif actor == "connor":
         from routes.connor_wallet import _get_connor_balance
         balance = await _get_connor_balance()
-    else:
+    elif actor == "aion":
         from routes.wallet import _get_balance
         balance = await _get_balance()
+    else:
+        raise ValueError("没有这个钱包")
     return (
         f"[转账：n元] — 给{user_name}转账（n为正数），会从你的钱包余额中扣除。"
         f"你的钱包当前余额：{balance:.2f}元。余额不足时不要转账。",
@@ -2097,32 +2103,45 @@ async def _wish_wallet_ability(actor: str, user_name: str) -> tuple[str, float]:
 
 
 async def _execute_wish_transfer(actor: str, amount: float) -> tuple[bool, str]:
+    import math
+    from seat_chat import SEAT_ACTORS
     amount = round(float(amount or 0), 2)
-    if amount <= 0:
+    if not math.isfinite(amount) or amount <= 0:
         return False, "转账金额必须大于0元"
+    description = f"{_actor_label(actor)}通过许愿池转账给{_actor_label('user')} {amount:g}元"
+    if actor in SEAT_ACTORS:
+        from routes.seat_wallet import pay_user, get_seat_balance
+        if await pay_user(actor, amount, description):
+            return True, ""
+        return False, f"钱包余额不足，当前余额{await get_seat_balance(actor):.2f}元"
     if actor == "connor":
-        from routes.connor_wallet import _get_connor_balance
-        balance = float(await _get_connor_balance())
+        wallet_types = ("connor_wallet_user", "connor_wallet_ai")
         record_type = "connor_wallet_ai"
         prefix = "cwt"
         event_type = "connor_wallet_update"
-    else:
-        from routes.wallet import _get_balance
-        balance = float(await _get_balance())
+    elif actor == "aion":
+        wallet_types = ("wallet_user", "wallet_ai")
         record_type = "wallet_ai"
         prefix = "wt"
         event_type = "wallet_update"
-    if balance + 1e-9 < amount:
-        return False, f"钱包余额不足，当前余额{balance:.2f}元"
+    else:
+        return False, "没有这个钱包"
     now = time.time()
     async with get_db() as db:
+        await db.execute("PRAGMA busy_timeout=15000")
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT COALESCE(SUM(amount), 0) FROM bookkeeping WHERE record_type IN (?, ?)", wallet_types)
+        balance = float((await cur.fetchone())[0])
+        if round(balance * 100) < round(amount * 100):
+            await db.commit()
+            return False, f"钱包余额不足，当前余额{balance:.2f}元"
         await db.execute(
             "INSERT INTO bookkeeping (id, record_type, amount, description, created_at) VALUES (?,?,?,?,?)",
             (
                 f"{prefix}_{time.time_ns()}_wish",
                 record_type,
                 -amount,
-                f"{_actor_label(actor)}通过许愿池转账给{_actor_label('user')} {amount:g}元",
+                description,
                 now,
             ),
         )
