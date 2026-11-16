@@ -1591,10 +1591,8 @@ def _build_codex_chat_environment(base_env: dict | None = None, *, prepare_catal
     desktop_auth = Path(_CODEX_HOME) / "auth.json"
     chat_auth = chat_home / "auth.json"
 
-    if desktop_auth.is_file():
-        chat_home.mkdir(parents=True, exist_ok=True)
-        if not chat_auth.exists() or desktop_auth.stat().st_mtime_ns > chat_auth.stat().st_mtime_ns:
-            shutil.copy2(desktop_auth, chat_auth)
+    from codex_auth import prepare_auth_copy
+    prepare_auth_copy(desktop_auth,chat_auth,[DATA_DIR/'repair-room'/'codex-home'/'auth.json'])
 
     # Do not inherit desktop task tools/identity when the home server was
     # launched from a Codex terminal. Repair has its own environment builder.

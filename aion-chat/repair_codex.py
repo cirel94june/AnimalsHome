@@ -100,12 +100,12 @@ async def run_codex(store, job, instructions, context):
             prompt += '\n请结合工作讨论和必要调查整理简短方案，明确范围和验收方式，使用方案协议保存，等待用户确认。'
 
     # A separate home preserves work threads while sharing only authentication.
-    from ai_providers import _CODEX_HOME
+    from ai_providers import _CODEX_HOME, _CODEX_CHAT_HOME
+    from codex_auth import prepare_auth_copy
     work_home = store.directory / "codex-home"
     work_home.mkdir(exist_ok=True)
     auth = Path(_CODEX_HOME) / "auth.json"
-    if auth.is_file():
-        shutil.copy2(auth, work_home / "auth.json")
+    prepare_auth_copy(auth,work_home/'auth.json',[Path(_CODEX_CHAT_HOME)/'auth.json'])
     # Load project/global instruction files explicitly; do not inherit companion overrides.
     for rule in (Path(_CODEX_HOME) / "AGENTS.md", Path(__file__).parent.parent / "AGENTS.md"):
         if rule.is_file():
