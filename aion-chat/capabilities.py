@@ -608,7 +608,7 @@ def image_gen_ability_text(user_name: str) -> str:
             "画图有三种方式：代码插画、Banana、OpenAI 图片接口。"
             + (f"现在设置为由你自己选方式，已配置可用的方式是：{modes}。根据想送的画选择其中一种，必须在提示词最前面写 code|、banana| 或 openai|。"
                if SETTINGS.get('image_gen_provider') == 'auto' else "用户指定时在提示词最前面加 code|、banana| 或 openai|；没指定就使用默认方式。")
-            + "例如 [DRAW: code|a blue flower card]。"
+            + "例如 [DRAW: code|a blue flower card]。自动模式若漏写方式，家里优先使用已配置的 OpenAI 图片线路，其次 Banana，没有图片线路才用代码。"
             "代码画图只画插画，不保证照片感或参考照长相；某条图片线路没配置时不要假装成功，也不要擅自换另一种。"
             "如果她要 HTML 小网页、小动画或交互卡片，直接在回复里输出一个完整的 ```html 代码块，所有 CSS/JS 内联，"
             "不要使用外部库、外部图片或联网。成品放在正文，不要在思考里反复写整份代码；完整代码尽量在 4000 字符内，先保证完整交付。"

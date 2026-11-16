@@ -67,6 +67,7 @@ def test_code_generation_is_text_only_and_bounded(environment,monkeypatch):
     from text_only import TEXT_ONLY
     monkeypatch.setitem(config.SETTINGS,'image_gen_provider','code')
     monkeypatch.setattr(image_gen,'_code_model',lambda who:'own-model')
+    monkeypatch.setitem(config.MODELS,'own-model',{'provider':'custom_openai','model':'test-own','base_url':'https://test.invalid','api_key':'TEST'})
     closed=[]
     async def stream(*args):
         try:

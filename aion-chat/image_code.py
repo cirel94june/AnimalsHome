@@ -39,7 +39,7 @@ def instructions() -> str:
         "用「画画清单」画一张图。只输出一个 JSON 对象，不要解释，不要代码块。格式：\n"
         '{"width":768,"height":768,"background":"#fff4e0","shapes":[…]}\n'
         "width、height 在 256 到 1024 之间。background 是一个颜色，或两个颜色的数组（从上到下渐变）。\n"
-        "shapes 按顺序一层层往上画，最多 400 个，尽量多用形状把细节画足。可用的形状：\n"
+        "shapes 按顺序一层层往上画，最多 80 个；完整 JSON 控制在 12000 字符以内，先保证完整成图，不要反复推演或在思考里写整份代码。可用的形状：\n"
         '{"type":"rect","x":0,"y":0,"w":100,"h":50,"r":8,"fill":"#f00","stroke":"#000","width":2}\n'
         '{"type":"ellipse","cx":50,"cy":50,"rx":30,"ry":20,"fill":"#0af","stroke":"#000","width":2}\n'
         '{"type":"polygon","points":[[0,0],[10,0],[5,9]],"fill":"#0a0","stroke":"#000","width":1}\n'

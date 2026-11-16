@@ -159,6 +159,7 @@ def test_code_mode_uses_the_ais_own_model_and_saves(world, monkeypatch):
     calls, _, saved = world
     _set(monkeypatch, "code")
     monkeypatch.setattr(image_gen, "_code_model", lambda who: f"model-of-{who}")
+    monkeypatch.setitem(config.MODELS,'model-of-ai3',{'provider':'custom_openai','model':'test-own','base_url':'https://test.invalid','api_key':'TEST'})
     seen = {}
 
     async def stream(messages, model_key, meta):
@@ -176,6 +177,7 @@ def test_code_mode_failure_is_none(world, monkeypatch):
     _, _, saved = world
     _set(monkeypatch, "code")
     monkeypatch.setattr(image_gen, "_code_model", lambda who: "m")
+    monkeypatch.setitem(config.MODELS,'m',{'provider':'custom_openai','model':'test-own','base_url':'https://test.invalid','api_key':'TEST'})
 
     async def stream(messages, model_key, meta):
         yield "我不会画"

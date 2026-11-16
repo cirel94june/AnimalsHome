@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 import ai_providers
+import config
 import html_works
 import image_gen
 from text_only import TEXT_ONLY
@@ -12,6 +13,7 @@ from text_only import TEXT_ONLY
 
 @pytest.mark.parametrize('ending', ['timeout', 'cancel', 'provider_error'])
 def test_review_code_stream_closes_and_restores_text_only(monkeypatch, ending):
+    monkeypatch.setitem(config.MODELS,'TEST_OWN_MODEL',{'provider':'custom_openai','model':'TEST_MODEL','base_url':'https://model.invalid/v1','api_key':'TEST_KEY'})
     monkeypatch.setattr(image_gen, '_code_model', lambda actor: 'TEST_OWN_MODEL')
     monkeypatch.setattr(image_gen, 'IMAGE_GEN_TIMEOUT', .05 if ending == 'timeout' else 1)
     states, closed = [], []

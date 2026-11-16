@@ -89,6 +89,7 @@ async def _post_openai_images(client, api_base: str, api_key: str, model: str, p
 
 async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: str,
                                  base_url: str, api_key: str, model: str, references=None) -> str | None:
+    stage = 'request'
     try:
         content = [{"type": "text", "text": prompt}]
         for ref in references or []:
@@ -128,6 +129,7 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
                     json={"model": model, "stream": False, "messages": [{"role": "user", "content": content}]},
                 )
             response.raise_for_status()
+            stage = 'response'
             source = _openai_image_source(response.json())
             if not source:
                 _fail('OpenAI 线路没有返回图片，请确认填的是能生成图片的模型。')
@@ -140,21 +142,36 @@ async def _generate_openai_image(prompt: str, is_selfie: bool, source_identity: 
                 image_bytes = base64.b64decode(encoded, validate=True)
             elif source.startswith(("https://", "http://")):
                 # 图片通常位于独立 CDN，不向下载地址传递中转站的 Key。
+                stage = 'download'
                 image_response = await client.get(source, follow_redirects=True)
                 image_response.raise_for_status()
                 image_bytes = image_response.content
             else:
                 raise ValueError("不支持的图片地址格式")
 
+        stage = 'save'
         return await save_generated_image(image_bytes, prompt=prompt, model=model,
                                           actor=source_identity, kind="selfie" if is_selfie else "draw",
                                           reference_bytes=reference_bytes)
     except httpx.HTTPStatusError as exc:
-        _fail(f'OpenAI 图片服务这次返回 {exc.response.status_code}，请检查图片 Key、模型名和可用额度。')
-        print(f"[image_gen] 自定义生图请求失败（HTTP {exc.response.status_code}），未切换至 Gemini")
+        code = exc.response.status_code
+        if stage == 'download':
+            _fail(f'图片服务已返回链接，但下载图片失败（{code}）；可能是图片链接失效或下载权限不足。')
+        else:
+            hint = {401:'图片 Key 无效或已过期',403:'图片线路没有权限使用这个模型',
+                    404:'图片模型或接口地址不存在',429:'图片服务限流或额度不足'}.get(code,'图片服务暂时出错')
+            _fail(f'OpenAI 图片服务返回 {code}：{hint}。')
+        print(f"[image_gen] OpenAI failure stage={stage} type=HTTPStatusError status={code}")
+    except httpx.TimeoutException:
+        _fail('图片已生成链接，但下载等候超时。' if stage == 'download' else '图片服务等候超时，这次没有收到完整图片。')
+        print(f'[image_gen] OpenAI failure stage={stage} type=TimeoutException')
     except Exception as exc:
+        _fail({'request':'图片线路连接或准备失败，请检查线路及参考照片。',
+               'response':'图片服务返回的内容无法读取成图片，请检查该模型支持的图片接口。',
+               'download':'图片服务已返回链接，但图片下载失败。',
+               'save':'图片已返回，但保存相册失败，可能是图片损坏或超过大小限制。'}[stage])
         # 不打印请求 URL、响应正文等可能包含凭据的内容。
-        print(f"[image_gen] 自定义生图失败（{type(exc).__name__}），未切换至 Gemini")
+        print(f"[image_gen] OpenAI failure stage={stage} type={type(exc).__name__}")
     return None
 
 
@@ -171,28 +188,50 @@ async def _generate_code_image(prompt: str, is_selfie: bool, source_identity: st
     from model_json import extract_json_object
     from contextlib import aclosing
     from text_only import TEXT_ONLY
+    from config import model_snapshot,ensure_model_unchanged,ModelChanged
     model_key = _code_model(source_identity)
     if not model_key:
         _fail('代码画图需要先在这位 AI 的名片里选好聊天模型。')
         return None
-    meta: dict = {}
-    text = ""
+    pinned = model_snapshot(model_key)
     token = TEXT_ONLY.set(True)
     try:
         ask = f"{image_code.instructions()}\n\n要画的内容：{prompt}"
         async with asyncio.timeout(IMAGE_GEN_TIMEOUT):
-            async with aclosing(stream_ai([{"role": "user", "content": ask}], model_key, meta)) as chunks:
-                async for chunk in chunks:
-                    if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
-                        text += chunk
-                        if len(text) > 180000:
-                            _fail('代码画图的内容太长，这次已停止，请让 AI 画简单一点。')
-                            return None
-        if meta.get("provider_error"):
-            _fail('这位 AI 的聊天模型这次报错，代码画图没能完成。')
-            print("[image_gen] 代码画图：模型报错")
-            return None
-        data = await asyncio.to_thread(image_code.render, extract_json_object(text))
+            for attempt in range(2):
+                meta: dict = {}
+                text = ''
+                request = ask if not attempt else ask + '\n上次没有交付可画的完整清单。请重新给出完整 JSON，使用不超过 40 个形状，不要省略号、HTML、Python 或 JavaScript。'
+                if _code_model(source_identity) != model_key:
+                    raise ModelChanged('code_image_owner_changed')
+                ensure_model_unchanged(model_key,pinned)
+                async with aclosing(stream_ai([{"role": "user", "content": request}], model_key, meta)) as chunks:
+                    async for chunk in chunks:
+                        if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
+                            text += chunk
+                            if len(text) > 180000:
+                                _fail('代码画图的内容太长，这次已停止，请让 AI 画简单一点。')
+                                return None
+                if meta.get('provider_error'):
+                    _fail('这位 AI 的聊天模型这次报错，代码画图没能完成。')
+                    print('[image_gen] 代码画图：模型报错')
+                    return None
+                plan = extract_json_object(text, predicate=lambda value:isinstance(value.get('shapes'),list))
+                try:
+                    data = await asyncio.to_thread(image_code.render,plan)
+                except (ValueError,TypeError,OverflowError):
+                    data = None
+                if data:
+                    break
+                print(f'[image_gen] 代码画图：清单无效 attempt={attempt+1} chars={len(text)}')
+    except ModelChanged:
+        _fail('画图期间这位 AI 的模型线路被改动了，本次已停止，请重新发起。')
+        print('[image_gen] 代码画图失败 type=ModelChanged')
+        return None
+    except (TimeoutError,httpx.TimeoutException):
+        _fail('代码画图的聊天模型等候超时，这次没有收到完整画画清单。')
+        print('[image_gen] 代码画图失败 type=TimeoutException')
+        return None
     except Exception as exc:
         _fail('代码画图这次没完成，模型需要给出完整的画画清单，请稍后重试。')
         print(f"[image_gen] 代码画图失败（{type(exc).__name__}）")
@@ -223,7 +262,10 @@ async def generate_image(prompt: str, is_selfie: bool = False, source_identity: 
               ("image_gen_base_url", "image_gen_api_key", "image_gen_model")]
     provider = explicit or (SETTINGS.get("image_gen_provider") or "").strip()
     if provider == 'auto':
-        provider = 'code'  # 旧模型没写方式前缀时的兼容；新提示词要求 AI 自己选可用方式并注明前缀。
+        from image_profiles import available_modes
+        modes = available_modes(SETTINGS)
+        # 忘写前缀时优先已配置的图片模型；明确选择 code 仍按代码画图，不在失败后偷换线路。
+        provider = 'openai' if 'openai' in modes else 'gemini' if 'banana' in modes else 'code'
     if provider in ('openai', 'gemini'):
         from image_profiles import resolve_profile
         try:
