@@ -14,6 +14,7 @@
   --xhs-line:var(--line, var(--border, #f0e4dd));
   --xhs-card:var(--card, var(--surface, #fff));
 }
+#cloudLoginFrame[hidden] { display:none !important; }
 body.sub-page {
   display:block;
   max-width:none;
@@ -534,13 +535,25 @@ pre {
       <div class="grid" style="margin-top:14px">
         <div class="inline-card">
           <h2>操作账号</h2>
+          <div id="cloudLoginBox" hidden>
+            <p class="hint">用小红书扫码，登录会保存在云端。日常不用复制 Cookie；平台要求重新验证时，再扫码即可。AI 只阅读，不发评论。</p>
+            <div class="row">
+              <button type="button" id="cloudStartBtn" onclick="cloudStart()">扫码登录</button>
+              <button type="button" class="secondary" id="cloudConfirmBtn" onclick="cloudConfirm()" hidden>我已在手机确认</button>
+              <button type="button" class="ghost" onclick="cloudCancel()">关闭登录画面</button>
+            </div>
+            <p id="cloudLoginHint" class="hint" aria-live="polite"></p>
+            <img id="cloudLoginFrame" alt="小红书登录画面" hidden style="display:block;max-width:100%;height:auto;margin-top:10px">
+          </div>
+          <details><summary class="hint">手动登录（兼容原有方式）</summary>
           <label>Cookie（共享的小红书操作账号）</label>
           <textarea id="cookieInput" placeholder="a1=...; web_session=...（保存后不会回显原文；留空保存不会覆盖）"></textarea>
+          <label class="check"><input type="checkbox" id="clearCookieInput"> 清空已保存 cookie</label>
+          </details>
           <div class="mini-note" id="cookieHint">读取中...</div>
           <div class="hint" id="accountHint" style="margin-top:6px"></div>
           <div class="row" style="margin-top:10px">
             <button class="secondary" type="button" onclick="checkLogin()">测试登录</button>
-            <label class="check"><input type="checkbox" id="clearCookieInput"> 清空已保存 cookie</label>
           </div>
         </div>
 
@@ -652,7 +665,7 @@ const $ = id => document.getElementById(id);
 let currentConfig = null;
 
 async function api(method, url, body) {
-  const opts = { method, headers: {'Content-Type': 'application/json'} };
+  const opts = { method, headers: {'Content-Type': 'application/json','X-Requested-With':'AnimalsHome'} };
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
   const text = await res.text();
@@ -785,6 +798,9 @@ async function loadConfig(options = {}) {
   $('autoEnabledInput').checked = !!currentConfig.auto_enabled;
   $('roamModeInput').value = currentConfig.roam_mode === 'target' ? 'target' : 'explore';
   $('writeInput').checked = !!currentConfig.allow_write_comments;
+  $('writeInput').disabled = !!currentConfig.cloud_login;
+  $('cloudLoginBox').hidden = !currentConfig.cloud_login_available;
+  $('cloudStartBtn').textContent = currentConfig.cloud_login ? '重新扫码登录' : '扫码登录';
   $('targetUserIdInput').value = currentConfig.target_user_id || '';
   $('targetNicknameInput').value = currentConfig.target_nickname || '';
   $('targetXsecInput').value = currentConfig.target_xsec_token || '';
@@ -800,7 +816,8 @@ async function loadConfig(options = {}) {
   $('runPrimaryBtn').textContent = '让' + actorName('aion') + '跑一次';
   $('runSecondaryBtn').textContent = '让' + actorName('connor') + '跑一次';
   renderSeatActors();
-  $('cookieHint').textContent = currentConfig.cookie_configured ? ('已保存：' + currentConfig.cookie_masked) : '尚未保存 cookie';
+  $('cookieHint').textContent = currentConfig.cloud_login ? '云端登录已保存，AI 使用这个账号阅读。' :
+    (currentConfig.cookie_configured ? ('已保存：' + currentConfig.cookie_masked) : '尚未登录');
   const accountBits = [];
   if (currentConfig.logged_in_nickname) accountBits.push('昵称：' + currentConfig.logged_in_nickname);
   if (currentConfig.logged_in_user_id) accountBits.push('user_id：' + currentConfig.logged_in_user_id);
@@ -811,6 +828,61 @@ async function loadConfig(options = {}) {
   updateOverview();
   if (!options.silent) setStatus('设置已加载。');
 }
+let cloudFrameURL = null, cloudFrameTimer = null, cloudUntil = 0;
+async function cloudFrame() {
+  clearTimeout(cloudFrameTimer);
+  if (Date.now() >= cloudUntil) {
+    $('cloudLoginHint').textContent = '登录画面已到期，需要时重新点扫码登录。';
+    return;
+  }
+  try {
+    const res = await fetch('/api/xhs-lite/cloud-login/frame', {method:'POST',headers:{'X-Requested-With':'AnimalsHome'}});
+    if (!res.ok) throw new Error('登录画面暂时不可用，请重新点扫码登录。');
+    const next = URL.createObjectURL(await res.blob());
+    if (cloudFrameURL) URL.revokeObjectURL(cloudFrameURL);
+    cloudFrameURL = next;
+    $('cloudLoginFrame').src = next;
+    $('cloudLoginFrame').hidden = false;
+    cloudFrameTimer = setTimeout(cloudFrame,5000);
+  } catch(err) { $('cloudLoginHint').textContent = err.message; }
+}
+async function cloudStart() {
+  $('cloudStartBtn').disabled = true;
+  $('cloudLoginHint').textContent = '正在打开云端登录画面，请稍等…';
+  try {
+    const res = await api('POST','/api/xhs-lite/cloud-login/start');
+    if (!res.ok) throw new Error(res.error || '打开失败，请稍后重试。');
+    cloudUntil = Date.now()+res.expires_in*1000;
+    $('cloudConfirmBtn').hidden = false;
+    $('cloudLoginHint').textContent = '请用要交给 AI 的小红书账号扫码，并在手机上确认。只有一部手机时，可以保存登录画面后用小红书扫一扫的相册识别。';
+    await cloudFrame();
+  } catch(err) { $('cloudLoginHint').textContent = err.message; }
+  finally { $('cloudStartBtn').disabled = false; }
+}
+async function cloudConfirm() {
+  $('cloudConfirmBtn').disabled = true;
+  clearTimeout(cloudFrameTimer);
+  try {
+    const res = await api('POST','/api/xhs-lite/cloud-login/confirm');
+    if (!res.ok) throw new Error(res.error || '尚未登录成功，请检查手机。');
+    await cloudCancel();
+    await loadConfig({silent:true});
+    $('cloudLoginHint').textContent = '登录已保存：'+(res.account.nickname || '小红书账号')+'。以后不用自己抓 Cookie。';
+    setStatus('云端登录已保存。现有巡游开关保持原样。');
+  } catch(err) { $('cloudLoginHint').textContent = err.message; if(Date.now()<cloudUntil) cloudFrameTimer=setTimeout(cloudFrame,5000); }
+  finally { $('cloudConfirmBtn').disabled = false; }
+}
+async function cloudCancel() {
+  cloudUntil = 0;
+  clearTimeout(cloudFrameTimer);
+  $('cloudLoginFrame').hidden = true;
+  $('cloudLoginFrame').removeAttribute('src');
+  $('cloudConfirmBtn').hidden = true;
+  if (cloudFrameURL) URL.revokeObjectURL(cloudFrameURL);
+  cloudFrameURL = null;
+  await api('POST','/api/xhs-lite/cloud-login/cancel');
+}
+window.addEventListener('pagehide',()=>{ clearTimeout(cloudFrameTimer); if(cloudFrameURL) URL.revokeObjectURL(cloudFrameURL); });
 let xhsRunning = false;  // 有一次巡游还没结束时，所有「跑一次」按钮都不能点（重建按钮也一样）
 // 狗蛋等座位：和小克 / Lucien 一样有启用开关和「跑一次」按钮（名字用 textContent）
 function seatIds() {

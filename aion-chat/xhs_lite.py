@@ -1,5 +1,8 @@
 import asyncio
+import hashlib
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +18,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": False,
     "auto_enabled": False,
     "cookie": "",
+    "cloud_login": False,
+    "login_generation": 0,
     "target_user_id": "",
     "target_xsec_token": "",
     "target_nickname": "",
@@ -53,6 +58,8 @@ def _seat_ready(actor: str) -> bool:
 
 
 _ROAM_LOCKS: dict[str, asyncio.Lock] = {}
+_ACCOUNT_LOCK = asyncio.Lock()
+_COOKIE_ACCOUNTS: dict[str, tuple] = {}
 
 
 def known_actors() -> tuple[str, ...]:
@@ -78,6 +85,7 @@ def load_config() -> dict[str, Any]:
     else:
         raw = {}
     cfg = _deep_merge(DEFAULT_CONFIG, raw)
+    if cfg.get('cloud_login'):cfg['allow_write_comments'] = False
     cfg.setdefault("actors", {})
     for actor in ("aion", "connor"):
         cfg["actors"].setdefault(actor, {"enabled": True})
@@ -86,6 +94,8 @@ def load_config() -> dict[str, Any]:
 
 def save_config(updates: dict[str, Any]) -> dict[str, Any]:
     cfg = load_config()
+    owner_changed = ('cloud_login' in updates or
+                     ('logged_in_user_id' in updates and updates['logged_in_user_id'] != cfg.get('logged_in_user_id')))
     for key, value in updates.items():
         if key == "actors" and isinstance(value, dict):
             actors = cfg.setdefault("actors", {})
@@ -96,7 +106,16 @@ def save_config(updates: dict[str, Any]) -> dict[str, Any]:
                 actors[actor].update(actor_update)
         elif key in DEFAULT_CONFIG:
             cfg[key] = value
-    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    if owner_changed:cfg['login_generation'] = int(cfg.get('login_generation',0))+1
+    fd, temporary = tempfile.mkstemp(dir=CONFIG_PATH.parent,prefix='.xhs-config-')
+    try:
+        with os.fdopen(fd,'w',encoding='utf-8') as target:
+            json.dump(cfg,target,ensure_ascii=False,indent=2)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary,CONFIG_PATH)
+    finally:
+        if os.path.exists(temporary):os.unlink(temporary)
     return load_config()
 
 
@@ -129,9 +148,12 @@ def actor_label(actor: str) -> str:
 def public_config() -> dict[str, Any]:
     cfg = load_config()
     cookie = cfg.get("cookie") or ""
-    public = {k: v for k, v in cfg.items() if k != "cookie"}
+    public = {k: v for k, v in cfg.items() if k not in {"cookie","login_generation"}}
     public["cookie_configured"] = bool(cookie.strip())
-    public["cookie_masked"] = mask_cookie(cookie)
+    public["cookie_masked"] = "" if cfg.get('cloud_login') else mask_cookie(cookie)
+    import xhs_browser
+    public["cloud_login_available"] = xhs_browser.configured()
+    if cfg.get('cloud_login'):public['allow_write_comments'] = False
     public["actor_labels"] = {
         "aion": actor_label("aion"),
         "connor": actor_label("connor"),
@@ -155,6 +177,51 @@ def mask_cookie(cookie: str) -> str:
 
 
 async def _run_worker(endpoint: str, body: dict | None = None, *, cookie: str | None = None, timeout: int = 90) -> dict:
+    async with _ACCOUNT_LOCK:
+        return await _run_worker_locked(endpoint,body,cookie=cookie,timeout=timeout)
+
+
+def _account_version(cfg):
+    return (*_account_identity(cfg),cfg.get('cookie'))
+
+
+def _account_identity(cfg):
+    return (bool(cfg.get('cloud_login')),cfg.get('logged_in_user_id'),cfg.get('login_generation',0))
+
+
+async def _run_worker_locked(endpoint: str, body: dict | None = None, *, cookie: str | None = None, timeout: int = 90) -> dict:
+    cfg = load_config()
+    if cookie is not None:
+        fingerprint = hashlib.sha256(cookie.encode()).hexdigest()
+        identity = _account_identity(cfg)
+        if cookie != cfg.get('cookie') and _COOKIE_ACCOUNTS.get(fingerprint) != identity:
+            raise RuntimeError('登录设置刚刚改变，本次巡游已停止，请重新操作。')
+        # Existing roam callers carry their original cookie across awaits. Keep a
+        # bounded, secret-free association so renewal of the SAME account is
+        # allowed, while a different confirmed account stops the old roam.
+        _COOKIE_ACCOUNTS[fingerprint] = identity
+        while len(_COOKIE_ACCOUNTS)>256:_COOKIE_ACCOUNTS.pop(next(iter(_COOKIE_ACCOUNTS)))
+    if cfg.get('cloud_login'):
+        if endpoint not in {'check-login','search','list-feeds','get-feed-detail','user-profile','list-followings'}:
+            raise RuntimeError('云端小红书目前只开放阅读，不能评论或发布。')
+        import xhs_browser
+        session = await xhs_browser.call('credentials')
+        if _account_version(load_config()) != _account_version(cfg):
+            raise RuntimeError('登录设置刚刚改变，本次巡游已停止，请重新操作。')
+        candidate = session.get('cookie') or ''
+        if not candidate:raise RuntimeError('小红书登录已失效，请在巡游页面重新扫码。')
+        if candidate != cfg.get('cookie'):
+            account = await _run_worker_local('check-login',{},cookie=candidate,timeout=60)
+            if _account_version(load_config()) != _account_version(cfg):
+                raise RuntimeError('登录设置刚刚改变，本次巡游已停止，请重新操作。')
+            if not account.get('logged_in') or account.get('user_id') != cfg.get('logged_in_user_id'):
+                raise RuntimeError('小红书账号有变化，请在巡游页面重新确认登录。')
+            save_config({'cookie':candidate})
+        cookie = candidate
+    return await _run_worker_local(endpoint,body,cookie=cookie,timeout=timeout)
+
+
+async def _run_worker_local(endpoint: str, body: dict | None = None, *, cookie: str | None = None, timeout: int = 90) -> dict:
     payload = {
         "endpoint": endpoint,
         "body": body or {},
@@ -195,11 +262,20 @@ async def _run_worker(endpoint: str, body: dict | None = None, *, cookie: str | 
 
 
 async def check_login() -> dict:
-    cfg = load_config()
-    cookie = (cfg.get("cookie") or "").strip()
-    if not cookie:
-        raise RuntimeError("未配置小红书 cookie")
-    return await _run_worker("check-login", {}, cookie=cookie, timeout=60)
+    async with _ACCOUNT_LOCK:
+        cfg = load_config()
+        cookie = (cfg.get("cookie") or "").strip()
+        if not cookie:raise RuntimeError("未配置小红书 cookie")
+        result = await _run_worker_locked("check-login", {}, cookie=cookie, timeout=60)
+        updates={'last_login_check_at':time.time()}
+        if result.get('logged_in'):
+            updates.update(logged_in_user_id=result.get('user_id') or '',
+                           logged_in_nickname=result.get('nickname') or '',
+                           logged_in_red_id=result.get('red_id') or '')
+        elif not cfg.get('cloud_login'):
+            updates.update(logged_in_user_id='',logged_in_nickname='',logged_in_red_id='')
+        save_config(updates)
+        return result
 
 
 async def list_followings() -> list[dict]:

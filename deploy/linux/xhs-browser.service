@@ -1,0 +1,28 @@
+[Unit]
+Description=On-demand Xiaohongshu owner login
+After=network-online.target
+
+[Service]
+Type=simple
+User=xhs-browser
+Group=aionshome
+Environment=HOME=/var/lib/xhs-browser
+ExecStart=/usr/bin/xvfb-run -a /opt/xhs-browser/venv/bin/python /opt/xhs-browser/xhs_browser_service.py
+RuntimeDirectory=xhs-browser
+RuntimeDirectoryMode=0750
+UMask=0077
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/xhs-browser /run/xhs-browser
+MemoryMax=360M
+MemorySwapMax=128M
+CPUQuota=60%
+KillMode=control-group
+OOMPolicy=kill
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

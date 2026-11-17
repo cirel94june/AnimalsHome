@@ -1,0 +1,2 @@
+# Isolated helper environment only; never install into the main application venv.
+playwright==1.65.2

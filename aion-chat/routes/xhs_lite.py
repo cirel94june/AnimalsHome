@@ -1,13 +1,18 @@
 from typing import Literal, Any, Optional
+import asyncio
+import hashlib
 import time
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request, HTTPException
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 import xhs_lite
+import xhs_browser
 
 
 router = APIRouter(prefix="/api/xhs-lite", tags=["xhs-lite"])
+_LOGIN_LOCK = asyncio.Lock()
 
 
 class XhsActorConfig(BaseModel):
@@ -70,15 +75,20 @@ async def update_config(body: XhsConfigUpdate):
         updates["max_comments_for_prompt"] = max(5, min(50, int(body.max_comments_for_prompt)))
     if body.clear_cookie:
         updates["cookie"] = ""
+        updates['cloud_login'] = False
     elif body.cookie is not None and body.cookie.strip():
         updates["cookie"] = body.cookie.strip()
+        updates['cloud_login'] = False
+    if 'cloud_login' in updates:
+        updates.update(logged_in_user_id='',logged_in_nickname='',logged_in_red_id='')
     if body.actors is not None:
         updates["actors"] = {
             actor: actor_cfg.dict(exclude_none=True)
             for actor, actor_cfg in body.actors.items()
             if actor in xhs_lite.known_actors()
         }
-    xhs_lite.save_config(updates)
+    async with xhs_lite._ACCOUNT_LOCK:
+        xhs_lite.save_config(updates)
     return {"ok": True, "config": xhs_lite.public_config()}
 
 
@@ -92,15 +102,41 @@ async def check_login():
             "user_id": result.get("user_id") or "",
             "red_id": result.get("red_id") or "",
         }
-        xhs_lite.save_config({
-            "logged_in_nickname": account["nickname"],
-            "logged_in_user_id": account["user_id"],
-            "logged_in_red_id": account["red_id"],
-            "last_login_check_at": time.time(),
-        })
-        return {"ok": True, "account": account}
+        return {"ok": account['logged_in'], "account": account,
+                **({} if account['logged_in'] else {'error':'小红书登录已失效，请重新登录。'})}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+@router.post('/cloud-login/{operation}')
+async def cloud_login(operation: Literal['status','start','frame','confirm','cancel'], request: Request):
+    # Browser-only owner UI. Cross-site forms/images cannot send this header;
+    # the existing whole-site Access door still authenticates the request.
+    if request.headers.get('x-requested-with')!='AnimalsHome' or request.headers.get('sec-fetch-site')=='cross-site':
+        raise HTTPException(status_code=403,detail='same-origin request required')
+    async with _LOGIN_LOCK, xhs_lite._ACCOUNT_LOCK:
+        try:
+            if operation=='confirm':
+                candidate = await xhs_browser.call('candidate')
+                cookie = candidate.get('cookie') or ''
+                if not cookie:raise RuntimeError('还没有检测到登录，请先用小红书扫码并在手机确认。')
+                account = await xhs_lite._run_worker_local('check-login',{},cookie=cookie,timeout=60)
+                if not account.get('logged_in') or not account.get('user_id'):
+                    raise RuntimeError('小红书尚未确认登录，请完成手机上的验证后再试。')
+                await xhs_browser.call('accept',{'expected_hash':hashlib.sha256(cookie.encode()).hexdigest()})
+                xhs_lite.save_config({'cookie':cookie,'cloud_login':True,'allow_write_comments':False,
+                                     'logged_in_user_id':account['user_id'],
+                                     'logged_in_nickname':account.get('nickname') or '',
+                                     'logged_in_red_id':account.get('red_id') or '',
+                                     'last_login_check_at':time.time()})
+                result={'ok':True,'account':{key:account.get(key) for key in ('logged_in','user_id','nickname','red_id')}}
+            elif operation=='frame':
+                return Response(await xhs_browser.call('frame'),media_type='image/png',headers={'Cache-Control':'no-store'})
+            else:
+                result=await xhs_browser.call(operation)
+            return JSONResponse(result,headers={'Cache-Control':'no-store'})
+        except RuntimeError as exc:
+            return JSONResponse({'ok':False,'error':str(exc)},status_code=503,headers={'Cache-Control':'no-store'})
 
 
 @router.get("/followings")
