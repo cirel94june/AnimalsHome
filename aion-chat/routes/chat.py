@@ -29,6 +29,7 @@ import patrol_control
 from activity import get_activity_summary_for_prompt, get_user_dynamics_for_prompt
 from message_dedup import build_message_dedupe_key, reserve_message_ingress
 from routes.files import export_conversation
+from music_actions import process as process_music_playlists
 from routes.music import MUSIC_CMD_PATTERN
 from music_station import record_music_request
 from song_gen import SONG_CMD_PATTERN, clean_song_visible_reply
@@ -1540,6 +1541,12 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             if safety_notice:
                 full_text = f"{full_text}\n\n[{safety_notice}]".strip()
 
+            if not has_error:
+                full_text = await process_music_playlists(full_text, actor="aion", source_type="private",
+                                                          source_id=conv_id, message_id=ai_msg_id)
+            else:
+                full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
+
             # 小克自己开 / 停巡逻：放在翻记忆之前，翻记忆那一步会提前返回（§88 复审 R4）
             full_text, patrol_notices = patrol_control.process(full_text, "aion")
             for patrol_notice in patrol_notices:
@@ -2220,6 +2227,12 @@ async def send_message(conv_id: str, body: MsgCreate):
                 error_text = stripped
             if safety_notice:
                 full_text = f"{full_text}\n\n[{safety_notice}]".strip()
+
+            if not has_error:
+                full_text = await process_music_playlists(full_text, actor="aion", source_type="private",
+                                                          source_id=conv_id, message_id=ai_msg_id)
+            else:
+                full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
 
             # 小克自己开 / 停巡逻：放在翻记忆之前，翻记忆那一步会提前返回（§88 复审 R4）
             full_text, patrol_notices = patrol_control.process(full_text, "aion")
@@ -3728,6 +3741,12 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                 error_text = stripped
             if safety_notice:
                 full_text = f"{full_text}\n\n[{safety_notice}]".strip()
+
+            if not has_error:
+                full_text = await process_music_playlists(full_text, actor="aion", source_type="private",
+                                                          source_id=conv_id, message_id=ai_msg_id)
+            else:
+                full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
 
             # 小克自己开 / 停巡逻：放在翻记忆之前，翻记忆那一步会提前返回（§88 复审 R4）
             full_text, patrol_notices = patrol_control.process(full_text, "aion")

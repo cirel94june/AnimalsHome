@@ -771,6 +771,7 @@
     catch (error) { notice(error.message, 0); }
   }
 
+  window.addEventListener('music-station-updated', () => loadPlaylists().then(loadTracks));
   bindEvents();
   updateRepeatButton();
   renderSide(null);

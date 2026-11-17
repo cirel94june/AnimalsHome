@@ -195,6 +195,12 @@ class KnownCommandStreamFilter:
         if memory_prefix and "MEMORY_SEARCH".startswith(memory_prefix.group(1).upper()):
             return False, True
         upper = candidate.upper()
+        if upper.startswith('[MUSIC_PLAYLIST]'):
+            self._close_token = '[/MUSIC_PLAYLIST]'
+            self._active_limit = SAFE_LIVE_MAX_LONG_COMMAND_CHARS
+            return True, False
+        if '[MUSIC_PLAYLIST]'.startswith(upper):
+            return False, True
         prefixes = self._prefixes_for(candidate[0])
         matched_prefix = next((prefix for prefix in prefixes if upper.startswith(prefix)), "")
         known = bool(matched_prefix)

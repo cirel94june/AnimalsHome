@@ -21,7 +21,7 @@ _WEB_CMD_START_RE = re.compile(
     r"|BAND_NOTE_(?:SINGLE|CALL)\s*[：:]|APP_(?:LOCK|TEMP_UNLOCK|UNLOCK)\s*:"
     r"|DEVICE_(?:LOCK|TEMP_UNLOCK)\s*:|DEVICE_UNLOCK"
     r"|(?:COME_HOME|LOOK_AT_ME)\s*:"
-    r"|拍拍抱枕:|PAT\s*[：:])",
+    r"|拍拍抱枕:|PAT\s*[：:]|MUSIC_PLAYLIST\])",
     re.IGNORECASE,
 )
 _MAX_QUERIES = 3
@@ -248,6 +248,7 @@ class WebCommandStreamFilter:
     def __init__(self):
         self._pending = ""
         self._in_command = False
+        self._block_close = ''
 
     def feed(self, chunk: str) -> str:
         if not chunk:
@@ -257,6 +258,15 @@ class WebCommandStreamFilter:
         out: list[str] = []
 
         while buf:
+            if self._block_close:
+                end = buf.upper().find(self._block_close)
+                if end < 0:
+                    self._pending = buf[-(len(self._block_close)-1):]
+                    return ''.join(out)
+                buf = buf[end + len(self._block_close):]
+                self._block_close = ''
+                self._in_command = False
+                continue
             if self._in_command:
                 ends = [pos for pos in (buf.find("]"), buf.find("］"), buf.find("】")) if pos >= 0]
                 end = min(ends) if ends else -1
@@ -271,6 +281,8 @@ class WebCommandStreamFilter:
                 out.append(buf[:match.start()])
                 buf = buf[match.end():]
                 self._in_command = True
+                if 'MUSIC_PLAYLIST' in match[0].upper():
+                    self._block_close = '[/MUSIC_PLAYLIST]'
                 continue
 
             keep = _possible_command_prefix_len(buf)
@@ -287,6 +299,7 @@ class WebCommandStreamFilter:
         pending = self._pending
         self._pending = ""
         if self._in_command:
+            self._block_close = ""
             self._in_command = False
             return ""
         return pending
@@ -336,6 +349,7 @@ def _possible_command_prefix_len(text: str) -> int:
     probes = (
         "[WEB_SEARCH:", "[WEB_SEARCH：", "[WEB_EXTRACT:", "[WEB_EXTRACT：", "[TAOBAO:", "[TAOBAO：", "[出门:", "[出门：",
         "[BAND_VIBRATE:",
+        "[MUSIC_PLAYLIST]",
         "[BAND_NOTE_SINGLE:", "[BAND_NOTE_SINGLE：",
         "[BAND_NOTE_CALL:", "[BAND_NOTE_CALL：",
         "[APP_LOCK:", "[APP_TEMP_UNLOCK:", "[APP_UNLOCK:",

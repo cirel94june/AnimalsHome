@@ -887,6 +887,9 @@ async def _process_chatroom_commands(
     triggered = {}  # 收集需要后续处理的动作
     who_identity = "connor" if who.lower() == "connor" else "aion"
     who_label = _name_for_identity(who_identity)
+    from music_actions import process as process_music_playlists
+    full_text = await process_music_playlists(full_text, actor=who_identity, source_type="chatroom",
+                                              source_id=room_id, message_id=msg_id, actor_name=who_label)
 
     # 自己开 / 停巡逻：放最前面，下面翻记录那一步会提前返回
     full_text, patrol_notices = patrol_control.process(full_text, who_identity)
@@ -4138,6 +4141,9 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     from ws import manager as ws_manager
     triggered: dict = {}
     label = _name_for_identity(actor_id)
+    from music_actions import process as process_music_playlists
+    full_text = await process_music_playlists(full_text, actor=actor_id, source_type="chatroom",
+                                              source_id=room_id, message_id=msg_id, actor_name=label)
 
     # 自己开 / 停巡逻（和小克、Lucien 一样）：放最前面，下面翻记录那一步会提前返回
     full_text, patrol_notices = patrol_control.process(full_text, actor_id)

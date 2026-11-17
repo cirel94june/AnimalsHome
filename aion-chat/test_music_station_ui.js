@@ -63,7 +63,7 @@ assert.ok(fs.existsSync(path.join(__dirname, '..', 'public', 'funIcon_0032_点�
 
 const stationHtml = fs.readFileSync(path.join(__dirname, 'static', 'music-station.html'), 'utf8');
 const stationCss = fs.readFileSync(path.join(__dirname, 'static', 'music-station.css'), 'utf8');
-assert.match(stationHtml, /id="uploadButton"[^>]*aria-label="上传本地歌曲"[^>]*>＋<\/button>/);
+assert.match(stationHtml, /id="uploadButton"[^>]*aria-label="从网易云添加歌曲"[^>]*>＋<\/button>/);
 assert.match(stationHtml, /id="libraryViewButton"[^>]*data-view="library"/);
 assert.match(stationHtml, /id="lyricsViewButton"[^>]*data-view="lyrics"/);
 assert.match(stationHtml, /id="volumeButton"[^>]*aria-label="歌曲音量"/);

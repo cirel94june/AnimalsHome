@@ -5,14 +5,16 @@
 """
 
 import logging, threading, time
+from functools import wraps
 from pyncm.apis.login import LoginViaAnonymousAccount, LoginViaCookie
 from pyncm.apis.cloudsearch import GetSearchResult
 from pyncm.apis.track import GetTrackDetail, GetTrackAudio
 
 log = logging.getLogger(__name__)
 
-_init_lock = threading.Lock()
+_init_lock = threading.RLock()
 _inited = False
+_credential_version = None
 _last_login_time = 0.0
 _SESSION_TTL = 2 * 3600  # 会话有效期：2小时
 
@@ -34,29 +36,40 @@ if not getattr(_pyncm.Session.request, "_aion_timeout", False):
 
 def _ensure_login():
     """确保已登录且会话未过期（优先 MUSIC_U Cookie，否则匿名）"""
-    global _inited, _last_login_time
+    global _inited, _last_login_time, _credential_version
+    from netease_account import credentials
+    cookies, version = credentials()
     now = time.time()
-    if _inited and (now - _last_login_time < _SESSION_TTL):
+    if _inited and version == _credential_version and (now - _last_login_time < _SESSION_TTL):
         return
     with _init_lock:
         now = time.time()
-        if _inited and (now - _last_login_time < _SESSION_TTL):
+        if _inited and version == _credential_version and (now - _last_login_time < _SESSION_TTL):
             return
+        _inited = False
+        _credential_version = None
+        _last_login_time = 0
         try:
-            from config import SETTINGS
-            music_u = SETTINGS.get("netease_music_u", "").strip()
+            _pyncm.GetCurrentSession().cookies.clear()
+            jar={item['name']:item['value'] for item in cookies}
+            music_u = jar.get('MUSIC_U','')
             if music_u:
-                LoginViaCookie(MUSIC_U=music_u)
+                result=LoginViaCookie(MUSIC_U=music_u,**{k:v for k,v in jar.items() if k!='MUSIC_U'})
+                if not (result.get('result') or {}).get('success'):
+                    raise RuntimeError('网易云登录已失效，请在点歌台重新登录。')
                 _inited = True
+                _credential_version = version
                 _last_login_time = now
                 log.info("pyncm MUSIC_U Cookie 登录成功（VIP）")
             else:
                 LoginViaAnonymousAccount()
                 _inited = True
+                _credential_version = version
                 _last_login_time = now
                 log.info("pyncm 匿名登录成功（未配置 MUSIC_U）")
         except Exception as e:
-            log.error("pyncm 登录失败: %s", e)
+            _pyncm.GetCurrentSession().cookies.clear()
+            log.error("pyncm 登录失败: %s", type(e).__name__)
             raise
 
 
@@ -74,6 +87,16 @@ def reload_login():
     _force_relogin()
 
 
+def _serialised(fn):
+    @wraps(fn)
+    def call(*args,**kwargs):
+        # Legacy searches/audio share pyncm's default session. Do not replace its
+        # credentials halfway through another request when the owner logs out.
+        with _init_lock:return fn(*args,**kwargs)
+    return call
+
+
+@_serialised
 def search_songs(keyword: str, limit: int = 5) -> list[dict]:
     """搜索歌曲，返回精简结果列表"""
     _ensure_login()
@@ -95,6 +118,7 @@ def search_songs(keyword: str, limit: int = 5) -> list[dict]:
     return results
 
 
+@_serialised
 def get_song_detail(song_id: int) -> dict | None:
     """获取单曲详情"""
     _ensure_login()
@@ -116,6 +140,7 @@ def get_song_detail(song_id: int) -> dict | None:
     }
 
 
+@_serialised
 def get_audio_url(song_id: int) -> str | None:
     """尝试获取播放 URL，失败时自动重新登录重试一次"""
     _ensure_login()

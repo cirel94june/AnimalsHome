@@ -913,6 +913,13 @@ class ScheduleManager:
             return
 
         # 检测 [MUSIC:xxx] 指令
+        from music_actions import process as process_music_playlists
+        if not has_error:
+            full_text = await process_music_playlists(full_text, actor=sender,
+                source_type="background_chatroom" if target.get("type")=="chatroom" else "background_private",
+                source_id=target.get("room_id") or conv_id or "", message_id=ai_msg_id)
+        else:
+            full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
         music_matches = MUSIC_CMD_PATTERN.findall(full_text)
         music_cards = []
         if music_matches:
@@ -1276,6 +1283,13 @@ class ScheduleManager:
             return
 
         # 检测 [MUSIC:xxx] 指令
+        from music_actions import process as process_music_playlists
+        if not has_error:
+            full_text = await process_music_playlists(full_text, actor=sender,
+                source_type="background_chatroom" if target.get("type")=="chatroom" else "background_private",
+                source_id=target.get("room_id") or conv_id or "", message_id=ai_msg_id)
+        else:
+            full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
         music_matches = MUSIC_CMD_PATTERN.findall(full_text)
         music_cards = []
         if music_matches:

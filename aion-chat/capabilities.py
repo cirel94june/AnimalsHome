@@ -580,8 +580,9 @@ def lounge_visit_ability_text(actor_id: str, store) -> str:
 
 
 def music_ability_text() -> str:
+    from music_actions import ability_text
     return ("[MUSIC:歌曲名 歌手名] — 点歌/推荐音乐。系统自动展示播放卡片，"
-            "不要在指令外重复歌曲信息。可同时用多个。")
+            "可以自然说明推荐理由，每次最多推荐3首。" + ability_text())
 
 
 def web_search_ability_text() -> str:

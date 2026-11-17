@@ -50,6 +50,7 @@ import post_sentinel
 from routes import voice as voice_routes
 from routes import music as music_routes
 from routes import music_station as music_station_routes
+from routes import netease_account as netease_account_routes
 from routes import taobao as taobao_routes
 from routes import album as album_routes
 from routes import schedule as schedule_routes
@@ -381,6 +382,7 @@ app.include_router(user_profile.router)
 app.include_router(voice_routes.router)
 app.include_router(music_routes.router)
 app.include_router(music_station_routes.router)
+app.include_router(netease_account_routes.router)
 app.include_router(taobao_routes.router)
 app.include_router(album_routes.router)
 app.include_router(schedule_routes.router)

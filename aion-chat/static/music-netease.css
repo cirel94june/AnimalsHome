@@ -1,0 +1,16 @@
+.netease-account-dialog { width: min(760px, calc(100vw - 24px)); max-height: 88dvh; overflow: auto; padding: 20px; color: var(--text, #20243a); background: var(--bg, #eef3ff); border: 1px solid var(--border, #ddd); border-radius: 22px; }
+.netease-account-dialog::backdrop { background: #17203988; }
+.netease-account-head { display: flex; align-items: center; justify-content: space-between; }
+.netease-account-head h2 { margin: 0; font-size: 22px; }
+.netease-account-dialog button, .netease-account-dialog input, .netease-account-dialog select { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 9px 12px; background: var(--surface, #fff); color: inherit; min-width: 0; max-width: 100%; }
+.netease-account-dialog button:disabled { opacity: .5; }
+.netease-account-dialog p { line-height: 1.6; font-size: 13px; overflow-wrap: anywhere; }
+.netease-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+#musicPermissions { border: 1px solid var(--border, #ddd); border-radius: 12px; margin: 16px 0; }
+#musicPermissions label { display: block; margin: 10px 0; }
+#neteaseQr { width: 244px; padding: 12px; background: white; border-radius: 12px; margin: 12px auto; }
+#neteaseQr img, #neteaseQr canvas { max-width: 100%; }
+.cloud-playlist-row { display: block; width: 100%; text-align: left; margin: 8px 0; }
+.cloud-song-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; border-bottom: 1px solid var(--border, #ddd); padding: 12px 0; }
+.cloud-song-row span { flex: 1 0 100%; overflow-wrap: anywhere; }
+.netease-account-dialog [hidden] { display: none !important; }

@@ -314,6 +314,69 @@ class MusicStationStore:
                 raise ValueError("已经有同名歌单") from exc
         return next(item for item in await self.list_playlists() if item["id"] == playlist_id)
 
+    async def save_song_playlist(self, name, songs, *, playlist_id='', actor='user',
+                                 actor_name='我', action_id='', record_requests=False):
+        """Atomically import metadata/membership; never download an entire playlist."""
+        value=self._playlist_name(name) if not playlist_id else ''
+        if len(songs)>50:raise ValueError('每批最多保存50首歌曲')
+        now=time.time();added=0
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('PRAGMA foreign_keys=ON')
+            await db.execute('BEGIN IMMEDIATE')
+            if playlist_id:
+                row=await (await db.execute('SELECT id,name FROM music_station_playlists WHERE id=?',(playlist_id,))).fetchone()
+                if not row:raise KeyError('playlist')
+            else:
+                row=await (await db.execute('SELECT id,name FROM music_station_playlists WHERE name=? COLLATE NOCASE',(value,))).fetchone()
+                if not row:
+                    playlist_id='msp_'+uuid.uuid4().hex
+                    await db.execute('INSERT INTO music_station_playlists(id,name,sort_order,created_at,updated_at) '
+                                     'VALUES(?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM music_station_playlists),?,?)',
+                                     (playlist_id,value,now,now))
+                    row=(playlist_id,value)
+            playlist_id,value=row
+            for song in songs:
+                external_id=str(int(song['id']))
+                if int(external_id)<=0:raise ValueError('无效歌曲')
+                track_id='mst_'+uuid.uuid4().hex
+                await db.execute('INSERT INTO music_station_tracks '
+                                 '(id,source_type,source_key,external_id,title,artist,album,duration_ms,cover_url,cache_status,created_at,updated_at) '
+                                 'VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_key) DO NOTHING',
+                                 (track_id,'netease','netease:'+external_id,external_id,
+                                  str(song.get('name') or '未知歌曲'),str(song.get('artist') or ''),
+                                  str(song.get('album') or ''),max(0,int(song.get('duration') or 0)),
+                                  str(song.get('cover') or ''),'pending',now,now))
+                track_id=(await (await db.execute('SELECT id FROM music_station_tracks WHERE source_key=?',('netease:'+external_id,))).fetchone())[0]
+                cursor=await db.execute('INSERT OR IGNORE INTO music_station_playlist_tracks(playlist_id,track_id,sort_order,added_at) '
+                                        'VALUES(?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM music_station_playlist_tracks WHERE playlist_id=?),?)',
+                                        (playlist_id,track_id,playlist_id,now))
+                added+=cursor.rowcount
+                if record_requests:
+                    await db.execute('INSERT OR IGNORE INTO music_station_requests '
+                                     '(id,track_id,requester_identity,requester_name_snapshot,source_type,source_id,source_message_id,requested_at) '
+                                     'VALUES(?,?,?,?,?,?,?,?)',
+                                     ('msr_'+uuid.uuid4().hex,track_id,actor,actor_name,'playlist_ai',playlist_id,action_id,now))
+            await db.commit()
+        return {'ok':True,'playlist_id':playlist_id,'name':value,'added':added}
+
+    async def claim_music_action(self, action_id, fingerprint):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('CREATE TABLE IF NOT EXISTS music_station_actions '
+                             '(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,state TEXT NOT NULL,result TEXT NOT NULL,created_at REAL NOT NULL)')
+            cursor=await db.execute('INSERT OR IGNORE INTO music_station_actions VALUES(?,?,?,?,?)',
+                                    (action_id,fingerprint,'pending','{}',time.time()))
+            inserted=cursor.rowcount==1
+            row=await (await db.execute('SELECT fingerprint,state,result FROM music_station_actions WHERE id=?',(action_id,))).fetchone()
+            await db.commit()
+        if row[0]!=fingerprint:raise ValueError('同一操作编号对应的内容或账号已改变，请先检查已有结果。')
+        return None if inserted else {'state':row[1],**json.loads(row[2])}
+
+    async def finish_music_action(self, action_id, state, result):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute('UPDATE music_station_actions SET state=?,result=? WHERE id=?',
+                             (state,json.dumps(result,ensure_ascii=False),action_id))
+            await db.commit()
+
     async def rename_playlist(self, playlist_id: str, name: str) -> dict[str, Any]:
         value = self._playlist_name(name)
         async with aiosqlite.connect(self.db_path) as db:
