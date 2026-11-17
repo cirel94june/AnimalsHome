@@ -2,8 +2,10 @@
 import asyncio
 import hashlib
 import json
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -170,3 +172,33 @@ def test_original_roam_cookie_allows_renewal_of_same_account(setup,monkeypatch):
     asyncio.run(roam())
     assert reads==['old','renewed','renewed']
     assert xhs_lite.load_config()['cookie']=='renewed'
+
+
+def test_login_skips_hidden_duplicate_and_clicks_visible_control():
+    hidden=SimpleNamespace(is_visible=AsyncMock(return_value=False),click=AsyncMock())
+    visible=SimpleNamespace(is_visible=AsyncMock(return_value=True),click=AsyncMock())
+    modal=SimpleNamespace(first=SimpleNamespace(is_visible=AsyncMock(return_value=False)))
+    controls=SimpleNamespace(all=AsyncMock(return_value=[hidden,visible]))
+    browser=service.LoginBrowser()
+    browser.open=AsyncMock()
+    browser.page=SimpleNamespace(locator=lambda _:modal,get_by_text=lambda _:controls)
+    result,_=asyncio.run(browser.call('/start'))
+    assert result['ok']
+    hidden.click.assert_not_awaited()
+    visible.click.assert_awaited_once_with(timeout=5000)
+
+
+def test_launch_uses_desktop_viewport_and_preserves_sandbox(tmp_path,monkeypatch):
+    page=SimpleNamespace(goto=AsyncMock())
+    context=SimpleNamespace(pages=[page])
+    launch=AsyncMock(return_value=context)
+    driver=SimpleNamespace(chromium=SimpleNamespace(launch_persistent_context=launch))
+    manager=SimpleNamespace(start=AsyncMock(return_value=driver))
+    monkeypatch.setitem(sys.modules,'playwright',SimpleNamespace())
+    monkeypatch.setitem(sys.modules,'playwright.async_api',SimpleNamespace(async_playwright=lambda:manager))
+    monkeypatch.setattr(service,'ROOT',tmp_path)
+    browser=service.LoginBrowser()
+    asyncio.run(browser._launch())
+    assert launch.await_args.kwargs['viewport']=={'width':1280,'height':800}
+    assert launch.await_args.kwargs['chromium_sandbox'] is True
+    assert launch.await_args.kwargs['user_data_dir']==str(tmp_path/'profile')

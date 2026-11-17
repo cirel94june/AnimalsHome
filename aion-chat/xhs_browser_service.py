@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import time
@@ -65,7 +66,7 @@ class LoginBrowser:
         self.driver = await async_playwright().start()
         self.context = await self.driver.chromium.launch_persistent_context(
             user_data_dir=str(ROOT/'profile'), executable_path='/usr/bin/google-chrome',
-            headless=False, chromium_sandbox=True, viewport={'width':640,'height':720},
+            headless=False, chromium_sandbox=True, viewport={'width':1280,'height':800},
             args=['--disable-dev-shm-usage','--no-first-run','--no-default-browser-check',
                   '--autoplay-policy=user-gesture-required'])
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
@@ -119,10 +120,17 @@ class LoginBrowser:
                 self.login_deadline = time.monotonic()+300
                 # The platform may show the login modal automatically. Otherwise
                 # only the fixed login control is clicked, never a user URL.
-                modal = self.page.locator('.login-container, .login-modal').first
-                if not await modal.is_visible():
-                    login = self.page.get_by_text('登录',exact=True).first
-                    if await login.is_visible():await login.click(timeout=5000)
+                for _ in range(4):
+                    modal = self.page.locator('.login-container, .login-modal').first
+                    if await modal.is_visible():break
+                    visible = False
+                    for login in await self.page.get_by_text(re.compile(r'^(登录|登录/注册|Log in|Login|Sign in)$',re.I)).all():
+                        if await login.is_visible():
+                            await login.click(timeout=5000)
+                            visible = True
+                            break
+                    if visible:break
+                    await asyncio.sleep(2)
                 return {'ok':True,'expires_in':300}, 'application/json'
             if path == '/frame':
                 if not self.page or time.monotonic()>self.login_deadline:
