@@ -6,9 +6,12 @@
 - 通过内部 API 发送消息到聊天
 - WebSocket 广播通话状态
 """
+from __future__ import annotations
 
 import io, wave, time, threading, asyncio
-import numpy as np
+from lazy_media import media_module
+
+np = media_module('numpy')
 import sounddevice as sd
 import httpx
 import webrtcvad

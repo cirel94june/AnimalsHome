@@ -6,8 +6,10 @@ import json
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
+from lazy_media import media_module
+
+cv2 = media_module('cv2')
+np = media_module('numpy')
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 

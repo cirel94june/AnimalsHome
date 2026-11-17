@@ -64,7 +64,8 @@ class SentinelRouteConfigTests(unittest.TestCase):
                 settings_routes.SettingsUpdate(sentinel_route="codex_luna")
             ))
 
-        self.assertEqual(result, {"ok": True})
+        self.assertTrue(result['ok'])
+        self.assertIsInstance(result['custom_routes_rev'], int)
         self.assertEqual(config.SETTINGS["sentinel_route"], "codex_luna")
         save.assert_called_once()
 
@@ -73,7 +74,7 @@ class SentinelLunaDispatchTests(unittest.TestCase):
     def test_image_status_is_replaced_before_waiting_for_chat_model(self):
         prepared = [{"role": "user", "content": "[图片内容：午饭]"}]
 
-        async def provider(*args):
+        async def provider(*args, request_timeout=None):
             yield "回复正文"
 
         async def collect():

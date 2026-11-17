@@ -13,8 +13,10 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
-import cv2
-import numpy as np
+from lazy_media import media_module
+
+cv2 = media_module('cv2')
+np = media_module('numpy')
 
 from config import DATA_DIR, SCREENSHOTS_DIR
 

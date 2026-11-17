@@ -1,13 +1,18 @@
 """
 摄像头监控：CameraMonitor 类、Sentinel 分析、Core 唤醒、监控日志读写
 """
+from __future__ import annotations
 
 from clock_text import now_text
 import json, time, re, base64, asyncio, threading, sqlite3, random, urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2, httpx, numpy as np, aiosqlite
+import httpx, aiosqlite
+from lazy_media import media_module
+
+cv2 = media_module('cv2')
+np = media_module('numpy')
 
 from config import (
     DB_PATH, SCREENSHOTS_DIR, MONITOR_LOGS_DIR,
