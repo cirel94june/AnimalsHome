@@ -541,6 +541,45 @@ html[data-skin="ib"][data-ib-reduce] *::after {
 }
 
 
+/* Repair controls sit above live conversation text. Keep their surfaces opaque,
+   including on WebViews where backdrop-filter is unavailable or disabled. */
+html[data-skin="ib"] body.repair-room {
+  --ib-card-a: 1;
+  --ib-input-a: 1;
+  --ib-topbar-a: 1;
+  --ib-tx: #243450;
+  --ib-tx2: #526078;
+  --ib-tx3: #58677d;
+  --ib-card-tx: #243450;
+  --bg: #f4f7fc;
+  --surface: #ffffff;
+  --surface2: #eaf0f8;
+  --surface3: #e1e9f5;
+  --text: #243450;
+  --text2: #526078;
+  --text3: #58677d;
+}
+html[data-skin="ib"] body.repair-room .composer,
+html[data-skin="ib"] body.repair-room .composer-tools,
+html[data-skin="ib"] body.repair-room dialog {
+  background: #f4f7fc;
+  color: #243450;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-shadow: none;
+}
+html[data-skin="ib"] body.repair-room .composer textarea,
+html[data-skin="ib"] body.repair-room .composer-tools select,
+html[data-skin="ib"] body.repair-room dialog input,
+html[data-skin="ib"] body.repair-room dialog select {
+  background: #fff;
+  color: #243450;
+  text-shadow: none;
+}
+html[data-skin="ib"] body.repair-room .message small {
+  color: #526078;
+}
+
 /* ── 设置页（11-08 小猫：这页没跟上 IB 风格，原来的规则写的是旧类名） ── */
 html[data-skin="ib"] .settings-card {
   background: rgba(255, 255, 255, var(--ib-card-a));
@@ -562,6 +601,18 @@ html[data-skin="ib"] .summary-chevron { color: var(--ib-tx3); }
 html[data-skin="ib"] .settings-card .form-label,
 html[data-skin="ib"] .settings-card .sub-title { color: var(--ib-tx); }
 html[data-skin="ib"] .settings-card .sub-block { border-color: var(--ib-line); background: rgba(255, 255, 255, 0.28); }
+/* Functional labels must not inherit the settings page's dark-theme white. */
+html[data-skin="ib"] .settings-card .vision-toggle,
+html[data-skin="ib"] .settings-card .check-field,
+html[data-skin="ib"] .settings-card .model-index {
+  color: #243450;
+  text-shadow: none;
+  -webkit-text-stroke: 0;
+}
+html[data-skin="ib"] .settings-card .vision-toggle {
+  background: #f4f7fc;
+  border-color: #bac7db;
+}
 html[data-skin="ib"] input[type="password"] {
   background: rgba(255, 255, 255, 0.66);
   color: var(--ib-tx);

@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, 'static', 'settings.html'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, 'static', 'settings.html'), 'utf8').replace(/\r\n/g, '\n');
 const renderSource = source.match(/function renderModelTransportModes\(\) \{[\s\S]*?\n\}\n\nfunction collectModelTransportModes/)[0]
   .replace(/\n\nfunction collectModelTransportModes$/, '');
 
