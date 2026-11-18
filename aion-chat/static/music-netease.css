@@ -29,3 +29,10 @@
 #personalPlaylistBindings label { display: flex; align-items: center; gap: 6px; justify-content: space-between; margin-top: 8px; font-size: 12px; font-weight: 400; }
 #personalPlaylistBindings select { max-width: 65%; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 5px; background: var(--surface, white); color: inherit; }
 #personalPlaylistBindings p { overflow-wrap: anywhere; }
+@media (max-width: 850px), (max-height: 700px) {
+  .library-panel { display: block; overflow-y: auto; overscroll-behavior: contain; }
+  .local-music-library { display: block; }
+  .local-music-library[hidden] { display: none; }
+  .track-list { overflow: visible; }
+  .cloud-music-library { overflow: visible; min-height: 160px; }
+}

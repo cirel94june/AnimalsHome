@@ -83,6 +83,9 @@
   async function showCloud() {
     $('localMusicLibrary').hidden = true; $('cloudMusicLibrary').hidden = false;
     $('localLibraryButton').setAttribute('aria-pressed', 'false'); $('cloudLibraryButton').setAttribute('aria-pressed', 'true');
+    if (window.matchMedia('(max-width: 850px), (max-height: 700px)').matches) {
+      $('dropZone').scrollTop = Math.max(0, $('cloudLibraryButton').parentElement.offsetTop - 6);
+    }
     try { showAccount(await api()); await refreshTargets(); await load('personal'); }
     catch (error) { message(error.message); }
   }
