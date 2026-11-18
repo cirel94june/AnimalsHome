@@ -315,7 +315,7 @@ class MusicStationStore:
         return next(item for item in await self.list_playlists() if item["id"] == playlist_id)
 
     async def save_song_playlist(self, name, songs, *, playlist_id='', actor='user',
-                                 actor_name='我', action_id='', record_requests=False):
+                                 actor_name='我', action_id='', record_requests=False,allowed=None,owner_actor=None):
         """Atomically import metadata/membership; never download an entire playlist."""
         value=self._playlist_name(name) if not playlist_id else ''
         if len(songs)>50:raise ValueError('每批最多保存50首歌曲')
@@ -323,6 +323,23 @@ class MusicStationStore:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute('PRAGMA foreign_keys=ON')
             await db.execute('BEGIN IMMEDIATE')
+            if allowed and not allowed():raise ValueError('AI 歌单权限已关闭。')
+            if owner_actor:
+                if owner_actor not in {'aion','connor','ai3','ai4','ai5','ai6'}:raise ValueError('无法确认个人歌单身份。')
+                await db.execute('CREATE TABLE IF NOT EXISTS music_station_personal_playlists '
+                    '(actor_id TEXT PRIMARY KEY,playlist_id TEXT NOT NULL UNIQUE, '
+                    'FOREIGN KEY(playlist_id) REFERENCES music_station_playlists(id) ON DELETE CASCADE)')
+                owned=await (await db.execute('SELECT playlist_id FROM music_station_personal_playlists WHERE actor_id=?',(owner_actor,))).fetchone()
+                playlist_id=owned[0] if owned else ''
+                if not playlist_id:
+                    base=self._playlist_name(name)
+                    value=base; suffix=1
+                    while True:
+                        conflict=await (await db.execute('SELECT p.id,o.actor_id FROM music_station_playlists p '
+                            'LEFT JOIN music_station_personal_playlists o ON o.playlist_id=p.id '
+                            'WHERE p.name=? COLLATE NOCASE',(value,))).fetchone()
+                        if not conflict or not conflict[1] or conflict[1]==owner_actor:break
+                        suffix+=1;value=base[:35]+' '+str(suffix)
             if playlist_id:
                 row=await (await db.execute('SELECT id,name FROM music_station_playlists WHERE id=?',(playlist_id,))).fetchone()
                 if not row:raise KeyError('playlist')
@@ -335,6 +352,8 @@ class MusicStationStore:
                                      (playlist_id,value,now,now))
                     row=(playlist_id,value)
             playlist_id,value=row
+            if owner_actor:
+                await db.execute('INSERT OR IGNORE INTO music_station_personal_playlists(actor_id,playlist_id) VALUES(?,?)',(owner_actor,playlist_id))
             for song in songs:
                 external_id=str(int(song['id']))
                 if int(external_id)<=0:raise ValueError('无效歌曲')
@@ -356,6 +375,7 @@ class MusicStationStore:
                                      '(id,track_id,requester_identity,requester_name_snapshot,source_type,source_id,source_message_id,requested_at) '
                                      'VALUES(?,?,?,?,?,?,?,?)',
                                      ('msr_'+uuid.uuid4().hex,track_id,actor,actor_name,'playlist_ai',playlist_id,action_id,now))
+            if allowed and not allowed():raise ValueError('AI 歌单权限已关闭。')
             await db.commit()
         return {'ok':True,'playlist_id':playlist_id,'name':value,'added':added}
 
@@ -835,7 +855,10 @@ async def record_music_request(
     source_type: str,
     source_id: str,
     source_message_id: str,
+    *, account_generation: int | None = None,
 ) -> str:
+    from netease_account import load as account_config
+    music_generation=account_config()['generation'] if account_generation is None else account_generation
     store = get_music_station_store()
     track_id = await store.record_request(
         song,
@@ -846,6 +869,9 @@ async def record_music_request(
         source_message_id=source_message_id,
     )
     spawn_generation_task(_refresh_new_netease_track(track_id))
+    if requester_identity in {'aion','connor','ai3','ai4','ai5','ai6'} and song.get('id'):
+        from music_personal import collect
+        spawn_generation_task(collect(song,requester_identity,source_type,source_message_id,music_generation))
     return track_id
 
 

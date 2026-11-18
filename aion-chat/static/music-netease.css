@@ -14,3 +14,18 @@
 .cloud-song-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; border-bottom: 1px solid var(--border, #ddd); padding: 12px 0; }
 .cloud-song-row span { flex: 1 0 100%; overflow-wrap: anywhere; }
 .netease-account-dialog [hidden] { display: none !important; }
+.netease-account-dialog { background: #f5f3f8 !important; color: #252237 !important; }
+.netease-account-dialog input, .netease-account-dialog button { color: #252237; background: #fff; }
+.station-library-nav { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.station-library-nav button, .cloud-music-library button, .cloud-music-library select, .cloud-music-library input { border: 1px solid var(--border, #ddd); border-radius: 10px; padding: 8px 10px; background: var(--surface, #fff); color: inherit; min-width: 0; max-width: 100%; }
+.station-library-nav button[aria-pressed="true"] { background: var(--station-accent); color: white; border-color: transparent; }
+.local-music-library { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.cloud-music-library { flex: 1; overflow-y: auto; min-height: 0; }
+.local-music-library[hidden], .cloud-music-library[hidden] { display: none; }
+#cloudAccountSummary, #cloudStatus { font-size: 12px; line-height: 1.5; }
+#cloudSearchForm { flex-wrap: nowrap; }
+#cloudSearchInput { flex: 1; width: 0; }
+#cloudTabs button[aria-pressed="true"] { background: var(--station-accent-soft); border-color: var(--station-accent); }
+#personalPlaylistBindings label { display: flex; align-items: center; gap: 6px; justify-content: space-between; margin-top: 8px; font-size: 12px; font-weight: 400; }
+#personalPlaylistBindings select { max-width: 65%; border: 1px solid var(--border, #ddd); border-radius: 8px; padding: 5px; background: var(--surface, white); color: inherit; }
+#personalPlaylistBindings p { overflow-wrap: anywhere; }

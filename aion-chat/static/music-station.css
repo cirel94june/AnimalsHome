@@ -64,6 +64,10 @@ button { color: inherit; cursor: pointer; }
   box-shadow: 0 18px 48px rgba(45, 52, 85, .08);
 }
 .library-panel { padding: 12px; min-height: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+.ai-music-control { flex: 0 0 auto; padding: 10px 12px; margin-bottom: 10px; border-radius: 14px; background: var(--station-accent-soft); }
+.ai-music-control label { display: flex; align-items: center; justify-content: space-between; gap: 14px; font-size: 14px; font-weight: 600; }
+.ai-music-control input { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--station-accent); }
+.ai-music-control p { margin: 5px 0 0; font-size: 11px; line-height: 1.5; color: var(--text2, #6d7388); }
 .library-panel.dragging { outline: 3px solid var(--station-accent); outline-offset: -5px; }
 .toolbar { display: flex; gap: 10px; }
 .search-box {

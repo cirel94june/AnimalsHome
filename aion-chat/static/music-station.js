@@ -772,6 +772,12 @@
   }
 
   window.addEventListener('music-station-updated', () => loadPlaylists().then(loadTracks));
+  window.onAionSubPageVisibilityChanged = visible => {
+    if (visible) {
+      window.dispatchEvent(new Event('music-station-updated'));
+      window.dispatchEvent(new Event('music-station-visible'));
+    }
+  };
   bindEvents();
   updateRepeatButton();
   renderSide(null);

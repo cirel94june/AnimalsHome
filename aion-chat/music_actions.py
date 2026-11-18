@@ -61,11 +61,21 @@ def _allowed(cfg,target,op,as_ai):
         if not cfg['permissions'].get(permission):raise ValueError('主人尚未在点歌台开启这项写入权限。')
 
 
-async def execute(data,action_id,*,actor='user',actor_name='我',as_ai=False):
+async def execute(data,action_id,*,actor='user',actor_name='我',as_ai=False,resolved_songs=None,personal_actor=None):
     import netease_account as account
     from music_station import get_music_station_store
     if not isinstance(data,dict):raise ValueError('歌单指令格式不正确。')
     if as_ai and actor not in ACTORS:raise ValueError('无法确认点歌身份。')
+    if personal_actor is not None and (not as_ai or personal_actor!=actor):raise ValueError('个人歌单身份不一致。')
+    if data.get('op')=='personal':
+        if not as_ai:raise ValueError('个人收歌需要由已确认的 AI 身份发起。')
+        from capabilities import is_capability_enabled
+        if not is_capability_enabled('music'):raise ValueError('AI 点歌已关闭。')
+        from music_personal import add
+        generation=account.load()['generation']
+        songs=await resolve_songs(data.get('songs',[]))
+        if not songs:raise ValueError('请先选择歌曲。')
+        return await add(songs,actor,action_id,generation=generation)
     target=data.get('target','local');op=data.get('op','create')
     name=str(data.get('name') or '').strip();playlist_id=str(data.get('playlist_id') or '').strip()
     if op=='create' and not 1<=len(name)<=40:raise ValueError('歌单名称需要1–40个字符。')
@@ -89,7 +99,7 @@ async def execute(data,action_id,*,actor='user',actor_name='我',as_ai=False):
                 'message':'这项操作正在确认或尚未确认结果，请先查看歌单，暂不重复执行。'}
         try:
             async with asyncio.timeout(90):
-                songs=await resolve_songs(data.get('songs',[]))
+                songs=resolved_songs if resolved_songs is not None else await resolve_songs(data.get('songs',[]))
                 if op!='create' and not songs:raise ValueError('请先选择要添加的歌曲。')
                 if account.load()['generation']!=cfg['generation']:
                     raise ValueError('账号或登录已改变，本次操作停止。')
@@ -109,7 +119,8 @@ async def execute(data,action_id,*,actor='user',actor_name='我',as_ai=False):
                         if len(matches)!=1:raise ValueError('找不到唯一的自建网易云歌单，请在点歌台确认。')
                         playlist_id=matches[0]['id']
                     value=await run_sync(account.mutate,op,name,playlist_id,[s['id'] for s in songs],
-                                         as_ai=as_ai,expected_generation=cfg['generation'])
+                                         as_ai=as_ai,expected_generation=cfg['generation'],
+                                         **({'personal_actor':personal_actor} if personal_actor else {}))
                     value['message']=_clean(value['message'])
             await store.finish_music_action(action_id,'succeeded',value)
             return value
@@ -161,4 +172,6 @@ def ability_text():
             'target只能选已开放的local/netease；op=create或add，add须给准确name或已知playlist_id。'
             '每个块最多10首、每条回复最多2块；同名版本不唯一时补album，不能编造歌曲ID。'
             + ('红心已开放，可用target=netease、op=like、songs给歌曲点红心。' if likes else '红心写入未开放。')+
-            '指令放在代码块外。普通聊天可自然说明荐歌理由并附[MUSIC:歌名 歌手]，无需为每次推荐新建歌单。')
+            '只想加入自己的歌单而不点播，用[MUSIC_PLAYLIST]{"op":"personal","songs":[{"id":真实歌曲ID,"name":"真实歌名","artist":"歌手"}]}[/MUSIC_PLAYLIST]。'
+            'personal由系统按你的身份选择自己的歌单，不要代别的AI收歌。'
+            '普通点歌[MUSIC:歌名 歌手]会自动收进自己的歌单，不要为同一首歌额外重复发personal。指令放在代码块外。')

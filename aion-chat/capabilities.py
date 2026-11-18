@@ -59,7 +59,7 @@ CAPABILITY_DEFS: list[CapabilityDef] = [
         default_enabled=True,
     ),
     CapabilityDef("expressive_voice", "主动语音", "media", "", default_enabled=False),
-    CapabilityDef("music", "点歌", "media", "注入 [MUSIC:歌曲名 歌手名]，让模型可以点歌或推荐音乐。"),
+    CapabilityDef("music", "AI 主动点歌", "media", "允许 AI 在聊天或已有主动聊天中自行分享歌曲；关闭后停止新的 AI 点歌，也停止 AI 歌单写入。你仍可手动听歌。"),
     CapabilityDef("cam_check", "查看监控/状态", "core", "注入 [CAM_CHECK]，让模型可以主动请求查看当前画面。"),
     CapabilityDef("schedule", "闹铃/日程/监督", "core", "注入闹铃、日程、定时监督和删除日程指令；关闭后也不注入当前日程列表。"),
     CapabilityDef("app_supervision", "应用监管", "core", "注入应用使用缓存、唤回聊天、整机专注和应用锁定/解锁指令；关闭后手机计时、上报和检查点唤醒全部静默。"),
@@ -582,7 +582,9 @@ def lounge_visit_ability_text(actor_id: str, store) -> str:
 def music_ability_text() -> str:
     from music_actions import ability_text
     return ("[MUSIC:歌曲名 歌手名] — 点歌/推荐音乐。系统自动展示播放卡片，"
-            "可以自然说明推荐理由，每次最多推荐3首。" + ability_text())
+            "主人允许你主动点歌：当你自己想分享音乐、想用一首歌表达心情时，可以自行使用，无需每次等主人要求。"
+            "可先用[MUSIC_SEARCH:歌名、歌手或想找的音乐关键词]查网易云曲库，等搜索结果回来后自己挑选，不能编造歌曲ID。"
+            "可以自然说明推荐理由，每次最多推荐3首；不必为了使用能力而强行点歌，普通分享无需先建歌单。" + ability_text())
 
 
 def web_search_ability_text() -> str:

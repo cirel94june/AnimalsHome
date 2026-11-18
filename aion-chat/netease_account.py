@@ -53,7 +53,10 @@ def load():
         raise NeteaseError('网易云账号配置暂时无法读取。')
     if type(raw.get('generation',0)) is not int or raw.get('generation',0)<0:
         raise NeteaseError('网易云账号配置暂时无法读取。')
+    for key in ('actor_playlists','actor_local_playlists','personal_status'):
+        if not isinstance(raw.get(key,{}),dict):raise NeteaseError('个人歌单配置暂时无法读取。')
     return {'managed':False,'cookies':[],'user_id':'','nickname':'','generation':0,
+            'actor_playlists':{},'actor_local_playlists':{},'personal_status':{},
             'verified_at':0,**raw,'permissions':{**PERMISSIONS,**raw.get('permissions',{})}}
 
 
@@ -150,7 +153,7 @@ def _identity(session):
 def _commit(session, identity):
     cfg=load()
     cfg.update(managed=True,cookies=_cookies(session),**identity,
-               generation=int(cfg['generation'])+1,verified_at=time.time())
+               generation=int(cfg['generation'])+1,verified_at=time.time(),actor_playlists={},personal_status={})
     # A new login requires renewed owner permission for cloud writes.
     cfg['permissions']={**cfg['permissions'],'cloud_playlists':False,'cloud_likes':False}
     if not any(c['name']=='MUSIC_U' and c['value'] for c in cfg['cookies']):
@@ -241,7 +244,7 @@ def logout():
     with LOCK:
         cfg=load()
         cfg.update(managed=True,cookies=[],user_id='',nickname='',verified_at=0,
-                   generation=int(cfg['generation'])+1)
+                   generation=int(cfg['generation'])+1,actor_playlists={},personal_status={})
         cfg['permissions']={**cfg['permissions'],'cloud_playlists':False,'cloud_likes':False}
         _save(cfg)
         for item in _QR.values():item['session'].close()
@@ -341,12 +344,14 @@ def read(kind,ref='',offset=0):
                     'total':min(len(songs),50),'next_offset':None}
 
 
-def mutate(op, name='',playlist_id='',song_ids=(), *, as_ai=False,expected_generation=None):
+def mutate(op, name='',playlist_id='',song_ids=(), *, as_ai=False,expected_generation=None,personal_actor=None):
     with LOCK:
         cfg=load()
         if expected_generation is not None and expected_generation!=cfg['generation']:
             raise NeteaseError('账号或登录已经改变，本次操作已停止。')
         permission='cloud_likes' if op=='like' else 'cloud_playlists'
+        reserved={pid for actor,pid in cfg['actor_playlists'].items() if personal_actor and actor!=personal_actor and pid}
+        if personal_actor and str(playlist_id) in reserved:raise NeteaseError('这张歌单属于另一位 AI，请选择自己的歌单。')
         if as_ai:
             from capabilities import is_capability_enabled
             if not is_capability_enabled('music'):raise NeteaseError('点歌能力已关闭。')
@@ -360,14 +365,24 @@ def mutate(op, name='',playlist_id='',song_ids=(), *, as_ai=False,expected_gener
         cookies,_=credentials()
         with _session(cookies) as session:
             if _identity(session)['user_id']!=cfg['user_id']:raise NeteaseError('网易云账号有变化，请重新登录。')
+            def check_write():
+                if as_ai:
+                    from capabilities import is_capability_enabled
+                    if not is_capability_enabled('music'):raise NeteaseError('主人已关闭 AI 点歌，本次写入停止。')
             if op=='like':
-                for song_id in ids:_checked(track.SetLikeTrack(song_id,like=True))
+                for song_id in ids:
+                    check_write();_checked(track.SetLikeTrack(song_id,like=True))
                 return {'ok':True,'message':f'已将{len(ids)}首歌标为网易云红心。'}
             if op=='create':
                 matches=[p for p in _playlists(cfg) if p['owned'] and p['name']==name.strip()]
+                if personal_actor:
+                    if matches and all(p['id'] in reserved for p in matches):
+                        raise NeteaseError('同名歌单已属于另一位 AI，请在点歌台为自己选择歌单。')
+                    matches=[p for p in matches if p['id'] not in reserved]
                 if len(matches)>1:raise NeteaseError('有多张同名网易云歌单，请在点歌台选择具体歌单。')
                 if matches:playlist_id=matches[0]['id']
                 else:
+                    check_write()
                     # pyncm multiplies this value by one; NetEase requires 10, not 1.
                     value=_checked(playlist.SetCreatePlaylist(name.strip(),privacy=10))
                     playlist_id=str(value.get('id') or (value.get('playlist') or {}).get('id') or '')
@@ -375,6 +390,7 @@ def mutate(op, name='',playlist_id='',song_ids=(), *, as_ai=False,expected_gener
             if not str(playlist_id).isdecimal():raise NeteaseError('请选择有效的网易云歌单。')
             detail=_tracks(playlist_id,0,0)
             if detail['owned_by']!=cfg['user_id']:raise NeteaseError('只能添加到当前账号自己创建的歌单。')
-            if ids:_checked(playlist.SetManipulatePlaylistTracks(ids,playlist_id,op='add'))
+            if ids:
+                check_write();_checked(playlist.SetManipulatePlaylistTracks(ids,playlist_id,op='add'))
             return {'ok':True,'playlist_id':str(playlist_id),'name':detail['name'],
                     'message':f'网易云歌单《{detail["name"]}》已保存'+(f'，加入{len(ids)}首歌。' if ids else '。')}

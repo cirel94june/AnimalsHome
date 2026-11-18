@@ -2230,7 +2230,9 @@ async def _run_wish_pool(actor: str) -> dict:
         if SETTINGS.get("image_gen_enabled", False)
         else "当前没有启用图片生成功能。"
     )
-    music_ability = "[MUSIC:歌曲名 歌手名] — 当愿望是点播或推荐一首现有歌曲时使用。"
+    from capabilities import is_capability_enabled
+    music_ability = ("[MUSIC:歌曲名 歌手名] — 当愿望是点播或推荐一首现有歌曲时使用。"
+                     if is_capability_enabled("music") else "主人已关闭AI点歌，不要使用MUSIC指令。")
     result = await _ask_actor_json(actor, (
         "[查看许愿池并尝试实现愿望]\n"
         f"你刚刚从许愿池打捞起了 {user_name} 的愿望：\n{wish.get('content') or ''}\n\n"
@@ -2389,7 +2391,7 @@ async def _run_wish_pool(actor: str) -> dict:
 
         songs = []
         try:
-            songs = search_songs(music_keyword, limit=1) or []
+            songs = (search_songs(music_keyword, limit=1) or []) if is_capability_enabled("music") else []
         except Exception:
             songs = []
         completed = bool(songs)
@@ -2408,6 +2410,11 @@ async def _run_wish_pool(actor: str) -> dict:
             visible_response = f"{visible_response}\n\n{followup}".strip()
         elif not completed:
             visible_response = f"{visible_response}\n\n这次没有找到合适的歌曲，愿望先留在池里。".strip()
+        if not is_capability_enabled("music"):
+            completed = False
+            card["status"] = "active"
+            attachments = [card]
+            updated = await update_wish(wish["id"], {"status": "active"})
         message = await _save_private_message(actor, visible_response, attachments, force_private=force_private)
         event = await append_idle_event(
             actor, "wish_pool_result",

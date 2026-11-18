@@ -16,7 +16,7 @@ from database import get_db
 from ws import manager
 from band_commands import process_band_vibration, with_band_vibration_attachment
 from hug_pillow_commands import process_hug_pillow_commands
-from capabilities import process_pat_commands
+from capabilities import process_pat_commands, is_capability_enabled
 from ai_providers import stream_ai, CLI_STATUS_PREFIX
 from memory import recall_memories, format_recalled_memories_for_prompt
 from music import search_songs, get_audio_url
@@ -913,24 +913,34 @@ class ScheduleManager:
             return
 
         # 检测 [MUSIC:xxx] 指令
-        from music_actions import process as process_music_playlists
+        from music_actions import process as process_music_playlists, run_sync as run_music_sync
         if not has_error:
             full_text = await process_music_playlists(full_text, actor=sender,
                 source_type="background_chatroom" if target.get("type")=="chatroom" else "background_private",
                 source_id=target.get("room_id") or conv_id or "", message_id=ai_msg_id)
         else:
             full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
+        from netease_account import load as music_account_config
+        music_generation=music_account_config()["generation"]
+        from music_discovery import extract_queries
+        full_text, music_queries=extract_queries(full_text)
         music_matches = MUSIC_CMD_PATTERN.findall(full_text)
         music_cards = []
         if music_matches:
-            for keyword in music_matches:
+            for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+                if not is_capability_enabled("music"):
+                    music_cards.clear()
+                    break
                 keyword = keyword.strip()
                 try:
-                    results = search_songs(keyword, limit=5)
+                    results = await run_music_sync(search_songs,keyword,limit=5)
                     if results:
                         song = results[0]
-                        song["audio_url"] = get_audio_url(song["id"])
+                        song["audio_url"] = await run_music_sync(get_audio_url,song["id"])
                         song["candidates"] = results[1:4]
+                        if not is_capability_enabled("music"):
+                            music_cards.clear()
+                            break
                         music_cards.append(song)
                 except Exception:
                     pass
@@ -951,6 +961,8 @@ class ScheduleManager:
         if safety_notice:
             full_text = f"{full_text}\n\n[{safety_notice}]".strip()
 
+        if not is_capability_enabled("music"):
+            music_cards = []
         music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
         att_json = json.dumps(music_atts, ensure_ascii=False) if music_atts else "[]"
         reasoning_content = (usage_meta.get("reasoning_content") or "").strip()
@@ -982,7 +994,21 @@ class ScheduleManager:
                 pass
 
         # 推送音乐卡片（带 autoplay 标记，前端自动播放）
-        if music_cards:
+        if not has_error and music_queries and is_capability_enabled("music"):
+            from music_discovery import launch_background_search
+            launch_background_search(music_queries,target,conv_id,sender,debug_model_key)
+        if music_cards and is_capability_enabled("music"):
+            from music_station import record_music_request
+            import actors
+            for song in music_cards:
+                if not is_capability_enabled("music"):break
+                try:
+                    await record_music_request(song,sender,actors.display_name(sender),
+                        "chatroom" if is_chatroom else "private",target.get("room_id") or conv_id or "",
+                        ai_msg_id,account_generation=music_generation)
+                except Exception:
+                    pass
+        if music_cards and is_capability_enabled("music"):
             music_data = {'type': 'music', 'msg_id': ai_msg_id, 'cards': music_cards, 'autoplay': True}
             await manager.broadcast({"type": "music", "data": music_data})
 
@@ -1283,24 +1309,34 @@ class ScheduleManager:
             return
 
         # 检测 [MUSIC:xxx] 指令
-        from music_actions import process as process_music_playlists
+        from music_actions import process as process_music_playlists, run_sync as run_music_sync
         if not has_error:
             full_text = await process_music_playlists(full_text, actor=sender,
                 source_type="background_chatroom" if target.get("type")=="chatroom" else "background_private",
                 source_id=target.get("room_id") or conv_id or "", message_id=ai_msg_id)
         else:
             full_text = re.sub(r'\[MUSIC_PLAYLIST\][\s\S]*?(?:\[/MUSIC_PLAYLIST\]|$)', '', full_text, flags=re.I)
+        from netease_account import load as music_account_config
+        music_generation=music_account_config()["generation"]
+        from music_discovery import extract_queries
+        full_text, music_queries=extract_queries(full_text)
         music_matches = MUSIC_CMD_PATTERN.findall(full_text)
         music_cards = []
         if music_matches:
-            for keyword in music_matches:
+            for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+                if not is_capability_enabled("music"):
+                    music_cards.clear()
+                    break
                 keyword = keyword.strip()
                 try:
-                    results = search_songs(keyword, limit=5)
+                    results = await run_music_sync(search_songs,keyword,limit=5)
                     if results:
                         song = results[0]
-                        song["audio_url"] = get_audio_url(song["id"])
+                        song["audio_url"] = await run_music_sync(get_audio_url,song["id"])
                         song["candidates"] = results[1:4]
+                        if not is_capability_enabled("music"):
+                            music_cards.clear()
+                            break
                         music_cards.append(song)
                 except Exception:
                     pass
@@ -1321,6 +1357,8 @@ class ScheduleManager:
         if safety_notice:
             full_text = f"{full_text}\n\n[{safety_notice}]".strip()
 
+        if not is_capability_enabled("music"):
+            music_cards = []
         music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
         att_json = json.dumps(music_atts, ensure_ascii=False) if music_atts else "[]"
         reasoning_content = (usage_meta.get("reasoning_content") or "").strip()
@@ -1377,7 +1415,21 @@ class ScheduleManager:
                 pass
 
         # 推送音乐卡片（带 autoplay 标记）
-        if music_cards:
+        if not has_error and music_queries and is_capability_enabled("music"):
+            from music_discovery import launch_background_search
+            launch_background_search(music_queries,target,conv_id,sender,debug_model_key)
+        if music_cards and is_capability_enabled("music"):
+            from music_station import record_music_request
+            import actors
+            for song in music_cards:
+                if not is_capability_enabled("music"):break
+                try:
+                    await record_music_request(song,sender,actors.display_name(sender),
+                        "chatroom" if is_chatroom else "private",target.get("room_id") or conv_id or "",
+                        ai_msg_id,account_generation=music_generation)
+                except Exception:
+                    pass
+        if music_cards and is_capability_enabled("music"):
             music_data = {'type': 'music', 'msg_id': ai_msg_id, 'cards': music_cards, 'autoplay': True}
             await manager.broadcast({"type": "music", "data": music_data})
 

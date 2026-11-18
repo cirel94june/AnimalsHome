@@ -1000,10 +1000,15 @@ async def _process_chatroom_commands(
     )
 
     # ── 点歌 ──
+    from netease_account import load as music_account_config
+    music_generation=music_account_config()["generation"]
     music_matches = MUSIC_CMD_PATTERN.findall(full_text)
     music_cards = []
     if music_matches:
-        for keyword in music_matches:
+        for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+            if not is_capability_enabled("music"):
+                music_cards.clear()
+                break
             keyword = keyword.strip()
             try:
                 results = await asyncio.to_thread(search_songs, keyword, limit=5)
@@ -1011,14 +1016,18 @@ async def _process_chatroom_commands(
                     song = results[0]
                     song["audio_url"] = await asyncio.to_thread(get_audio_url, song["id"])
                     song["candidates"] = results[1:4]
+                    if not is_capability_enabled("music"):
+                        music_cards.clear()
+                        break
                     music_cards.append(song)
             except Exception:
                 pass
         full_text = MUSIC_CMD_PATTERN.sub("", full_text)
 
-    if music_cards:
+    if music_cards and is_capability_enabled("music"):
         parts = [f"《{s['name']}》- {s['artist']}" for s in music_cards]
         await _chatroom_sys_msg(room_id, f"🎵 {who_label}点了一首{' / '.join(parts)}", _q, after_msg_id=msg_id)
+    if music_cards and is_capability_enabled("music"):
         music_data = {"type": "music", "msg_id": msg_id, "cards": music_cards, "autoplay": True}
         triggered["music_cards"] = music_cards
         await _q.put(music_data)
@@ -1031,7 +1040,7 @@ async def _process_chatroom_commands(
                     requester_name=who_label,
                     source_type="chatroom",
                     source_id=room_id,
-                    source_message_id=msg_id,
+                    source_message_id=msg_id, account_generation=music_generation,
                 )
             except Exception as exc:
                 print(f"[music_station] 聊天室点歌记录失败: {exc}")
@@ -1832,6 +1841,11 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     if not searches and not extracts:
         return
 
+    from music_discovery import music_only, INSTRUCTION, finish as finish_music_discovery
+    pure_music = music_only(searches, extracts)
+    from netease_account import load as music_account_config
+    music_generation = music_account_config()["generation"] if pure_music else None
+    context_items = []
     try:
         context_items = await run_web_commands(searches, extracts, allow_taobao=True)
         web_context = "\n\n".join(item for item in context_items if item.strip()).strip()
@@ -1878,8 +1892,11 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         "请像平时聊天一样自然表达，不要写成搜索报告，不要逐条复述搜索结果，也不要长篇大论。"
         f"除非确实必须继续核实，否则不要再次输出 [WEB_SEARCH:...] 或 [WEB_EXTRACT:...]。"
     )
+    if pure_music:
+        web_prompt += INSTRUCTION
     messages = prefix_msgs + recent + [{"role": "user", "content": web_prompt}]
 
+    music_reply_ok = True
     full_text = ""
     tts_from_model = True
     try:
@@ -1910,6 +1927,7 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
                     continue
                 full_text += chunk
     except Exception as e:
+        music_reply_ok = False
         resolution = resolve_stream_failure(full_text, e, "联网搜索完成但回复生成失败")
         full_text = resolution.visible_text
         tts_from_model = resolution.had_partial_text
@@ -1918,6 +1936,12 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         return
 
     reply_msg_id = f"cm_{time.time_ns()}_{sender[:1]}"
+    if pure_music:
+        full_text, music_atts = await finish_music_discovery(full_text, context_items,
+            actor=sender, source_type="chatroom", source_id=room_id, message_id=reply_msg_id, success=music_reply_ok, expected_generation=music_generation)
+        if full_text.strip() or music_atts:
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, attachments=music_atts or None, auto_tts=False)
+        return
     read_products = has_taobao_query(searches)
     if read_products:  # 读过外部商品资料的这一轮：动作标签只清除，不执行
         full_text = strip_untrusted_reply(full_text)
@@ -4211,23 +4235,32 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
                                         after_msg_id=msg_id)
 
     # ── 点歌 ──
+    from netease_account import load as music_account_config
+    music_generation=music_account_config()["generation"]
     music_matches = MUSIC_CMD_PATTERN.findall(full_text)
     if music_matches:
         full_text = MUSIC_CMD_PATTERN.sub("", full_text)
     music_cards = []
-    for keyword in music_matches if is_capability_enabled("music") else []:
+    for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+        if not is_capability_enabled("music"):
+            music_cards.clear()
+            break
         try:
             results = await asyncio.to_thread(search_songs, keyword.strip(), limit=5)
             if results:
                 song = results[0]
                 song["audio_url"] = await asyncio.to_thread(get_audio_url, song["id"])
                 song["candidates"] = results[1:4]
+                if not is_capability_enabled("music"):
+                    music_cards.clear()
+                    break
                 music_cards.append(song)
         except Exception:
             pass
-    if music_cards:
+    if music_cards and is_capability_enabled("music"):
         parts = [f"《{s['name']}》- {s['artist']}" for s in music_cards]
         await _chatroom_sys_msg(room_id, f"🎵 {label}点了一首{' / '.join(parts)}", _q, after_msg_id=msg_id)
+    if music_cards and is_capability_enabled("music"):
         music_data = {"type": "music", "msg_id": msg_id, "cards": music_cards, "autoplay": True}
         triggered["music_cards"] = music_cards
         await _q.put(music_data)
@@ -4235,7 +4268,7 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
         for song in music_cards:
             try:
                 await record_music_request(song, requester_identity=actor_id, requester_name=label,
-                                           source_type="chatroom", source_id=room_id, source_message_id=msg_id)
+                                           source_type="chatroom", source_id=room_id, source_message_id=msg_id,account_generation=music_generation)
             except Exception as exc:
                 print(f"[music_station] 座位点歌记录失败: {exc}")
 

@@ -810,8 +810,12 @@ async def _video_call_sys_msg(conv_id: str, duration: int):
            "content": text, "created_at": now, "attachments": []}
     await manager.broadcast({"type": "msg_created", "data": msg})
 
-async def _music_sys_msg(conv_id: str, music_cards: list):
+async def _music_sys_msg(conv_id: str, music_cards: list, *, account_generation=None):
     """为点歌操作插入系统消息，使后续上下文能看到点歌信息"""
+    if not is_capability_enabled("music"):
+        return
+    from netease_account import load as music_account_config
+    music_generation=music_account_config()["generation"] if account_generation is None else account_generation
     wb = load_worldbook()
     ai_name = wb.get("ai_name", "AI")
     parts = [f"《{s['name']}》- {s['artist']}" for s in music_cards]
@@ -824,6 +828,8 @@ async def _music_sys_msg(conv_id: str, music_cards: list):
             (msg_id, conv_id, "system", text, now, "[]"),
         )
         await db.commit()
+    if not is_capability_enabled("music"):
+        return
     for song in music_cards:
         try:
             await record_music_request(
@@ -832,7 +838,7 @@ async def _music_sys_msg(conv_id: str, music_cards: list):
                 requester_name=ai_name,
                 source_type="private",
                 source_id=conv_id,
-                source_message_id=msg_id,
+                source_message_id=msg_id, account_generation=music_generation,
             )
         except Exception as exc:
             print(f"[music_station] 私聊点歌记录失败: {exc}")
@@ -1558,10 +1564,15 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             ):
                 return
 
+            from netease_account import load as music_account_config
+            music_generation=music_account_config()["generation"]
             music_matches = MUSIC_CMD_PATTERN.findall(full_text)
             music_cards = []
             if music_matches:
-                for keyword in music_matches:
+                for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+                    if not is_capability_enabled("music"):
+                        music_cards.clear()
+                        break
                     keyword = keyword.strip()
                     try:
                         results = await asyncio.to_thread(search_songs, keyword, limit=5)
@@ -1569,6 +1580,9 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                             song = results[0]
                             song["audio_url"] = await asyncio.to_thread(get_audio_url, song["id"])
                             song["candidates"] = results[1:4]
+                            if not is_capability_enabled("music"):
+                                music_cards.clear()
+                                break
                             music_cards.append(song)
                     except Exception:
                         pass
@@ -1758,6 +1772,8 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 except (ValueError, Exception):
                     pass
 
+            if not is_capability_enabled("music"):
+                music_cards = []
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
             reply_atts = _dedupe_attachments(music_atts + luckin_payment_attachments(luckin_results) + image_atts)
@@ -1827,11 +1843,11 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 await _video_call_incoming_sys_msg(conv_id)
                 spawn_generation_task(_delayed_video_call(vc_data))
 
-            if music_cards:
+            if music_cards and is_capability_enabled("music"):
                 music_data = {'type': 'music', 'msg_id': ai_msg_id, 'cards': music_cards}
                 await _q.put(music_data)
                 await manager.broadcast({"type": "music", "data": music_data})
-                await _music_sys_msg(conv_id, music_cards)
+                await _music_sys_msg(conv_id, music_cards, account_generation=music_generation)
 
             if image_gen_prompt:
                 ig_data = {'type': 'image_gen_start', 'conv_id': conv_id, 'msg_id': ai_msg_id, 'is_selfie': image_gen_is_selfie}
@@ -2246,10 +2262,15 @@ async def send_message(conv_id: str, body: MsgCreate):
                 return
 
             # 检测 [MUSIC:xxx] 指令 → 搜索歌曲并推送卡片数据
+            from netease_account import load as music_account_config
+            music_generation=music_account_config()["generation"]
             music_matches = MUSIC_CMD_PATTERN.findall(full_text)
             music_cards = []
             if music_matches:
-                for keyword in music_matches:
+                for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+                    if not is_capability_enabled("music"):
+                        music_cards.clear()
+                        break
                     keyword = keyword.strip()
                     try:
                         results = await asyncio.to_thread(search_songs, keyword, limit=5)
@@ -2257,6 +2278,9 @@ async def send_message(conv_id: str, body: MsgCreate):
                             song = results[0]
                             song["audio_url"] = await asyncio.to_thread(get_audio_url, song["id"])
                             song["candidates"] = results[1:4]
+                            if not is_capability_enabled("music"):
+                                music_cards.clear()
+                                break
                             music_cards.append(song)
                     except Exception:
                         pass
@@ -2497,6 +2521,8 @@ async def send_message(conv_id: str, body: MsgCreate):
             full_text = _visible_ai_text(full_text)
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
+            if not is_capability_enabled("music"):
+                music_cards = []
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
             reply_atts = _dedupe_attachments(music_atts + luckin_payment_attachments(luckin_results) + image_atts)
@@ -2573,11 +2599,11 @@ async def send_message(conv_id: str, body: MsgCreate):
                 spawn_generation_task(_delayed_video_call(vc_data))
 
             # 推送音乐卡片
-            if music_cards:
+            if music_cards and is_capability_enabled("music"):
                 music_data = {'type': 'music', 'msg_id': ai_msg_id, 'cards': music_cards}
                 await _q.put(music_data)
                 await manager.broadcast({"type": "music", "data": music_data})
-                await _music_sys_msg(conv_id, music_cards)
+                await _music_sys_msg(conv_id, music_cards, account_generation=music_generation)
 
             if image_gen_prompt:
                 ig_data = {'type': 'image_gen_start', 'conv_id': conv_id, 'msg_id': ai_msg_id, 'is_selfie': image_gen_is_selfie}
@@ -3129,6 +3155,11 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
     if not searches and not extracts:
         return
 
+    from music_discovery import music_only, INSTRUCTION, finish as finish_music_discovery
+    pure_music = music_only(searches, extracts)
+    from netease_account import load as music_account_config
+    music_generation = music_account_config()["generation"] if pure_music else None
+    context_items = []
     try:
         context_items = await run_web_commands(searches, extracts, allow_taobao=True)
         web_context = "\n\n".join(item for item in context_items if item.strip()).strip()
@@ -3186,6 +3217,8 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
         "请像平时聊天一样自然表达，不要写成搜索报告，不要逐条复述搜索结果，也不要长篇大论。"
         f"除非确实必须继续核实，否则不要再次输出 [WEB_SEARCH:...] 或 [WEB_EXTRACT:...]。"
     )
+    if pure_music:
+        web_prompt += INSTRUCTION
     messages = prefix + recent + [{"role": "user", "content": web_prompt}]
 
     msg_id = f"msg_{int(time.time()*1000)}_web_reply"
@@ -3195,6 +3228,7 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
         if tts_voice:
             web_tts = TTSStreamer(msg_id, tts_voice, manager)
 
+    music_reply_ok = True
     full_text = ""
     web_reply_filter = WebCommandStreamFilter()
     try:
@@ -3210,13 +3244,18 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
         if web_tts and visible_tail:
             web_tts.feed(visible_tail)
     except Exception as e:
+        music_reply_ok = False
         resolution = resolve_stream_failure(full_text, e, "联网搜索完成但回复生成失败")
         full_text = resolution.visible_text
 
     if not full_text.strip():
         return
 
-    if has_taobao_query(searches):  # 读过外部商品资料的这一轮：动作标签只清除，不执行
+    music_reply_atts = []
+    if pure_music:
+        full_text, music_reply_atts = await finish_music_discovery(full_text, context_items,
+            actor="aion", source_type="private", source_id=conv_id, message_id=msg_id, success=music_reply_ok, expected_generation=music_generation)
+    elif has_taobao_query(searches):  # 读过外部商品资料的这一轮：动作标签只清除，不执行
         full_text = _visible_ai_text(strip_untrusted_reply(full_text))
         if not full_text.strip():
             return
@@ -3232,7 +3271,7 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
         full_text = _visible_ai_text(clean_web_command_text(full_text))
 
     now = time.time()
-    reply_atts = await with_band_vibration_attachment(msg_id, [])
+    reply_atts = await with_band_vibration_attachment(msg_id, music_reply_atts)
     att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else "[]"
     async with get_db() as db:
         await db.execute(
@@ -3760,10 +3799,15 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                 return
 
             # 检测 [MUSIC:xxx] 指令 → 搜索歌曲并推送卡片数据
+            from netease_account import load as music_account_config
+            music_generation=music_account_config()["generation"]
             music_matches = MUSIC_CMD_PATTERN.findall(full_text)
             music_cards = []
             if music_matches:
-                for keyword in music_matches:
+                for keyword in music_matches[:3] if is_capability_enabled("music") else []:
+                    if not is_capability_enabled("music"):
+                        music_cards.clear()
+                        break
                     keyword = keyword.strip()
                     try:
                         results = await asyncio.to_thread(search_songs, keyword, limit=5)
@@ -3771,6 +3815,9 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                             song = results[0]
                             song["audio_url"] = await asyncio.to_thread(get_audio_url, song["id"])
                             song["candidates"] = results[1:4]
+                            if not is_capability_enabled("music"):
+                                music_cards.clear()
+                                break
                             music_cards.append(song)
                     except Exception:
                         pass
@@ -3964,6 +4011,8 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             full_text = _visible_ai_text(full_text)
 
             # 将音乐点歌信息存入 attachments，刷新后可显示胶囊
+            if not is_capability_enabled("music"):
+                music_cards = []
             music_atts = [{"type": "music", "name": s["name"], "artist": s["artist"], "id": s["id"]} for s in music_cards] if music_cards else []
             full_text, image_atts = _extract_reply_image_attachments(full_text)
             reply_atts = _dedupe_attachments(music_atts + luckin_payment_attachments(luckin_results) + image_atts)
@@ -4039,11 +4088,11 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                 spawn_generation_task(_delayed_video_call(vc_data))
 
             # 推送音乐卡片
-            if music_cards:
+            if music_cards and is_capability_enabled("music"):
                 music_data = {'type': 'music', 'msg_id': ai_msg_id, 'cards': music_cards}
                 await _q.put(music_data)
                 await manager.broadcast({"type": "music", "data": music_data})
-                await _music_sys_msg(conv_id, music_cards)
+                await _music_sys_msg(conv_id, music_cards, account_generation=music_generation)
 
             if image_gen_prompt:
                 ig_data = {'type': 'image_gen_start', 'conv_id': conv_id, 'msg_id': ai_msg_id, 'is_selfie': image_gen_is_selfie}

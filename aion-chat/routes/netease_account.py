@@ -119,3 +119,16 @@ async def import_page(request: Request):
         name = str(data.get('name') or value.get('name') or '网易云收藏').strip()[:40]
         result = await get_music_station_store().save_song_playlist(name, value.get('songs', []))
         return {**result, 'next_offset': value.get('next_offset'), 'total': value.get('total', 0)}
+
+
+@router.get('/personal')
+async def personal():
+    from music_personal import profiles
+    return {'profiles':await call(profiles)}
+
+
+@router.put('/personal/{actor}')
+async def bind_personal(actor: str, request: Request):
+    from music_personal import bind
+    data=await body(request)
+    return await call(bind,actor,data.get('playlist_id'),data.get('account_generation'))

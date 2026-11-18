@@ -28,12 +28,23 @@
 
   <main class="station-shell">
     <section class="library-panel" id="dropZone" aria-label="歌曲列表与上传区域">
+      <section class="ai-music-control" aria-label="AI 点歌权限">
+        <label><span>允许 AI 主动点歌</span><input id="aiMusicEnabled" type="checkbox" role="switch" aria-describedby="aiMusicHelp aiMusicStatus" disabled></label>
+        <p id="aiMusicHelp">开着时，AI 可以自己找歌、收进各自歌单。关闭后暂停 AI 音乐操作，不影响你手动听歌。</p>
+        <p id="aiMusicStatus" role="status" aria-live="polite">正在读取点歌开关…</p>
+        <details><summary>他们各自的网易云歌单</summary><div id="personalPlaylistBindings">正在读取…</div></details>
+      </section>
+      <div class="station-library-nav">
+        <button id="localLibraryButton" type="button" aria-pressed="true">家里的歌</button>
+        <button id="cloudLibraryButton" type="button" aria-pressed="false">网易云曲库</button>
+        <button id="accountButton" type="button">账号与权限</button>
+      </div>
+      <div id="localMusicLibrary" class="local-music-library">
       <div class="toolbar">
         <label class="search-box">
           <span aria-hidden="true">⌕</span>
           <input id="searchInput" type="search" placeholder="搜索歌曲、歌手或点歌人" autocomplete="off">
         </label>
-        <button class="soft-button" id="accountButton" type="button">网易云</button>
         <button class="soft-button" id="refreshButton" type="button">刷新</button>
         <button class="soft-button" id="manageButton" type="button">管理</button>
       </div>
@@ -60,6 +71,24 @@
         <div>♫</div>
         <p>还没有歌曲。等伴侣点一首，或者上传本地音乐吧。</p>
       </div>
+      </div>
+      <section id="cloudMusicLibrary" class="cloud-music-library" aria-label="网易云曲库" hidden>
+        <p id="cloudAccountSummary" role="status">正在读取网易云账号…</p>
+        <form id="cloudSearchForm" class="netease-controls"><input id="cloudSearchInput" type="search" placeholder="搜网易云的歌名、歌手" aria-label="搜索网易云曲库"><button type="submit">搜索</button></form>
+    <div class="netease-controls" id="cloudTabs">
+      <button type="button" data-kind="personal">他们的歌单</button><button type="button" data-kind="playlists">我的歌单</button><button type="button" data-kind="liked">红心</button>
+      <button type="button" data-kind="daily">每日推荐</button><button type="button" data-kind="fm">私人FM</button>
+      <button type="button" data-kind="charts">榜单</button><button type="button" data-kind="week">周排行</button><button type="button" data-kind="alltime">总排行</button>
+    </div>
+    <details id="cloudPlaylistTools"><summary>手动整理网易云歌单</summary>
+    <div class="netease-controls"><input id="cloudPlaylistName" maxlength="40" placeholder="新网易云歌单名称" aria-label="新网易云歌单名称"><button id="createCloudPlaylistButton" type="button">新建网易云歌单</button></div>
+    <div class="netease-controls"><select id="cloudWriteTarget" aria-label="加入到我的网易云歌单"></select></div>
+    </details>
+    <p id="cloudStatus" role="status" aria-live="polite"></p>
+    <button id="importCloudButton" type="button" hidden>整张存入点歌台</button>
+    <div id="cloudResults"></div><button id="cloudMoreButton" type="button" hidden>加载更多</button>
+    <audio id="cloudPreviewAudio" preload="none"></audio>
+      </section>
     </section>
 
     <aside class="side-panel" id="sidePanel" aria-label="歌词与歌曲设置">
@@ -166,6 +195,7 @@
   <dialog id="neteaseAccountDialog" class="netease-account-dialog">
     <div class="netease-account-head"><h2>网易云音乐</h2><button id="closeAccountButton" type="button" aria-label="关闭">×</button></div>
     <p id="accountStatus" role="status" aria-live="polite">正在读取账号…</p>
+    <p id="accountActionStatus" role="status" aria-live="polite"></p>
     <div class="netease-controls">
       <button id="qrLoginButton" type="button">扫码登录</button>
       <button id="checkAccountButton" type="button">检查登录</button>
@@ -186,22 +216,13 @@
       <label><input type="checkbox" data-permission="local_playlists">整理点歌台歌单</label>
       <label><input type="checkbox" data-permission="cloud_playlists">新建、加歌到我的网易云歌单</label>
       <label><input type="checkbox" data-permission="cloud_likes">给网易云歌曲点红心</label>
-      <p>网易云写入默认关闭，换账号后会重新关闭。不会删除歌曲或歌单。</p>
+      <p>打开网易云歌单写入后，AI 的新点歌也会收进各自的网易云歌单。换账号会重新关闭权限。不会删除歌曲或歌单。</p>
     </fieldset>
-    <div class="netease-controls" id="cloudTabs">
-      <button type="button" data-kind="playlists">我的歌单</button><button type="button" data-kind="liked">红心</button>
-      <button type="button" data-kind="daily">每日推荐</button><button type="button" data-kind="fm">私人FM</button>
-      <button type="button" data-kind="charts">榜单</button><button type="button" data-kind="week">周排行</button><button type="button" data-kind="alltime">总排行</button>
-    </div>
-    <div class="netease-controls"><input id="cloudPlaylistName" maxlength="40" placeholder="新网易云歌单名称" aria-label="新网易云歌单名称"><button id="createCloudPlaylistButton" type="button">新建网易云歌单</button></div>
-    <p id="cloudStatus" role="status" aria-live="polite"></p>
-    <div class="netease-controls"><select id="cloudWriteTarget" aria-label="加入到我的网易云歌单"></select><button id="importCloudButton" type="button" hidden>整张存入点歌台</button></div>
-    <div id="cloudResults"></div><button id="cloudMoreButton" type="button" hidden>加载更多</button>
-    <audio id="cloudPreviewAudio" preload="none"></audio>
   </dialog>
   <script src="/static/vendor/qrcode.min.js"></script>
   <script src="/static/music-netease.js"></script>
   <script src="/static/theme.js"></script>
   <script src="/static/music-station.js"></script>
+  <script src="/static/music-permission.js"></script>
 </body>
 </html>
