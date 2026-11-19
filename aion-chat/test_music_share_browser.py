@@ -103,11 +103,14 @@ def test_mobile_picker_preview_send_and_old_card(group):
             assert image.get_attribute('src')=='/api/music/cover/123'
             page.wait_for_function('document.querySelector("#oldCard img").hidden')
             page.evaluate(f"document.querySelector('#oldCard').innerHTML={name}({{id:456,cover:'http://p1.music.126.net/art.jpg',name:'旧记录'}})")
+            page.locator('#oldCard').scroll_into_view_if_needed()
             page.wait_for_function('document.querySelector("#oldCard img").naturalWidth===1')
             assert page.locator('#oldCard img').get_attribute('src')=='/api/music/cover/456'
             page.evaluate(f"document.querySelector('#oldCard').innerHTML={name}({{id:789,name:'暂时繁忙'}})")
+            page.locator('#oldCard').scroll_into_view_if_needed()
             page.wait_for_function('document.querySelector("#oldCard img").naturalWidth===1')
             assert cover_attempts['789']==2
+            assert page.locator('#oldCard img').get_attribute('loading')=='eager'
             # Switching chat during selection never adds a stale pending song.
             page.evaluate(adapter+'()')
             page.get_by_role('searchbox').fill('测试')

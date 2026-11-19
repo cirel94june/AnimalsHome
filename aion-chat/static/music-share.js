@@ -5,15 +5,16 @@
     const value = String(song?.external_id || song?.id || '');
     return /^\d+$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value)>0 ? String(Number(value)) : '';
   }
+  const localCover = value => /^\/(?!\/)[^\x00-\x1f\x7f\\]*$/.test(value) ? value : '';
   function coverUrl(song) {
     const id = song?.source_type === 'local' ? '' : songId(song);
     if (id) return '/api/music/cover/' + id;
     const url = String(song?.cover_url || song?.cover || '');
-    return /^\/(?!\/)[^\\]*$/.test(url) ? url : '';
+    return localCover(url);
   }
   function knownCover(song) {
     const raw = String(song?.cover_url || song?.cover || '');
-    if (/^\/(?!\/)[^\\]*$/.test(raw)) return raw;
+    if (raw.startsWith('/')) return localCover(raw);
     try {
       const url = new URL(raw);
       if (!['http:','https:'].includes(url.protocol) || !url.hostname.endsWith('.music.126.net') || url.username || url.password || (url.port && !['80','443'].includes(url.port))) return '';
@@ -54,7 +55,11 @@
     img.hidden = true;
     if (fallback && !img.dataset.musicRetried) {
       img.dataset.musicRetried = '1';
-      setTimeout(() => { if (img.isConnected) img.src = fallback + '?retry=1'; }, 1500);
+      setTimeout(() => {
+        if (!img.isConnected) return;
+        img.loading = 'eager';
+        img.src = fallback + '?retry=1';
+      }, 1500);
     }
   }, true);
   document.addEventListener('load', event => {
