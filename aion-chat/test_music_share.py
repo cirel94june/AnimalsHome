@@ -48,6 +48,10 @@ def test_shared_client_helpers_handle_old_cards_and_untrusted_ids():
     const assert=require('node:assert/strict');
     const m=require('./static/music-share.js');
     assert.equal(m.coverUrl({id:123}),'/api/music/cover/123');
+    assert.equal(m.knownCover({cover:'http://p1.music.126.net/art.jpg'}),'https://p1.music.126.net/art.jpg');
+    assert.equal(m.knownCover({cover:'https://p1.music.126.net.evil.invalid/art.jpg'}),'');
+    assert.equal(m.knownCover({cover:'javascript:alert(1)'}),'');
+    assert(m.coverMarkup({id:123,cover:'http://p1.music.126.net/art.jpg'}).includes('src="https://p1.music.126.net/art.jpg"'));
     assert.equal(m.coverUrl({id:'db-id',external_id:'456',cover_url:'http://old.invalid/pic'}),'/api/music/cover/456');
     assert.equal(m.coverUrl({id:123,source_type:'local',cover_url:'/local.jpg'}),'/local.jpg');
     assert.equal(m.coverUrl({id:'bad',cover:'//evil.invalid'}),'');

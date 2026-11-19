@@ -1,5 +1,6 @@
 """Isolated mobile picker + real private/group send handlers; no real messages."""
 import functools
+import base64
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import json
 import os
@@ -53,7 +54,7 @@ def test_mobile_picker_preview_send_and_old_card(group):
       var _chatControl={active:false,begin:target=>({target,controller:new AbortController()}),fetch:async(g,u,o)=>{sent.push(JSON.parse(o.body));return{}},isCurrent:()=>true,finish:noop};
       var _crControl=_chatControl;
     '''
-    errors=[];requests=[]
+    errors=[];requests=[];cover_attempts={}
     try:
         with sync_playwright() as p:
             browser=p.chromium.launch(executable_path=os.environ['EDGE_EXECUTABLE'],headless=True)
@@ -63,11 +64,16 @@ def test_mobile_picker_preview_send_and_old_card(group):
             def mock(route):
                 requests.append(route.request.url)
                 if '/cover/' in route.request.url:
+                    key=route.request.url.split('/cover/',1)[1].split('?')[0]
+                    cover_attempts[key]=cover_attempts.get(key,0)+1
+                    if key=='456' or (key=='789' and cover_attempts[key]>1):
+                        route.fulfill(content_type='image/png',body=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2xkAAAAASUVORK5CYII='));return
                     route.fulfill(status=404,body='');return
                 song={'id':123,'type':'music','name':'测试歌曲','artist':'测试歌手','album':'测试专辑'}
                 data={'songs':[song]} if 'search?' in route.request.url else {'song':song}
                 route.fulfill(status=200,content_type='application/json',body=json.dumps(data))
             page.route('**/api/**',mock)
+            page.route('https://p1.music.126.net/**',lambda route:route.fulfill(status=403,body=''))
             page.route('**/fixture',lambda route:route.fulfill(content_type='text/html; charset=utf-8',body='<html><meta charset="utf-8"><body></body></html>'))
             page.goto(base+'/fixture')
             page.set_content(f'''<html data-skin="ib"><head><meta charset="utf-8"><link rel="stylesheet" href="{base}/static/common.css"><link rel="stylesheet" href="{base}/static/{'chatroom' if group else 'chat'}.css"><link rel="stylesheet" href="{base}/static/ib/ib-skin.css"><link rel="stylesheet" href="{base}/static/music-share.css"></head><body><form id="composer"><textarea id="input"></textarea><button id="sendBtn">发送</button></form><div id="previewArea"></div><div id="oldCard"></div><input id="contextSlider" value="30"><input id="tempSlider" value=".7"><script src="{base}/static/music-share.js"></script></body></html>''')
@@ -96,6 +102,12 @@ def test_mobile_picker_preview_send_and_old_card(group):
             image=page.locator('#oldCard img[data-music-cover]')
             assert image.get_attribute('src')=='/api/music/cover/123'
             page.wait_for_function('document.querySelector("#oldCard img").hidden')
+            page.evaluate(f"document.querySelector('#oldCard').innerHTML={name}({{id:456,cover:'http://p1.music.126.net/art.jpg',name:'旧记录'}})")
+            page.wait_for_function('document.querySelector("#oldCard img").naturalWidth===1')
+            assert page.locator('#oldCard img').get_attribute('src')=='/api/music/cover/456'
+            page.evaluate(f"document.querySelector('#oldCard').innerHTML={name}({{id:789,name:'暂时繁忙'}})")
+            page.wait_for_function('document.querySelector("#oldCard img").naturalWidth===1')
+            assert cover_attempts['789']==2
             # Switching chat during selection never adds a stale pending song.
             page.evaluate(adapter+'()')
             page.get_by_role('searchbox').fill('测试')

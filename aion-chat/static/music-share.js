@@ -11,10 +11,19 @@
     const url = String(song?.cover_url || song?.cover || '');
     return /^\/(?!\/)[^\\]*$/.test(url) ? url : '';
   }
+  function knownCover(song) {
+    const raw = String(song?.cover_url || song?.cover || '');
+    if (/^\/(?!\/)[^\\]*$/.test(raw)) return raw;
+    try {
+      const url = new URL(raw);
+      if (!['http:','https:'].includes(url.protocol) || !url.hostname.endsWith('.music.126.net') || url.username || url.password || (url.port && !['80','443'].includes(url.port))) return '';
+      url.protocol = 'https:'; url.port = ''; return url.href;
+    } catch (_) { return ''; }
+  }
   function coverMarkup(song, className = 'music-cover') {
     const css = className.replace(/[^a-zA-Z0-9 _-]/g, '');
-    const src = coverUrl(song);
-    return `<span class="${css} music-cover-frame"><span class="music-cover-fallback" aria-hidden="true">♫</span>${src ? `<img data-music-cover src="${escape(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>`;
+    const fallback = coverUrl(song), src = knownCover(song) || fallback;
+    return `<span class="${css} music-cover-frame"><span class="music-cover-fallback" aria-hidden="true">♫</span>${src ? `<img data-music-cover data-music-fallback="${escape(fallback)}" src="${escape(src)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}</span>`;
   }
   function caption(song) {
     const clean = value => String(value || '').replace(/[\x00-\x1f\[\]［］【】<>`]/g, '').slice(0,160);
@@ -31,12 +40,25 @@
       artist:String(attachment.artist || '').slice(0,160), album:String(attachment.album || '').slice(0,160),
       cover:coverUrl(attachment), shared_by:'user'};
   }
-  const api = {songId, coverUrl, coverMarkup, caption, composeText, serialize};
+  const api = {songId, coverUrl, knownCover, coverMarkup, caption, composeText, serialize};
   root.MusicShare = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof document === 'undefined') return;
   document.addEventListener('error', event => {
-    if (event.target?.matches?.('img[data-music-cover]')) event.target.hidden = true;
+    const img = event.target;
+    if (!img?.matches?.('img[data-music-cover]')) return;
+    const fallback = img.dataset.musicFallback;
+    if (fallback && img.getAttribute('src') !== fallback && !img.dataset.musicRetried) {
+      img.src = fallback; return;
+    }
+    img.hidden = true;
+    if (fallback && !img.dataset.musicRetried) {
+      img.dataset.musicRetried = '1';
+      setTimeout(() => { if (img.isConnected) img.src = fallback + '?retry=1'; }, 1500);
+    }
+  }, true);
+  document.addEventListener('load', event => {
+    if (event.target?.matches?.('img[data-music-cover]')) event.target.hidden = false;
   }, true);
   api.setCover = (node, song) => {
     node.classList.add('music-cover-frame'); node.style.backgroundImage = '';
