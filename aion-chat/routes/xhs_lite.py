@@ -43,6 +43,33 @@ class XhsRunRequest(BaseModel):
     actor: str = "aion"
 
 
+class CloudConnection(BaseModel):
+    url: str
+    token: str
+    machine_id: str
+    fly_token: str
+
+
+@router.post('/cloud-connection')
+async def cloud_connection(body: CloudConnection,request: Request):
+    if request.headers.get('x-requested-with')!='AnimalsHome' or request.headers.get('sec-fetch-site')=='cross-site':
+        raise HTTPException(403,'same-origin request required')
+    import xhs_remote
+    try:
+        connection=xhs_remote.validate(**body.model_dump())
+        async with _LOGIN_LOCK,xhs_lite._ACCOUNT_LOCK:
+            result=await xhs_remote.call('status',connection=connection)
+            if result.get('available') is not True:raise RuntimeError('云浏览器尚未就绪。')
+            previous=xhs_remote.load()
+            if connection!=previous:
+                xhs_remote.save(**body.model_dump())
+                xhs_lite.save_config({'cloud_login':False,'cookie':'','logged_in_user_id':'',
+                    'logged_in_nickname':'','logged_in_red_id':''})
+        return {'ok':True}
+    except (RuntimeError,ValueError):
+        return JSONResponse({'ok':False,'error':'连接未完成，请检查地址和连接钥匙。'},status_code=503)
+
+
 @router.get("/config")
 async def get_config():
     return xhs_lite.public_config()

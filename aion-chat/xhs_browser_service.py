@@ -14,7 +14,7 @@ from pathlib import Path
 import tempfile
 import time
 
-ROOT = Path('/var/lib/xhs-browser')
+ROOT = Path(os.environ.get('XHS_BROWSER_ROOT','/var/lib/xhs-browser'))
 SOCKET = Path('/run/xhs-browser/api.sock')
 HOME_URL = 'https://www.xiaohongshu.com/explore'
 

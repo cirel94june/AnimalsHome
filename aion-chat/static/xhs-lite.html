@@ -535,6 +535,16 @@ pre {
       <div class="grid" style="margin-top:14px">
         <div class="inline-card">
           <h2>操作账号</h2>
+          <p id="cloudBudgetHint" class="hint" hidden></p>
+          <details id="cloudConnectionSetup" hidden>
+            <summary>云浏览器维护连接</summary>
+            <label>专用应用地址<input id="cloudConnectionUrl" type="url" autocomplete="off"></label>
+            <label>连接钥匙<input id="cloudConnectionKey" type="password" autocomplete="new-password"></label>
+            <label>专用机器编号<input id="cloudConnectionMachine" autocomplete="off"></label>
+            <label>仅此应用的启动钥匙<input id="cloudConnectionFlyKey" type="password" autocomplete="new-password"></label>
+            <button type="button" onclick="connectCloudBrowser()">验证并连接</button>
+            <p class="hint">更换连接会清除旧小红书登录，需本人重新扫码确认；预算记录保留。</p>
+          </details>
           <div id="cloudLoginBox" hidden>
             <p class="hint">用小红书扫码，登录会保存在云端。日常不用复制 Cookie；平台要求重新验证时，再扫码即可。AI 只阅读，不发评论。</p>
             <div class="row">
@@ -800,6 +810,10 @@ async function loadConfig(options = {}) {
   $('writeInput').checked = !!currentConfig.allow_write_comments;
   $('writeInput').disabled = !!currentConfig.cloud_login;
   $('cloudLoginBox').hidden = !currentConfig.cloud_login_available;
+  $('cloudConnectionSetup').hidden = new URLSearchParams(location.search).get('maintenance') !== '1';
+  const budget = currentConfig.cloud_budget;
+  $('cloudBudgetHint').hidden = !budget;
+  if (budget) $('cloudBudgetHint').textContent = `${budget.locked ? '云浏览器已锁停' : '云浏览器用量保护已开启'}：保守估计 $${Number(budget.estimated_usd).toFixed(2)} / $${budget.limit_usd}（含存储和流量预留，不是 Fly 实际账单）。`;
   $('cloudStartBtn').textContent = currentConfig.cloud_login ? '重新扫码登录' : '扫码登录';
   $('targetUserIdInput').value = currentConfig.target_user_id || '';
   $('targetNicknameInput').value = currentConfig.target_nickname || '';
@@ -827,6 +841,18 @@ async function loadConfig(options = {}) {
   $('configDetails').open = !currentConfig.cookie_configured;
   updateOverview();
   if (!options.silent) setStatus('设置已加载。');
+}
+async function connectCloudBrowser() {
+  try {
+    const response = await fetch('/api/xhs-lite/cloud-connection', {method:'POST',
+      headers:{'Content-Type':'application/json','X-Requested-With':'AnimalsHome'},
+      body:JSON.stringify({url:$('cloudConnectionUrl').value.trim(),token:$('cloudConnectionKey').value.trim(),
+        machine_id:$('cloudConnectionMachine').value.trim(),fly_token:$('cloudConnectionFlyKey').value.trim()})});
+    const data=await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || '连接未完成');
+    $('cloudConnectionKey').value='';$('cloudConnectionFlyKey').value='';
+    await loadConfig();setStatus('云浏览器已连接，请扫码确认小红书账号。');
+  } catch (error) {setStatus(error.message,'error');}
 }
 let cloudFrameURL = null, cloudFrameTimer = null, cloudUntil = 0;
 async function cloudFrame() {

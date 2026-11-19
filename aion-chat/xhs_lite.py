@@ -153,6 +153,10 @@ def public_config() -> dict[str, Any]:
     public["cookie_masked"] = "" if cfg.get('cloud_login') else mask_cookie(cookie)
     import xhs_browser
     public["cloud_login_available"] = xhs_browser.configured()
+    import xhs_remote
+    if xhs_remote.load():
+        from xhs_fly_budget import public_status
+        public['cloud_budget']=public_status()
     if cfg.get('cloud_login'):public['allow_write_comments'] = False
     public["actor_labels"] = {
         "aion": actor_label("aion"),
@@ -222,6 +226,10 @@ async def _run_worker_locked(endpoint: str, body: dict | None = None, *, cookie:
 
 
 async def _run_worker_local(endpoint: str, body: dict | None = None, *, cookie: str | None = None, timeout: int = 90) -> dict:
+    # Keep login checks and subsequent reads on the cloud browser's network.
+    import xhs_remote
+    if xhs_remote.load():
+        return await xhs_remote.call('worker',{'endpoint':endpoint,'body':body or {},'cookie':cookie or ''})
     payload = {
         "endpoint": endpoint,
         "body": body or {},
