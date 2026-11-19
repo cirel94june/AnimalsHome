@@ -699,13 +699,11 @@ function crRenderMusicCards(msgId) {
 }
 
 function crBuildMusicCardHtml(song) {
-  const cover = song.cover ? esc(song.cover) : '';
-  const coverImg = cover
-    ? `<img class="music-cover" src="${cover}" alt="">`
-    : `<div class="music-cover" style="display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--text3)">🎵</div>`;
+  const songId = MusicShare.songId(song);
+  if (!songId) return '';
+  const coverImg = MusicShare.coverMarkup(song);
   const name = esc(song.name || '未知歌曲');
   const artist = esc(song.artist || '未知歌手');
-  const songId = song.id;
   const onlineBtn = `<button class="music-btn secondary" onclick="crPlayMusicOnline(${songId})">▶ 在线播放</button>`;
   return `
     <div class="music-card">
@@ -4066,7 +4064,7 @@ composer.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (_crControl.active) { _crControl.stop(); return; }
   if (!crRequireModels()) return;
-  const text = inputEl.value.trim();
+  const text = MusicShare.composeText(inputEl.value, pendingAttachments);
   if (pendingAttachments.some(a => a.uploading)) { toast('图片或附件还在上传，请稍等'); return; }
   if ((!text && !pendingAttachments.length) || !currentRoom || isSending) return;
 
@@ -4076,8 +4074,8 @@ composer.addEventListener('submit', async (e) => {
   inputEl.value = '';
   resizeInput();
 
-  const attachments = pendingAttachments.map(a => a.url);
-  pendingAttachments.forEach(a => ChatImageUpload.release(a));
+  const attachments = pendingAttachments.map(MusicShare.serialize);
+  pendingAttachments.forEach(a => { if (a.type !== 'music') ChatImageUpload.release(a); });
   pendingAttachments = [];
   renderPreview();
 
@@ -6529,6 +6527,7 @@ function renderPreview() {
   if (!pendingAttachments.length) { area.className = 'preview-area'; area.innerHTML = ''; return; }
   area.className = 'preview-area has-files';
   area.innerHTML = pendingAttachments.map((a, i) => {
+    if (a.type === 'music') return `<div class="preview-item music-share-preview">${MusicShare.preview(a)}<button class="preview-remove" onclick="removeChatroomAttachment(${i})">✕</button></div>`;
     const isVideo = String(a.type || '').startsWith('video/') || /\.(mp4|webm|mov)(?:[?#].*)?$/i.test(a.url || '');
     const src = esc(a.previewUrl || a.url || '');
     const media = isVideo
@@ -6540,9 +6539,23 @@ function renderPreview() {
 }
 
 function removeChatroomAttachment(i) {
-  ChatImageUpload.release(pendingAttachments[i]);
+  if (pendingAttachments[i]?.type !== 'music') ChatImageUpload.release(pendingAttachments[i]);
   pendingAttachments.splice(i, 1);
   renderPreview();
+}
+
+function crOpenMusicShare() {
+  const room = currentRoom?.id;
+  if (!room) { toast('请先打开一个聊天室'); return; }
+  MusicShare.openPicker({
+    isCurrent: () => currentRoom?.id === room,
+    onSelect: song => {
+      if (!MusicShare.songId(song)) throw new Error('歌曲资料不完整，请重新选歌。');
+      if (pendingAttachments.filter(a => a.type === 'music').length >= 3) throw new Error('每条消息最多分享三首歌曲。');
+      if (!pendingAttachments.some(a => a.type === 'music' && MusicShare.songId(a) === MusicShare.songId(song))) pendingAttachments.push(song);
+      renderPreview();
+    }
+  });
 }
 
 function openImageViewer(src) {

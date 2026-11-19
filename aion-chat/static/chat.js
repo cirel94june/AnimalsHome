@@ -2737,12 +2737,12 @@ function renderMusicCards(msgId) {
 }
 
 function buildMusicCardHtml(song) {
-  const cover = song.cover ? escHtml(song.cover) : '';
-  const coverImg = cover ? `<img class="music-cover" src="${cover}" alt="">` : `<div class="music-cover" style="display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text3)">🎵</div>`;
+  const songId = MusicShare.songId(song);
+  if (!songId) return '';
+  const coverImg = MusicShare.coverMarkup(song);
   const name = escHtml(song.name || '未知歌曲');
   const artist = escHtml(song.artist || '未知歌手');
   const album = song.album ? `<div class="music-album">💿 ${escHtml(song.album)}</div>` : '';
-  const songId = song.id;
 
   // 在线播放按钮（统一走服务端代理推流）
   const onlineBtn = `<button class="music-btn secondary" onclick="playMusicOnline(${songId})">▶ 在线播放</button>`;
@@ -2750,8 +2750,8 @@ function buildMusicCardHtml(song) {
   // 备选歌曲
   let candidatesHtml = '';
   if (song.candidates && song.candidates.length) {
-    const items = song.candidates.map(c =>
-      `<div class="cand-item" onclick="openInNetease(${c.id})">🎵 ${escHtml(c.name)} - ${escHtml(c.artist)}</div>`
+    const items = song.candidates.filter(c => MusicShare.songId(c)).map(c =>
+      `<div class="cand-item" onclick="openInNetease(${MusicShare.songId(c)})">🎵 ${escHtml(c.name)} - ${escHtml(c.artist)}</div>`
     ).join('');
     candidatesHtml = `<details class="music-candidates"><summary>不是这首？看看其他结果</summary>${items}</details>`;
   }
@@ -3079,7 +3079,7 @@ function _getMaxTokens() {
 // ── 发送消息 ──
 async function send() {
   const input = $("input");
-  const text = input.value.trim();
+  const text = MusicShare.composeText(input.value, pendingAttachments);
   if (pendingAttachments.some(a => a.uploading)) { alert('图片或附件还在上传，请稍等'); return; }
   if ((!text && !pendingAttachments.length) || sending) return;
   if (!currentConvId) {
@@ -3101,8 +3101,8 @@ async function send() {
   _showStopBtn();
   input.value = "";
   autoResize(input);
-  const attachments = pendingAttachments.map(a => a.url);
-  pendingAttachments.forEach(a => ChatImageUpload.release(a));
+  const attachments = pendingAttachments.map(MusicShare.serialize);
+  pendingAttachments.forEach(a => { if (a.type !== 'music') ChatImageUpload.release(a); });
   pendingAttachments = [];
   renderPreview();
 
@@ -4472,7 +4472,7 @@ function renderAttachments(atts) {
     } else if (typeof item === 'object' && item.type === 'wish_fulfillment') {
       wishHtml += buildWishFulfillmentCard(item);
     } else if (typeof item === 'object' && item.type === 'music') {
-      capsuleHtml += `<div class="music-capsule" onclick="openInNetease(${item.id})">🎵 ${escHtml(aiName)}给你点播歌曲《${escHtml(item.name)}》</div>`;
+      mediaHtml += `<div class="music-cards-container">${buildMusicCardHtml(item)}</div>`;
     } else if (typeof item === 'object' && item.type === 'generated_song') {
       mediaHtml += buildGeneratedSongCard(item);
     } else if (typeof item === 'object' && item.type === 'voice') {
@@ -4548,6 +4548,7 @@ function renderPreview() {
   if (!pendingAttachments.length) { area.className = 'preview-area'; area.innerHTML = ''; return; }
   area.className = 'preview-area has-files';
   area.innerHTML = pendingAttachments.map((a, i) => {
+    if (a.type === 'music') return `<div class="preview-item music-share-preview">${MusicShare.preview(a)}<button class="preview-remove" onclick="removeAttachment(${i})">✕</button></div>`;
     const isVid = a.type && a.type.startsWith('video/');
     const src = escHtml(a.previewUrl || a.url || '');
     const media = isVid ? `<video src="${src}" muted></video>` : `<img src="${src}">`;
@@ -4557,9 +4558,22 @@ function renderPreview() {
 }
 
 function removeAttachment(i) {
-  ChatImageUpload.release(pendingAttachments[i]);
+  if (pendingAttachments[i]?.type !== 'music') ChatImageUpload.release(pendingAttachments[i]);
   pendingAttachments.splice(i, 1);
   renderPreview();
+}
+
+function openMusicShare() {
+  const conversation = currentConvId;
+  MusicShare.openPicker({
+    isCurrent: () => currentConvId === conversation,
+    onSelect: song => {
+      if (!MusicShare.songId(song)) throw new Error('歌曲资料不完整，请重新选歌。');
+      if (pendingAttachments.filter(a => a.type === 'music').length >= 3) throw new Error('每条消息最多分享三首歌曲。');
+      if (!pendingAttachments.some(a => a.type === 'music' && MusicShare.songId(a) === MusicShare.songId(song))) pendingAttachments.push(song);
+      renderPreview(); _updateSendBtnState();
+    }
+  });
 }
 
 // ── 附加功能菜单 ──

@@ -3,7 +3,7 @@
 """
 
 import re
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Path, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 
@@ -14,6 +14,28 @@ from music import search_songs, get_song_detail, get_audio_url
 router = APIRouter()
 
 MUSIC_CMD_PATTERN = re.compile(r"\[MUSIC:(.+?)\]")
+
+
+@router.get('/api/music/cover/{song_id}')
+async def music_cover(song_id: int=Path(gt=0,le=9007199254740991)):
+    from music_media import get_cover
+    value,kind=await get_cover(song_id)
+    return Response(value,media_type=kind,headers={'Cache-Control':'private, max-age=86400',
+        'X-Content-Type-Options':'nosniff'})
+
+
+@router.get('/api/music/share/{song_id}')
+async def music_share(song_id: int=Path(gt=0,le=9007199254740991)):
+    from music_actions import run_sync
+    from music_media import share_text
+    try:info=await run_sync(get_song_detail,song_id)
+    except HTTPException:raise
+    except Exception:raise HTTPException(502,'歌曲资料暂时无法读取，请稍后再试。') from None
+    if not info or str(info.get('id'))!=str(song_id):raise HTTPException(404,'没有找到这首歌。')
+    song={'type':'music','id':song_id,'name':str(info.get('name') or '')[:160],
+          'artist':str(info.get('artist') or '')[:160],'album':str(info.get('album') or '')[:160],
+          'cover':f'/api/music/cover/{song_id}','shared_by':'user'}
+    return {'song':song,'text':share_text(song)}
 
 
 @router.get("/api/music/search")

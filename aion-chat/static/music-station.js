@@ -131,10 +131,9 @@
     card.setAttribute('role', 'button');
     card.setAttribute('aria-label', `播放 ${track.title || '歌曲'}`);
 
-    const cover = track.cover_url ? document.createElement('img') : document.createElement('div');
+    const cover = document.createElement('div');
     cover.className = 'track-cover';
-    if (track.cover_url) { cover.src = track.cover_url; cover.alt = ''; cover.loading = 'lazy'; }
-    else cover.textContent = '♫';
+    MusicShare.setCover(cover, track);
 
     const copy = document.createElement('div');
     copy.className = 'track-copy';
@@ -249,8 +248,7 @@
     $('nowTitle').textContent = track ? track.title || '未知歌曲' : '尚未播放';
     $('nowArtist').textContent = track ? track.artist || '未知歌手' : '从歌单里选一首吧';
     const cover = $('nowCover');
-    cover.style.backgroundImage = track && track.cover_url ? `url("${String(track.cover_url).replace(/["\\]/g, '')}")` : '';
-    cover.textContent = track && track.cover_url ? '' : '♫';
+    MusicShare.setCover(cover, track || {});
   }
 
   function selectTrack(trackId, autoplay) {
@@ -353,10 +351,9 @@
   function neteaseRow(song) {
     const row = document.createElement('div');
     row.className = 'netease-row';
-    const cover = document.createElement('img');
-    cover.alt = '';
-    cover.loading = 'lazy';
-    if (song.cover) cover.src = song.cover;
+    const cover = document.createElement('span');
+    cover.className = 'netease-cover';
+    MusicShare.setCover(cover, song);
     const meta = document.createElement('div');
     meta.className = 'meta';
     const title = document.createElement('strong');

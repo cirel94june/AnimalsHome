@@ -163,6 +163,8 @@
       const row = document.createElement('div'); row.className = 'cloud-song-row';
       const label = document.createElement('span'); label.textContent = `${song.name} · ${song.artist}`;
       const spec = {id: song.id, name: song.name, artist: song.artist, album: song.album};
+      const cover = document.createElement('span'); cover.className = 'netease-cover';
+      MusicShare.setCover(cover, song); row.append(cover);
       row.append(label, button('试听', async () => {
         const audio = $('cloudPreviewAudio');
         $('stationAudio').pause(); $('neteasePreview').pause();

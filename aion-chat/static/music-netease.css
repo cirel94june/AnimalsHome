@@ -12,7 +12,7 @@
 #neteaseQr img, #neteaseQr canvas { max-width: 100%; }
 .cloud-playlist-row { display: block; width: 100%; text-align: left; margin: 8px 0; }
 .cloud-song-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; border-bottom: 1px solid var(--border, #ddd); padding: 12px 0; }
-.cloud-song-row span { flex: 1 0 100%; overflow-wrap: anywhere; }
+.cloud-song-row > span:not(.music-cover-frame) { flex: 1 1 calc(100% - 60px); min-width: 0; overflow-wrap: anywhere; }
 .netease-account-dialog [hidden] { display: none !important; }
 .netease-account-dialog { background: #f5f3f8 !important; color: #252237 !important; }
 .netease-account-dialog input, .netease-account-dialog button { color: #252237; background: #fff; }

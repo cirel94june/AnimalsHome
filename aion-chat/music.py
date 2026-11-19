@@ -112,7 +112,7 @@ def search_songs(keyword: str, limit: int = 5) -> list[dict]:
             "artists": artists,
             "artist": " / ".join(artists),
             "album": album_info.get("name", ""),
-            "cover": (album_info.get("picUrl") or "") + "?param=200y200",
+            "cover": __import__('music_media').remote_cover(album_info.get('picUrl')),
             "duration": s.get("dt", 0),  # 毫秒
         })
     return results
@@ -135,7 +135,7 @@ def get_song_detail(song_id: int) -> dict | None:
         "artists": artists,
         "artist": " / ".join(artists),
         "album": album_info.get("name", ""),
-        "cover": (album_info.get("picUrl") or "") + "?param=200y200",
+        "cover": __import__('music_media').remote_cover(album_info.get('picUrl')),
         "duration": s.get("dt", 0),
     }
 

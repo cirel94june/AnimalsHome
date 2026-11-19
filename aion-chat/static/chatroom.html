@@ -125,6 +125,7 @@
         <div class="plus-menu-wrap">
           <button type="button" class="plus-btn" onclick="crTogglePlusMenu()" title="更多功能">＋</button>
           <div class="plus-menu" id="crPlusMenu">
+            <div class="plus-menu-item" onclick="crClosePlusMenu();crOpenMusicShare()"><span class="pm-icon">🎵</span>分享歌曲</div>
             <div class="plus-menu-item" onclick="crClosePlusMenu();document.getElementById('fileInput').click()"><span class="pm-icon">📎</span>上传附件</div>
             <div class="plus-menu-item" onclick="crClosePlusMenu();crOpenCamera()"><span class="pm-icon">📷</span>拍照</div>
             <div class="plus-menu-item" onclick="crClosePlusMenu();if(window.VoiceCall)VoiceCall.openChatroom()"><span class="pm-icon">◉</span>语音通话</div>
@@ -489,7 +490,9 @@
 <script src="/static/tts-voices.js?v=elevenlabs-20261003"></script>
 <link rel="stylesheet" href="/static/chat-artifacts.css?v=20261113">
 <script src="/static/chat-artifacts.js?v=20261113"></script>
-<script src="/static/chatroom.js?v=20261113-artifacts-auto"></script>
+<link rel="stylesheet" href="/static/music-share.css?v=20261119-share1">
+<script src="/static/music-share.js?v=20261119-share1"></script>
+<script src="/static/chatroom.js?v=20261119-share1"></script>
   <script src="/static/voice-call-policy.js?v=voice-latency-20260902a"></script>
   <script src="/static/voice-call.js?v=voice-latency-20260902a"></script>
 </body>
