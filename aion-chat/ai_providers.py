@@ -679,6 +679,12 @@ def _observe_relay_cache(cfg: dict, meta: dict, reported: bool):
     counts['calls']+=1
     counts['reported']+=receipt['cache_reported_calls']
     counts['hits']+=int(receipt['cache_read_tokens']>0)
+    shape = meta.pop('_cache_request_shape', None)
+    if shape is not None:
+        from cache_request_trace import numeric_usage
+        recent = counts.setdefault('recent', [])
+        recent.append({'at': time.time(), **shape, 'usage': numeric_usage(meta.get('raw'))})
+        del recent[:-8]
     if len(_CACHE_OBSERVED)>200:_CACHE_OBSERVED.pop(next(iter(_CACHE_OBSERVED)))
 
 
@@ -970,6 +976,9 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                     # 一次性接口也不认思考开关：和流式一样记住、去掉再发（复审 M1）
                     _NO_GEMINI_THOUGHTS.add(url)
                     continue
+                if resp.status_code == 200 and meta is not None:
+                    from cache_request_trace import payload_shape
+                    meta['_cache_request_shape'] = payload_shape(body)
                 for piece in _custom_openai_whole_reply(resp, meta):
                     yield piece
                 return
@@ -1014,6 +1023,9 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                         return
                     if meta is not None and payload["messages"] is not plain_messages:
                         meta["cache_ttl"] = ttl  # 这次真正发出去的缓存时长（写缓存按它计价）
+                    if meta is not None:
+                        from cache_request_trace import payload_shape
+                        meta['_cache_request_shape'] = payload_shape(payload)
                     async for line in resp.aiter_lines():
                         data = _openai_sse_data(line)
                         if data is None:
@@ -2186,6 +2198,7 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
     # 发请求之前就定下这次算哪条线路；请求途中改绑 / 删掉模型也不影响这一笔
     route = usage_log.route_for_model(resolved)
     cache_cfg = dict(MODELS.get(resolved) or {})
+    meta.pop('_cache_request_shape', None)
     # 同一个 meta 可能被调用方重复用：先把上一次的用量拿走，这次中转站给了才算真实数字
     previous = {key: meta.pop(key) for key in _USAGE_KEYS if key in meta}
     output: list[str] = []
