@@ -849,6 +849,8 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
     request_messages = messages
     recovered_empty = False
     for attempt in range(1, RELAY_ATTEMPTS + 1):
+        if attempt > 1 and meta is not None:
+            meta['_reply_extra_calls'] = meta.get('_reply_extra_calls', 0) + 1
         started = False
         try:
             stream = _call_custom_openai_once(request_messages, cfg, meta, temperature, max_tokens, request_timeout=request_timeout)
@@ -1482,7 +1484,8 @@ async def call_antigravity_cli(messages: list, model: str, meta: dict | None = N
                     meta["completion_tokens"] = usage.get("output_tokens", 0)
                     meta["total_tokens"] = usage.get("total_tokens", 0)
                     meta["raw"] = {
-                        "prompt_tokens_details": {"cached_tokens": usage.get("cache_read_tokens", 0)},
+                        "prompt_tokens_details": ({"cached_tokens": usage["cache_read_tokens"]}
+                                                  if "cache_read_tokens" in usage else {}),
                         "completion_tokens_details": {"reasoning_tokens": usage.get("thinking_tokens", 0)},
                     }
                 yield StreamActivity()
@@ -1740,17 +1743,11 @@ def _codex_semaphore() -> asyncio.Semaphore:
 
 def _normalize_codex_app_server_usage(usage: dict | None) -> dict:
     usage = usage or {}
-    return {
-        "input_tokens": usage.get("inputTokens", usage.get("input_tokens", 0)),
-        "cached_input_tokens": usage.get(
-            "cachedInputTokens", usage.get("cached_input_tokens", 0)
-        ),
-        "output_tokens": usage.get("outputTokens", usage.get("output_tokens", 0)),
-        "reasoning_output_tokens": usage.get(
-            "reasoningOutputTokens", usage.get("reasoning_output_tokens", 0)
-        ),
-        "total_tokens": usage.get("totalTokens", usage.get("total_tokens", 0)),
-    }
+    fields = {'input_tokens': 'inputTokens', 'cached_input_tokens': 'cachedInputTokens',
+              'output_tokens': 'outputTokens', 'reasoning_output_tokens': 'reasoningOutputTokens',
+              'total_tokens': 'totalTokens'}
+    return {snake: usage[camel] if camel in usage else usage[snake]
+            for snake, camel in fields.items() if camel in usage or snake in usage}
 
 
 def _usage_int(value) -> int:
@@ -1770,8 +1767,12 @@ def _apply_codex_usage_meta(meta: dict | None, usage: dict | None) -> None:
     cached_tokens = _usage_int(usage.get("cached_input_tokens"))
     reasoning_tokens = _usage_int(usage.get("reasoning_output_tokens"))
 
-    meta["prompt_tokens"] = input_tokens
-    meta["completion_tokens"] = output_tokens
+    meta.pop("prompt_tokens", None)
+    meta.pop("completion_tokens", None)
+    if "input_tokens" in usage:
+        meta["prompt_tokens"] = input_tokens
+    if "output_tokens" in usage:
+        meta["completion_tokens"] = output_tokens
     meta["total_tokens"] = total_tokens
 
     raw = dict(usage)
@@ -2160,6 +2161,8 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
                 yield chunk
     finally:
         reported = any(key in meta for key in ("prompt_tokens", "completion_tokens"))
+        import reply_usage
+        reply_usage.observe(meta, reported)
         if counted:
             usage_log.record_call(resolved, usage_log.kind_for_module(caller), meta if reported else {},
                                   usage_log.messages_text(messages), "".join(output), route=route)

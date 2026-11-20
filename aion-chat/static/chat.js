@@ -2052,7 +2052,7 @@ function renderPrivateMessageHTML(m) {
   if (inlineToy?.noticeHtml) contentHtml += `<div class="system-notice">${inlineToy.noticeHtml}</div>`;
   const avatarSrc = isUser ? '/public/UserIcon.png' : '/public/AIIcon.png';
   const ttsBtn = !isUser ? `<button class="tts-replay-btn" onclick="replayTTS('${m.id}')" title="重听语音">🔊</button>` : '';
-  const roleRow = `<div class="msg-role-row">${dotsLeft}<span class="msg-role-name">${escHtml(roleLabel)}</span>${reasoningHtml}<span class="msg-time">${time}</span>${dotsRight}${feedbackHtml}${ttsBtn}${starBadge}<div class="msg-menu" id="menu_${m.id}">${actionsHtml}</div></div>`;
+  const roleRow = `<div class="msg-role-row">${dotsLeft}<span class="msg-role-name">${escHtml(roleLabel)}</span>${reasoningHtml}${isAssistant ? (window.ReplyUsage?.render(m) || "") : ""}<span class="msg-time">${time}</span>${dotsRight}${feedbackHtml}${ttsBtn}${starBadge}<div class="msg-menu" id="menu_${m.id}">${actionsHtml}</div></div>`;
   const avatar = `<div class="msg-avatar-col"><img class="msg-avatar" src="${avatarSrc}" alt="" data-pat-target="${isUser ? 'user' : 'aion'}" role="button" tabindex="0" title="双击拍拍" aria-label="双击拍拍" draggable="false"></div>`;
   const header = isUser ? `${roleRow}${avatar}` : `${avatar}${roleRow}`;
   return `
@@ -4440,6 +4440,7 @@ function renderAttachments(atts) {
   const aiName = worldBook.ai_name || 'AI';
   const actorName = escHtml(String(aiName));
   atts.forEach(item => {
+    if (item?.type === 'reply_usage') return;
     if (typeof item === 'object' && item.type === 'expressive_voice') {
       mediaHtml += window.ExpressiveVoice?.render(item) || '';
     } else if (typeof item === 'object' && item.type === 'luckin_payment') {

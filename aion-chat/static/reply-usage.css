@@ -1,0 +1,7 @@
+.reply-usage { display:inline-block; position:relative; max-width:100%; font:12px/1.6 system-ui,sans-serif; color:#31445d; letter-spacing:normal; }
+.reply-usage summary { cursor:pointer; padding:2px 8px; border:1px solid #ccd7e2; border-radius:10px; background:#f2f6fa; color:#31445d; list-style:none; }
+.reply-usage summary::-webkit-details-marker { display:none; }
+.reply-usage[open] { flex-basis:100%; }
+.reply-usage[open] summary { display:inline-block; }
+.reply-usage > span { display:block; max-width:100%; padding:7px 10px; margin-top:4px; border:1px solid #ccd7e2; border-radius:8px; background:#f7f9fc; color:#26384e; overflow-wrap:anywhere; }
+.msg-role-row:has(.reply-usage), .sender-line:has(.reply-usage) { flex-wrap:wrap; gap:5px; }

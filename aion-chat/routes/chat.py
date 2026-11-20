@@ -4,6 +4,7 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 """
 
 import json, time, asyncio, re, shutil
+import reply_usage
 from datetime import datetime
 
 from clock_text import now_text
@@ -1780,6 +1781,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             reply_atts = await _with_link_previews(full_text, reply_atts)
             full_text = strip_urls_for_message(full_text)
             reply_atts = await with_band_vibration_attachment(ai_msg_id, reply_atts)
+            reply_atts += reply_usage.attachments(usage_meta)
             att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else ""
 
             now2 = time.time()
@@ -2529,6 +2531,7 @@ async def send_message(conv_id: str, body: MsgCreate):
             reply_atts = await _with_link_previews(full_text, reply_atts)
             full_text = strip_urls_for_message(full_text)
             reply_atts = await with_band_vibration_attachment(ai_msg_id, reply_atts)
+            reply_atts += reply_usage.attachments(usage_meta)
             att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else ""
 
             now2 = time.time()
@@ -3041,11 +3044,12 @@ async def perform_private_memory_search(
         voice = manager.get_tts_voice()
         if voice:
             tts_streamer = TTSStreamer(msg_id, voice, manager)
+    usage_meta = {}
     full_text = ""
     async def generate_search_reply(search_messages):
         nonlocal full_text
         full_text = ''
-        async for chunk in stream_ai(search_messages, model_key, temperature=SETTINGS.get("temperature")):
+        async for chunk in stream_ai(search_messages, model_key, usage_meta, temperature=SETTINGS.get("temperature")):
             if chunk.startswith(CLI_STATUS_PREFIX):
                 continue
             full_text += chunk
@@ -3076,6 +3080,7 @@ async def perform_private_memory_search(
         tts_streamer.feed(full_text)
     now = time.time()
     reply_atts = await with_band_vibration_attachment(msg_id, [])
+    reply_atts += reply_usage.attachments(usage_meta)
     att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else "[]"
     async with get_db() as db:
         await db.execute(
@@ -3229,11 +3234,12 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
             web_tts = TTSStreamer(msg_id, tts_voice, manager)
 
     music_reply_ok = True
+    usage_meta = {}
     full_text = ""
     web_reply_filter = WebCommandStreamFilter()
     try:
         _temp = SETTINGS.get("temperature")
-        async for chunk in stream_ai(messages, model_key, temperature=_temp):
+        async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
             if chunk.startswith(CLI_STATUS_PREFIX):
                 continue
             full_text += chunk
@@ -3272,6 +3278,7 @@ async def perform_web_search_check(conv_id: str, model_key: str, searches: list[
 
     now = time.time()
     reply_atts = await with_band_vibration_attachment(msg_id, music_reply_atts)
+    reply_atts += reply_usage.attachments(usage_meta)
     att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else "[]"
     async with get_db() as db:
         await db.execute(
@@ -3361,10 +3368,11 @@ async def perform_poi_check(conv_id: str, model_key: str, categories: list[str])
         if tts_voice:
             poi_tts = TTSStreamer(msg_id, tts_voice, manager)
 
+    usage_meta = {}
     full_text = ""
     try:
         _temp = SETTINGS.get("temperature")
-        async for chunk in stream_ai(messages, model_key, temperature=_temp):
+        async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
             if chunk.startswith(CLI_STATUS_PREFIX):
                 continue
             full_text += chunk
@@ -3403,6 +3411,7 @@ async def perform_poi_check(conv_id: str, model_key: str, categories: list[str])
 
     now = time.time()
     reply_atts = await with_band_vibration_attachment(msg_id, [])
+    reply_atts += reply_usage.attachments(usage_meta)
     att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else "[]"
     async with get_db() as db:
         await db.execute(
@@ -3505,10 +3514,11 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
         if tts_voice:
             ac_tts = TTSStreamer(msg_id, tts_voice, manager)
 
+    usage_meta = {}
     full_text = ""
     try:
         _temp = SETTINGS.get("temperature")
-        async for chunk in stream_ai(messages, model_key, temperature=_temp):
+        async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
             if chunk.startswith(CLI_STATUS_PREFIX):
                 continue
             full_text += chunk
@@ -3545,6 +3555,7 @@ async def perform_activity_check(conv_id: str, model_key: str, n: int = 6):
 
     now = time.time()
     reply_atts = await with_band_vibration_attachment(msg_id, [])
+    reply_atts += reply_usage.attachments(usage_meta)
     att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else "[]"
     async with get_db() as db:
         await db.execute(
@@ -4019,6 +4030,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             reply_atts = await _with_link_previews(full_text, reply_atts)
             full_text = strip_urls_for_message(full_text)
             reply_atts = await with_band_vibration_attachment(ai_msg_id, reply_atts)
+            reply_atts += reply_usage.attachments(usage_meta)
             att_json = json.dumps(reply_atts, ensure_ascii=False) if reply_atts else ""
 
             now2 = time.time()

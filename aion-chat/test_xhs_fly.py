@@ -56,6 +56,25 @@ def test_unknown_start_result_never_refunds_reserved_charge(isolated,monkeypatch
     assert budget.load()['spent_micro']==budget.RESERVE_MICRO+budget.LEASE_MICRO
 
 
+def test_owner_reconnect_accepts_valid_repair_without_resetting_spend(isolated,monkeypatch):
+    calls,_=install_fly(monkeypatch)
+    spent=budget.RESERVE_MICRO+budget.LEASE_MICRO*4
+    budget.save({'spent_micro':spent,'lease_until':0,'locked':True,
+                 'target':'animalshome-xhs-test/'+CFG['machine_id']})
+    with pytest.raises(RuntimeError):asyncio.run(budget.ensure_started(CFG))
+    asyncio.run(budget.ensure_started(CFG,owner_reconnect=True))
+    assert budget.load()['spent_micro']==spent+budget.LEASE_MICRO
+    assert budget.load()['locked'] is False
+
+
+def test_owner_reconnect_cannot_unlock_spent_budget(isolated,monkeypatch):
+    calls,_=install_fly(monkeypatch)
+    budget.save({'spent_micro':budget.LIMIT_MICRO,'lease_until':0,'locked':True})
+    with pytest.raises(RuntimeError):asyncio.run(budget.ensure_started(CFG,owner_reconnect=True))
+    assert budget.load()['locked'] is True
+    assert not any(path.endswith('/start') for _,path in calls)
+
+
 def test_running_without_lease_is_stopped_not_reused(isolated,monkeypatch):
     calls,status=install_fly(monkeypatch,started=True)
     with pytest.raises(RuntimeError):asyncio.run(budget.ensure_started(CFG))
@@ -122,4 +141,4 @@ def test_vm_deadline_and_no_proxy_autostart_are_in_deployment_source():
     script=(root/'entrypoint.sh').read_text(encoding='utf-8')
     config=(root/'fly.toml').read_text(encoding='utf-8')
     assert '--kill-after=15s 300s' in script
-    assert 'auto_start_machines = false' in config and 'policy = "no"' in config
+    assert 'auto_start_machines = false' in config and 'policy = "never"' in config

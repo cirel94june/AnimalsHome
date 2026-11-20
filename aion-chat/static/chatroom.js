@@ -2980,7 +2980,7 @@ function crMsgSenderLineHtml(sender, name, msgId, msg = null, opts = {}) {
     ? `<button class="memory-record-hint" onclick="event.stopPropagation();crShowMemoryRecordCard('${msgId}')" title="已记录到记忆库">💡</button>`
     : '';
   if (sender !== 'user') {
-    return `<div class="sender-line"><span class="sender-label ${sender}">${esc(name)}</span>${msg ? crReasoningChipHtml(msg) : ''}${timeHtml}${menuHtml}${feedbackHtml}${ttsHtml}${memoryHtml}</div>`;
+    return `<div class="sender-line"><span class="sender-label ${sender}">${esc(name)}</span>${msg ? crReasoningChipHtml(msg) : ''}${window.ReplyUsage?.render(msg) || ''}${timeHtml}${menuHtml}${feedbackHtml}${ttsHtml}${memoryHtml}</div>`;
   }
   return timeHtml || menuHtml ? `<div class="sender-line user-line">${timeHtml}${menuHtml}</div>` : '';
 }
@@ -6444,6 +6444,7 @@ function renderAttachments(atts, options = {}) {
   let musicHtml = '';
   let wishHtml = '';
   atts.forEach(item => {
+    if (item?.type === 'reply_usage') return;
     const url = typeof item === 'string' ? item : (item.url || '');
     const type = (typeof item === 'object' && item.type) || '';
     if (type === 'expressive_voice') {

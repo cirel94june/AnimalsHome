@@ -78,7 +78,7 @@ def save(data):
         if os.path.exists(name):os.unlink(name)
 
 
-async def ensure_started(cfg):
+async def ensure_started(cfg, *, owner_reconnect=False):
     """Caller holds the transport lock. Fail closed; never refund failed starts."""
     async with LOCK,file_lock():
         app=cfg['url'].split('//',1)[1].split('.',1)[0]
@@ -106,6 +106,12 @@ async def ensure_started(cfg):
                 and not any(init.get(key) for key in ('entrypoint','cmd','exec'))
                 and machine.get('image_ref',{}).get('digest')==cfg.get('image_digest')
                 and bool(cfg.get('image_digest')))
+            # Only an explicit owner connection submission can accept a repaired
+            # image/config. Preserve the ledger and the hard spending limit.
+            if valid and owner_reconnect and state['locked'] and state['spent_micro']+LEASE_MICRO<LIMIT_MICRO:
+                state['locked']=False
+                state['lease_until']=0
+                save(state)
             if not valid or state['locked']:
                 state['locked']=True;save(state)
                 await stop()

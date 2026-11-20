@@ -1,0 +1,15 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const context = {window: {}};
+vm.runInNewContext(fs.readFileSync('static/reply-usage.js', 'utf8'), context);
+const render = data => context.window.ReplyUsage.render({attachments: data ? [{type:'reply_usage', ...data}] : []});
+const base = {calls: 1, reported_calls: 1, cache_reported_calls: 1, input_tokens: 100, output_tokens: 12, cache_read_tokens: 60};
+assert.match(render(base), /缓存 60.0%/);
+assert.match(render({...base, cache_read_tokens: 0}), /缓存 0.0%/);
+assert.match(render({...base, cache_reported_calls: 0}), /缓存 未知/);
+assert.match(render({...base, calls: 2}), /缓存 未知/);
+assert.match(render({...base, input_tokens: 0, cache_read_tokens: 0}), /缓存 未知/);
+assert.doesNotMatch(render({...base, input_tokens: '<img onerror=alert(1)>'}), /<img/);
+assert.equal(render(null), '');
+console.log('reply usage UI passed');

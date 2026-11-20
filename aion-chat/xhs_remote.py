@@ -63,7 +63,7 @@ async def _call_locked(operation,data=None,*,connection=None):
     if not cfg:raise RuntimeError('尚未连接云浏览器。')
     try:
         from xhs_fly_budget import ensure_started
-        await ensure_started(cfg)
+        await ensure_started(cfg, owner_reconnect=connection is not None)
         async with httpx.AsyncClient(timeout=90,follow_redirects=False) as client:
             for attempt in range(10):
                 try:

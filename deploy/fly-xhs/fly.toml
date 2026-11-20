@@ -27,4 +27,4 @@ kill_timeout = "15s"
   destination = "/data"
 
 [[restart]]
-  policy = "no"
+  policy = "never"

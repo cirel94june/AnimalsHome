@@ -4,6 +4,7 @@ from toy_profiles import allow_legacy as allow_legacy_toy, state as toy_selectio
 """
 
 import json, time, asyncio, random, re, mimetypes, secrets
+import reply_usage
 import memory_hub_bridge
 import mcp_policy
 import seat_chat
@@ -1602,6 +1603,7 @@ async def _chatroom_cam_check(
         cam_message["attachments"] = [f"/screenshots/{fname}"]
     messages = prefix_msgs + recent + [cam_message]
 
+    usage_meta = {}
     full_text = ""
     tts_from_model = True
     try:
@@ -1615,19 +1617,19 @@ async def _chatroom_cam_check(
                 await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的模型线路刚刚变了，这次没能接着说）",
                                         asyncio.Queue())
                 return
-            async for chunk in stream_ai(messages, model_key):
+            async for chunk in stream_ai(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
         elif sender == "aion":
             _temp = SETTINGS.get("temperature")
-            async for chunk in stream_ai(messages, model_key, temperature=_temp):
+            async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     await _broadcast_chatroom_ai_status(room_id, sender, chunk[len(CLI_STATUS_PREFIX):])
                     continue
                 full_text += chunk
         else:
-            async for chunk in _stream_connor_model(messages, model_key):
+            async for chunk in _stream_connor_model(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     await _broadcast_chatroom_ai_status(room_id, sender, chunk[len(CLI_STATUS_PREFIX):])
                     continue
@@ -1645,7 +1647,7 @@ async def _chatroom_cam_check(
     if is_seat:
         full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(_strip_unexecuted_transfers(full_text)), model_key)
         if full_text.strip():
-            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=False)
         return
     from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
@@ -1656,7 +1658,7 @@ async def _chatroom_cam_check(
         ai_msg_id=reply_msg_id,
     )
     full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
-    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=tts_from_model)
+    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=tts_from_model)
     print(f"[CHATROOM_CAM_CHECK] {sender} 查看监控完成, room={room_id}")
 
 
@@ -1705,6 +1707,7 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
         prefix_msgs.insert(0, {"role": "user", "content": f"[你的角色设定]\n你是{_name_for_identity(sender)}。\n\n{seat_chat._persona_text(sender)}"})
     messages = prefix_msgs + recent + [{"role": "user", "content": activity_prompt}]
 
+    usage_meta = {}
     full_text = ""
     tts_from_model = True
     try:
@@ -1718,18 +1721,18 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
                 await _chatroom_sys_msg(room_id, f"（{_name_for_identity(sender)}的模型线路刚刚变了，这次没能接着说）",
                                         asyncio.Queue())
                 return
-            async for chunk in stream_ai(messages, model_key):
+            async for chunk in stream_ai(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
         elif sender == "aion":
             _temp = SETTINGS.get("temperature")
-            async for chunk in stream_ai(messages, model_key, temperature=_temp):
+            async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
         else:
-            async for chunk in _stream_connor_model(messages, model_key):
+            async for chunk in _stream_connor_model(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
@@ -1745,7 +1748,7 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
     if is_seat:
         full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(_strip_unexecuted_transfers(full_text)), model_key)
         if full_text.strip():
-            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=False)
         return
     from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
@@ -1756,7 +1759,7 @@ async def _chatroom_activity_check(room_id: str, sender: str, model_key: str, n:
         ai_msg_id=reply_msg_id,
     )
     full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
-    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=tts_from_model)
+    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=tts_from_model)
     print(f"[CHATROOM_ACTIVITY] {sender} 查看动态完成, room={room_id}, n={n}")
 
 
@@ -1789,17 +1792,18 @@ async def _chatroom_poi_check(room_id: str, sender: str, model_key: str, categor
 
     messages = prefix_msgs + recent + [{"role": "user", "content": poi_prompt}]
 
+    usage_meta = {}
     full_text = ""
     tts_from_model = True
     try:
         if sender == "aion":
             _temp = SETTINGS.get("temperature")
-            async for chunk in stream_ai(messages, model_key, temperature=_temp):
+            async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
         else:
-            async for chunk in _stream_connor_model(messages, model_key):
+            async for chunk in _stream_connor_model(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
@@ -1821,7 +1825,7 @@ async def _chatroom_poi_check(room_id: str, sender: str, model_key: str, categor
         ai_msg_id=reply_msg_id,
     )
     full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key)
-    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=tts_from_model)
+    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=tts_from_model)
     searched_cats = "、".join(c.strip() for c in categories)
     print(f"[CHATROOM_POI] {sender} 搜索完成, room={room_id}, categories={searched_cats}")
 
@@ -1897,6 +1901,7 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     messages = prefix_msgs + recent + [{"role": "user", "content": web_prompt}]
 
     music_reply_ok = True
+    usage_meta = {}
     full_text = ""
     tts_from_model = True
     try:
@@ -1911,18 +1916,18 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
                 await _chatroom_sys_msg(room_id, f"（{sender_label}的模型线路刚刚变了，这次搜索的结果没能回复）",
                                         asyncio.Queue())
                 return
-            async for chunk in stream_ai(messages, model_key):
+            async for chunk in stream_ai(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
         elif sender == "aion":
             _temp = SETTINGS.get("temperature")
-            async for chunk in stream_ai(messages, model_key, temperature=_temp):
+            async for chunk in stream_ai(messages, model_key, usage_meta, temperature=_temp):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
         else:
-            async for chunk in _stream_connor_model(messages, model_key):
+            async for chunk in _stream_connor_model(messages, model_key, usage_meta):
                 if chunk.startswith(CLI_STATUS_PREFIX):
                     continue
                 full_text += chunk
@@ -1940,7 +1945,7 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         full_text, music_atts = await finish_music_discovery(full_text, context_items,
             actor=sender, source_type="chatroom", source_id=room_id, message_id=reply_msg_id, success=music_reply_ok, expected_generation=music_generation)
         if full_text.strip() or music_atts:
-            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, attachments=music_atts or None, auto_tts=False)
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, attachments=music_atts or None, usage_meta=usage_meta, auto_tts=False)
         return
     read_products = has_taobao_query(searches)
     if read_products:  # 读过外部商品资料的这一轮：动作标签只清除，不执行
@@ -1949,7 +1954,7 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         full_text = _normalize_cli_bubble_breaks(
             _visible_chatroom_text(_strip_unexecuted_transfers(clean_web_command_text(full_text))), model_key)
         if full_text.strip():
-            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=False)
+            await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=False)
         return
     if not read_products:
         from schedule import _process_background_reply_commands
@@ -1963,7 +1968,7 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
     full_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(clean_web_command_text(full_text)), model_key)
     if not full_text.strip():
         return
-    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, auto_tts=tts_from_model)
+    await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=tts_from_model)
     print(f"[CHATROOM_WEB_SEARCH] {sender} 搜索完成, room={room_id}, searches={len(searches)}, extracts={len(extracts)}")
 
 
@@ -2042,6 +2047,7 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
     )
     messages = prefix_msgs + recent + [{"role": "user", "content": memory_prompt}]
 
+    usage_meta = {}
     full_text = ""
     tts_from_model = True
     async def generate_search_reply(search_messages):
@@ -2052,15 +2058,15 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
             if not _seat_still_ready(actor, model_key):
                 raise RuntimeError("seat changed")
             ensure_model_unchanged(model_key, pinned)  # 和下面发起调用之间没有 await：线路变了就不回复，不换模型
-            async for chunk in stream_ai(search_messages, model_key):
+            async for chunk in stream_ai(search_messages, model_key, usage_meta):
                 if not chunk.startswith(CLI_STATUS_PREFIX):
                     full_text += chunk
         elif actor == "aion":
-            async for chunk in stream_ai(search_messages, model_key, temperature=SETTINGS.get("temperature")):
+            async for chunk in stream_ai(search_messages, model_key, usage_meta, temperature=SETTINGS.get("temperature")):
                 if not chunk.startswith(CLI_STATUS_PREFIX):
                     full_text += chunk
         else:
-            async for chunk in _stream_connor_model(search_messages, model_key):
+            async for chunk in _stream_connor_model(search_messages, model_key, usage_meta):
                 if not chunk.startswith(CLI_STATUS_PREFIX):
                     full_text += chunk
         return full_text
@@ -2082,7 +2088,7 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
         full_text = _normalize_cli_bubble_breaks(
             _visible_chatroom_text(_strip_unexecuted_transfers(clean_web_command_text(full_text))), model_key)
         if full_text.strip():
-            await _save_msg(room_id, actor, full_text, msg_id=reply_msg_id, auto_tts=False)
+            await _save_msg(room_id, actor, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=False)
         return
     from schedule import _process_background_reply_commands
     full_text = await _process_background_reply_commands(
@@ -2100,7 +2106,7 @@ async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, pay
     if not full_text.strip():
         return
     await _save_msg(
-        room_id, actor, full_text, msg_id=reply_msg_id, auto_tts=tts_from_model
+        room_id, actor, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=tts_from_model
     )
     print(
         f"[CHATROOM_MEMORY_SEARCH] {actor} 搜索完成, room={room_id}, "
@@ -2302,8 +2308,14 @@ async def _stream_connor_model(messages: list[dict], model_key: str | None = Non
     """Connor 默认走 Codex CLI；选择其他模型时复用统一模型线路。"""
     key = _resolve_connor_model(model_key)
     if key == "Codex":
-        async for chunk in stream_connor_cli(messages=messages, meta=meta):
-            yield chunk
+        meta = meta if meta is not None else {}
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'raw'):
+            meta.pop(field, None)
+        try:
+            async for chunk in stream_connor_cli(messages=messages, meta=meta):
+                yield chunk
+        finally:
+            reply_usage.observe(meta, 'prompt_tokens' in meta)
     else:
         async for chunk in stream_ai(messages, key, meta if meta is not None else {}):
             yield chunk
@@ -3445,6 +3457,7 @@ async def _save_msg(
     *,
     auto_tts: bool = True,
     reasoning_content: str = "",
+    usage_meta: dict | None = None,
     dedupe_key: str | None = None,
     dedupe_target_type: str = "chatroom",
     dedupe_target_id: str = "",
@@ -3457,7 +3470,7 @@ async def _save_msg(
     now = time.time()
     if not msg_id:
         msg_id = f"cm_{int(now * 1000)}_{sender[:1]}"
-    att_list = attachments or []
+    att_list = list(attachments or []) + reply_usage.attachments(usage_meta)
     if sender != "system":
         att_list = await _with_link_previews(content, att_list)
         if sender in ("aion", "connor"):
@@ -4489,6 +4502,7 @@ async def _chatroom_poi_search(room_id: str, sender: str, model_key: str, catego
         *recent,
         {"role": "user", "content": prompt},
     ]
+    usage_meta = {}
     full_text = ""
     try:
         try:
@@ -4499,7 +4513,7 @@ async def _chatroom_poi_search(room_id: str, sender: str, model_key: str, catego
             await _chatroom_sys_msg(room_id, f"（{sender_label}的设置刚刚变了，这次搜到的结果没能回复）",
                                     asyncio.Queue())
             return
-        async for chunk in stream_ai(messages, model_key):
+        async for chunk in stream_ai(messages, model_key, usage_meta):
             if isinstance(chunk, str) and not chunk.startswith(CLI_STATUS_PREFIX):
                 full_text += chunk
     except Exception as e:
@@ -4508,7 +4522,7 @@ async def _chatroom_poi_search(room_id: str, sender: str, model_key: str, catego
     full_text = _normalize_cli_bubble_breaks(
         _visible_chatroom_text(_strip_unexecuted_transfers(POI_SEARCH_PATTERN.sub("", full_text))), model_key)
     if full_text.strip():
-        await _save_msg(room_id, sender, full_text, msg_id=f"cm_{time.time_ns()}_{sender[:1]}", auto_tts=False)
+        await _save_msg(room_id, sender, full_text, msg_id=f"cm_{time.time_ns()}_{sender[:1]}", usage_meta=usage_meta, auto_tts=False)
 
 
 def _seat_still_ready(sender: str, model_key: str) -> bool:
@@ -4645,7 +4659,7 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
         await _save_chatroom_reply_failure(room_id, actor_id, _q, "empty_response", msg_id=msg_id)
         return
     msg = await _save_msg(room_id, actor_id, clean_text, msg_id, attachments=music_atts or None, auto_tts=False,
-                          reasoning_content=usage_meta.get("reasoning_content", "").strip())
+                          usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip())
     await _q.put({"type": "seat_done", "actor": actor_id, "message": msg})
     if group:
         await _turtle_soup(room_id, actor_id, clean_text, _q)
@@ -4790,7 +4804,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         room_id, "connor", reply, connor_msg_id,
         attachments=saved_imgs + _music_attachments_from_triggered(triggered) + _luckin_attachments_from_triggered(triggered),
         auto_tts=not safety_notice and tts_from_model and not (tts_enabled and tts_connor_voice and clean_text),
-        reasoning_content=usage_meta.get("reasoning_content", "").strip(),
+        usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "connor_done", "message": msg})
     if not has_error and not safety_notice:
@@ -5038,7 +5052,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
         room_id, "aion", clean_text, aion_msg_id,
         attachments=saved_imgs + _music_attachments_from_triggered(triggered) + _luckin_attachments_from_triggered(triggered) + _toy_attachments_from_triggered(triggered),
         auto_tts=not safety_notice and tts_from_model and not (tts_enabled and tts_voice and clean_text),
-        reasoning_content=usage_meta.get("reasoning_content", "").strip(),
+        usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "aion_done", "message": aion_msg})
     await _turtle_soup(room_id, "aion", clean_text, _q)
@@ -5191,7 +5205,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         room_id, "connor", clean_text, connor_msg_id,
         attachments=saved_imgs + _music_attachments_from_triggered(triggered) + _luckin_attachments_from_triggered(triggered) + _toy_attachments_from_triggered(triggered),
         auto_tts=not safety_notice and tts_from_model and not (tts_enabled and tts_voice and clean_text),
-        reasoning_content=usage_meta.get("reasoning_content", "").strip(),
+        usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     await _q.put({"type": "connor_done", "message": connor_msg})
     await _turtle_soup(room_id, "connor", clean_text, _q)

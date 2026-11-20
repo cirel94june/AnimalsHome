@@ -30,5 +30,6 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/candidate)" = 401
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $GATEWAY_TOKEN" -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:18080/status)" = 200
           docker exec xhs-check google-chrome --version
+          docker exec xhs-check python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print('browser_driver_started'); p.stop()"
           docker exec xhs-check node --version
           docker image inspect xhs-check --format 'image_bytes={{.Size}}'
