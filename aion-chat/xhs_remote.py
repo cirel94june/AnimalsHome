@@ -24,7 +24,7 @@ def validate(url, token, machine_id='', fly_token='', image_digest=''):
         raise ValueError('请填写专用 Fly 应用的 HTTPS 地址。')
     if not isinstance(token,str) or not re.fullmatch(r'[a-f0-9]{64}',token):
         raise ValueError('云浏览器连接钥匙无效。')
-    if not re.fullmatch(r'[a-f0-9]{12,32}',machine_id) or not isinstance(fly_token,str) or not 32<=len(fly_token)<=20000 or re.search(r'[\x00-\x20\x7f]',fly_token):
+    if not re.fullmatch(r'[a-f0-9]{12,32}',machine_id) or not isinstance(fly_token,str) or not 32<=len(fly_token)<=20000 or re.search(r'[\x00-\x1f\x7f]',fly_token) or fly_token!=fly_token.strip():
         raise ValueError('云浏览器启动权限无效。')
     if not re.fullmatch(r'sha256:[a-f0-9]{64}',image_digest):raise ValueError('云浏览器镜像校验无效。')
     return {'url':f'https://{parsed.netloc}','token':token,'machine_id':machine_id,'fly_token':fly_token,'image_digest':image_digest}

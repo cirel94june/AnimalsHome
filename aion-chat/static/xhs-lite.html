@@ -536,6 +536,7 @@ pre {
         <div class="inline-card">
           <h2>操作账号</h2>
           <p id="cloudBudgetHint" class="hint" hidden></p>
+          <button id="pairCloudButton" type="button" onclick="pairCloudBrowser()" hidden>接通云浏览器</button>
           <details id="cloudConnectionSetup" hidden>
             <summary>云浏览器维护连接</summary>
             <label>专用应用地址<input id="cloudConnectionUrl" type="url" autocomplete="off"></label>
@@ -811,7 +812,9 @@ async function loadConfig(options = {}) {
   $('writeInput').checked = !!currentConfig.allow_write_comments;
   $('writeInput').disabled = !!currentConfig.cloud_login;
   $('cloudLoginBox').hidden = !currentConfig.cloud_login_available;
-  $('cloudConnectionSetup').hidden = new URLSearchParams(location.search).get('maintenance') !== '1';
+  const params = new URLSearchParams(location.search);
+  $('cloudConnectionSetup').hidden = params.get('maintenance') !== '1' || params.has('connect_nonce');
+  $('pairCloudButton').hidden = !pairingRequest();
   const budget = currentConfig.cloud_budget;
   $('cloudBudgetHint').hidden = !budget;
   if (budget) $('cloudBudgetHint').textContent = `${budget.locked ? '云浏览器已锁停' : '云浏览器用量保护已开启'}：保守估计 $${Number(budget.estimated_usd).toFixed(2)} / $${budget.limit_usd}（含存储和流量预留，不是 Fly 实际账单）。`;
@@ -853,8 +856,33 @@ async function connectCloudBrowser() {
     const data=await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || '连接未完成');
     $('cloudConnectionKey').value='';$('cloudConnectionFlyKey').value='';
-    await loadConfig();setStatus('云浏览器已连接，请扫码确认小红书账号。');
-  } catch (error) {setStatus(error.message,'error');}
+    await loadConfig();setStatus('云浏览器已连接，请扫码确认小红书账号。');return true;
+  } catch (error) {setStatus(error.message,'error');return false;}
+}
+function pairingRequest() {
+  const params = new URLSearchParams(location.search), port=params.get('connect_port'), nonce=params.get('connect_nonce');
+  return /^\d{4,5}$/.test(port || '') && Number(port)>=1024 && Number(port)<=65535 && /^[A-Za-z0-9_-]{40,80}$/.test(nonce || '')
+    ? {port,nonce} : null;
+}
+let pairLoaded=false;
+async function pairCloudBrowser() {
+  const button=$('pairCloudButton');button.disabled=true;
+  try {
+    if (!pairLoaded) {
+      const request=pairingRequest();if(!request)throw new Error('连接窗口已到期，请重新打开。');
+      const response=await fetch(`http://127.0.0.1:${request.port}/connection?nonce=${encodeURIComponent(request.nonce)}`,{cache:'no-store',signal:AbortSignal.timeout(10000)});
+      if(!response.ok)throw new Error('临时连接已失效，请重新打开连接窗口。');
+      const data=await response.json();
+      for(const [field,key] of [['cloudConnectionUrl','url'],['cloudConnectionKey','token'],['cloudConnectionMachine','machine_id'],['cloudConnectionFlyKey','fly_token'],['cloudConnectionImage','image_digest']]) {
+        if(typeof data[key]!=='string')throw new Error('连接资料不完整');
+        $(field).value=data[key];
+      }
+      pairLoaded=true;
+      history.replaceState(null,'',location.pathname);
+    }
+    if(await connectCloudBrowser())button.hidden=true;
+  } catch(error) {setStatus(error.message,'error');}
+  finally {button.disabled=false;}
 }
 let cloudFrameURL = null, cloudFrameTimer = null, cloudUntil = 0;
 async function cloudFrame() {

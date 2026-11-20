@@ -11,7 +11,7 @@ import xhs_remote as remote
 import xhs_fly_service as service
 
 CFG={'url':'https://animalshome-xhs-test.fly.dev','token':'a'*64,
-     'machine_id':'123456789abcde','fly_token':'fly-test-'+'x'*60,'image_digest':'sha256:'+'b'*64}
+     'machine_id':'123456789abcde','fly_token':'FlyV1 '+'x'*60,'image_digest':'sha256:'+'b'*64}
 
 
 @pytest.fixture
