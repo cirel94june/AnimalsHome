@@ -861,7 +861,7 @@ async def _load_model_visible_merged_timeline(
 
 
 # 聊天记录分批丢：每段对话记住这次从哪条开始，新消息往后加，攒到「上限 + 一批」才一次删回上限。
-# 开头那条不变，「人设 + 聊天记录」才是每轮相同的开头、能走缓存。只在进程内记，重启后重新起头。
+# 开头那条不变，「人设 + 聊天记录」才是每轮相同的开头、能走缓存。跨重启只保存匿名起点摘要。
 CACHE_WINDOW_STEP = 10
 _WINDOW_STARTS: dict[tuple, tuple] = {}
 
@@ -874,12 +874,17 @@ def _stable_window(results: list[dict], limit: int, key: tuple) -> list[dict]:
     """results 是最近 limit+批量 条（时间升序）。上次的起点还在里面就从它开始，否则删回最近 limit 条、换新起点。"""
     start = _WINDOW_STARTS.get(key)
     keys = [_message_key(m) for m in results]
+    if start is None:
+        import cache_window_hints
+        start=cache_window_hints.find(key,keys)
     window = results[keys.index(start):] if start in keys else []
     if len(window) < min(limit, len(results)):
         # 起点没了，或删除 / 编辑重发后从起点算不够 limit 条：删回最近 limit 条、换新起点
         window = results[-limit:]
     if window:
         _WINDOW_STARTS[key] = _message_key(window[0])
+        import cache_window_hints
+        cache_window_hints.remember(key,_WINDOW_STARTS[key])
         if len(_WINDOW_STARTS) > 200:  # 只留最近用过的
             _WINDOW_STARTS.pop(next(iter(_WINDOW_STARTS)))
     return window
@@ -1051,11 +1056,8 @@ def render_merged_timeline(
         role = "user"
 
         # ── 清洗旧 meta 标签 + 添加精确时间戳 ──
-        if has_mixed:
-            label = "群聊" if source == "group" else "私聊"
-            content = append_message_meta(content, msg.get("created_at"), label)
-        else:
-            content = append_message_meta(content, msg.get("created_at"))
+        scene_label = "群聊" if source == "group" else "私聊"
+        content = append_message_meta(content, msg.get("created_at"), scene_label)
 
         # 把待写入的场景切换提示并入本条 content 开头
         if pending_scene_marker:

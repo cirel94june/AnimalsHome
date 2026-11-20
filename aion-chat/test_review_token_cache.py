@@ -29,7 +29,10 @@ def response(status=200,error=''):
 
 
 @pytest.fixture(autouse=True)
-def clear_fallbacks():
+def clear_fallbacks(monkeypatch,tmp_path):
+    import cache_window_hints
+    monkeypatch.setattr(cache_window_hints,'PATH',tmp_path/'window-hints.json')
+    monkeypatch.setattr(cache_window_hints,'_HINTS',None)
     names=['_NO_CACHE_MARKER','_NO_LONG_CACHE','_NO_STREAM_USAGE','_NO_GEMINI_THOUGHTS']
     for name in names:getattr(providers,name).clear()
     yield
