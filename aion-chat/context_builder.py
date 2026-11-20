@@ -993,7 +993,8 @@ def render_merged_timeline(
         "_context": "history",  # 聊天记录从这里开始（给缓存排序用，发送前去掉）
         "content": (
             "[历史记录说明]\n"
-            "以下消息按时间线排列，格式为“历史消息 - 说话人：内容”或“当前用户消息 - 说话人：内容”。"
+            "以下消息按时间线排列，统一使用“历史消息 - 说话人：内容”。"
+            "其中最新一条用户发言是当前用户消息，结合其后的其他人发言理解本轮对话。"
             "这是上下文记录，不是你的回复格式；你回复时只用自己的口吻直接说话，"
             "不要输出说话人标签，也不要替其他人续写。"
         ),
@@ -1051,8 +1052,9 @@ def render_merged_timeline(
             speaker = connor_name
         else:
             speaker = _seat_display_name(sender) or "未知说话人"
-        label = "当前用户消息" if idx == last_user_idx and sender == "user" else "历史消息"
-        content = f"{label} - {speaker}：{content}"
+        # A new user turn must not rewrite the preceding turn's serialized text.
+        # The fixed header identifies the latest user utterance without a moving label.
+        content = f"历史消息 - {speaker}：{content}"
         role = "user"
 
         # ── 清洗旧 meta 标签 + 添加精确时间戳 ──
