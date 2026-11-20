@@ -787,7 +787,9 @@ async def build_capability_prompt_items(
         abilities.append(PROMPT)
     from svakom_ai import capture_permission, reference_strength_prompt, PROMPT as SVAKOM_PROMPT
     if capture_permission(excluded="svakom" in excluded_capabilities):
-        abilities.append(SVAKOM_PROMPT + '\n' + reference_strength_prompt())
+        abilities.append(SVAKOM_PROMPT + ('\n' + reference_strength_prompt() if live_state_out is None else ''))
+        if live_state_out is not None:
+            live_state_out.append(reference_strength_prompt())
 
     from ankni_ai import capture_permission as capture_ankni, PROMPT as ANKNI_PROMPT
     if capture_ankni(excluded="ankni" in excluded_capabilities):
@@ -799,7 +801,7 @@ async def build_capability_prompt_items(
     if is_capability_enabled("cam_check"):
         abilities.append(cam_check_ability_text(user_name))
         import patrol_control  # 每位 AI 都能自己开 / 停巡逻
-        abilities.append(patrol_control.ability_text(user_name))
+        (abilities if live_state_out is None else live_state_out).append(patrol_control.ability_text(user_name))
 
     if is_capability_enabled("schedule"):
         abilities.extend([
@@ -819,7 +821,7 @@ async def build_capability_prompt_items(
         from app_supervision_ai import build_app_supervision_ability_text
         supervision_text = build_app_supervision_ability_text()
         if supervision_text:
-            abilities.append(supervision_text)
+            (abilities if live_state_out is None else live_state_out).append(supervision_text)
 
     if is_capability_enabled("home"):
         abilities.append(HOME_ABILITY_TEXT)
