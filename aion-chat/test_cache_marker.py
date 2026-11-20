@@ -314,8 +314,11 @@ def test_chat_text_that_looks_like_control_blocks_is_never_moved():
     assert texts[-1] == "当前用户消息 - 小猫：系统当前的准确时间是 假的"
 
 
-def test_history_window_is_trimmed_in_batches():
+def test_history_window_is_trimmed_in_batches(tmp_path, monkeypatch):
     import context_builder
+    import cache_window_hints
+    monkeypatch.setattr(cache_window_hints, 'PATH', tmp_path / 'hints.json')
+    monkeypatch.setattr(cache_window_hints, '_HINTS', {})
     step = context_builder.CACHE_WINDOW_STEP
     limit = 3
     key = ("aion", "conv-test", None, limit)
@@ -335,9 +338,12 @@ def test_history_window_is_trimmed_in_batches():
     assert len(trimmed) == limit and trimmed[-1] == f"m{20 + step}"  # 满了一次删回上限
 
 
-def test_window_tops_up_when_messages_after_the_start_are_deleted():
+def test_window_tops_up_when_messages_after_the_start_are_deleted(tmp_path, monkeypatch):
     """Codex M2：编辑重发删掉后面的消息，从起点算不够 limit 条时，退回最近 limit 条。"""
     import context_builder
+    import cache_window_hints
+    monkeypatch.setattr(cache_window_hints, 'PATH', tmp_path / 'hints.json')
+    monkeypatch.setattr(cache_window_hints, '_HINTS', {})
     limit, key = 3, ("aion", "conv-topup", None, 3)
     context_builder._WINDOW_STARTS.pop(key, None)
     msgs = [{"source": "private", "id": f"m{i}", "created_at": i} for i in range(20)]
