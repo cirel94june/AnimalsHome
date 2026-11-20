@@ -70,3 +70,23 @@ def numeric_usage(raw):
                 if type(value) is int and 0 <= value <= 10**12:
                     result[parent + '.' + key] = value
     return result
+
+
+def start(meta, payload):
+    """Diagnostics must never interrupt a successful model response."""
+    if meta is None:
+        return
+    meta.pop('_cache_request_shape', None)
+    try:
+        meta['_cache_request_shape'] = {**payload_shape(payload), 'usage': {}}
+    except Exception:
+        pass
+
+
+def observe_usage(meta, raw):
+    if meta is None or '_cache_request_shape' not in meta:
+        return
+    try:
+        meta['_cache_request_shape']['usage'] = numeric_usage(raw)
+    except Exception:
+        pass

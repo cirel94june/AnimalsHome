@@ -681,10 +681,12 @@ def _observe_relay_cache(cfg: dict, meta: dict, reported: bool):
     counts['hits']+=int(receipt['cache_read_tokens']>0)
     shape = meta.pop('_cache_request_shape', None)
     if shape is not None:
-        from cache_request_trace import numeric_usage
-        recent = counts.setdefault('recent', [])
-        recent.append({'at': time.time(), **shape, 'usage': numeric_usage(meta.get('raw'))})
-        del recent[:-8]
+        try:
+            recent = counts.setdefault('recent', [])
+            recent.append({'at': time.time(), **shape})
+            del recent[:-8]
+        except Exception:
+            pass  # Diagnostic storage cannot block replies or usage accounting.
     if len(_CACHE_OBSERVED)>200:_CACHE_OBSERVED.pop(next(iter(_CACHE_OBSERVED)))
 
 
@@ -977,8 +979,8 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                     _NO_GEMINI_THOUGHTS.add(url)
                     continue
                 if resp.status_code == 200 and meta is not None:
-                    from cache_request_trace import payload_shape
-                    meta['_cache_request_shape'] = payload_shape(body)
+                    from cache_request_trace import start
+                    start(meta, body)
                 for piece in _custom_openai_whole_reply(resp, meta):
                     yield piece
                 return
@@ -1024,8 +1026,8 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                     if meta is not None and payload["messages"] is not plain_messages:
                         meta["cache_ttl"] = ttl  # 这次真正发出去的缓存时长（写缓存按它计价）
                     if meta is not None:
-                        from cache_request_trace import payload_shape
-                        meta['_cache_request_shape'] = payload_shape(payload)
+                        from cache_request_trace import start
+                        start(meta, payload)
                     async for line in resp.aiter_lines():
                         data = _openai_sse_data(line)
                         if data is None:
@@ -1047,6 +1049,8 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                                 meta["completion_tokens"] = u.get("completion_tokens", 0)
                                 meta["total_tokens"] = u.get("total_tokens", 0)
                                 meta["raw"] = u
+                                from cache_request_trace import observe_usage
+                                observe_usage(meta, u)
                             delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
                             reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                             if reasoning:
@@ -1113,6 +1117,8 @@ def _custom_openai_whole_reply(resp: httpx.Response, meta: dict | None) -> list[
         meta["completion_tokens"] = usage.get("completion_tokens", 0)
         meta["total_tokens"] = usage.get("total_tokens", 0)
         meta["raw"] = usage
+        from cache_request_trace import observe_usage
+        observe_usage(meta, usage)
     if reasoning and meta is not None:
         meta["reasoning_content"] = reasoning
     return [content] if content else []
