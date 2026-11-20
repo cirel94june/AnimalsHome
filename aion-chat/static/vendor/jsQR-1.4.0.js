@@ -377,6 +377,21 @@ function jsQR(data, width, height, providedOptions) {
     return result;
 }
 jsQR.default = jsQR;
+// AnimalsHome modification: expose pixel geometry without requiring QR payload
+// decoding. Some platform login payloads cannot be decoded by this library.
+jsQR.locate = function(data, width, height) {
+    var matrix = binarizer_1.binarize(data, width, height, false).binarized;
+    var locations = locator_1.locate(matrix);
+    if (!locations || !locations.length) return null;
+    var item = locations[0];
+    var extracted = extractor_1.extract(matrix, item);
+    return {location: {
+        topLeftCorner: extracted.mappingFunction(0, 0),
+        topRightCorner: extracted.mappingFunction(item.dimension, 0),
+        bottomLeftCorner: extracted.mappingFunction(0, item.dimension),
+        bottomRightCorner: extracted.mappingFunction(item.dimension, item.dimension)
+    }};
+};
 exports.default = jsQR;
 
 

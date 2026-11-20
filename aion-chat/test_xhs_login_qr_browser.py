@@ -39,7 +39,8 @@ def test_login_qr_is_large_and_sidebar_download_code_is_not_selected():
             sample=os.environ.get('ANIMALSHOME_QR_PROBE_PATH')
             if sample:
                 encoded=base64.b64encode(Path(sample).read_bytes()).decode('ascii')
-                assert page.evaluate('''async src=>{const image=document.querySelector('#source');
+                decoded=page.evaluate('''async src=>{const image=document.querySelector('#source');
                     image.src=src;await image.decode();return XhsLoginQR.render(image,document.querySelector('#out'));}''',
                     'data:image/png;base64,'+encoded)
+                assert decoded
         finally:browser.close()
