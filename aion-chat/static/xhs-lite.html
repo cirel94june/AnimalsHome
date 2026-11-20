@@ -538,7 +538,6 @@ pre {
           <p id="cloudBudgetHint" class="hint" hidden></p>
           <button id="pairCloudButton" type="button" onclick="pairCloudBrowser()" hidden>接通云浏览器</button>
           <button id="updateCloudImageButton" type="button" onclick="updateCloudImage()" hidden>确认云浏览器升级</button>
-          <button id="updateCloudImageButton" type="button" onclick="updateCloudImage()" hidden>更新已修复的云浏览器</button>
           <details id="cloudConnectionSetup" hidden>
             <summary>云浏览器维护连接</summary>
             <label>专用应用地址<input id="cloudConnectionUrl" type="url" autocomplete="off"></label>
@@ -819,7 +818,6 @@ async function loadConfig(options = {}) {
   $('pairCloudButton').hidden = !pairingRequest();
   $('updateCloudImageButton').hidden = params.get('maintenance') !== '1' ||
     !/^sha256:[a-f0-9]{64}$/.test(params.get('image_digest') || '');
-  $('updateCloudImageButton').hidden = params.get('maintenance') !== '1' || !/^sha256:[a-f0-9]{64}$/.test(params.get('image_digest') || '');
   const budget = currentConfig.cloud_budget;
   $('cloudBudgetHint').hidden = !budget;
   if (budget) $('cloudBudgetHint').textContent = `${budget.locked ? '云浏览器已锁停' : '云浏览器用量保护已开启'}：保守估计 $${Number(budget.estimated_usd).toFixed(2)} / $${budget.limit_usd}（含存储和流量预留，不是 Fly 实际账单）。`;
