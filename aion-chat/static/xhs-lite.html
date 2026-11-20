@@ -23,6 +23,15 @@ body.sub-page {
   overflow:auto;
   background:var(--bg);
 }
+/* Fixed wallpaper plus blurred scrolling cards can cover content in WebViews. */
+body.xhs-page { background-attachment:scroll !important; isolation:isolate; }
+body.xhs-page .wrap { position:relative; z-index:1; }
+body.xhs-page .panel {
+  background:#f5f8fc !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+body.xhs-page .inline-card { background:#fff !important; }
 .wrap {
   width:min(1040px, 100%);
   margin:0 auto;
@@ -471,7 +480,7 @@ pre {
 }
 </style>
 </head>
-<body class="sub-page">
+<body class="sub-page xhs-page">
 <div class="wrap">
   <section class="panel hero">
     <div>
