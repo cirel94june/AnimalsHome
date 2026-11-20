@@ -57,8 +57,11 @@ def test_xhs_login_remains_visible_after_scrolling():
                 image.src='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="red"/></svg>';
             }''')
             image=page.locator('#cloudLoginFrame')
+            page.locator('.wrap').evaluate('(e)=>{e.scrollTop=500;}')
+            assert page.locator('.wrap').evaluate('(e)=>e.scrollTop') > 0
             image.scroll_into_view_if_needed()
             assert image.is_visible()
+            assert page.evaluate('document.scrollingElement.scrollTop') == 0
             assert page.locator('body').evaluate('(e)=>getComputedStyle(e).backgroundAttachment')=='scroll'
             assert page.locator('.panel').first.evaluate('(e)=>getComputedStyle(e).backdropFilter')=='none'
             assert page.locator('.wrap').evaluate('(e)=>getComputedStyle(e).zIndex')=='1'
