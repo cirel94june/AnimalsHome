@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const html = fs.readFileSync('static/xhs-lite.html','utf8');
 const script = html.slice(html.indexOf('let cloudFrameURL'),html.indexOf('let xhsRunning'));
-const nodes = Object.fromEntries(['cloudStartBtn','cloudConfirmBtn','cloudLoginHint','cloudLoginFrame'].map(id=>[id,{hidden:true,disabled:false,removeAttribute(name){delete this[name];}}]));
+const nodes = Object.fromEntries(['cloudStartBtn','cloudConfirmBtn','cloudLoginHint','cloudLoginFrame','cloudLoginQR','cloudFullFrame'].map(id=>[id,{hidden:true,disabled:false,removeAttribute(name){delete this[name];}}]));
 const calls=[],revoked=[];let frameCalls=0,loaded=0,failConfirm=false;
 const ctx={
   $:id=>nodes[id],Date,Error,clearTimeout(){},setTimeout(){return 1;},

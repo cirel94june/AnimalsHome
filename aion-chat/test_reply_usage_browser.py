@@ -53,6 +53,7 @@ def test_xhs_login_remains_visible_after_scrolling():
             page.evaluate('''() => {
                 document.querySelector('#configDetails').open=true;
                 document.querySelector('#cloudLoginBox').hidden=false;
+                document.querySelector('#cloudFullFrame').open=true;
                 const image=document.querySelector('#cloudLoginFrame');image.hidden=false;
                 image.src='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800"><rect width="1280" height="800" fill="red"/></svg>';
             }''')

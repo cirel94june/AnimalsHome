@@ -15,6 +15,7 @@
   --xhs-card:var(--card, var(--surface, #fff));
 }
 #cloudLoginFrame[hidden] { display:none !important; }
+#cloudLoginQR[hidden] { display:none !important; }
 body.sub-page {
   display:block;
   max-width:none;
@@ -569,7 +570,10 @@ pre {
               <button type="button" class="ghost" onclick="cloudCancel()">关闭登录画面</button>
             </div>
             <p id="cloudLoginHint" class="hint" aria-live="polite"></p>
-            <img id="cloudLoginFrame" alt="小红书登录画面" hidden style="display:block;max-width:100%;height:auto;margin-top:10px">
+            <canvas id="cloudLoginQR" aria-label="放大的小红书登录二维码" hidden style="display:block;width:300px;max-width:100%;height:auto;background:#fff;margin:12px auto;image-rendering:pixelated"></canvas>
+            <details id="cloudFullFrame"><summary>查看完整登录画面</summary>
+              <img id="cloudLoginFrame" alt="小红书登录画面" hidden style="display:block;max-width:100%;height:auto;margin-top:10px">
+            </details>
           </div>
           <details><summary class="hint">手动登录（兼容原有方式）</summary>
           <label>Cookie（共享的小红书操作账号）</label>
@@ -686,6 +690,8 @@ pre {
 
 </div>
 
+<script src="/static/vendor/jsQR-1.4.0.js"></script>
+<script src="/static/xhs-login-qr.js?v=20261120"></script>
 <script>
 const $ = id => document.getElementById(id);
 let currentConfig = null;
@@ -929,6 +935,11 @@ async function cloudFrame() {
     const next = URL.createObjectURL(await res.blob());
     if (cloudFrameURL) URL.revokeObjectURL(cloudFrameURL);
     cloudFrameURL = next;
+    $('cloudLoginFrame').onload = () => {
+      let found=false;
+      try {found=window.XhsLoginQR?.render($('cloudLoginFrame'),$('cloudLoginQR')) || false;} catch (_) {}
+      $('cloudFullFrame').open=!found;
+    };
     $('cloudLoginFrame').src = next;
     $('cloudLoginFrame').hidden = false;
     cloudFrameTimer = setTimeout(cloudFrame,5000);
@@ -936,6 +947,7 @@ async function cloudFrame() {
 }
 async function cloudStart() {
   $('cloudStartBtn').disabled = true;
+  $('cloudLoginQR').hidden=true;
   $('cloudLoginHint').textContent = '正在打开云端登录画面，请稍等…';
   try {
     const res = await api('POST','/api/xhs-lite/cloud-login/start');
@@ -964,6 +976,8 @@ async function cloudCancel() {
   cloudUntil = 0;
   clearTimeout(cloudFrameTimer);
   $('cloudLoginFrame').hidden = true;
+  $('cloudLoginQR').hidden=true;
+  $('cloudLoginQR').width=0;
   $('cloudLoginFrame').removeAttribute('src');
   $('cloudConfirmBtn').hidden = true;
   if (cloudFrameURL) URL.revokeObjectURL(cloudFrameURL);
