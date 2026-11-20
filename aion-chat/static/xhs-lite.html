@@ -19,8 +19,8 @@ body.sub-page {
   display:block;
   max-width:none;
   min-height:100dvh;
-  height:auto;
-  overflow:auto;
+  height:100dvh;
+  overflow:hidden;
   background:var(--bg);
 }
 /* Fixed wallpaper plus blurred scrolling cards can cover content in WebViews. */
@@ -34,12 +34,16 @@ body.xhs-page .panel {
 body.xhs-page .inline-card { background:#fff !important; }
 .wrap {
   width:min(1040px, 100%);
+  height:100%;
+  overflow-y:auto;
+  overscroll-behavior-y:contain;
   margin:0 auto;
   padding:18px 14px 34px;
   display:flex;
   flex-direction:column;
 }
 .panel {
+  flex-shrink:0;
   border:1px solid var(--xhs-line);
   border-radius:22px;
   background:rgba(255,255,255,.76);
