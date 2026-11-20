@@ -775,6 +775,7 @@ async def build_capability_prompt_items(
     include_image_gen: bool = True,
     who: str = "aion",
     excluded_capabilities: set[str] | None = None,
+    live_state_out: list[str] | None = None,
     include_group_post: bool = False,
 ) -> list[str]:
     import toy_profiles
@@ -958,10 +959,11 @@ async def build_capability_prompt_items(
             else:
                 from routes.wallet import _get_balance
                 wallet_bal = await _get_balance()
-            abilities.append(
-                f"[转账：n元] — 给{user_name}转账（n为正整数），会从你的钱包余额中扣除。"
-                f"你的钱包当前余额：{wallet_bal:.2f}元。余额不足时不要转账。"
-            )
+            instruction=f"[转账：n元] — 给{user_name}转账（n为正整数），会从你的钱包余额中扣除。"
+            balance=f"你的钱包当前余额：{wallet_bal:.2f}元。"
+            abilities.append(instruction+(balance if live_state_out is None else '')+'余额不足时不要转账。')
+            if live_state_out is not None:
+                live_state_out.append('【钱包当前状态】\n'+balance)
         except Exception:
             pass
 
@@ -978,7 +980,7 @@ async def build_capability_prompt_items(
         except Exception:
             learning_count = 0
         if learning_count > 0:
-            abilities.append(
+            (abilities if live_state_out is None else live_state_out).append(
                 f"学习角目前还有 {learning_count} 张正在学习的英语卡片。这是当前正常聊天中"
                 f"的一项明确提醒任务：当前{user_name}表达无聊，没事干时，或你认为合理的时候，主动提醒"
                 f"{user_name}去学习，但不要一直说教。"

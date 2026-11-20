@@ -251,6 +251,7 @@ async def build_ability_block(
 ) -> str:
     """构建 [系统能力] 文本块，who 参数用于 Connor 等角色的细微措辞差异"""
     parts = []
+    ability_live_state = []
     abilities = await build_capability_prompt_items(
         user_name,
         whisper_mode=whisper_mode,
@@ -260,6 +261,7 @@ async def build_ability_block(
         include_image_gen=include_image_gen,
         who=who,
         excluded_capabilities=excluded_capabilities,
+        live_state_out=ability_live_state,
     )
     if abilities:
         parts.append(format_ability_block(abilities))
@@ -269,7 +271,7 @@ async def build_ability_block(
         parts.append(cli_file_text.strip())
 
     # 以下每轮都可能变（日程、位置、设备、画像），放在小标题后面；缓存标记只盖到小标题之前
-    static_parts, parts = parts, []
+    static_parts, parts = parts, ability_live_state
 
     if is_capability_enabled("schedule"):
         schedules = await get_active_schedules(viewer="connor" if who == "connor" else "aion")

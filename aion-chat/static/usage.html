@@ -204,7 +204,8 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
       compare();
       $('kinds').innerHTML = rows(d.by_kind);
       $('models').innerHTML = rows(d.by_model, function (r) {
-        return r.users && r.users.length ? '<small>' + esc(r.users.join('、')) + ' 在用</small>' : '';
+        var users=r.users && r.users.length ? '<small>' + esc(r.users.join('、')) + ' 在用</small>' : '';
+        return users+(r.cache_diagnostic ? '<small>'+esc(r.cache_diagnostic.note)+'</small>' : '');
       });
       var multi = days > 1;
       $('days-title').style.display = $('days').style.display = multi ? '' : 'none';

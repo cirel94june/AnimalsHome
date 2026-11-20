@@ -653,6 +653,7 @@ _NO_STREAM_USAGE: set[tuple[str,str,str]] = set()
 _NO_CACHE_MARKER: set[tuple[str,str,str]] = set()
 # 不认「缓存保留 1 小时」（ttl）的中转站：退回默认的 5 分钟
 _NO_LONG_CACHE: set[tuple[str,str,str]] = set()
+_CACHE_OBSERVED: dict[tuple[str,str,str], dict] = {}
 # 不认 Gemini「把思考也传回来」开关（extra_body.google.thinking_config）的中转站
 _NO_GEMINI_THOUGHTS: set[str] = set()
 # 边写边传时把 Gemini 思考丢掉、一次性返回才给的 (地址, 模型)：改成一次性返回（2026-10-29 4Router 实测）
@@ -664,6 +665,39 @@ def _relay_feature_key(url: str, model: str, api_key: str) -> tuple[str,str,str]
     # Never retain the credential itself in these process-local fallback sets.
     import hashlib
     return url,model,hashlib.sha256(api_key.encode('utf-8')).hexdigest()
+
+
+def _observe_relay_cache(cfg: dict, meta: dict, reported: bool):
+    if cfg.get('provider')!='custom_openai':return
+    import reply_usage
+    snapshot={key:meta[key] for key in ('prompt_tokens','completion_tokens','raw') if key in meta}
+    reply_usage.observe(snapshot,reported)
+    receipt=reply_usage.attachments(snapshot)[0]
+    key=_relay_feature_key(_openai_chat_completions_url(cfg.get('base_url','')),
+                           str(cfg.get('model') or '').strip(),str(cfg.get('api_key') or '').strip())
+    counts=_CACHE_OBSERVED.setdefault(key,{'calls':0,'reported':0,'hits':0})
+    counts['calls']+=1
+    counts['reported']+=receipt['cache_reported_calls']
+    counts['hits']+=int(receipt['cache_read_tokens']>0)
+    if len(_CACHE_OBSERVED)>200:_CACHE_OBSERVED.pop(next(iter(_CACHE_OBSERVED)))
+
+
+def relay_cache_diagnostic(cfg: dict) -> dict | None:
+    """Owner usage UI: only settings/observed counts, never URLs or credentials."""
+    if cfg.get('provider')!='custom_openai':return None
+    key=_relay_feature_key(_openai_chat_completions_url(cfg.get('base_url','')),
+                           str(cfg.get('model') or '').strip(),str(cfg.get('api_key') or '').strip())
+    enabled=cfg.get('cache_marker',True) is not False
+    counts=dict(_CACHE_OBSERVED.get(key,{'calls':0,'reported':0,'hits':0}))
+    note='缓存设置'+('已开启' if enabled else '已关闭')
+    if key in _NO_CACHE_MARKER:note+='；中转站拒绝显式缓存标记'
+    elif key in _NO_LONG_CACHE:note+='；中转站拒绝1小时保留，已退到5分钟'
+    if key in _NO_STREAM_USAGE:note+='；中转站拒绝流式用量报告'
+    note+=(f"；本次服务启动以来观察{counts['calls']}次返回，{counts['reported']}次报告缓存，{counts['hits']}次命中"
+           if counts['calls'] else '；本次服务启动后尚未观察到返回')
+    return {'enabled':enabled,'marker_rejected':key in _NO_CACHE_MARKER,
+            'long_cache_rejected':key in _NO_LONG_CACHE,'stream_usage_rejected':key in _NO_STREAM_USAGE,
+            **counts,'note':note}
 _GEMINI_THOUGHTS = {"google": {"thinking_config": {"include_thoughts": True}}}
 
 # 每次都会变的内容从这里开始（当前时间 → 记忆 → 聊天记录）；它之前的人设、规则、能力说明不变
@@ -713,6 +747,8 @@ def _cache_friendly_order(messages: list) -> list:
         content = m.get("content")
         cut = content.find(LIVE_STATE_HEADING) if tag == "abilities" and isinstance(content, str) else -1
         if tag in ("live", "live_ack"):
+            moved.append(m)
+        elif cut == 0:
             moved.append(m)
         elif cut > 0 and content[:cut].strip():
             kept.append({**m, "content": content[:cut].rstrip()})
@@ -2149,6 +2185,7 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
     counted = resolved in MODELS and not is_model_deprecated(resolved)
     # 发请求之前就定下这次算哪条线路；请求途中改绑 / 删掉模型也不影响这一笔
     route = usage_log.route_for_model(resolved)
+    cache_cfg = dict(MODELS.get(resolved) or {})
     # 同一个 meta 可能被调用方重复用：先把上一次的用量拿走，这次中转站给了才算真实数字
     previous = {key: meta.pop(key) for key in _USAGE_KEYS if key in meta}
     output: list[str] = []
@@ -2163,6 +2200,7 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
         reported = any(key in meta for key in ("prompt_tokens", "completion_tokens"))
         import reply_usage
         reply_usage.observe(meta, reported)
+        _observe_relay_cache(cache_cfg, meta, reported)
         if counted:
             usage_log.record_call(resolved, usage_log.kind_for_module(caller), meta if reported else {},
                                   usage_log.messages_text(messages), "".join(output), route=route)

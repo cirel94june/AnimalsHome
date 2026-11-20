@@ -57,6 +57,9 @@ async def usage_data(days: int = 1):
         pass
     for row in data["by_model"]:
         row["users"] = users.get(row["name"], [])
+        from ai_providers import relay_cache_diagnostic
+        from config import MODELS
+        row['cache_diagnostic']=relay_cache_diagnostic(MODELS.get(row['name']) or {})
     data["by_route"] = usage_log.route_costs(data["by_route"], usage_log.load_prices(), _route_name)
     data["cost"] = usage_log.total_cost(data["by_route"])
     return data
