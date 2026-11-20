@@ -537,6 +537,8 @@ pre {
           <h2>操作账号</h2>
           <p id="cloudBudgetHint" class="hint" hidden></p>
           <button id="pairCloudButton" type="button" onclick="pairCloudBrowser()" hidden>接通云浏览器</button>
+          <button id="updateCloudImageButton" type="button" onclick="updateCloudImage()" hidden>确认云浏览器升级</button>
+          <button id="updateCloudImageButton" type="button" onclick="updateCloudImage()" hidden>更新已修复的云浏览器</button>
           <details id="cloudConnectionSetup" hidden>
             <summary>云浏览器维护连接</summary>
             <label>专用应用地址<input id="cloudConnectionUrl" type="url" autocomplete="off"></label>
@@ -815,6 +817,9 @@ async function loadConfig(options = {}) {
   const params = new URLSearchParams(location.search);
   $('cloudConnectionSetup').hidden = params.get('maintenance') !== '1' || params.has('connect_nonce');
   $('pairCloudButton').hidden = !pairingRequest();
+  $('updateCloudImageButton').hidden = params.get('maintenance') !== '1' ||
+    !/^sha256:[a-f0-9]{64}$/.test(params.get('image_digest') || '');
+  $('updateCloudImageButton').hidden = params.get('maintenance') !== '1' || !/^sha256:[a-f0-9]{64}$/.test(params.get('image_digest') || '');
   const budget = currentConfig.cloud_budget;
   $('cloudBudgetHint').hidden = !budget;
   if (budget) $('cloudBudgetHint').textContent = `${budget.locked ? '云浏览器已锁停' : '云浏览器用量保护已开启'}：保守估计 $${Number(budget.estimated_usd).toFixed(2)} / $${budget.limit_usd}（含存储和流量预留，不是 Fly 实际账单）。`;
@@ -865,6 +870,22 @@ function pairingRequest() {
     ? {port,nonce} : null;
 }
 let pairLoaded=false;
+async function updateCloudImage() {
+  const button=$('updateCloudImageButton');button.disabled=true;
+  try {
+    const image_digest=new URLSearchParams(location.search).get('image_digest');
+    const response=await fetch('/api/xhs-lite/cloud-connection/image',{method:'POST',
+      headers:{'Content-Type':'application/json','X-Requested-With':'AnimalsHome'},
+      body:JSON.stringify({image_digest})});
+    const result=await response.json();
+    if(!response.ok || !result.ok) throw new Error(result.error || '更新未完成');
+    history.replaceState(null,'',location.pathname);button.hidden=true;
+    setStatus('云浏览器已更新，可以扫码登录。');
+    await loadConfig();
+  } catch(error) { setStatus(error.message || '更新未完成','error'); }
+  finally {button.disabled=false;}
+}
+
 async function pairCloudBrowser() {
   const button=$('pairCloudButton');button.disabled=true;
   try {

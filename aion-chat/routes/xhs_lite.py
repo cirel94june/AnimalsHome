@@ -51,6 +51,28 @@ class CloudConnection(BaseModel):
     image_digest: str
 
 
+class CloudImageUpdate(BaseModel):
+    image_digest: str
+
+
+@router.post('/cloud-connection/image')
+async def cloud_image_update(body: CloudImageUpdate, request: Request):
+    if request.headers.get('x-requested-with')!='AnimalsHome' or request.headers.get('sec-fetch-site')=='cross-site':
+        raise HTTPException(403,'same-origin request required')
+    import xhs_remote
+    try:
+        async with _LOGIN_LOCK,xhs_lite._ACCOUNT_LOCK:
+            previous=xhs_remote.load()
+            if not previous:raise RuntimeError('尚未连接云浏览器。')
+            connection=xhs_remote.validate(**{**previous,'image_digest':body.image_digest})
+            result=await xhs_remote.call('status',connection=connection)
+            if result.get('available') is not True:raise RuntimeError('云浏览器尚未就绪。')
+            xhs_remote.save(**connection)
+        return {'ok':True}
+    except (RuntimeError,ValueError):
+        return JSONResponse({'ok':False,'error':'镜像更新未完成，请检查已审版本和预算。'},status_code=400)
+
+
 @router.post('/cloud-connection')
 async def cloud_connection(body: CloudConnection,request: Request):
     if request.headers.get('x-requested-with')!='AnimalsHome' or request.headers.get('sec-fetch-site')=='cross-site':

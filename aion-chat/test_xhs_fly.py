@@ -1,7 +1,7 @@
 """Temporary ledgers, fake Fly API and browser; no real accounts or billable VM."""
 import asyncio
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -142,3 +142,27 @@ def test_vm_deadline_and_no_proxy_autostart_are_in_deployment_source():
     config=(root/'fly.toml').read_text(encoding='utf-8')
     assert '--kill-after=15s 300s' in script
     assert 'auto_start_machines = false' in config and 'policy = "never"' in config
+
+
+def test_image_repair_route_preserves_credentials_and_account(isolated,monkeypatch):
+    from fastapi import FastAPI
+    import xhs_lite
+    from routes import xhs_lite as routes
+    remote.save(**CFG)
+    monkeypatch.setattr(routes,'_LOGIN_LOCK',asyncio.Lock())
+    monkeypatch.setattr(xhs_lite,'_ACCOUNT_LOCK',asyncio.Lock())
+    account_save=Mock()
+    monkeypatch.setattr(xhs_lite,'save_config',account_save)
+    call=AsyncMock(return_value={'available':True})
+    monkeypatch.setattr(remote,'call',call)
+    app=FastAPI();app.include_router(routes.router);client=TestClient(app)
+    path='/api/xhs-lite/cloud-connection/image'
+    digest='sha256:'+'d'*64
+    assert client.post(path,json={'image_digest':digest}).status_code==403
+    headers={'X-Requested-With':'AnimalsHome'}
+    assert client.post(path,json={'image_digest':'invalid'},headers=headers).status_code==400
+    call.assert_not_awaited()
+    assert client.post(path,json={'image_digest':digest,'url':'https://evil.invalid'},headers=headers).status_code==200
+    assert remote.load()=={**CFG,'image_digest':digest}
+    call.assert_awaited_once_with('status',connection={**CFG,'image_digest':digest})
+    account_save.assert_not_called()
