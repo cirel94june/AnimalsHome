@@ -15,7 +15,7 @@ READS = {'check-login','search','list-feeds','get-feed-detail','user-profile','l
 LOCK=asyncio.Lock()
 
 
-def validate(url, token, machine_id='', fly_token=''):
+def validate(url, token, machine_id='', fly_token='', image_digest=''):
     if not isinstance(url,str) or re.search(r'[\x00-\x20\x7f\\]',url):
         raise ValueError('云浏览器地址无效。')
     parsed=urlsplit(url)
@@ -26,7 +26,8 @@ def validate(url, token, machine_id='', fly_token=''):
         raise ValueError('云浏览器连接钥匙无效。')
     if not re.fullmatch(r'[a-f0-9]{12,32}',machine_id) or not isinstance(fly_token,str) or not 32<=len(fly_token)<=20000 or re.search(r'[\x00-\x20\x7f]',fly_token):
         raise ValueError('云浏览器启动权限无效。')
-    return {'url':f'https://{parsed.netloc}','token':token,'machine_id':machine_id,'fly_token':fly_token}
+    if not re.fullmatch(r'sha256:[a-f0-9]{64}',image_digest):raise ValueError('云浏览器镜像校验无效。')
+    return {'url':f'https://{parsed.netloc}','token':token,'machine_id':machine_id,'fly_token':fly_token,'image_digest':image_digest}
 
 
 def load():

@@ -48,6 +48,7 @@ class CloudConnection(BaseModel):
     token: str
     machine_id: str
     fly_token: str
+    image_digest: str
 
 
 @router.post('/cloud-connection')

@@ -11,7 +11,7 @@ import xhs_remote as remote
 import xhs_fly_service as service
 
 CFG={'url':'https://animalshome-xhs-test.fly.dev','token':'a'*64,
-     'machine_id':'123456789abcde','fly_token':'fly-test-'+'x'*60}
+     'machine_id':'123456789abcde','fly_token':'fly-test-'+'x'*60,'image_digest':'sha256:'+'b'*64}
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def install_fly(monkeypatch,*,started=False,region='iad',fail_start=False):
     def handler(request):
         calls.append((request.method,request.url.path))
         if request.method=='GET':
-            return httpx.Response(200,json={'id':CFG['machine_id'],'state':status['state'],'region':region,
+            return httpx.Response(200,json={'id':CFG['machine_id'],'state':status['state'],'region':region,'image_ref':{'digest':CFG['image_digest']},
                 'config':{'guest':{'cpu_kind':'shared','cpus':2,'memory_mb':2048},
                           'restart':{'policy':'no'},'services':[{'autostart':False}]}})
         if request.url.path.endswith('/start'):

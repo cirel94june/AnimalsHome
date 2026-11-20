@@ -1,0 +1,11 @@
+**
+!deploy/
+!deploy/fly-xhs/
+!deploy/fly-xhs/Dockerfile
+!deploy/fly-xhs/requirements.txt
+!deploy/fly-xhs/entrypoint.sh
+!aion-chat/
+!aion-chat/xhs_browser_service.py
+!aion-chat/xhs_fly_service.py
+!aion-chat/xhs_lite_worker.js
+!aion-chat/xhs_lite_worker_runner.mjs

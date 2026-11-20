@@ -542,6 +542,7 @@ pre {
             <label>连接钥匙<input id="cloudConnectionKey" type="password" autocomplete="new-password"></label>
             <label>专用机器编号<input id="cloudConnectionMachine" autocomplete="off"></label>
             <label>仅此应用的启动钥匙<input id="cloudConnectionFlyKey" type="password" autocomplete="new-password"></label>
+            <label>已审镜像校验<input id="cloudConnectionImage" autocomplete="off"></label>
             <button type="button" onclick="connectCloudBrowser()">验证并连接</button>
             <p class="hint">更换连接会清除旧小红书登录，需本人重新扫码确认；预算记录保留。</p>
           </details>
@@ -847,7 +848,8 @@ async function connectCloudBrowser() {
     const response = await fetch('/api/xhs-lite/cloud-connection', {method:'POST',
       headers:{'Content-Type':'application/json','X-Requested-With':'AnimalsHome'},
       body:JSON.stringify({url:$('cloudConnectionUrl').value.trim(),token:$('cloudConnectionKey').value.trim(),
-        machine_id:$('cloudConnectionMachine').value.trim(),fly_token:$('cloudConnectionFlyKey').value.trim()})});
+        machine_id:$('cloudConnectionMachine').value.trim(),fly_token:$('cloudConnectionFlyKey').value.trim(),
+        image_digest:$('cloudConnectionImage').value.trim()})});
     const data=await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || '连接未完成');
     $('cloudConnectionKey').value='';$('cloudConnectionFlyKey').value='';
