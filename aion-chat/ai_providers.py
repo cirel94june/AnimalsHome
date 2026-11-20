@@ -648,15 +648,22 @@ def _openai_chat_completions_url(base_url: str) -> str:
 
 
 # 不认识 stream_options 的中转站（按请求地址记，进程内有效）
-_NO_STREAM_USAGE: set[str] = set()
+_NO_STREAM_USAGE: set[tuple[str,str,str]] = set()
 # 不认识缓存标记（cache_control）的中转站
-_NO_CACHE_MARKER: set[str] = set()
+_NO_CACHE_MARKER: set[tuple[str,str,str]] = set()
 # 不认「缓存保留 1 小时」（ttl）的中转站：退回默认的 5 分钟
-_NO_LONG_CACHE: set[str] = set()
+_NO_LONG_CACHE: set[tuple[str,str,str]] = set()
 # 不认 Gemini「把思考也传回来」开关（extra_body.google.thinking_config）的中转站
 _NO_GEMINI_THOUGHTS: set[str] = set()
 # 边写边传时把 Gemini 思考丢掉、一次性返回才给的 (地址, 模型)：改成一次性返回（2026-10-29 4Router 实测）
 _STREAM_DROPS_THOUGHTS: set[tuple[str, str]] = set()
+
+
+def _relay_feature_key(url: str, model: str, api_key: str) -> tuple[str,str,str]:
+    # Models and upstream accounts behind one relay can have different features.
+    # Never retain the credential itself in these process-local fallback sets.
+    import hashlib
+    return url,model,hashlib.sha256(api_key.encode('utf-8')).hexdigest()
 _GEMINI_THOUGHTS = {"google": {"thinking_config": {"include_thoughts": True}}}
 
 # 每次都会变的内容从这里开始（当前时间 → 记忆 → 聊天记录）；它之前的人设、规则、能力说明不变
@@ -776,7 +783,7 @@ def _cache_breakpoint(messages: list, ttl: str = "5m") -> tuple[list, list[int]]
     marked = list(messages)
     marked[boundary - 1] = target
     indices = [boundary - 1]
-    header = next((i for i, m in enumerate(messages[:boundary]) if _message_text(m).startswith(_HISTORY_HEADER)), -1)
+    header = next((i for i, m in enumerate(messages[:boundary]) if _message_text(m).startswith((_HISTORY_HEADER,"[聊天记录说明]"))), -1)
     if 0 < header < boundary - 1:
         stable_end = _mark_cacheable(messages[header - 1], ttl)
         if stable_end is not None:
@@ -904,6 +911,7 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
     stream_usage: dict = {}
     reasoning_status_sent = False
     content_started = False
+    feature_key = _relay_feature_key(url,model,api_key)
     want_cache_marker = cfg.get("cache_marker", True) is not False
     plain_messages = payload["messages"]
     try:
@@ -928,13 +936,13 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                     yield piece
                 return
             # 请中转站在流式回复的最后告诉用量（含缓存命中），用量小本本靠它记真实数字
-            ask_usage = url not in _NO_STREAM_USAGE
+            ask_usage = feature_key not in _NO_STREAM_USAGE
             if ask_usage:
                 payload["stream_options"] = {"include_usage": True}
             else:
                 payload.pop("stream_options", None)
-            mark_cache = want_cache_marker and url not in _NO_CACHE_MARKER
-            ttl = "1h" if cfg.get("cache_ttl", "1h") == "1h" and url not in _NO_LONG_CACHE else "5m"
+            mark_cache = want_cache_marker and feature_key not in _NO_CACHE_MARKER
+            ttl = "1h" if cfg.get("cache_ttl", "1h") == "1h" and feature_key not in _NO_LONG_CACHE else "5m"
             payload["messages"], marked_index = _cache_breakpoint(plain_messages, ttl) if mark_cache else (plain_messages, [])
             async with httpx.AsyncClient(timeout=request_timeout) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
@@ -946,13 +954,13 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                         if (mark_cache and ttl == "1h" and payload["messages"] is not plain_messages
                                 and resp.status_code in (400, 422) and _mentions_ttl(body)):
                             # 这家中转站不认「保留 1 小时」：记住，退回 5 分钟再发一次
-                            _NO_LONG_CACHE.add(url)
+                            _NO_LONG_CACHE.add(feature_key)
                             continue
                         if (mark_cache and payload["messages"] is not plain_messages
                                 and resp.status_code in (400, 422)
                                 and (_mentions_cache_control(body) or _rejects_list_content(body, marked_index))):
                             # 这家中转站不认识缓存标记（或只收字符串内容）：记住，去掉再发一次
-                            _NO_CACHE_MARKER.add(url)
+                            _NO_CACHE_MARKER.add(feature_key)
                             continue
                         if "extra_body" in payload and resp.status_code in (400, 422) and _mentions_thinking_config(body):
                             # 这家中转站不认 Gemini 思考开关：记住，去掉再发一次
@@ -960,7 +968,7 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                             continue
                         if ask_usage and resp.status_code in (400, 422) and _mentions_stream_options(body):
                             # 这家中转站不认识 stream_options：记住，去掉再发一次
-                            _NO_STREAM_USAGE.add(url)
+                            _NO_STREAM_USAGE.add(feature_key)
                             continue
                         if meta is not None:
                             meta["provider_error"] = f"HTTP {resp.status_code}: {_decode_relay_body(body)}"

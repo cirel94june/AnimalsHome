@@ -82,7 +82,7 @@ async def merged_messages(actor_id: str, limit: int) -> list[dict]:
     from database import get_db
     async with get_db() as db:
         cur = await db.execute(
-            "SELECT m.sender, m.content, m.created_at, m.attachments, r.type FROM chatroom_messages m "
+            "SELECT m.sender, m.content, m.created_at, m.attachments, r.type, m.id FROM chatroom_messages m "
             "JOIN chatroom_rooms r ON r.id = m.room_id "
             "WHERE (m.sender != 'system' OR (r.type = 'group' AND m.content LIKE '🐢 汤主%')) AND r.id NOT GLOB 'billiards_*' "
             "AND (r.type = 'group' OR (r.type = ? AND r.actor = ?)) "
@@ -91,12 +91,12 @@ async def merged_messages(actor_id: str, limit: int) -> list[dict]:
         )
         rows = await cur.fetchall()
     out = []
-    for sender, content, created_at, attachments, room_type in reversed(rows):
+    for sender, content, created_at, attachments, room_type, message_id in reversed(rows):
         try:
             atts = json.loads(attachments) if attachments else []
         except ValueError:
             atts = []
-        out.append({"sender": sender, "content": content, "created_at": created_at,
+        out.append({"id": message_id, "sender": sender, "content": content, "created_at": created_at,
                     "attachments": atts if isinstance(atts, list) else [],
                     "source": "group" if room_type == "group" else "private"})
     return out
@@ -188,8 +188,8 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         background.append(desk_notes.fresh_from_her_text(user_name))  # 空串会被下面过滤掉
     background.append(location_line())  # 和小克一样：位置上下文开关开着时带上她的位置
     messages += [
-        {"role": "user", "content": "\n\n".join(b for b in background if b)},
-        {"role": "assistant", "content": "收到。"},
+        {"role": "user", "content": "\n\n".join(b for b in background if b), "_context": "live"},
+        {"role": "assistant", "content": "收到。", "_context": "live_ack"},
         {"role": "user", "content": (
             f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。"
             f"{group_privacy_rule(user_name)}下面是最近的聊天记录，"
@@ -203,6 +203,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "assistant", "content": "明白了。"},
     ]
     abilities = _ability_lines(user_name, group, actor_id)
+    wallet_state = ''
     if proactive_line(actor_id):
         abilities.append(proactive_line(actor_id))
     if is_capability_enabled("transfer"):  # 转账要带上 TA 自己钱包的余额
@@ -210,21 +211,35 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             from routes.seat_wallet import get_seat_balance
             balance = await get_seat_balance(actor_id)
             abilities.append(f"[转账：n元] — 给{user_name}转账（n为正整数），会从你自己的钱包余额中扣除。"
-                             f"你的钱包当前余额：{balance:.2f}元。余额不足时不要转账，系统也不会转。")
+                             "余额不足时不要转账，系统也不会转。")
+            wallet_state = f"【钱包当前状态】\n你的钱包当前余额：{balance:.2f}元。"
         except Exception:
             pass
     if abilities:
         messages += [
-            {"role": "user", "content": "[你能用的指令]\n" + "\n\n".join(abilities)},
+            {"role": "user", "content": "[你能用的指令]\n" + "\n\n".join(abilities), "_context": "abilities"},
             {"role": "assistant", "content": "好的，需要时我会用。"},
         ]
+    if wallet_state:
+        messages += [{"role":"user","content":wallet_state,"_context":"live"},
+                     {"role":"assistant","content":"收到，我会参考当前余额。","_context":"live_ack"}]
     if any(m.get("source") for m in msgs):
         messages += [
-            {"role": "user", "content": "[聊天记录说明]\n下面的记录把你和" + user_name
+            {"role": "user", "_context": "history", "content": "[聊天记录说明]\n下面的记录把你和" + user_name
              + "的私聊、家里群聊按时间排在一起，<meta> 里标了每条是「群聊」还是「私聊」。"},
             {"role": "assistant", "content": "明白了。"},
         ]
-    messages += _history(actor_id, msgs, context_limit, group=group, user_name=user_name)
+    from context_builder import _stable_window, CACHE_WINDOW_STEP
+    limit = max(1,int(context_limit))
+    cfg=MODELS.get(actor.get('model') or '') or {}
+    if cfg.get('provider')=='custom_openai' and cfg.get('cache_marker',True) is not False:
+        window = _stable_window(list(msgs[-(limit+CACHE_WINDOW_STEP):]),limit,
+                                ('seat',actor_id,chat_id,group,limit))
+    else:
+        window = list(msgs[-limit:])
+    history = _history(actor_id, window, len(window), group=group, user_name=user_name)
+    if history:history[0] = {**history[0], "_context":"history"}
+    messages += history
     # 「当前时间」在一大段记录最前面，离要回的那句太远（11-07：狗蛋早上七点说成十二点半）。
     # 在最后一条记录后面再写一遍（群里常常接在别的 AI 后面说，也要有）；系统叫醒由叫醒的提示自己写
     if messages and messages[-1].get("role") == "user" and isinstance(messages[-1].get("content"), str):

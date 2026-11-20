@@ -28,7 +28,6 @@ async def file_lock():
     fd=os.open(lock_path,os.O_CREAT|os.O_RDWR,0o600)
     locked=False
     try:
-        if os.fstat(fd).st_size==0:os.write(fd,b'0')
         deadline=time.monotonic()+45
         while not locked:
             try:
@@ -44,6 +43,7 @@ async def file_lock():
                 if exc.errno not in (errno.EACCES,errno.EAGAIN,errno.EDEADLK):raise
                 if time.monotonic()>deadline:raise RuntimeError('云浏览器预算正在核对，请稍后重试。') from None
                 await asyncio.sleep(.05)
+        if os.fstat(fd).st_size==0:os.write(fd,b'0')
         yield
     finally:
         if locked:

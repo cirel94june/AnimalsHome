@@ -178,7 +178,7 @@ def test_string_only_relay_gets_a_plain_retry(monkeypatch):
     cfg = {"model": "claude-x", "base_url": "https://string-only.example/v1"}
     assert _run(monkeypatch, handle, cfg) == "嗯"
     assert sent == [True, False]
-    assert "string-only.example" in "".join(ai_providers._NO_CACHE_MARKER)
+    assert any("string-only.example" in key[0] for key in ai_providers._NO_CACHE_MARKER)
 
 
 def test_type_error_on_another_message_is_not_blamed_on_the_marker(monkeypatch):

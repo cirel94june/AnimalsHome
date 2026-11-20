@@ -158,7 +158,8 @@ def cache_tokens(usage: Any) -> tuple[int, int]:
     details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details") or {}
     read = (_num(details.get("cached_tokens")) if isinstance(details, dict) else 0) \
         or _num(usage.get("cache_read_input_tokens")) or _num(usage.get("cachedContentTokenCount")) \
-        or _num(usage.get("cached_input_tokens")) or _num(usage.get("cached_tokens"))
+        or _num(usage.get("cached_input_tokens")) or _num(usage.get("cached_tokens")) \
+        or _num(usage.get("prompt_cache_hit_tokens"))
     write = _num(usage.get("cache_creation_input_tokens"))
     if not write and isinstance(details, dict):
         write = _num(details.get("cache_creation_tokens")) or _num(details.get("cache_write_tokens"))

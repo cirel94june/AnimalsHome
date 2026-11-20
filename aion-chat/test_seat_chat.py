@@ -124,6 +124,7 @@ def test_new_window_opens_another_room_for_the_same_seat(seats, monkeypatch):
                 assert second["id"] != first["id"] and second["title"] == "周末计划" and second["actor"] == "ai3"
                 async with get_db() as db:
                     await db.execute("UPDATE chatroom_rooms SET updated_at=? WHERE id=?", (9e12, second["id"]))
+                    await db.commit()
                 again = await chatroom_routes.create_room(chatroom_routes.RoomCreate(title="", type="seat_1v1", actor="ai3"))
                 assert again["id"] == second["id"]  # 最近用的那个
 

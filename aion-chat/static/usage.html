@@ -53,7 +53,7 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
   <div class="panel">
     <div class="big">
       <div><b id="t-req">–</b><span>次请求</span></div>
-      <div><b id="t-in">–</b><span>读入 token</span></div>
+      <div><b id="t-in">–</b><span>总读入（含缓存）</span></div>
       <div><b id="t-out">–</b><span>写出 token</span></div>
     </div>
     <div class="cache-line" id="t-cache"></div>
@@ -75,9 +75,9 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
   <h3 class="sec" id="days-title" style="display:none">每天</h3>
   <div class="panel" id="days" style="display:none"></div>
   <p class="note">价格存在服务器上，手机和电脑看到的一样。每个中转站选「按量」或「按次」，再填对应的价；两种都填了，上面会同时算出两种价钱方便比较，「实际」按你选的算。没填价格的中转站不算进花费。超过每天的提醒线，首页会显示一行提醒。「后台」是聊天以外的全部（自主活动、做梦、交接卡、旅行、哨兵等）。
-    这里只是粗算：写缓存的加价、各家的零头规则都没算进去。</p>
+    缓存读写按所填价格估算；未填写缓存价时按默认倍率估算，具体仍以中转站账单为准。</p>
   <p class="note">「读入」是每次请求连带发给模型的内容（人设、记忆、最近的聊天），「写出」是模型回的话。
-    按次计费看「次请求」，按量计费主要看读入和写出。
+    命中缓存的读入通常按缓存价格计费，不等于全部按原价重复消费；按次计费则看「次请求」。
     中转站没告诉用量时按字数估算（中文约一字一个 token），标「含估算」的只能当量级参考。只记数字，不记聊天内容。</p>
 </div>
 <script>
@@ -196,9 +196,10 @@ td.cheap { color: var(--ib-acc); font-weight: 600; }
       $('t-req').textContent = fmt(d.total.requests);
       $('t-in').textContent = fmt(d.total.prompt);
       $('t-out').textContent = fmt(d.total.completion);
-      var real = d.total.prompt && d.total.cache_read;
-      $('t-cache').textContent = real ? '读入里有 ' + fmt(d.total.cache_read) + '（' + Math.round(d.total.cache_read / d.total.prompt * 100) + '%）命中了缓存'
-        : (d.total.requests ? '这段时间中转站没有报告缓存命中' : '');
+      var hit = Math.min(d.total.prompt, d.total.cache_read || 0);
+      var written = Math.min(d.total.prompt - hit, d.total.cache_write || 0);
+      $('t-cache').textContent = hit || written ? '读入明细：非缓存 ' + fmt(d.total.prompt-hit-written) + ' · 命中缓存 ' + fmt(hit) + ' · 新写缓存 ' + fmt(written)
+        : (d.total.requests ? '中转站未报告缓存命中；这不等于确认没有缓存。' : '');
       last = d;
       compare();
       $('kinds').innerHTML = rows(d.by_kind);
