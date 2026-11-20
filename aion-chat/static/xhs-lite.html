@@ -926,6 +926,8 @@ let cloudFrameURL = null, cloudFrameTimer = null, cloudUntil = 0;
 async function cloudFrame() {
   clearTimeout(cloudFrameTimer);
   if (Date.now() >= cloudUntil) {
+    $('cloudLoginQR').hidden=true;
+    $('cloudLoginFrame').hidden=true;
     $('cloudLoginHint').textContent = '登录画面已到期，需要时重新点扫码登录。';
     return;
   }
@@ -943,13 +945,21 @@ async function cloudFrame() {
     $('cloudLoginFrame').src = next;
     $('cloudLoginFrame').hidden = false;
     cloudFrameTimer = setTimeout(cloudFrame,5000);
-  } catch(err) { $('cloudLoginHint').textContent = err.message; }
+  } catch(err) {
+    $('cloudLoginQR').hidden=true;
+    $('cloudLoginFrame').hidden=true;
+    $('cloudLoginHint').textContent = err.message;
+  }
 }
 async function cloudStart() {
   $('cloudStartBtn').disabled = true;
+  clearTimeout(cloudFrameTimer);
   $('cloudLoginQR').hidden=true;
+  $('cloudLoginFrame').hidden=true;
   $('cloudLoginHint').textContent = '正在打开云端登录画面，请稍等…';
   try {
+    const reset=await api('POST','/api/xhs-lite/cloud-login/cancel');
+    if(!reset.ok) throw new Error(reset.error || '重开登录画面失败，请稍后重试。');
     const res = await api('POST','/api/xhs-lite/cloud-login/start');
     if (!res.ok) throw new Error(res.error || '打开失败，请稍后重试。');
     cloudUntil = Date.now()+res.expires_in*1000;
