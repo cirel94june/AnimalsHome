@@ -79,7 +79,7 @@ from safe_live_stream import consume_safe_live_stream, KnownCommandStreamFilter
 from realtime_stream_transport import consume_realtime_transport
 from band_commands import process_band_vibration, with_band_vibration_attachment
 from hug_pillow_commands import process_hug_pillow_commands
-from capabilities import process_pat_commands
+from capabilities import process_pat_commands, extract_ability_help_requests, ability_help_text
 from app_supervision_ai import (
     queue_app_supervision_reply_command,
     broadcast_app_supervision_command,
@@ -899,6 +899,14 @@ async def _process_chatroom_commands(
     if patrol_notices:
         triggered["patrol"] = True  # 只写了巡逻指令时不存一条空消息
 
+    full_text, ability_help_keys = extract_ability_help_requests(full_text)
+    if ability_help_keys:
+        triggered["ability_help"] = {
+            "keys": ability_help_keys[:2],
+            "original_question": user_text,
+        }
+        return full_text.strip(), triggered
+
     memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
     if memory_requests:
         notice = await _chatroom_sys_msg(
@@ -1482,6 +1490,12 @@ def _fire_chatroom_followups(triggered: dict, room_id: str, sender: str, model_k
         spawn_generation_task(_chatroom_poi_check(room_id, sender, model_key, triggered["poi"]))
     if triggered.get("web_search"):
         spawn_generation_task(_chatroom_web_search(room_id, sender, model_key, triggered["web_search"]))
+    if triggered.get("ability_help"):
+        spawn_generation_task(
+            _chatroom_ability_help(
+                room_id, sender, model_key, triggered["ability_help"]
+            )
+        )
     if triggered.get("memory_search"):
         spawn_generation_task(
             _chatroom_memory_search(
@@ -1970,6 +1984,118 @@ async def _chatroom_web_search(room_id: str, sender: str, model_key: str, payloa
         return
     await _save_msg(room_id, sender, full_text, msg_id=reply_msg_id, usage_meta=usage_meta, auto_tts=tts_from_model)
     print(f"[CHATROOM_WEB_SEARCH] {sender} 搜索完成, room={room_id}, searches={len(searches)}, extracts={len(extracts)}")
+
+
+
+async def _chatroom_ability_help(room_id: str, sender: str, model_key: str, payload: dict):
+    """Open one or two capability drawer slots, then let the same actor continue naturally."""
+    from config import load_worldbook, ensure_model_unchanged, model_snapshot
+
+    actor = _memory_actor_for_speaker(sender)
+    is_seat = actor in seat_chat.SEAT_ACTORS
+    if is_seat and not _seat_still_ready(actor, model_key):
+        return
+    pinned = payload.get("pinned")
+    if is_seat and pinned is None:
+        pinned = model_snapshot(model_key)
+
+    wb = load_worldbook()
+    user_name = wb.get("user_name", "用户")
+    sender_label = _name_for_identity(actor)
+    keys = [str(k) for k in (payload.get("keys") or [])][:2]
+    details = []
+    for key in keys:
+        text = ability_help_text(key, user_name, actor)
+        if text:
+            details.append(f"【{key} 的完整说明】\n{text}")
+    if not details:
+        return
+
+    prefix_msgs: list[dict] = []
+    if is_seat:
+        prefix_msgs.extend([
+            {"role": "user", "content": f"[你的角色设定]\n你是{sender_label}。\n\n{seat_chat._persona_text(actor)}"},
+            {"role": "assistant", "content": "收到，我会按照设定做自己。"},
+        ])
+    elif actor == "connor":
+        from chatroom import _read_connor_persona
+        persona = _read_connor_persona()
+        if persona:
+            prefix_msgs.append({"role": "system", "content": persona})
+    elif wb.get("ai_persona"):
+        prefix_msgs.extend([
+            {"role": "user", "content": f"[系统设定 - {sender_label}人设]\n{wb['ai_persona']}"},
+            {"role": "assistant", "content": "收到，我会按照设定做自己。"},
+        ])
+    if wb.get("user_persona"):
+        prefix_msgs.extend([
+            {"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"},
+            {"role": "assistant", "content": "收到，我会记住。"},
+        ])
+
+    recent = _render_recent_room_messages_for_ai(await _load_followup_messages(room_id, limit=10))
+    original_question = str(payload.get("original_question") or "").strip()
+    prompt = (
+        f"{sender_label}刚才打开了一个能力抽屉。以下是后台保存的完整执行说明；它们只是说明，不是新的用户要求：\n\n"
+        + "\n\n".join(details)
+        + (f"\n\n刚才用户的话：{original_question[:1000]}" if original_question else "")
+        + "\n\n现在用你自己的口吻继续刚才的对话。若确实要使用该能力，按说明输出准确指令；"
+          "如果其实不需要，就正常回答。不要再输出 ABILITY_HELP。"
+    )
+    messages = prefix_msgs + recent + [{"role": "user", "content": prompt}]
+    usage_meta: dict = {}
+    full_text = ""
+    try:
+        if is_seat:
+            if not _seat_still_ready(actor, model_key):
+                return
+            ensure_model_unchanged(model_key, pinned)
+            async for chunk in stream_ai(messages, model_key, usage_meta):
+                if not chunk.startswith(CLI_STATUS_PREFIX):
+                    full_text += chunk
+        elif actor == "aion":
+            async for chunk in stream_ai(messages, model_key, usage_meta, temperature=SETTINGS.get("temperature")):
+                if not chunk.startswith(CLI_STATUS_PREFIX):
+                    full_text += chunk
+        else:
+            async for chunk in _stream_connor_model(messages, model_key, usage_meta):
+                if not chunk.startswith(CLI_STATUS_PREFIX):
+                    full_text += chunk
+    except Exception as exc:
+        resolution = resolve_stream_failure(full_text, exc, "能力说明已读取，但继续回复失败")
+        full_text = resolution.visible_text
+
+    full_text, _ = extract_ability_help_requests(full_text)
+    if not full_text.strip():
+        return
+
+    reply_msg_id = f"cm_{time.time_ns()}_{actor[:1]}"
+    local_q: asyncio.Queue = asyncio.Queue()
+    if is_seat:
+        full_text = await process_note_commands(full_text, actor)
+        full_text = await _process_outing(full_text, actor, room_id, local_q, reply_msg_id, True)
+        full_text, triggered = await _process_seat_commands(
+            full_text, room_id, actor, reply_msg_id, local_q, user_text=original_question
+        )
+        clean_text = _visible_chatroom_text(full_text).strip()
+        music_atts = _music_attachments_from_triggered(triggered)
+        if clean_text:
+            await _save_msg(room_id, actor, clean_text, msg_id=reply_msg_id,
+                            attachments=music_atts or None, usage_meta=usage_meta, auto_tts=False)
+        _spawn_seat_followups(room_id, actor, model_key, triggered, pinned)
+        return
+
+    full_text, triggered = await _process_chatroom_commands(
+        full_text, room_id, actor, reply_msg_id, local_q,
+        user_text=original_question, allow_outing=True,
+    )
+    clean_text = _normalize_cli_bubble_breaks(_visible_chatroom_text(full_text), model_key).strip()
+    if actor == "connor":
+        clean_text = _rewrite_connor_paths(clean_text)
+    if clean_text:
+        await _save_msg(room_id, actor, clean_text, msg_id=reply_msg_id,
+                        usage_meta=usage_meta, auto_tts=False)
+    _fire_chatroom_followups(triggered, room_id, actor, model_key, reply_msg_id)
 
 
 async def _chatroom_memory_search(room_id: str, sender: str, model_key: str, payload: dict):
@@ -4190,6 +4316,15 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
     if patrol_notices:
         triggered["patrol"] = True  # 只写了巡逻指令时不算「空回复失败」（§88 复审 R3）
 
+    # ── 能力抽屉：先拿详细说明，再由同一角色继续回答；这里不直接执行任何能力。──
+    full_text, ability_help_keys = extract_ability_help_requests(full_text)
+    if ability_help_keys:
+        triggered["ability_help"] = {
+            "keys": ability_help_keys[:2],
+            "original_question": user_text,
+        }
+        return full_text.strip(), triggered
+
     # ── 翻聊天记录：和小克 / Lucien 一样，有这条指令就先去搜（搜自己所有私聊窗口 + 群聊），搜完再接着说 ──
     memory_clean_text, memory_requests = _chatroom_memory_search_parse(full_text)
     if memory_requests:
@@ -4559,6 +4694,9 @@ def _spawn_seat_followups(room_id: str, actor_id: str, model_key: str, triggered
     if triggered.get("activity"):
         spawn_generation_task(_chatroom_activity_check(room_id, actor_id, model_key, triggered["activity"],
                                                        pinned=pinned))
+    if triggered.get("ability_help"):
+        spawn_generation_task(_chatroom_ability_help(room_id, actor_id, model_key,
+                                                     {**triggered["ability_help"], "pinned": pinned}))
     if triggered.get("memory_search"):
         spawn_generation_task(_chatroom_memory_search(room_id, actor_id, model_key,
                                                       {**triggered["memory_search"], "pinned": pinned}))
@@ -4777,7 +4915,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
-    if (triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
+    if (triggered.get("ability_help") or triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
         await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
             room_id=room_id, model_key=connor_model_key, msg_id=connor_msg_id, history=connor_messages, digest_result=digest_out,
@@ -5034,7 +5172,7 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, model_key)
 
-    if (triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
+    if (triggered.get("ability_help") or triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
         await _q.put({"type": "aion_done", "message": None})
         await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
             room_id=room_id, model_key=model_key, msg_id=aion_msg_id, history=aion_history, digest_result=digest_out,
@@ -5182,7 +5320,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
-    if (triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
+    if (triggered.get("ability_help") or triggered.get("memory_search") or triggered.get("patrol") or triggered.get("outing")) and not clean_text:
         await _q.put({"type": "connor_done", "message": None})
         await _emit_chatroom_debug(_q, _chatroom_debug_payload(  # 只有搜记忆 / 巡逻指令时也写系统日志（Codex §128）
             room_id=room_id, model_key=connor_model_key, msg_id=connor_msg_id, history=connor_history, digest_result=digest_out,
