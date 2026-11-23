@@ -133,6 +133,24 @@ def test_not_ready_or_reselected_model_writes_nothing(env, monkeypatch):
     assert not env.seen and env.anchor() == 0
 
 
+def test_recent_diary_skips_model_until_24_hours_have_passed(env):
+    env.say("s3", "user", 1000, 25)
+
+    async def add_recent_diary():
+        async with aiosqlite.connect(env.path) as conn:
+            await conn.execute(
+                "INSERT INTO diary_entries VALUES (?,?,?,?,?,?,?,?,?,?)",
+                ("recent", "ai3", "刚写过", "内容", "", "seat_digest", "ai3", 900, 1024, 99_000),
+            )
+            await conn.commit()
+    asyncio.run(add_recent_diary())
+
+    assert _run(now=100_000) == "skip_recent_diary"
+    assert not env.seen and env.anchor() == 0
+    assert _run(now=200_000) == "written"
+    assert len(env.seen) == 1
+
+
 def test_moment_switch_off_keeps_the_diary_only(env, monkeypatch):
     import capabilities
     monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "moment")
