@@ -503,7 +503,108 @@ def capabilities_payload() -> dict:
     }
 
 
+
+ABILITY_HELP_PATTERN = re.compile(r"\[ABILITY_HELP:([a-z0-9_-]+)\]", re.I)
+
+_COMPLEX_ABILITY_PREFIXES = (
+    ("music", "[MUSIC:"),
+    ("web", "[WEB_SEARCH:"),
+    ("taobao", "[TAOBAO:"),
+    ("image_gen", "[SELFIE:"),
+    ("activity", "[查看动态:"),
+    ("poi", "[POI_SEARCH:"),
+    ("outing", "[出门:"),
+    ("desk_note", "[NOTE:"),
+    ("memory_search", "[MEMORY_SEARCH:"),
+    ("app_supervision", "[APP_LOCK:"),
+)
+
+_COMPACT_ABILITY_TEXT = {
+    "music": "[MUSIC:歌曲名 歌手名] / [MUSIC_SEARCH:关键词] — 点歌或查歌。",
+    "web": "[WEB_SEARCH:查询] / [WEB_EXTRACT:URL] — 联网搜索或读取网页；结果回来后再回答。",
+    "taobao": "[TAOBAO:商品关键词] — 搜淘宝真实商品；结果回来后再挑选。",
+    "image_gen": "[SELFIE:英文提示词] / [DRAW:英文提示词] — 自拍或生图。",
+    "activity": "[查看动态:n] — 查看过去 n×10 分钟设备动态（n=1~12）。",
+    "poi": "[POI_SEARCH:类型或关键词] — 搜当前位置附近真实地点。",
+    "outing": "[出门:地方名:想做什么] — 去已接好的外部地方逛一趟；需要地点/规则时拉开抽屉。",
+    "desk_note": "[NOTE:内容] — 在桌面便笺留一句话。",
+    "memory_search": "[MEMORY_SEARCH:查询|选项] — 当前预加载记忆不够时，搜索自己的历史记忆。",
+    "app_supervision": "[APP_LOCK/APP_TEMP_UNLOCK/APP_UNLOCK/COME_HOME/LOOK_AT_ME/DEVICE_*] — 手机应用监管与唤回；使用前拉开抽屉看完整参数。",
+}
+
+
+def _complex_ability_key(text: str) -> str:
+    value = str(text or "").lstrip()
+    for key, prefix in _COMPLEX_ABILITY_PREFIXES:
+        if value.startswith(prefix):
+            return key
+    return ""
+
+
+def compact_ability_texts(abilities: list[str]) -> list[str]:
+    """Keep selection information resident; move verbose execution details behind ABILITY_HELP."""
+    out: list[str] = []
+    seen_help = False
+    for raw in abilities:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        key = _complex_ability_key(text)
+        if key:
+            out.append(_COMPACT_ABILITY_TEXT[key] + f" 详细规则：[ABILITY_HELP:{key}]")
+            seen_help = True
+        else:
+            out.append(text)
+    if seen_help:
+        out.append("[ABILITY_HELP:能力名] — 只有短目录不够执行复杂能力时才用；系统会把该能力的完整说明作为下一条内部上下文交给你。")
+    return out
+
+
+def extract_ability_help_requests(text: str) -> tuple[str, list[str]]:
+    keys: list[str] = []
+    for match in ABILITY_HELP_PATTERN.finditer(str(text or "")):
+        key = match.group(1).lower()
+        if key in _COMPACT_ABILITY_TEXT and key not in keys:
+            keys.append(key)
+    return ABILITY_HELP_PATTERN.sub("", str(text or "")), keys
+
+
+def ability_help_text(key: str, user_name: str, who: str = "aion") -> str:
+    """Return the full description for one drawer slot. Never executes the capability."""
+    key = str(key or "").lower()
+    if key == "music":
+        return music_ability_text()
+    if key == "web":
+        return web_search_ability_text()
+    if key == "taobao":
+        return taobao_chat_ability_text(user_name)
+    if key == "image_gen":
+        return image_gen_ability_text(user_name)
+    if key == "activity":
+        return activity_check_ability_text(user_name)
+    if key == "poi":
+        return poi_search_ability_text(user_name)
+    if key == "outing":
+        return mcp_chat_ability_text(user_name, who)
+    if key == "desk_note":
+        return (
+            f"[NOTE:内容] — 在{user_name}手机桌面的便笺上留一句短话（一两句以内）。"
+            "它会以你的名义贴在桌面上，不出现在聊天正文；真的有话想留时再用。"
+        )
+    if key == "memory_search":
+        return (
+            "[MEMORY_SEARCH:查询|选项] — 预加载记忆不足以回答过去事实时搜索自己的完整记忆库。"
+            "选项可省略；可用 relevant、latest、earliest、date=日期、range=开始..结束、detail、history、open=来源ID。"
+            "一轮最多 5 条互补查询；搜索结果回来前不要猜答案，证据不足可换关键词或打开来源继续查。"
+        )
+    if key == "app_supervision":
+        from app_supervision_ai import build_app_supervision_ability_text
+        return build_app_supervision_ability_text()
+    return ""
+
+
 def format_ability_block(abilities: list[str]) -> str:
+    abilities = compact_ability_texts(abilities)
     block = (
         "[系统能力]\n"
         "以下能力包含 AionsHome 本地动作协议、上下文注入和可见表达标记。"
@@ -763,7 +864,7 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
                 f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督。到时间后系统自动截取摄像头画面发给你，"
                 f"你可以看看{user_name}的状态再自然地回应。内容写清楚想看什么（比如「看她有没有在学习」）。"
             )
-    return texts
+    return compact_ability_texts(texts)
 
 
 async def build_capability_prompt_items(
