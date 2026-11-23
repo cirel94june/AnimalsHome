@@ -198,21 +198,28 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
             {"role": "assistant", "content": "收到，我会记住。"},
         ]
     now = now_text(seconds=False)
-    background = [f"[当前时间] {now}", await hub_task]
+    hub_block = await hub_task
+    memory_background = [hub_block]
+    live_background = [f"[当前时间] {now}"]
     from capabilities import is_capability_enabled
     if is_capability_enabled("schedule"):  # 日程不会自己响，要在提示词里看得到才能「合适时机自然提起」
         try:
             from schedule import build_schedule_prompt, get_active_schedules
-            background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules(viewer=actor_id)))
+            live_background.append("[当前日程列表]\n" + build_schedule_prompt(await get_active_schedules(viewer=actor_id)))
         except Exception:
             pass
-    from capabilities import is_capability_enabled
     if is_capability_enabled("desk_note"):
         import desk_notes
-        background.append(desk_notes.fresh_from_her_text(user_name))  # 空串会被下面过滤掉
-    background.append(location_line())  # 和小克一样：位置上下文开关开着时带上她的位置
+        memory_background.append(desk_notes.fresh_from_her_text(user_name))  # 一天内稳定，别放在秒级状态后面
+    live_background.append(location_line())  # 位置会变，跟当前时间一起压到最后
+    memory_text = "\n\n".join(b for b in memory_background if b)
+    if memory_text:
+        messages += [
+            {"role": "user", "content": memory_text, "_context": "memory"},
+            {"role": "assistant", "content": "收到。", "_context": "memory_ack"},
+        ]
     messages += [
-        {"role": "user", "content": "\n\n".join(b for b in background if b), "_context": "live"},
+        {"role": "user", "content": "\n\n".join(b for b in live_background if b), "_context": "live"},
         {"role": "assistant", "content": "收到。", "_context": "live_ack"},
         {"role": "user", "content": (
             f"[群聊说明]\n你现在在家里的群聊里。{_family_name_rule(user_name)}"

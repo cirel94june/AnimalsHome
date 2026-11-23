@@ -46,7 +46,7 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
                     "水母灯", recent_messages=[], skip_digest=fast_mode,
                     digest_result={"keywords": ["水母灯"], "topic": "", "is_search_needed": False},
                 )
-                self.assertNotIn("纸条原文不应带入", result["time_block"] + result["memory_block"])
+                self.assertNotIn("纸条原文不应带入", result["time_block"] + result.get("background_block", "") + result["memory_block"])
         board_context.assert_not_called()
 
     def test_recall_query_falls_back_to_latest_user_message_when_digest_has_no_clues(self):
@@ -110,11 +110,32 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
                 digest_result=digest,
             )
 
-        self.assertIn("- 记忆：ordinary surfaced memory", result["time_block"])
+        self.assertIn("- 记忆：ordinary surfaced memory", result["background_block"])
         self.assertIn(
             "📌 记忆：unfinished surfaced memory（还没做/还没去）",
-            result["time_block"],
+            result["background_block"],
         )
+
+    async def test_hub_duplicate_is_not_repeated_in_local_background(self):
+        surfaced = [_memory("surface1", "小猫没有技术背景，解释技术问题时默认使用大白话")]
+        digest = {"is_search_needed": False, "keywords": [], "require_detail": False, "status": "", "topic": "tech"}
+        hub_text = "[跨端记忆]\n- 小猫没有技术背景，解释技术问题时默认使用大白话"
+
+        with (
+            patch("context_builder.build_health_summary", new=_empty_health),
+            patch("context_builder.build_surfacing_memories", new=AsyncMock(return_value=(surfaced, {"surface1"}))),
+            patch("context_builder.recall_memories", new=AsyncMock(return_value=([], []))),
+            patch("memory_hub_bridge.context_block", new=AsyncMock(return_value=hub_text)),
+        ):
+            result = await context_builder.build_memory_blocks(
+                "技术问题",
+                recent_messages=[],
+                digest_result=digest,
+                memory_hub_actor="aion",
+            )
+
+        self.assertIn("大白话", result["background_block"])
+        self.assertEqual(result["background_block"].count("大白话"), 1)
 
     async def test_search_signal_includes_recalled_memory_source_text(self):
         recalled = _memory("main1", "memory with source")
@@ -222,7 +243,8 @@ class ActiveMemoryRecallTests(unittest.IsolatedAsyncioTestCase):
         ]
         memory_result = {
             "time_block": "系统当前的准确时间是 12:00",
-            "memory_block": "[背景记忆]\n旧事",
+            "background_block": "[背景记忆]\n旧事",
+            "memory_block": "",
             "digest_result": digest,
         }
 

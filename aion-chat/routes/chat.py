@@ -102,6 +102,7 @@ _SYSTEM_MSG_CONTEXT_KEYWORDS = ('查看了监控', '搜索了', '点歌', '点�
 from context_builder import (
     fetch_merged_timeline, render_merged_timeline, build_health_summary,
     build_ability_block, WISH_CMD_PATTERN, _build_recall_query, strip_tool_commands,
+    _memory_duplicate_of_text,
     BAND_VIBRATE_CMD_PATTERN,
 )
 from music import search_songs, get_audio_url
@@ -1446,13 +1447,14 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     )
 
     now_str = now_text()
-    bg_block = f"系统当前的准确时间是 {now_str}"
+    live_block = f"系统当前的准确时间是 {now_str}"
     health_text = await build_health_summary()
     if health_text:
-        bg_block += health_text
+        live_block += health_text
     hub_block = await hub_task
-    if hub_block:
-        bg_block += "\n\n" + hub_block
+    if hub_block and surfaced:
+        surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
+    memory_parts = [hub_block] if hub_block else []
     if surfaced:
         unresolved_lines = [
             f"📌 {format_recalled_memories_for_prompt([m])[2:]}（还没做/还没去）"
@@ -1465,9 +1467,13 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             if not m.get("unresolved")
         ]
         mem_text = "\n".join(unresolved_lines + normal_lines)
-        bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
-    history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block, "_context": "live"})
-    history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。", "_context": "live_ack"})
+        memory_parts.append(f"[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}")
+    if memory_parts:
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": "\n\n".join(memory_parts), "_context": "memory"})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些背景。", "_context": "memory_ack"})
+        inject_offset += 2
+    history.insert(cap_idx + inject_offset, {"role": "user", "content": live_block, "_context": "live"})
+    history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。", "_context": "live_ack"})
     inject_offset += 2
 
     if recall_query:
@@ -1481,13 +1487,15 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     debug_top6_data = [{"content": m["content"], "score": m["score"],
                         "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
                         "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
+    if hub_block and recalled:
+        recalled = [m for m in recalled if not _memory_duplicate_of_text(m, hub_block)]
     if recalled:
         mem_lines = format_recalled_memories_for_prompt(recalled)
         mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
         if detail_text:
             mem_block += f"\n\n[记忆来源原文]\n以下是相关记忆挂载的来源原文；旧记忆没有精确来源时才会按时间范围回退筛选原文：\n{detail_text}"
-        history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block, "_context": "live"})
-        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block, "_context": "memory"})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "memory_ack"})
 
     debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
 
@@ -2141,15 +2149,16 @@ async def send_message(conv_id: str, body: MsgCreate):
             _do_surfacing(), _do_recall()
         )
 
-        # 注入当前时间（缓存分界点）+ 背景记忆（动态内容）
+        # 背景/跨端记忆和真正实时状态分开，避免时间/设备变化截断后面的记忆缓存
         now_str = now_text()
-        bg_block = f"系统当前的准确时间是 {now_str}"
+        live_block = f"系统当前的准确时间是 {now_str}"
         health_text = await build_health_summary()
         if health_text:
-            bg_block += health_text
+            live_block += health_text
         hub_block = await hub_task
-        if hub_block:
-            bg_block += "\n\n" + hub_block
+        if hub_block and surfaced:
+            surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
+        memory_parts = [hub_block] if hub_block else []
         if surfaced:
             unresolved_lines = [
                 f"📌 {format_recalled_memories_for_prompt([m])[2:]}（还没做/还没去）"
@@ -2162,9 +2171,13 @@ async def send_message(conv_id: str, body: MsgCreate):
                 if not m.get("unresolved")
             ]
             mem_text = "\n".join(unresolved_lines + normal_lines)
-            bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
-        history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block, "_context": "live"})
-        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。", "_context": "live_ack"})
+            memory_parts.append(f"[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}")
+        if memory_parts:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": "\n\n".join(memory_parts), "_context": "memory"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些背景。", "_context": "memory_ack"})
+            inject_offset += 2
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": live_block, "_context": "live"})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。", "_context": "live_ack"})
         inject_offset += 2
 
         # 4. RAG 精确召回（与背景记忆去重，使用已并行获取的结果）
@@ -2181,13 +2194,15 @@ async def send_message(conv_id: str, body: MsgCreate):
                             "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
                             "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
         # 5. 注入向量匹配到的相关记忆（在背景记忆之后，每次请求都可能不同）
+        if hub_block and recalled:
+            recalled = [m for m in recalled if not _memory_duplicate_of_text(m, hub_block)]
         if recalled:
             mem_lines = format_recalled_memories_for_prompt(recalled)
             mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
             if detail_text:
                 mem_block += f"\n\n[记忆来源原文]\n以下是相关记忆挂载的来源原文；旧记忆没有精确来源时才会按时间范围回退筛选原文：\n{detail_text}"
-            history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block, "_context": "live"})
-            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block, "_context": "memory"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "memory_ack"})
 
     debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
 
@@ -3797,16 +3812,17 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         topic = digest_result.get("topic", "")
         is_search_needed = digest_result.get("is_search_needed", False)
 
-        # 3. 注入当前时间（缓存分界点）+ 背景记忆（动态内容）
+        # 3. 背景记忆先放 memory；时间/健康等实时状态压到最后
         surfaced, surfaced_ids = await build_surfacing_memories(topic, recall_keywords)
         now_str = now_text()
-        bg_block = f"系统当前的准确时间是 {now_str}"
+        live_block = f"系统当前的准确时间是 {now_str}"
         health_text = await build_health_summary()
         if health_text:
-            bg_block += health_text
+            live_block += health_text
         hub_block = await hub_task
-        if hub_block:
-            bg_block += "\n\n" + hub_block
+        if hub_block and surfaced:
+            surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
+        memory_parts = [hub_block] if hub_block else []
         if surfaced:
             unresolved_lines = [
                 f"📌 {format_recalled_memories_for_prompt([m])[2:]}（还没做/还没去）"
@@ -3819,9 +3835,13 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                 if not m.get("unresolved")
             ]
             mem_text = "\n".join(unresolved_lines + normal_lines)
-            bg_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
-        history.insert(cap_idx + inject_offset, {"role": "user", "content": bg_block, "_context": "live"})
-        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会在合适的时候自然提及。", "_context": "live_ack"})
+            memory_parts.append(f"[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}")
+        if memory_parts:
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": "\n\n".join(memory_parts), "_context": "memory"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些背景。", "_context": "memory_ack"})
+            inject_offset += 2
+        history.insert(cap_idx + inject_offset, {"role": "user", "content": live_block, "_context": "live"})
+        history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到。", "_context": "live_ack"})
         inject_offset += 2
 
         # 4. RAG 精确召回（与背景记忆去重）
@@ -3850,13 +3870,15 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                             "vec_sim": m.get("vec_sim"), "kw_score": m.get("kw_score"),
                             "importance": m.get("importance")} for m in debug_top6] if debug_top6 else []
         # 5. 注入相关记忆（在背景记忆之后）
+        if hub_block and recalled:
+            recalled = [m for m in recalled if not _memory_duplicate_of_text(m, hub_block)]
         if recalled:
             mem_lines = format_recalled_memories_for_prompt(recalled)
             mem_block = f"[相关记忆]\n你脑海中与当前话题相关的记忆：\n{mem_lines}"
             if detail_text:
                 mem_block += f"\n\n[记忆来源原文]\n以下是相关记忆挂载的来源原文；旧记忆没有精确来源时才会按时间范围回退筛选原文：\n{detail_text}"
-            history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block, "_context": "live"})
-            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
+            history.insert(cap_idx + inject_offset, {"role": "user", "content": mem_block, "_context": "memory"})
+            history.insert(cap_idx + inject_offset + 1, {"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "memory_ack"})
 
     debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
     ai_msg_id = f"msg_{int(time.time()*1000)}"

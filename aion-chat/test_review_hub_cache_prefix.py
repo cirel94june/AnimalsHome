@@ -84,9 +84,14 @@ def test_hub_change_and_clock_preserve_actual_sent_prefix(path,tmp_path,monkeypa
         history+=context_builder.render_merged_timeline(rows,'aion')
         offset=await private._insert_private_ability_block(history,2,0,user_name='SyntheticUser',model_key='review-hub-cache')
         memory=await memories()
-        for text in (memory['time_block'],memory['memory_block']):
-            history[2+offset:2+offset]=[{'role':'user','content':text,'_context':'live'},
-                                      {'role':'assistant','content':'ack','_context':'live_ack'}]
+        for text,tag,ack in (
+            (memory.get('background_block',''),'memory','memory_ack'),
+            (memory['memory_block'],'memory','memory_ack'),
+            (memory['time_block'],'live','live_ack'),
+        ):
+            if not text: continue
+            history[2+offset:2+offset]=[{'role':'user','content':text,'_context':tag},
+                                      {'role':'assistant','content':'ack','_context':ack}]
             offset+=2
         return history
 

@@ -7,6 +7,7 @@ from clock_text import now_text
 from reply_timing import timed
 import json, re, time, asyncio
 from datetime import datetime
+from difflib import SequenceMatcher
 
 import aiosqlite
 
@@ -370,6 +371,28 @@ def _build_recall_query(
 
 
 @timed("memory_context")
+
+def _normalize_memory_compare_text(value: str) -> str:
+    return re.sub(r"[\W_]+", "", str(value or "").lower(), flags=re.UNICODE)
+
+
+def _memory_duplicate_of_text(memory: dict, reference: str) -> bool:
+    """Conservative prompt-only dedupe. Never mutates or deletes stored memories."""
+    content = _normalize_memory_compare_text(memory.get("content", ""))
+    if len(content) < 16 or not reference:
+        return False
+    for raw_line in str(reference).splitlines():
+        line = _normalize_memory_compare_text(raw_line.lstrip("-•📌 "))
+        if len(line) < 16:
+            continue
+        shorter, longer = (content, line) if len(content) <= len(line) else (line, content)
+        if len(shorter) >= 18 and shorter in longer:
+            return True
+        if min(len(content), len(line)) >= 24 and SequenceMatcher(None, content, line).ratio() >= 0.74:
+            return True
+    return False
+
+
 async def build_memory_blocks(
     query_text: str,
     recent_messages: list[dict] = None,
@@ -400,14 +423,15 @@ async def build_memory_blocks(
       chatroom_source_fn: 可选的聊天室原文追溯函数 async (memories, keywords) -> str
       skip_digest: 跳过 instant_digest（快速模式）
       digest_result: 外部传入的 digest 结果（复用同一次调用）
-      memory_hub_actor: 非空时同时拉取该角色的 Memory Hub 跨端记忆并拼进 time_block。
+      memory_hub_actor: 非空时同时拉取该角色的 Memory Hub 跨端记忆，单独放进 background_block。
       memory_hub_chat_id: 对话 / 房间编号，传给 Hub 做短期去重和话题接续。
       memory_hub_chat_type: "private"（一对一）或 "private_group"（群聊房间），群聊里 Hub 不给私聊内容。
                         默认关闭：访客/外出等面向他人的场景不得注入私人跨端记忆。
       always_include_recalled: 已弃用的兼容参数；摘要记忆现在每轮都会按相关度注入
 
     返回 dict:
-      time_block: str — 当前时间 + 背景记忆文本
+      time_block: str — 当前时间 / 健康等真正实时状态
+      background_block: str — 跨端记忆 + 背景浮现（可能为空）
       memory_block: str — 相关记忆 + 记忆证据文本（可能为空）
       digest_result: dict — instant_digest 的结果
     """
@@ -420,9 +444,6 @@ async def build_memory_blocks(
         hub_task = asyncio.create_task(memory_hub_bridge.context_block(memory_hub_actor, query_text, memory_hub_chat_id,
                                                                        memory_hub_chat_type, **hub_extra))
 
-    async def _with_hub(block: str) -> str:
-        hub_block = await hub_task if hub_task else ""
-        return f"{block}\n\n{hub_block}" if hub_block else block
     # 健康数据摘要
     health_text = await build_health_summary()
     if health_text:
@@ -430,7 +451,8 @@ async def build_memory_blocks(
     memory_block = ""
 
     if skip_digest:
-        return {"time_block": await _with_hub(time_block), "memory_block": "", "digest_result": {}}
+        hub_block = await hub_task if hub_task else ""
+        return {"time_block": time_block, "background_block": hub_block, "memory_block": "", "digest_result": {}}
 
     # 如果没有外部传入 digest_result，自己生成一次本地前置路由
     if digest_result is None and recent_messages:
@@ -492,6 +514,14 @@ async def build_memory_blocks(
         elif label == "chatroom_recall":
             chatroom_mems = results[i]
 
+    hub_block = await hub_task if hub_task else ""
+    if hub_block and surfaced:
+        surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
+
+    background_parts: list[str] = []
+    if hub_block:
+        background_parts.append(hub_block)
+
     # 背景记忆
     if surfaced:
         unresolved_lines = [
@@ -505,7 +535,9 @@ async def build_memory_blocks(
             if not m.get("unresolved")
         ]
         mem_text = "\n".join(unresolved_lines + normal_lines)
-        time_block += f"\n\n[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
+        background_parts.append(
+            f"[背景记忆]\n以下是你记得的近期事件和需要关注的事项，在对话中如果有关联可以自然提起：\n{mem_text}"
+        )
 
     # RAG 摘要召回；always_include_recalled 用于需要每轮主动带摘要记忆的上下文。
     recalled = []
@@ -521,6 +553,9 @@ async def build_memory_blocks(
                     recalled.append(m)
                     seen_content.add(m["content"][:100])
             recalled = recalled[:max_recalled_memories]
+
+    if hub_block and recalled:
+        recalled = [m for m in recalled if not _memory_duplicate_of_text(m, hub_block)]
 
     if recalled:
         mem_lines = format_recalled_memories_for_prompt(recalled, limit=200)
@@ -557,11 +592,11 @@ async def build_memory_blocks(
         "debug_top6": [_memory_debug_item(m) for m in debug_candidates[:6]],
     })
 
-    time_block = await _with_hub(time_block)
     if memory_hub_actor:
         debug_digest["memory_hub"] = memory_hub_bridge.read_status(memory_hub_actor, memory_hub_chat_id)
     return {
         "time_block": time_block,
+        "background_block": "\n\n".join(part for part in background_parts if part),
         "memory_block": memory_block,
         "digest_result": debug_digest,
     }

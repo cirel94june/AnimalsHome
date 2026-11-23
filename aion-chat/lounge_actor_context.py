@@ -99,17 +99,17 @@ async def build_lounge_actor_context(
         if persona_pair_open and item.get("role") == "assistant":
             persona_pair_open = False
     memory = await _actor_memory_blocks(actor_id, safe_query, safe_visit[-3:])
-    if memory.get("time_block"):
+    if memory.get("background_block"):
         context.extend([
             {
                 "role": "user",
-                "content": memory["time_block"],
-                "lounge_context_kind": "dynamic_state",
+                "content": memory["background_block"],
+                "lounge_context_kind": "memory_summary",
             },
             {
                 "role": "assistant",
-                "content": "收到。",
-                "lounge_context_kind": "dynamic_state",
+                "content": "收到，我会自然参考这些背景。",
+                "lounge_context_kind": "memory_summary",
             },
         ])
     if memory.get("memory_block"):
@@ -123,6 +123,19 @@ async def build_lounge_actor_context(
                 "role": "assistant",
                 "content": "收到，我会自然参考相关记忆。",
                 "lounge_context_kind": "memory_summary",
+            },
+        ])
+    if memory.get("time_block"):
+        context.extend([
+            {
+                "role": "user",
+                "content": memory["time_block"],
+                "lounge_context_kind": "dynamic_state",
+            },
+            {
+                "role": "assistant",
+                "content": "收到。",
+                "lounge_context_kind": "dynamic_state",
             },
         ])
     context.append({

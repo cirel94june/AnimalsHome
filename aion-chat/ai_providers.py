@@ -730,7 +730,8 @@ def _live_state_at(text: str) -> int:
 
 # 构造上下文时给消息打的内部标签（发给模型前去掉）：
 #   "abilities" 能力说明（里面 LIVE_STATE_HEADING 之后是每轮会变的状态）
-#   "live" / "live_ack" 每轮会变的背景（时间+背景记忆、设备状态、相关记忆）及它的回执
+#   "memory" / "memory_ack" 记忆背景（跨端/背景/相关记忆），变化慢于实时状态
+#   "live" / "live_ack" 每轮都会变的状态（当前时间、位置、设备/手机状态）及它的回执
 #   "history" 聊天记录从这一条开始
 # 只认标签，不从正文猜：聊天内容里出现同样的字也不会被挪动。
 CONTEXT_TAG = "_context"
@@ -749,23 +750,25 @@ def _cache_friendly_order(messages: list) -> list:
     header = next((i for i, m in enumerate(messages) if m.get(CONTEXT_TAG) == "history"), -1)
     if header < 0 or header >= len(messages) - 1:
         return messages
-    kept, moved = [], []
+    kept, moved_memory, moved_live = [], [], []
     for m in messages[:header]:
         tag = m.get(CONTEXT_TAG)
         content = m.get("content")
         cut = content.find(LIVE_STATE_HEADING) if tag == "abilities" and isinstance(content, str) else -1
-        if tag in ("live", "live_ack"):
-            moved.append(m)
+        if tag in ("memory", "memory_ack"):
+            moved_memory.append(m)
+        elif tag in ("live", "live_ack"):
+            moved_live.append(m)
         elif cut == 0:
-            moved.append(m)
+            moved_live.append(m)
         elif cut > 0 and content[:cut].strip():
             kept.append({**m, "content": content[:cut].rstrip()})
-            moved.append({"role": "user", "content": content[cut:]})
+            moved_live.append({"role": "user", "content": content[cut:]})
         else:
             kept.append(m)
-    if not moved:
+    if not moved_memory and not moved_live:
         return messages
-    return kept + list(messages[header:-1]) + moved + [messages[-1]]
+    return kept + list(messages[header:-1]) + moved_memory + moved_live + [messages[-1]]
 
 
 def _without_context_tags(messages: list) -> list:
