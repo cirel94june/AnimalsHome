@@ -929,7 +929,8 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
     if all_summaries and not digest_incomplete and await auto_diary_due("connor"):
         try:
             connor_persona = _read_connor_persona()
-            summaries_text = "\n".join(f"- {s}" for s in all_summaries)
+            from diary import diary_material_since_last
+            summaries_text = await diary_material_since_last("connor") or "\n".join(f"- {s}" for s in all_summaries)
             context_lines = []
             for m in msgs[-30:]:
                 content = (m.get("content") or "").strip()
