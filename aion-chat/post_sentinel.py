@@ -574,15 +574,26 @@ async def run_pending_once():
     return True
 
 
-async def build_context(*, now=None):
+async def build_context_parts(*, now=None) -> tuple[str, str]:
+    """Return (stable profile, live current-state) so cacheable facts do not sit behind volatile state."""
     if not enabled():
-        return ''
+        return '', ''
     try:
         async with get_db() as db:
             _, document = await _read(db)
     except Exception:
-        return ''  # Unavailable new tables never block existing reply paths.
-    return render_context(document, _profile_user_name(), now)[0]
+        return '', ''  # Unavailable new tables never block existing reply paths.
+    context = render_context(document, _profile_user_name(), now)[0]
+    marker = "【当前状态】"
+    if marker not in context:
+        return context, ''
+    before, after = context.split(marker, 1)
+    return before.rstrip(), marker + after
+
+
+async def build_context(*, now=None):
+    stable, live = await build_context_parts(now=now)
+    return "\n".join(part for part in (stable, live) if part)
 
 
 async def run_maintenance_once(*, now=None):
