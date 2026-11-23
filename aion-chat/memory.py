@@ -1453,11 +1453,12 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
         "moment_published": False,
         "message": "本轮没有新记忆，不生成日记",
     }
+    from diary import auto_diary_due
     if model_failure_detected:
         diary_generation["message"] = "记忆总结模型调用失败，本轮已熔断后续模型调用"
     elif digest_incomplete:
         diary_generation["message"] = "记忆总结未完整完成，本轮不生成日记"
-    elif total_new > 0 and all_summaries:
+    elif total_new > 0 and all_summaries and await auto_diary_due("aion"):
         try:
             # 使用本轮已合并排序的新消息，避免把总结产物或旧私聊尾巴重新喂给模型。
             context_msgs = [
@@ -1549,6 +1550,9 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
                 "moment_published": False,
                 "message": f"日记保存阶段失败：{type(e).__name__}",
             }
+    elif total_new > 0 and all_summaries:
+        diary_generation["ok"] = True
+        diary_generation["message"] = "距离上一篇自动日记不足24小时，本轮只整理记忆"
 
     followup_model_calls_allowed = bool(diary_generation.get("ok"))
 
