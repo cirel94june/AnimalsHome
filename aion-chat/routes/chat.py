@@ -1566,31 +1566,6 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                 original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
             ):
                 return
-            if not has_error and await _start_private_ability_help_if_requested(
-                full_text, conv_id=conv_id, model_key=model_key,
-                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
-            ):
-                return
-            if not has_error and await _start_private_ability_help_if_requested(
-                full_text, conv_id=conv_id, model_key=model_key,
-                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
-            ):
-                return
-            if not has_error and await _start_private_ability_help_if_requested(
-                full_text, conv_id=conv_id, model_key=model_key,
-                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
-            ):
-                return
-            if not has_error and await _start_private_ability_help_if_requested(
-                full_text, conv_id=conv_id, model_key=model_key,
-                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
-            ):
-                return
-            if not has_error and await _start_private_ability_help_if_requested(
-                full_text, conv_id=conv_id, model_key=model_key,
-                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
-            ):
-                return
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
