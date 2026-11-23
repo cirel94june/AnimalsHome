@@ -17,6 +17,61 @@ from ws import manager
 AUTO_DIARY_MIN_INTERVAL_SECONDS = 24 * 60 * 60
 
 
+
+async def diary_material_since_last(author: str, *, now: float | None = None,
+                                    max_chars: int = 7000) -> str:
+    """Collect already-saved memory summaries since the previous diary.
+
+    This is deliberately read-only and model-free. It lets a once-daily diary see the whole
+    period even though memory digests may have run several times during the day.
+    """
+    now = time.time() if now is None else float(now)
+    async with get_db() as db:
+        cur = await db.execute(
+            "SELECT COALESCE(MAX(source_end_ts), MAX(created_at), 0) FROM diary_entries WHERE author=?",
+            (author,),
+        )
+        row = await cur.fetchone()
+        last_end = float(row[0] or 0) if row else 0.0
+        since = last_end if last_end > 0 else now - 36 * 3600
+
+        if author == "aion":
+            cur = await db.execute(
+                "SELECT content, COALESCE(source_end_ts, created_at) AS ts FROM memories "
+                "WHERE COALESCE(source_end_ts, created_at)>? "
+                "AND COALESCE(archive_state,'active')='active' "
+                "ORDER BY ts ASC LIMIT 80",
+                (since,),
+            )
+        elif author == "connor":
+            cur = await db.execute(
+                "SELECT content, COALESCE(source_end_ts, created_at) AS ts FROM chatroom_memories "
+                "WHERE scope='connor' AND COALESCE(source_end_ts, created_at)>? "
+                "AND COALESCE(archive_state,'active')='active' "
+                "ORDER BY ts ASC LIMIT 80",
+                (since,),
+            )
+        else:
+            return ""
+        rows = await cur.fetchall()
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    used = 0
+    for content, ts in rows:
+        text = " ".join(str(content or "").split()).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        when = time.strftime("%m-%d %H:%M", time.localtime(float(ts or now)))
+        line = f"- [{when}] {text[:500]}"
+        if used + len(line) + 1 > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines)
+
+
 async def auto_diary_due(author: str, *, now: float | None = None,
                          min_interval_seconds: int = AUTO_DIARY_MIN_INTERVAL_SECONDS) -> bool:
     """自动日记的轻量限频：距离这个角色上一篇日记至少一个间隔才允许再次调用模型。

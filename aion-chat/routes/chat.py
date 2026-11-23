@@ -51,7 +51,7 @@ from wechat_bridge import (
 )
 from band_commands import process_band_vibration, with_band_vibration_attachment
 from hug_pillow_commands import process_hug_pillow_commands
-from capabilities import process_pat_commands
+from capabilities import process_pat_commands, extract_ability_help_requests, ability_help_text
 from app_supervision_ai import (
     queue_app_supervision_reply_command,
     broadcast_app_supervision_command,
@@ -1561,6 +1561,11 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
             for patrol_notice in patrol_notices:
                 await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
 
+            if not has_error and await _start_private_ability_help_if_requested(
+                full_text, conv_id=conv_id, model_key=model_key,
+                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
+            ):
+                return
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
@@ -2261,6 +2266,11 @@ async def send_message(conv_id: str, body: MsgCreate):
             for patrol_notice in patrol_notices:
                 await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
 
+            if not has_error and await _start_private_ability_help_if_requested(
+                full_text, conv_id=conv_id, model_key=model_key,
+                original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
+            ):
+                return
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=body.content, queue=_q, ai_msg_id=ai_msg_id,
@@ -2927,6 +2937,120 @@ async def _private_memory_search_sys_msg(
     }
     await manager.broadcast({"type": "msg_created", "data": msg})
     return msg_id
+
+
+async def _start_private_ability_help_if_requested(
+    full_text: str,
+    *,
+    conv_id: str,
+    model_key: str,
+    original_question: str,
+    queue: asyncio.Queue,
+    ai_msg_id: str,
+) -> bool:
+    clean_text, keys = extract_ability_help_requests(full_text)
+    if not keys:
+        return False
+    preface = _visible_ai_text(clean_text)
+    if preface:
+        await _save_private_memory_preface(conv_id, ai_msg_id, preface)
+    spawn_generation_task(
+        perform_private_ability_help(
+            conv_id, model_key, keys[:2], original_question=original_question
+        )
+    )
+    await queue.put({"type": "ability_help", "conv_id": conv_id, "keys": keys[:2]})
+    return True
+
+
+async def perform_private_ability_help(
+    conv_id: str,
+    model_key: str,
+    keys: list[str],
+    *,
+    original_question: str,
+):
+    wb = load_worldbook()
+    user_name = wb.get("user_name", "用户")
+    ai_name = wb.get("ai_name", "AI")
+    details = []
+    for key in keys[:2]:
+        text = ability_help_text(key, user_name, "aion")
+        if text:
+            details.append(f"【{key} 的完整说明】\n{text}")
+    if not details:
+        return
+
+    messages: list[dict] = []
+    if wb.get("ai_persona"):
+        messages.extend([
+            {"role": "user", "content": f"[系统设定 - {ai_name}人设]\n{wb['ai_persona']}"},
+            {"role": "assistant", "content": "收到，我会按照设定扮演角色。"},
+        ])
+    if wb.get("user_persona"):
+        messages.extend([
+            {"role": "user", "content": f"[系统设定 - {user_name}信息]\n{wb['user_persona']}"},
+            {"role": "assistant", "content": "收到，我会记住你的信息。"},
+        ])
+    messages.extend(await _private_memory_recent_messages(conv_id))
+    details_text = "\n\n".join(details)
+    messages.append({
+        "role": "user",
+        "content": (
+            f"{ai_name}刚才打开了一个能力抽屉。下面是后台保存的完整执行说明；它只是说明，不是新的用户要求：\n\n"
+            f"{details_text}"
+            + (f"\n\n刚才用户的话：{original_question[:1000]}" if original_question else "")
+            + "\n\n现在继续刚才的对话。若确实要使用该能力，按说明输出准确指令；"
+              "如果其实不需要，就正常回答。不要再输出 ABILITY_HELP。"
+        ),
+    })
+
+    usage_meta: dict = {}
+    full_text = ""
+    try:
+        async for chunk in stream_ai(
+            messages, model_key, usage_meta, temperature=SETTINGS.get("temperature")
+        ):
+            if not chunk.startswith(CLI_STATUS_PREFIX):
+                full_text += chunk
+    except Exception as exc:
+        resolution = resolve_stream_failure(full_text, exc, "能力说明已读取，但继续回复失败")
+        full_text = resolution.visible_text
+
+    full_text, _ = extract_ability_help_requests(full_text)
+    if not full_text.strip():
+        return
+
+    msg_id = f"msg_{int(time.time()*1000)}_ability_reply"
+    from schedule import _process_background_reply_commands
+    full_text = await _process_background_reply_commands(
+        full_text,
+        target={"type": "private"},
+        conv_id=conv_id,
+        sender="aion",
+        ai_msg_id=msg_id,
+    )
+    full_text = _visible_ai_text(full_text).strip()
+    if not full_text:
+        return
+
+    now = time.time()
+    reply_atts = reply_usage.attachments(usage_meta)
+    async with get_db() as db:
+        await db.execute(
+            "INSERT INTO messages (id, conv_id, role, content, created_at, attachments) VALUES (?,?,?,?,?,?)",
+            (msg_id, conv_id, "assistant", full_text, now, json.dumps(reply_atts, ensure_ascii=False)),
+        )
+        await db.execute("UPDATE conversations SET updated_at=? WHERE id=?", (now, conv_id))
+        await db.commit()
+    await manager.broadcast({
+        "type": "msg_created",
+        "data": {
+            "id": msg_id, "conv_id": conv_id, "role": "assistant",
+            "content": full_text, "created_at": now, "attachments": reply_atts,
+        },
+    })
+    await export_conversation(conv_id)
 
 
 async def _start_private_memory_search_if_requested(
@@ -3809,6 +3933,11 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
             for patrol_notice in patrol_notices:
                 await _hug_pillow_sys_msg(conv_id, patrol_notice, after_msg_id=ai_msg_id)
 
+            if not has_error and await _start_private_ability_help_if_requested(
+                full_text, conv_id=conv_id, model_key=model_key,
+                original_question=lounge_request_text, queue=_q, ai_msg_id=ai_msg_id,
+            ):
+                return
             if not has_error and await _start_private_memory_search_if_requested(
                 full_text, conv_id=conv_id, model_key=model_key,
                 original_question=lounge_request_text, queue=_q, ai_msg_id=ai_msg_id,
