@@ -551,8 +551,11 @@ def compact_ability_texts(abilities: list[str]) -> list[str]:
             continue
         key = _complex_ability_key(text)
         if key:
-            out.append(_COMPACT_ABILITY_TEXT[key] + f" 详细规则：[ABILITY_HELP:{key}]")
-            seen_help = True
+            if key == "app_supervision":
+                out.append(_COMPACT_ABILITY_TEXT[key] + " 详细规则：[ABILITY_HELP:app_supervision]")
+                seen_help = True
+            else:
+                out.append(_COMPACT_ABILITY_TEXT[key])
         else:
             out.append(text)
     if seen_help:
