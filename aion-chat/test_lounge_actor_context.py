@@ -10,7 +10,7 @@ def test_aion_lounge_context_adds_related_memory_and_privacy_rule(monkeypatch):
         "_base_actor_context",
         AsyncMock(return_value=[{"role": "user", "content": "configured persona"}]),
     )
-    memory = AsyncMock(return_value={"time_block": "current time", "memory_block": "related memory"})
+    memory = AsyncMock(return_value={"time_block": "current time", "background_block": "", "memory_block": "related memory"})
     monkeypatch.setattr(lounge_actor_context, "_actor_memory_blocks", memory)
 
     result = asyncio.run(
@@ -35,7 +35,7 @@ def test_connor_lounge_context_uses_connor_memory_path(monkeypatch):
         "_base_actor_context",
         AsyncMock(return_value=[]),
     )
-    memory = AsyncMock(return_value={"time_block": "time", "memory_block": "connor memory"})
+    memory = AsyncMock(return_value={"time_block": "time", "background_block": "", "memory_block": "connor memory"})
     monkeypatch.setattr(lounge_actor_context, "_actor_memory_blocks", memory)
 
     result = asyncio.run(
@@ -48,7 +48,7 @@ def test_connor_lounge_context_uses_connor_memory_path(monkeypatch):
 
 def test_lounge_memory_disables_source_detail_loading(monkeypatch):
     build = AsyncMock(
-        return_value={"time_block": "", "memory_block": "summary only"}
+        return_value={"time_block": "", "background_block": "", "memory_block": "summary only"}
     )
     monkeypatch.setattr(lounge_actor_context, "build_memory_blocks", build)
 
@@ -73,7 +73,7 @@ def test_lounge_context_labels_blocks_by_eviction_priority(monkeypatch):
     monkeypatch.setattr(
         lounge_actor_context,
         "_actor_memory_blocks",
-        AsyncMock(return_value={"time_block": "当前状态", "memory_block": "摘要记忆"}),
+        AsyncMock(return_value={"time_block": "当前状态", "background_block": "跨端背景", "memory_block": "摘要记忆"}),
     )
 
     result = asyncio.run(
@@ -84,10 +84,12 @@ def test_lounge_context_labels_blocks_by_eviction_priority(monkeypatch):
         "persona",
         "persona",
         "home_chat",
-        "dynamic_state",
-        "dynamic_state",
         "memory_summary",
         "memory_summary",
+        "memory_summary",
+        "memory_summary",
+        "dynamic_state",
+        "dynamic_state",
         "safety",
         "safety",
     ]
@@ -102,7 +104,7 @@ def test_lounge_context_redacts_key_shaped_text(monkeypatch):
     monkeypatch.setattr(
         lounge_actor_context,
         "_actor_memory_blocks",
-        AsyncMock(return_value={"time_block": "", "memory_block": ""}),
+        AsyncMock(return_value={"time_block": "", "background_block": "", "memory_block": ""}),
     )
 
     result = asyncio.run(
