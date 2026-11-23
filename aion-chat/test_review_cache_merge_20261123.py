@@ -51,6 +51,43 @@ def test_missing_completion_is_not_normalized_to_reported_zero():
     assert reply_usage.attachments(meta)[0]['output_reported_calls']==0
 
 
+def test_real_openai_compatible_zero_cache_shape_is_reported_not_missing():
+    """The new relay reports an explicit nested zero; keep it distinct from no field."""
+    meta={}
+    provider._apply_openai_compatible_usage_meta(meta,{
+        'prompt_tokens':18372,
+        'completion_tokens':463,
+        'total_tokens':18835,
+        'input_tokens':18372,
+        'output_tokens':0,
+        'prompt_tokens_details':{'cached_tokens':0},
+    })
+    reply_usage.observe(meta,True)
+    receipt=reply_usage.attachments(meta)[0]
+
+    assert meta['raw']['prompt_tokens_details']['cached_tokens']==0
+    assert meta['usage_sources']['cache_read']=='prompt_tokens_details.cached_tokens'
+    assert receipt['reported_calls']==1
+    assert receipt['cache_reported_calls']==1
+    assert receipt['cache_read_tokens']==0
+    assert receipt['input_tokens']==18372
+
+
+def test_openai_compatible_missing_cache_stays_unreported():
+    meta={}
+    provider._apply_openai_compatible_usage_meta(meta,{
+        'prompt_tokens':18372,
+        'completion_tokens':463,
+        'total_tokens':18835,
+    })
+    reply_usage.observe(meta,True)
+    receipt=reply_usage.attachments(meta)[0]
+
+    assert meta['usage_sources']['cache_read'] is None
+    assert receipt['reported_calls']==1
+    assert receipt['cache_reported_calls']==0
+
+
 @pytest.mark.parametrize('write',[None,20])
 def test_cache_write_does_not_establish_cache_read_zero(write):
     meta={'prompt_tokens':100,'raw':{'prompt_tokens':100,'cache_creation_input_tokens':write}}
