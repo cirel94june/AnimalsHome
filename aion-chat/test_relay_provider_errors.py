@@ -296,6 +296,83 @@ class RelayProviderErrorPassthroughTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(chunks, [raw])
 
+
+    async def test_custom_openai_retries_once_when_relay_requires_max_tokens(self):
+        first = FakeStreamResponse(
+            status_code=400,
+            body=b'{"error":{"message":"max_tokens: Field required","type":"invalid_request_error"}}',
+        )
+        second = FakeStreamResponse(
+            status_code=200,
+            lines=[
+                'data: {"choices":[{"delta":{"content":"ok"}}]}',
+                'data: [DONE]',
+            ],
+        )
+
+        class SequentialClient(FakeAsyncClient):
+            def __init__(self):
+                super().__init__(first)
+                self.responses = [first, second]
+
+            def stream(self, *args, **kwargs):
+                recorded_kwargs = dict(kwargs)
+                if isinstance(recorded_kwargs.get("json"), dict):
+                    recorded_kwargs["json"] = dict(recorded_kwargs["json"])
+                self.calls.append((args, recorded_kwargs))
+                return self.responses[len(self.calls) - 1]
+
+        clients = []
+        def factory(*args, **kwargs):
+            client = SequentialClient()
+            clients.append(client)
+            return client
+
+        cfg = {
+            "base_url": "https://relay.example/v1",
+            "api_key": "test-key",
+            "model": "unit-model",
+        }
+        with patch("ai_providers.httpx.AsyncClient", new=factory):
+            chunks = [
+                chunk
+                async for chunk in call_custom_openai(
+                    [{"role": "user", "content": "hello"}],
+                    cfg,
+                )
+            ]
+
+        self.assertEqual(chunks, ["ok"])
+        self.assertEqual(len(clients[0].calls), 2)
+        first_payload = clients[0].calls[0][1]["json"]
+        second_payload = clients[0].calls[1][1]["json"]
+        self.assertNotIn("max_tokens", first_payload)
+        self.assertEqual(second_payload["max_tokens"], 4096)
+
+    async def test_custom_openai_does_not_retry_unrelated_http_error(self):
+        response = FakeStreamResponse(
+            status_code=400,
+            body=b'{"error":{"message":"invalid model"}}',
+        )
+        factory = fake_client_factory(response)
+        cfg = {
+            "base_url": "https://relay.example/v1",
+            "api_key": "test-key",
+            "model": "unit-model",
+        }
+
+        with patch("ai_providers.httpx.AsyncClient", new=factory):
+            chunks = [
+                chunk
+                async for chunk in call_custom_openai(
+                    [{"role": "user", "content": "hello"}],
+                    cfg,
+                )
+            ]
+
+        self.assertEqual(len(factory.clients[0].calls), 1)
+        self.assertEqual(chunks, ['{"error":{"message":"invalid model"}}'])
+
     async def test_custom_openai_stream_error_yields_raw_data_payload(self):
         raw = '{"error":{"message":"stream rejected"},"type":"invalid_request_error"}'
         response = FakeStreamResponse(

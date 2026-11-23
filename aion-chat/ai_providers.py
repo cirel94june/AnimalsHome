@@ -649,6 +649,19 @@ def _openai_chat_completions_url(base_url: str) -> str:
 
 
 # ── 自定义 OpenAI 兼容中转站 ─────────────────────────
+def _relay_requires_max_tokens(error_text: str) -> bool:
+    """Recognize relays that reject OpenAI-compatible requests unless max_tokens is explicit."""
+    if not error_text:
+        return False
+    try:
+        payload = json.loads(error_text)
+        message = str((payload.get("error") or {}).get("message") or "")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        message = str(error_text)
+    normalized = message.lower().replace("-", "_")
+    return "max_tokens" in normalized and "required" in normalized
+
+
 async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None, temperature: float | None = None, max_tokens: int | None = None, request_timeout: float = 120):
     model = (cfg.get("model") or "").strip()
     url = _openai_chat_completions_url(cfg.get("base_url", ""))
@@ -671,52 +684,80 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
         payload["max_tokens"] = max_tokens
     if cfg.get("use_default_reasoning_effort") is False:
         payload["reasoning_effort"] = cfg.get("reasoning_effort", "high")
-    reasoning_status_sent = False
-    content_started = False
+
+    fallback_max_tokens = int(cfg.get("fallback_max_tokens") or 4096)
     try:
         async with httpx.AsyncClient(timeout=request_timeout) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                own_stream(resp)
-                if resp.status_code != 200:
-                    body = await resp.aread()
-                    if meta is not None:
-                        meta["provider_error"] = f"HTTP {resp.status_code}: {_decode_relay_body(body)}"
-                    yield _decode_relay_body(body)
-                    return
-                async for line in resp.aiter_lines():
-                    data = _openai_sse_data(line)
-                    if data is None:
-                        continue
-                    if data == "[DONE]":
-                        return
-                    try:
-                        chunk = json.loads(data)
-                        if isinstance(chunk, dict) and chunk.get("error"):
+            for attempt in range(2):
+                reasoning_status_sent = False
+                content_started = False
+                retry_with_max_tokens = False
+
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    own_stream(resp)
+                    if resp.status_code != 200:
+                        body = await resp.aread()
+                        error_text = _decode_relay_body(body)
+                        if (
+                            attempt == 0
+                            and "max_tokens" not in payload
+                            and _relay_requires_max_tokens(error_text)
+                        ):
+                            payload["max_tokens"] = fallback_max_tokens
+                            retry_with_max_tokens = True
+                        else:
                             if meta is not None:
-                                meta["provider_error"] = data
-                            yield data
+                                meta["provider_error"] = f"HTTP {resp.status_code}: {error_text}"
+                            yield error_text
                             return
-                        if meta is not None and chunk.get("usage"):
-                            u = chunk["usage"]
-                            meta["prompt_tokens"] = u.get("prompt_tokens", 0)
-                            meta["completion_tokens"] = u.get("completion_tokens", 0)
-                            meta["total_tokens"] = u.get("total_tokens", 0)
-                            meta["raw"] = u
-                        delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
-                        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-                        if reasoning:
-                            if meta is not None:
-                                meta["reasoning_content"] = meta.get("reasoning_content", "") + str(reasoning)
-                            if not reasoning_status_sent and not content_started:
-                                yield f"{CLI_STATUS_PREFIX}正在思考..."
-                                reasoning_status_sent = True
-                            # Reasoning is real stream activity even before visible text.
-                            yield StreamActivity()
-                        if delta.get("content"):
-                            content_started = True
-                            yield delta["content"]
-                    except Exception:
-                        pass
+                    else:
+                        async for line in resp.aiter_lines():
+                            data = _openai_sse_data(line)
+                            if data is None:
+                                continue
+                            if data == "[DONE]":
+                                return
+                            try:
+                                chunk = json.loads(data)
+                                if isinstance(chunk, dict) and chunk.get("error"):
+                                    if (
+                                        attempt == 0
+                                        and not content_started
+                                        and "max_tokens" not in payload
+                                        and _relay_requires_max_tokens(data)
+                                    ):
+                                        payload["max_tokens"] = fallback_max_tokens
+                                        retry_with_max_tokens = True
+                                        break
+                                    if meta is not None:
+                                        meta["provider_error"] = data
+                                    yield data
+                                    return
+                                if meta is not None and chunk.get("usage"):
+                                    u = chunk["usage"]
+                                    meta["prompt_tokens"] = u.get("prompt_tokens", 0)
+                                    meta["completion_tokens"] = u.get("completion_tokens", 0)
+                                    meta["total_tokens"] = u.get("total_tokens", 0)
+                                    meta["raw"] = u
+                                delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
+                                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                                if reasoning:
+                                    if meta is not None:
+                                        meta["reasoning_content"] = meta.get("reasoning_content", "") + str(reasoning)
+                                    if not reasoning_status_sent and not content_started:
+                                        yield f"{CLI_STATUS_PREFIX}正在思考..."
+                                        reasoning_status_sent = True
+                                    # Reasoning is real stream activity even before visible text.
+                                    yield StreamActivity()
+                                if delta.get("content"):
+                                    content_started = True
+                                    yield delta["content"]
+                            except Exception:
+                                pass
+
+                if retry_with_max_tokens:
+                    continue
+                return
     except httpx.TimeoutException:
         if meta is not None:
             meta["provider_timeout"] = request_timeout
