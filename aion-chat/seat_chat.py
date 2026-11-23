@@ -74,18 +74,26 @@ def _speaker_name(sender: str, user_name: str) -> str:
         return sender
 
 
+def _group_roster(user_name: str) -> str:
+    """Return current family names, excluding seats that cannot actually chat."""
+    names = [user_name]
+    for actor_id in actors.SEAT_IDS:
+        if actor_id in SEAT_ACTORS:
+            try:
+                actor, _ = check_ready(actor_id)
+            except SeatNotReady:
+                continue
+            name = str(actor.get("name") or "").strip()
+        else:
+            name = str(actors.display_name(actor_id) or "").strip()
+        if name:
+            names.append(name)
+    return "、".join(dict.fromkeys(name for name in names if name))
+
+
 def _family_name_rule(user_name: str) -> str:
     """Give seat models the current display names without exposing legacy identity keys."""
-    names = [user_name]
-    try:
-        names.extend(
-            str(item.get("name") or "").strip()
-            for item in actors.list_actors(include_disabled=False)
-            if item.get("enabled") and str(item.get("name") or "").strip()
-        )
-    except Exception:
-        names.extend(actors.display_name(actor_id) for actor_id in actors.SEAT_IDS[:3])
-    current = "、".join(dict.fromkeys(name for name in names if name))
+    current = _group_roster(user_name)
     return (f"当前家庭成员姓名：{current}。称呼必须以这份当前名单为准；"
             "记忆里的旧称呼和程序内部标识都不能当作任何人的名字。")
 

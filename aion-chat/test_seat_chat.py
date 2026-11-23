@@ -308,6 +308,50 @@ def test_group_context_uses_current_family_names_without_legacy_ids(seats, monke
     assert "connor" not in group_rule.lower()
 
 
+def test_group_roster_excludes_seats_that_are_not_ready(seats):
+    data = actors._load_raw()
+    data["seats"].update({
+        "ai4": {
+            "name": "没有人设",
+            "enabled": True,
+            "model": "gemini-relay",
+            "persona_sections": {},
+        },
+        "ai5": {
+            "name": "没有模型",
+            "enabled": True,
+            "model": "",
+            "persona_sections": JASPER_SECTIONS,
+        },
+        "ai6": {
+            "name": "停用角色",
+            "enabled": False,
+            "model": "gemini-relay",
+            "persona_sections": JASPER_SECTIONS,
+        },
+    })
+    actors._save_raw(data)
+
+    roster = seat_chat._group_roster("小猫")
+    assert roster == "小猫、小克、Lucien、Jasper"
+    assert "没有人设" not in roster
+    assert "没有模型" not in roster
+    assert "停用角色" not in roster
+
+
+def test_group_roster_does_not_fail_open_on_unexpected_readiness_error(seats, monkeypatch):
+    original = seat_chat.check_ready
+
+    def broken_ready(actor_id):
+        if actor_id == "ai4":
+            raise RuntimeError("readiness lookup failed")
+        return original(actor_id)
+
+    monkeypatch.setattr(seat_chat, "check_ready", broken_ready)
+    with pytest.raises(RuntimeError, match="readiness lookup failed"):
+        seat_chat._group_roster("小猫")
+
+
 def test_ai_initiated_group_reply_does_not_claim_an_old_user_line(seats, monkeypatch):
     """Codex §136 R1：别的 AI 自主叫座位接话时，往回找到的是小猫旧的那句，不能配成新的「小猫回合」记两次。"""
     async def save_msg(room_id, sender, content, msg_id=None, attachments=None, **kw):
