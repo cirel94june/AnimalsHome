@@ -1162,12 +1162,15 @@ async def build_aion_group_context(
         memory_hub_background=memory_hub_background,
     )
 
-    history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
-    history.append({"role": "assistant", "content": "收到，我会在合适的时候自然提及。", "_context": "live_ack"})
-
+    if mem_result.get("background_block"):
+        history.append({"role": "user", "content": mem_result["background_block"], "_context": "memory"})
+        history.append({"role": "assistant", "content": "收到，我会自然地参考这些背景。", "_context": "memory_ack"})
     if mem_result["memory_block"]:
-        history.append({"role": "user", "content": mem_result["memory_block"], "_context": "live"})
-        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
+        history.append({"role": "user", "content": mem_result["memory_block"], "_context": "memory"})
+        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "memory_ack"})
+
+    history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
+    history.append({"role": "assistant", "content": "收到。", "_context": "live_ack"})
 
     # 5. 群聊说明
     history.append({"role": "user", "content": (
@@ -1276,12 +1279,15 @@ async def build_connor_group_context(
         memory_hub_background=memory_hub_background,
     )
 
+    if mem_result.get("background_block"):
+        history.append({"role": "user", "content": mem_result["background_block"], "_context": "memory"})
+        history.append({"role": "assistant", "content": "收到，我会自然地参考这些背景。", "_context": "memory_ack"})
+    if mem_result["memory_block"]:
+        history.append({"role": "user", "content": mem_result["memory_block"], "_context": "memory"})
+        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "memory_ack"})
+
     history.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
     history.append({"role": "assistant", "content": "收到。", "_context": "live_ack"})
-
-    if mem_result["memory_block"]:
-        history.append({"role": "user", "content": mem_result["memory_block"], "_context": "live"})
-        history.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
 
     # 4. 群聊说明
     history.append({"role": "user", "content": (
@@ -1385,12 +1391,15 @@ async def build_connor_1v1_context(
         memory_hub_background=memory_hub_background,
     )
 
+    if mem_result.get("background_block"):
+        messages.append({"role": "user", "content": mem_result["background_block"], "_context": "memory"})
+        messages.append({"role": "assistant", "content": "收到，我会自然地参考这些背景。", "_context": "memory_ack"})
+    if mem_result["memory_block"]:
+        messages.append({"role": "user", "content": mem_result["memory_block"], "_context": "memory"})
+        messages.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "memory_ack"})
+
     messages.append({"role": "user", "content": mem_result["time_block"], "_context": "live"})
     messages.append({"role": "assistant", "content": "收到。", "_context": "live_ack"})
-
-    if mem_result["memory_block"]:
-        messages.append({"role": "user", "content": mem_result["memory_block"], "_context": "live"})
-        messages.append({"role": "assistant", "content": "收到，我会自然地参考这些记忆。", "_context": "live_ack"})
 
     messages.append({"role": "user", "content": (
         "[私聊说明]\n"
