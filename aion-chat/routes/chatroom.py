@@ -2309,7 +2309,8 @@ async def _stream_connor_model(messages: list[dict], model_key: str | None = Non
     key = _resolve_connor_model(model_key)
     if key == "Codex":
         meta = meta if meta is not None else {}
-        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'raw'):
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'raw', 'usage_sources',
+                      '_codex_usage_reported', '_cache_request_shape'):
             meta.pop(field, None)
         try:
             async for chunk in stream_connor_cli(messages=messages, meta=meta):

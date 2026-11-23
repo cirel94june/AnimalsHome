@@ -1945,8 +1945,9 @@ def _apply_codex_usage_meta(meta: dict | None, usage: dict | None) -> None:
         return
 
     previous = meta.get("raw") if isinstance(meta.get("raw"), dict) else {}
-    reported_fields = meta.setdefault("_codex_usage_reported", set())
+    reported_fields = set(meta.get("_codex_usage_reported") or [])
     reported_fields.update(key for key in usage if _valid_usage_int(usage.get(key)) is not None)
+    meta["_codex_usage_reported"] = sorted(reported_fields)
     # App Server sends cumulative snapshots. A later sparse/zero snapshot must
     # not erase a larger counter already reported for the same turn.
     def cumulative(key: str) -> int:

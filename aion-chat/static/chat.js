@@ -2275,42 +2275,46 @@ function handleRealtimeStreamError(msgId, errorText, modelKey) {
 function _buildTokenHtml(u) {
   if (!u) return '🔤 token 无数据';
   const raw = u.raw;
+  const tok = value => {
+    const n = Number(value);
+    return Number.isSafeInteger(n) && n >= 0 ? String(n) : '无效';
+  };
   let parts = [];
   // 基础 token 信息（使用服务器返回的原始数据）
   if (raw) {
     // Gemini 格式
     if ('promptTokenCount' in raw) {
-      parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${raw.promptTokenCount || 0}</span>`);
-      if (raw.thoughtsTokenCount) parts.push(`<span class="tok-label">思考:</span><span class="tok-value tok-thinking">${raw.thoughtsTokenCount}</span>`);
-      if ('cachedContentTokenCount' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cachedContentTokenCount || 0}</span>`);
+      parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${tok(raw.promptTokenCount)}</span>`);
+      if (raw.thoughtsTokenCount) parts.push(`<span class="tok-label">思考:</span><span class="tok-value tok-thinking">${tok(raw.thoughtsTokenCount)}</span>`);
+      if ('cachedContentTokenCount' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${tok(raw.cachedContentTokenCount)}</span>`);
       else parts.push('<span class="tok-label">缓存:</span><span class="tok-value">未上报</span>');
-      parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${raw.candidatesTokenCount || 0}</span>`);
-      if (raw.toolUsePromptTokenCount) parts.push(`<span class="tok-label">工具:</span><span class="tok-value">${raw.toolUsePromptTokenCount}</span>`);
-      parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${raw.totalTokenCount || 0}</span>`);
+      parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${tok(raw.candidatesTokenCount)}</span>`);
+      if (raw.toolUsePromptTokenCount) parts.push(`<span class="tok-label">工具:</span><span class="tok-value">${tok(raw.toolUsePromptTokenCount)}</span>`);
+      parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${tok(raw.totalTokenCount)}</span>`);
     }
     // SiliconFlow / OpenAI 格式
     else if ('prompt_tokens' in raw) {
-      parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${raw.prompt_tokens || 0}</span>`);
+      parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${tok(raw.prompt_tokens)}</span>`);
       if (raw.prompt_tokens_details) {
-        if ('cached_tokens' in raw.prompt_tokens_details) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.prompt_tokens_details.cached_tokens || 0}</span>`);
+        if ('cached_tokens' in raw.prompt_tokens_details) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${tok(raw.prompt_tokens_details.cached_tokens)}</span>`);
       }
-      else if ('cached_tokens' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cached_tokens || 0}</span>`);
+      else if ('cached_tokens' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${tok(raw.cached_tokens)}</span>`);
       else parts.push('<span class="tok-label">缓存:</span><span class="tok-value">未上报</span>');
-      if ('cache_creation_input_tokens' in raw) parts.push(`<span class="tok-label">写缓存:</span><span class="tok-value tok-cached">${raw.cache_creation_input_tokens || 0}</span>`);
-      parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${raw.completion_tokens || 0}</span>`);
+      if ('cache_creation_input_tokens' in raw) parts.push(`<span class="tok-label">写缓存:</span><span class="tok-value tok-cached">${tok(raw.cache_creation_input_tokens)}</span>`);
+      parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${tok(raw.completion_tokens)}</span>`);
       if (raw.completion_tokens_details) {
-        if (raw.completion_tokens_details.reasoning_tokens) parts.push(`<span class="tok-label">推理:</span><span class="tok-value tok-thinking">${raw.completion_tokens_details.reasoning_tokens}</span>`);
+        if (raw.completion_tokens_details.reasoning_tokens) parts.push(`<span class="tok-label">推理:</span><span class="tok-value tok-thinking">${tok(raw.completion_tokens_details.reasoning_tokens)}</span>`);
       }
-      parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${raw.total_tokens || 0}</span>`);
+      parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${tok(raw.total_tokens)}</span>`);
     }
     else if ('input_tokens' in raw || 'output_tokens' in raw) {
       const input = raw.input_tokens || 0, output = raw.output_tokens || 0;
-      parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${input}</span>`);
-      if ('cache_read_input_tokens' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cache_read_input_tokens || 0}</span>`);
+      parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${tok(input)}</span>`);
+      if ('cache_read_input_tokens' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${tok(raw.cache_read_input_tokens)}</span>`);
       else parts.push('<span class="tok-label">缓存:</span><span class="tok-value">未上报</span>');
-      if ('cache_creation_input_tokens' in raw) parts.push(`<span class="tok-label">写缓存:</span><span class="tok-value tok-cached">${raw.cache_creation_input_tokens || 0}</span>`);
-      parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${output}</span>`);
-      parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${raw.total_tokens || input + output}</span>`);
+      if ('cache_creation_input_tokens' in raw) parts.push(`<span class="tok-label">写缓存:</span><span class="tok-value tok-cached">${tok(raw.cache_creation_input_tokens)}</span>`);
+      parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${tok(output)}</span>`);
+      parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${tok(raw.total_tokens ?? (Number(input) + Number(output)))}</span>`);
     }
   }
   // 无 raw 数据时使用简化格式
