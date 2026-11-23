@@ -529,6 +529,7 @@ def build_app_supervision_ability_text(
     cache: AppSupervisionStateCache | None = None,
     *,
     now: float | None = None,
+    state_only: bool = False,
 ) -> str:
     if not is_capability_enabled("app_supervision"):
         return ""
@@ -539,7 +540,7 @@ def build_app_supervision_ability_text(
     snapshot, received_at = selected_cache.read()
     current_time = float(time.time() if now is None else now)
     age_seconds = max(0, int(current_time - received_at)) if received_at else 0
-    lines = [
+    lines = [] if state_only else [
         "[APP_LOCK:groupId|分钟|锁屏提示] — 锁定应用组。",
         "[APP_TEMP_UNLOCK:groupId|分钟|解锁说明] — 暂时解锁应用组。",
         "[APP_UNLOCK:groupId] — 解除应用组锁定。",
