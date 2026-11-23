@@ -40,6 +40,50 @@ def test_numeric_whitelist_does_not_copy_untrusted_usage():
         'prompt_tokens': 100, 'cached_tokens': 0, 'prompt_tokens_details.cached_tokens': 20}
 
 
+def test_trace_reports_same_route_prefix_without_storing_conversation_id(monkeypatch):
+    monkeypatch.setattr(trace, '_PREVIOUS', {})
+    payload = {'model': 'synthetic', 'messages': [
+        {'role': 'system', 'content': 'private-persona'},
+        {'role': 'user', 'content': '[历史记录说明] stable'},
+        {'role': 'user', 'content': 'latest'},
+    ]}
+    first, second = {}, {}
+    for meta in (first, second):
+        trace.seed(meta, scope='private', identifier='real-conversation-id', context_limit=10)
+        trace.bind_route(meta, provider='codex_cli', model='synthetic')
+        trace.start(meta, payload)
+    debug = second['_cache_request_shape']
+    assert debug['same_fixed_prefix'] is True
+    assert debug['shared_prefix_messages'] == 3
+    assert debug['context_limit'] == 10
+    assert 'real-conversation-id' not in json.dumps(debug)
+    assert debug['request_bytes'] > 0 and debug['approx_tokens'] > 0
+
+
+def test_codex_relay_and_route_switch_keep_independent_prefix_history(monkeypatch):
+    monkeypatch.setattr(trace, '_PREVIOUS', {})
+
+    def one(provider_name, latest):
+        meta = {}
+        trace.seed(meta, scope='private', identifier='same-chat', context_limit=10)
+        trace.bind_route(meta, provider=provider_name, model='same-model')
+        trace.start(meta, {'model': 'same-model', 'messages': [
+            {'role': 'system', 'content': 'stable-persona'},
+            {'role': 'user', 'content': '[历史记录说明] stable-history'},
+            {'role': 'user', 'content': latest},
+        ]})
+        return meta['_cache_request_shape']
+
+    codex = [one('codex_cli', f'codex-{index}') for index in range(5)]
+    relay = [one('custom_openai', f'relay-{index}') for index in range(5)]
+    codex_again = one('codex_cli', 'codex-return')
+    assert codex[0]['same_fixed_prefix'] is False
+    assert all(item['same_fixed_prefix'] is True for item in codex[1:])
+    assert relay[0]['same_fixed_prefix'] is False
+    assert all(item['same_fixed_prefix'] is True for item in relay[1:])
+    assert codex_again['same_fixed_prefix'] is True
+
+
 def test_real_stream_records_accepted_payload_after_fallback(tmp_path, monkeypatch):
     cfg = {'provider': 'custom_openai', 'base_url': 'https://trace.invalid/v1',
            'model': 'synthetic-trace', 'api_key': 'synthetic-secret', 'cache_marker': True}

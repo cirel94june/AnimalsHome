@@ -1493,6 +1493,8 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
 
     ai_msg_id = f"msg_{int(time.time()*1000)}"
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="private", identifier=conv_id, context_limit=body.context_limit)
 
     _q: asyncio.Queue = GenerationQueue()
 
@@ -2186,6 +2188,8 @@ async def send_message(conv_id: str, body: MsgCreate):
 
     ai_msg_id = f"msg_{int(time.time()*1000)}"
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="private", identifier=conv_id, context_limit=body.context_limit)
 
     # ── 后台任务 + SSE 转发：AI 生成和保存在后台任务中完成，即使客户端断开也不丢失 ──
     _q: asyncio.Queue = GenerationQueue()
@@ -3733,6 +3737,8 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
     debug_prompt = [{"role": m["role"], "content": m["content"]} for m in history]
     ai_msg_id = f"msg_{int(time.time()*1000)}"
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="private", identifier=conv_id, context_limit=context_limit)
 
     # ── 后台任务 + SSE 转发：AI 生成和保存在后台任务中完成，即使客户端断开也不丢失 ──
     _q: asyncio.Queue = GenerationQueue()

@@ -234,6 +234,7 @@ def test_token_cost_prices_hour_and_five_minute_writes_separately():
 
 def test_hour_writes_come_from_the_relay_breakdown_or_the_ttl_actually_sent():
     usage = {"cache_creation": {"ephemeral_5m_input_tokens": 300, "ephemeral_1h_input_tokens": 700}}
+    assert usage_log.cache_tokens(usage) == (0, 1000)
     assert usage_log.cache_write_1h(usage, 1000, "5m") == 700  # 明细优先
     assert usage_log.cache_write_1h({}, 1000, "1h") == 1000
     assert usage_log.cache_write_1h({}, 1000, "5m") == 0      # 1 小时被退回 5 分钟

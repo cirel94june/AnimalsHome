@@ -55,3 +55,42 @@ def test_real_wrapper_aggregates_and_does_not_reuse_stale_usage(tmp_path, monkey
     assert (receipt['calls'], receipt['reported_calls'], receipt['cache_reported_calls']) == (3, 2, 2)
     assert (receipt['input_tokens'], receipt['cache_read_tokens'], receipt['output_tokens']) == (150, 80, 5)
     assert reply_usage.attachments({}) == []  # Old replies are not backfilled with invented numbers.
+
+
+@pytest.mark.parametrize('raw,expected_prompt,expected_output', [
+    ({'input_tokens': 90, 'output_tokens': 7, 'cache_read_input_tokens': 40}, 90, 7),
+    ({'promptTokenCount': 80, 'candidatesTokenCount': 6, 'cachedContentTokenCount': 30}, 80, 6),
+])
+def test_compatible_usage_aliases_are_normalized(raw, expected_prompt, expected_output):
+    meta = {}
+    ai_providers._apply_openai_compatible_usage_meta(meta, raw)
+    assert meta['prompt_tokens'] == expected_prompt
+    assert meta['completion_tokens'] == expected_output
+    assert meta['raw'] == raw
+
+
+def test_late_compatible_zero_does_not_erase_cache_hit():
+    meta = {}
+    ai_providers._apply_openai_compatible_usage_meta(meta, {
+        'prompt_tokens': 100, 'completion_tokens': 1,
+        'prompt_tokens_details': {'cached_tokens': 60},
+    })
+    ai_providers._apply_openai_compatible_usage_meta(meta, {
+        'prompt_tokens': 100, 'completion_tokens': 2,
+        'prompt_tokens_details': {'cached_tokens': 0},
+    })
+    assert meta['raw']['prompt_tokens_details']['cached_tokens'] == 60
+    assert meta['completion_tokens'] == 2
+
+
+def test_cache_creation_and_reasoning_are_persisted_without_raw_payload():
+    meta = {'prompt_tokens': 100, 'completion_tokens': 4, 'raw': {
+        'prompt_tokens_details': {'cached_tokens': 0, 'cache_creation_tokens': 70},
+        'completion_tokens_details': {'reasoning_tokens': 3},
+    }}
+    reply_usage.observe(meta, True)
+    receipt = reply_usage.attachments(meta)[0]
+    assert receipt['cache_reported_calls'] == 1
+    assert receipt['cache_creation_tokens'] == 70
+    assert receipt['reasoning_tokens'] == 3
+    assert 'raw' not in receipt

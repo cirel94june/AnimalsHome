@@ -20,6 +20,8 @@ from memory import (
 from ai_providers import (
     CLI_STATUS_PREFIX,
     _build_cli_prompt,
+    _cache_friendly_order,
+    _without_context_tags,
     call_codex_cli,
     stream_ai,
     with_current_device_context,
@@ -281,6 +283,13 @@ async def stream_connor_cli(prompt: str = None, *, messages: list[dict] = None, 
                 messages = [{"role": "system", "content": persona}] + messages
     messages = with_current_device_context(messages)
     codex_model = (MODELS.get("Codex") or {}).get("model", "")
+    messages = _without_context_tags(_cache_friendly_order(messages))
+    if meta is not None:
+        from cache_request_trace import bind_route
+        bind_route(
+            meta, provider="codex_cli", model=codex_model,
+            route_identity=f"codex_cli:{codex_model}",
+        )
     async for chunk in call_codex_cli(messages, codex_model, meta):
         yield chunk
 

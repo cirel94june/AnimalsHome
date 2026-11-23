@@ -1955,13 +1955,17 @@ function crBuildTokenHtml(u) {
     if ('promptTokenCount' in raw) {
       parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${raw.promptTokenCount || 0}</span>`);
       if (raw.thoughtsTokenCount) parts.push(`<span class="tok-label">思考:</span><span class="tok-value tok-thinking">${raw.thoughtsTokenCount}</span>`);
-      if (raw.cachedContentTokenCount) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cachedContentTokenCount}</span>`);
+      if ('cachedContentTokenCount' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cachedContentTokenCount || 0}</span>`);
+      else parts.push('<span class="tok-label">缓存:</span><span class="tok-value">未上报</span>');
       parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${raw.candidatesTokenCount || 0}</span>`);
       if (raw.toolUsePromptTokenCount) parts.push(`<span class="tok-label">工具:</span><span class="tok-value">${raw.toolUsePromptTokenCount}</span>`);
       parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${raw.totalTokenCount || 0}</span>`);
     } else if ('prompt_tokens' in raw) {
       parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${raw.prompt_tokens || 0}</span>`);
-      if (raw.prompt_tokens_details?.cached_tokens) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.prompt_tokens_details.cached_tokens}</span>`);
+      if (raw.prompt_tokens_details && 'cached_tokens' in raw.prompt_tokens_details) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.prompt_tokens_details.cached_tokens || 0}</span>`);
+      else if ('cached_tokens' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cached_tokens || 0}</span>`);
+      else parts.push('<span class="tok-label">缓存:</span><span class="tok-value">未上报</span>');
+      if ('cache_creation_input_tokens' in raw) parts.push(`<span class="tok-label">写缓存:</span><span class="tok-value tok-cached">${raw.cache_creation_input_tokens || 0}</span>`);
       parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${raw.completion_tokens || 0}</span>`);
       if (raw.completion_tokens_details?.reasoning_tokens) parts.push(`<span class="tok-label">推理:</span><span class="tok-value tok-thinking">${raw.completion_tokens_details.reasoning_tokens}</span>`);
       parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${raw.total_tokens || 0}</span>`);
@@ -1969,6 +1973,9 @@ function crBuildTokenHtml(u) {
       const input = raw.input_tokens || 0;
       const output = raw.output_tokens || 0;
       parts.push(`<span class="tok-label">输入:</span><span class="tok-value">${input}</span>`);
+      if ('cache_read_input_tokens' in raw) parts.push(`<span class="tok-label">缓存:</span><span class="tok-value tok-cached">${raw.cache_read_input_tokens || 0}</span>`);
+      else parts.push('<span class="tok-label">缓存:</span><span class="tok-value">未上报</span>');
+      if ('cache_creation_input_tokens' in raw) parts.push(`<span class="tok-label">写缓存:</span><span class="tok-value tok-cached">${raw.cache_creation_input_tokens || 0}</span>`);
       parts.push(`<span class="tok-label">输出:</span><span class="tok-value">${output}</span>`);
       parts.push(`<span class="tok-label">总计:</span><span class="tok-value">${raw.total_tokens || input + output}</span>`);
     }
@@ -1990,6 +1997,23 @@ function crBuildTokenDetailHtml(u) {
     html += `<div><span class="tok-label">${esc(k)}:</span> <span class="tok-value">${esc(val)}</span></div>`;
   }
   html += '</div>';
+  if (u.usage_sources) {
+    const reported = u.usage_sources.cache_read || u.usage_sources.cache_creation;
+    html += `<h4>缓存统计：${reported ? '已上报' : '未上报'}</h4><div class="cr-syslog-token-raw">`;
+    for (const [k, v] of Object.entries(u.usage_sources)) {
+      html += `<div><span class="tok-label">${esc(k)}:</span> <span class="tok-value">${esc(v == null ? '未上报' : String(v))}</span></div>`;
+    }
+    html += '</div>';
+  }
+  const trace = u._cache_request_shape;
+  if (trace) {
+    html += '<h4>🧩 缓存请求诊断（不含聊天正文）</h4><div class="cr-syslog-token-raw">';
+    for (const [k, v] of Object.entries(trace)) {
+      if (k === 'message_ids' || k === 'usage' || v === null || v === undefined) continue;
+      html += `<div><span class="tok-label">${esc(k)}:</span> <span class="tok-value">${esc(typeof v === 'object' ? JSON.stringify(v) : String(v))}</span></div>`;
+    }
+    html += '</div>';
+  }
   return html;
 }
 

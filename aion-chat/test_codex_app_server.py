@@ -207,6 +207,25 @@ class CodexAppServerStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("".join(text_events), "你好，宝宝。尾巴")
         self.assertLess(len(text_events), 3)
 
+    async def test_usage_prefers_total_snapshot_shape(self):
+        messages = _happy_messages()
+        usage_event = next(m for m in messages if m.get("method") == "thread/tokenUsage/updated")
+        usage_event["params"]["tokenUsage"]["last"] = {
+            "inputTokens": 2, "cachedInputTokens": 0, "outputTokens": 1, "totalTokens": 3,
+        }
+        process = _FakeProcess(messages)
+
+        async def spawn(*_args, **_kwargs):
+            return process
+
+        events = [event async for event in stream_codex_app_server(
+            ["codex", "app-server"], env={}, cwd="workspace", model="model",
+            prompt="prompt", image_paths=[], reasoning_summary="auto", spawn=spawn,
+        )]
+        usage = [event.usage for event in events if event.kind == "usage"][-1]
+        self.assertEqual(usage["inputTokens"], 12)
+        self.assertEqual(usage["cachedInputTokens"], 3)
+
     async def test_failed_turn_raises_protocol_error_and_closes_process(self):
         messages = _happy_messages()[:3] + [
             {

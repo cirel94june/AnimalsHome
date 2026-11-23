@@ -161,6 +161,50 @@ def test_reported_deepseek_cache_hit_field_is_not_lost_in_local_usage_accounting
                                    'prompt_cache_miss_tokens':200})==(1800,0)
 
 
+def test_codex_route_uses_same_cache_friendly_order_as_relay():
+    messages = [
+        {'role': 'user', 'content': 'stable persona'},
+        {'role': 'user', 'content': 'dynamic clock', '_context': 'live'},
+        {'role': 'assistant', 'content': 'ack', '_context': 'live_ack'},
+        {'role': 'user', 'content': '[历史记录说明]\nold', '_context': 'history'},
+        {'role': 'user', 'content': 'latest'},
+    ]
+    prepared = providers._cache_friendly_order(messages)
+    texts = [providers._message_text(m) for m in prepared]
+    assert texts.index('[历史记录说明]\nold') < texts.index('dynamic clock') < texts.index('latest')
+
+
+def test_codex_dispatch_reorders_live_context_before_serializing(monkeypatch, tmp_path):
+    import usage_log
+    monkeypatch.setattr(usage_log, 'USAGE_DB', tmp_path / 'usage.db')
+    monkeypatch.setitem(providers.MODELS, 'synthetic-codex-cache', {
+        'provider': 'codex_cli', 'model': 'synthetic-codex', 'vision': True,
+    })
+    monkeypatch.setattr(providers, 'with_current_device_context', lambda messages: messages)
+    seen = {}
+
+    async def fake_codex(messages, model, meta, *args, **kwargs):
+        seen['messages'] = messages
+        yield 'ok'
+
+    monkeypatch.setattr(providers, 'call_codex_cli', fake_codex)
+    messages = [
+        {'role': 'user', 'content': 'stable persona'},
+        {'role': 'user', 'content': 'dynamic clock', '_context': 'live'},
+        {'role': 'assistant', 'content': 'ack', '_context': 'live_ack'},
+        {'role': 'user', 'content': '[历史记录说明]\nold', '_context': 'history'},
+        {'role': 'user', 'content': 'latest'},
+    ]
+
+    async def run():
+        return ''.join([part async for part in providers.stream_ai(messages, 'synthetic-codex-cache', {})])
+
+    assert asyncio.run(run()) == 'ok'
+    texts = [providers._message_text(message) for message in seen['messages']]
+    assert texts.index('[历史记录说明]\nold') < texts.index('dynamic clock') < texts.index('latest')
+    assert all('_context' not in message for message in seen['messages'])
+
+
 @pytest.mark.parametrize('other_chat,other_group',[('review-other-chat',False),('review-isolated-window',True)])
 def test_stable_window_bookmark_isolated_by_chat_and_group(monkeypatch,other_chat,other_group):
     import context_builder

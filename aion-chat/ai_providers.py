@@ -679,7 +679,7 @@ def _observe_relay_cache(cfg: dict, meta: dict, reported: bool):
     counts['calls']+=1
     counts['reported']+=receipt['cache_reported_calls']
     counts['hits']+=int(receipt['cache_read_tokens']>0)
-    shape = meta.pop('_cache_request_shape', None)
+    shape = meta.get('_cache_request_shape')
     if shape is not None:
         try:
             recent = counts.setdefault('recent', [])
@@ -872,6 +872,136 @@ def _reasoning_tokens(usage: dict | None) -> int:
         return 0
 
 
+def _first_usage_int(usage: dict, *keys: str) -> tuple[int, str | None]:
+    """Return the first present numeric usage counter and its source field."""
+    for key in keys:
+        if key not in usage:
+            continue
+        value = usage.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed >= 0:
+            return parsed, key
+    return 0, None
+
+
+def _valid_usage_int(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _apply_openai_compatible_usage_meta(meta: dict | None, usage: dict | None) -> None:
+    """Normalize common compatible usage shapes while preserving raw counters."""
+    if meta is None or not isinstance(usage, dict):
+        return
+    previous = meta.get("raw") if isinstance(meta.get("raw"), dict) else {}
+    merged = dict(previous)
+    merged.update(usage)
+    cumulative_keys = (
+        "prompt_tokens", "input_tokens", "promptTokenCount", "completion_tokens",
+        "output_tokens", "candidatesTokenCount", "total_tokens", "totalTokenCount",
+        "cache_read_input_tokens", "cached_input_tokens", "cached_tokens",
+        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens", "cachedContentTokenCount",
+        "cache_creation_input_tokens", "cache_write_input_tokens",
+    )
+    for key in cumulative_keys:
+        if key not in usage:
+            continue
+        before = _valid_usage_int(previous.get(key))
+        current = _valid_usage_int(usage.get(key))
+        if current is not None and before is not None:
+            merged[key] = max(before, current)
+        elif current is not None:
+            merged[key] = current
+        elif before is not None:
+            merged[key] = before
+        else:
+            merged[key] = usage.get(key)
+    for parent in ("prompt_tokens_details", "input_tokens_details", "completion_tokens_details"):
+        before = previous.get(parent)
+        current = usage.get(parent)
+        if isinstance(before, dict) or isinstance(current, dict):
+            detail = dict(before or {})
+            detail.update(current or {})
+            for key in ("cached_tokens", "cache_creation_tokens", "cache_write_tokens", "reasoning_tokens"):
+                if key not in (current or {}):
+                    continue
+                before_value = _valid_usage_int((before or {}).get(key))
+                current_value = _valid_usage_int((current or {}).get(key))
+                if current_value is not None and before_value is not None:
+                    detail[key] = max(before_value, current_value)
+                elif current_value is not None:
+                    detail[key] = current_value
+                elif before_value is not None:
+                    detail[key] = before_value
+                else:
+                    detail[key] = (current or {}).get(key)
+            merged[parent] = detail
+    usage = merged
+    prompt, prompt_source = _first_usage_int(
+        usage, "prompt_tokens", "input_tokens", "promptTokenCount"
+    )
+    completion, completion_source = _first_usage_int(
+        usage, "completion_tokens", "output_tokens", "candidatesTokenCount"
+    )
+    total, total_source = _first_usage_int(usage, "total_tokens", "totalTokenCount")
+    if total_source is None:
+        total = prompt + completion
+    if prompt_source is not None:
+        meta["prompt_tokens"] = prompt
+    else:
+        meta.pop("prompt_tokens", None)
+    if completion_source is not None:
+        meta["completion_tokens"] = completion
+    else:
+        meta.pop("completion_tokens", None)
+    if total_source is not None or prompt_source is not None or completion_source is not None:
+        meta["total_tokens"] = total
+    else:
+        meta.pop("total_tokens", None)
+    meta["raw"] = dict(usage)
+    meta["usage_sources"] = {
+        "input": prompt_source,
+        "output": completion_source,
+        "total": total_source,
+    }
+    read_sources = []
+    for key in ("cache_read_input_tokens", "cached_input_tokens", "cached_tokens",
+                "prompt_cache_hit_tokens", "cachedContentTokenCount"):
+        if key in usage:
+            read_sources.append(key)
+    for parent in ("prompt_tokens_details", "input_tokens_details"):
+        detail = usage.get(parent)
+        if isinstance(detail, dict) and "cached_tokens" in detail:
+            read_sources.append(f"{parent}.cached_tokens")
+    write_sources = []
+    if "cache_creation_input_tokens" in usage:
+        write_sources.append("cache_creation_input_tokens")
+    if "cache_write_input_tokens" in usage:
+        write_sources.append("cache_write_input_tokens")
+    if isinstance(usage.get("cache_creation"), dict):
+        write_sources.append("cache_creation")
+    for parent in ("prompt_tokens_details", "input_tokens_details"):
+        detail = usage.get(parent)
+        if isinstance(detail, dict):
+            for key in ("cache_creation_tokens", "cache_write_tokens"):
+                if key in detail:
+                    write_sources.append(f"{parent}.{key}")
+    meta["usage_sources"].update({
+        "cache_read": ",".join(read_sources) or None,
+        "cache_creation": ",".join(write_sources) or None,
+    })
+
+
 def _mentions_stream_options(body: bytes) -> bool:
     text = (body or b"")[:4000].decode("utf-8", "replace").lower()
     return "stream_options" in text or "include_usage" in text
@@ -895,6 +1025,8 @@ async def call_custom_openai(messages: list, cfg: dict, meta: dict | None = None
     for attempt in range(1, RELAY_ATTEMPTS + 1):
         if attempt > 1 and meta is not None:
             meta['_reply_extra_calls'] = meta.get('_reply_extra_calls', 0) + 1
+            for field in ('prompt_tokens', 'completion_tokens', 'total_tokens', 'raw', 'usage_sources'):
+                meta.pop(field, None)
         started = False
         try:
             stream = _call_custom_openai_once(request_messages, cfg, meta, temperature, max_tokens, request_timeout=request_timeout)
@@ -1045,10 +1177,7 @@ async def _call_custom_openai_once(messages: list, cfg: dict, meta: dict | None 
                                 stream_usage = chunk["usage"]
                             if meta is not None and chunk.get("usage"):
                                 u = chunk["usage"]
-                                meta["prompt_tokens"] = u.get("prompt_tokens", 0)
-                                meta["completion_tokens"] = u.get("completion_tokens", 0)
-                                meta["total_tokens"] = u.get("total_tokens", 0)
-                                meta["raw"] = u
+                                _apply_openai_compatible_usage_meta(meta, u)
                                 from cache_request_trace import observe_usage
                                 observe_usage(meta, u)
                             delta = chunk["choices"][0].get("delta", {}) if chunk.get("choices") else {}
@@ -1113,10 +1242,7 @@ def _custom_openai_whole_reply(resp: httpx.Response, meta: dict | None) -> list[
         if value is not None and not isinstance(value, kind):
             return fail(f"一次性返回格式不对：{name} 类型是 {type(value).__name__}", "[自定义中转站错误] 返回格式不对")
     if meta is not None and usage:
-        meta["prompt_tokens"] = usage.get("prompt_tokens", 0)
-        meta["completion_tokens"] = usage.get("completion_tokens", 0)
-        meta["total_tokens"] = usage.get("total_tokens", 0)
-        meta["raw"] = usage
+        _apply_openai_compatible_usage_meta(meta, usage)
         from cache_request_trace import observe_usage
         observe_usage(meta, usage)
     if reasoning and meta is not None:
@@ -1798,6 +1924,7 @@ def _codex_semaphore() -> asyncio.Semaphore:
 def _normalize_codex_app_server_usage(usage: dict | None) -> dict:
     usage = usage or {}
     fields = {'input_tokens': 'inputTokens', 'cached_input_tokens': 'cachedInputTokens',
+              'cache_write_input_tokens': 'cacheWriteInputTokens',
               'output_tokens': 'outputTokens', 'reasoning_output_tokens': 'reasoningOutputTokens',
               'total_tokens': 'totalTokens'}
     return {snake: usage[camel] if camel in usage else usage[snake]
@@ -1805,8 +1932,10 @@ def _normalize_codex_app_server_usage(usage: dict | None) -> dict:
 
 
 def _usage_int(value) -> int:
+    if isinstance(value, bool):
+        return 0
     try:
-        return int(value or 0)
+        return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
 
@@ -1815,36 +1944,75 @@ def _apply_codex_usage_meta(meta: dict | None, usage: dict | None) -> None:
     if meta is None or not usage:
         return
 
-    input_tokens = _usage_int(usage.get("input_tokens"))
-    output_tokens = _usage_int(usage.get("output_tokens"))
-    total_tokens = _usage_int(usage.get("total_tokens")) or input_tokens + output_tokens
-    cached_tokens = _usage_int(usage.get("cached_input_tokens"))
-    reasoning_tokens = _usage_int(usage.get("reasoning_output_tokens"))
+    previous = meta.get("raw") if isinstance(meta.get("raw"), dict) else {}
+    reported_fields = meta.setdefault("_codex_usage_reported", set())
+    reported_fields.update(key for key in usage if _valid_usage_int(usage.get(key)) is not None)
+    # App Server sends cumulative snapshots. A later sparse/zero snapshot must
+    # not erase a larger counter already reported for the same turn.
+    def cumulative(key: str) -> int:
+        return max(_usage_int(usage.get(key)), _usage_int(previous.get(key)))
 
-    meta.pop("prompt_tokens", None)
-    meta.pop("completion_tokens", None)
-    if "input_tokens" in usage:
+    input_tokens = cumulative("input_tokens")
+    output_tokens = cumulative("output_tokens")
+    total_tokens = (
+        cumulative("total_tokens")
+        if "total_tokens" in reported_fields
+        else input_tokens + output_tokens
+    )
+    cached_tokens = cumulative("cached_input_tokens")
+    cache_write_tokens = cumulative("cache_write_input_tokens")
+    reasoning_tokens = cumulative("reasoning_output_tokens")
+    cache_reported = "cached_input_tokens" in reported_fields
+    cache_write_reported = "cache_write_input_tokens" in reported_fields
+
+    if "input_tokens" in reported_fields:
         meta["prompt_tokens"] = input_tokens
-    if "output_tokens" in usage:
+    else:
+        meta.pop("prompt_tokens", None)
+    if "output_tokens" in reported_fields:
         meta["completion_tokens"] = output_tokens
+    else:
+        meta.pop("completion_tokens", None)
     meta["total_tokens"] = total_tokens
 
-    raw = dict(usage)
-    raw.setdefault("prompt_tokens", input_tokens)
-    raw.setdefault("completion_tokens", output_tokens)
-    raw.setdefault("total_tokens", total_tokens)
+    raw = dict(previous)
+    raw.update(usage)
+    raw.update({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "prompt_tokens": input_tokens,
+        "completion_tokens": output_tokens,
+    })
+    for key, value in (
+        ("cached_input_tokens", cached_tokens),
+        ("cache_write_input_tokens", cache_write_tokens),
+        ("reasoning_output_tokens", reasoning_tokens),
+    ):
+        if key in reported_fields:
+            raw[key] = value
 
-    if cached_tokens:
+    if cache_reported:
         prompt_details = dict(raw.get("prompt_tokens_details") or {})
-        prompt_details.setdefault("cached_tokens", cached_tokens)
+        prompt_details["cached_tokens"] = cached_tokens
+        if cache_write_reported:
+            prompt_details["cache_creation_tokens"] = cache_write_tokens
         raw["prompt_tokens_details"] = prompt_details
 
-    if reasoning_tokens:
+    if "reasoning_output_tokens" in reported_fields:
         completion_details = dict(raw.get("completion_tokens_details") or {})
-        completion_details.setdefault("reasoning_tokens", reasoning_tokens)
+        completion_details["reasoning_tokens"] = reasoning_tokens
         raw["completion_tokens_details"] = completion_details
 
     meta["raw"] = raw
+    meta["usage_sources"] = {
+        "input": "inputTokens",
+        "output": "outputTokens",
+        "total": "totalTokens",
+        "cache_read": "cachedInputTokens" if cache_reported else None,
+        "cache_creation": "cacheWriteInputTokens" if cache_write_reported else None,
+        "reasoning": "reasoningOutputTokens" if "reasoning_output_tokens" in reported_fields else None,
+    }
 
 
 async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
@@ -1852,6 +2020,9 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
     """通过请求级 Codex App Server 会话增量返回正文与可读推理摘要。"""
     image_paths = _collect_cli_image_paths(messages)
     prompt = _build_cli_prompt(messages, include_image_refs=False)
+    if meta is not None:
+        from cache_request_trace import start
+        start(meta, {"model": model, "messages": messages, "transport": "codex_app_server"})
 
     node = shutil.which("node") or "node"
     if not _CODEX_SCRIPT:
@@ -1890,10 +2061,14 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
                         meta["reasoning_content"] = current + event.text
                     yield StreamActivity()
                 elif event.kind == "usage":
+                    normalized_usage = _normalize_codex_app_server_usage(event.usage)
                     _apply_codex_usage_meta(
                         meta,
-                        _normalize_codex_app_server_usage(event.usage),
+                        normalized_usage,
                     )
+                    if meta is not None:
+                        from cache_request_trace import observe_usage
+                        observe_usage(meta, meta.get("raw") or normalized_usage)
                     yield StreamActivity()
                 elif event.kind == "activity":
                     yield StreamActivity()
@@ -2205,6 +2380,7 @@ async def _stream_ai_counted(caller: str, messages: list, model_key: str, meta: 
     route = usage_log.route_for_model(resolved)
     cache_cfg = dict(MODELS.get(resolved) or {})
     meta.pop('_cache_request_shape', None)
+    meta.pop('_codex_usage_reported', None)
     # 同一个 meta 可能被调用方重复用：先把上一次的用量拿走，这次中转站给了才算真实数字
     previous = {key: meta.pop(key) for key in _USAGE_KEYS if key in meta}
     output: list[str] = []
@@ -2246,9 +2422,27 @@ async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, t
     if is_model_deprecated(model_key):
         yield f"[错误] 模型线路已停用: {model_key}"
         return
+    if meta is not None:
+        from cache_request_trace import bind_route
+        provider_name = cfg.get("provider", "")
+        route_identity = (
+            repr(_relay_feature_key(
+                _openai_chat_completions_url(cfg.get("base_url", "")),
+                str(cfg.get("model") or "").strip(),
+                str(cfg.get("api_key") or "").strip(),
+            ))
+            if provider_name == CUSTOM_OPENAI_PROVIDER else f"{provider_name}:{cfg.get('model', model_key)}"
+        )
+        bind_route(
+            meta, provider=provider_name, model=cfg.get("model", model_key),
+            route_identity=route_identity,
+        )
     # 开着缓存的中转站线路：把会变的背景挪到聊天记录之后（中转站不认标记退回纯文本时也保持这个顺序，
     # 对自动前缀缓存同样有利）。其他线路顺序不变。内部标签一律去掉再往下传
-    if cfg.get("provider") == CUSTOM_OPENAI_PROVIDER and cfg.get("cache_marker", True) is not False:
+    if (
+        cfg.get("provider") == "codex_cli"
+        or (cfg.get("provider") == CUSTOM_OPENAI_PROVIDER and cfg.get("cache_marker", True) is not False)
+    ):
         normalized = _cache_friendly_order(normalized)
     normalized = _without_context_tags(normalized)
 

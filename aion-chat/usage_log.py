@@ -160,9 +160,12 @@ def cache_tokens(usage: Any) -> tuple[int, int]:
         or _num(usage.get("cache_read_input_tokens")) or _num(usage.get("cachedContentTokenCount")) \
         or _num(usage.get("cached_input_tokens")) or _num(usage.get("cached_tokens")) \
         or _num(usage.get("prompt_cache_hit_tokens"))
-    write = _num(usage.get("cache_creation_input_tokens"))
+    write = _num(usage.get("cache_creation_input_tokens")) or _num(usage.get("cache_write_input_tokens"))
     if not write and isinstance(details, dict):
         write = _num(details.get("cache_creation_tokens")) or _num(details.get("cache_write_tokens"))
+    creation = usage.get("cache_creation")
+    if not write and isinstance(creation, dict):
+        write = _num(creation.get("ephemeral_5m_input_tokens")) + _num(creation.get("ephemeral_1h_input_tokens"))
     return read, write
 
 

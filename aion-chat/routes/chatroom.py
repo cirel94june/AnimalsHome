@@ -4581,6 +4581,8 @@ async def _generate_seat_reply(room_id, room, msgs, _q, context_limit, *, actor:
     pinned = model_snapshot(model_key)  # 取记忆要等几秒，期间线路被删/改就不生成，不换模型
     await _q.put({"type": "seat_start", "id": msg_id, "actor": actor_id})
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="room", identifier=room_id, context_limit=context_limit)
     raw_text = ""
     try:
         async with asyncio.timeout(960):
@@ -4698,6 +4700,8 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
     error_text = None
     tts_from_model = True
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="room", identifier=room_id, context_limit=context_limit)
     transport_mode = resolve_model_transport_mode(_resolve_connor_model(connor_model_key))
     live_tts = None
     if transport_mode == "safe_live" and tts_enabled and tts_connor_voice:
@@ -4955,6 +4959,8 @@ async def _reply_aion(room_id, msgs, context_limit, query_text, model_key, _q, *
     error_text = None
     tts_from_model = True
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="room", identifier=room_id, context_limit=context_limit)
     transport_mode = resolve_model_transport_mode(model_key)
     live_tts = None
     if transport_mode == "safe_live" and tts_enabled and tts_voice:
@@ -5100,6 +5106,8 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
     error_text = None
     tts_from_model = True
     usage_meta: dict = {}
+    from cache_request_trace import seed as seed_cache_trace
+    seed_cache_trace(usage_meta, scope="room", identifier=room_id, context_limit=context_limit)
     transport_mode = resolve_model_transport_mode(_resolve_connor_model(connor_model_key))
     live_tts = None
     if transport_mode == "safe_live" and tts_enabled and tts_voice:
