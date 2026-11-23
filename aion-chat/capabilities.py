@@ -920,9 +920,12 @@ async def build_capability_prompt_items(
 
     if is_capability_enabled("app_supervision"):
         from app_supervision_ai import build_app_supervision_ability_text
-        supervision_text = build_app_supervision_ability_text()
-        if supervision_text:
-            (abilities if live_state_out is None else live_state_out).append(supervision_text)
+        # 操作协议走能力抽屉；每轮真正会变的只有当前手机状态。
+        abilities.append(_COMPACT_ABILITY_TEXT["app_supervision"] + " 详细规则：[ABILITY_HELP:app_supervision]")
+        if live_state_out is not None:
+            supervision_state = build_app_supervision_ability_text(state_only=True)
+            if supervision_state:
+                live_state_out.append("【应用监管当前状态】\n" + supervision_state)
 
     if is_capability_enabled("home"):
         abilities.append(HOME_ABILITY_TEXT)
