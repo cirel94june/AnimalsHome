@@ -1481,7 +1481,8 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
                 source_label = "群聊" if src == "group" else "私聊"
                 context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
             context_text = "\n".join(context_lines)
-            summaries_text = "\n".join(f"- {s}" for s in all_summaries)
+            from diary import diary_material_since_last
+            summaries_text = await diary_material_since_last("aion") or "\n".join(f"- {s}" for s in all_summaries)
             time_str = now_text()
             from hub_day import day_text  # 这位 AI 今天在别处（群里、TG）的经历
             hub_day_block = await day_text("aion", user_name)
