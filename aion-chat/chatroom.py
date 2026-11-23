@@ -925,7 +925,8 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
 
     # ── 总结完成后：生成日记；可选发布朋友圈 ──
     target_room_id = connor_room["id"] if connor_room else (group_room["id"] if group_room else None)
-    if all_summaries and not digest_incomplete:
+    from diary import auto_diary_due
+    if all_summaries and not digest_incomplete and await auto_diary_due("connor"):
         try:
             connor_persona = _read_connor_persona()
             summaries_text = "\n".join(f"- {s}" for s in all_summaries)
