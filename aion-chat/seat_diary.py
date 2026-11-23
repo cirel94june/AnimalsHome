@@ -118,7 +118,7 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
     from config import ensure_model_unchanged, load_worldbook, model_snapshot
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
     from diary import (
-        broadcast_diary_entry, build_diary_entry, insert_diary_entry, normalize_diary_payload,
+        auto_diary_due, broadcast_diary_entry, build_diary_entry, insert_diary_entry, normalize_diary_payload,
         parse_diary_payload, publish_ai_moment,
     )
 
@@ -135,6 +135,8 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
         return "skip_no_user"
     if now - float(stretch["last_user_ts"]) < QUIET_SECONDS:
         return "skip_not_quiet"
+    if not await auto_diary_due(seat, now=now):
+        return "skip_recent_diary"
     last_ts = float(stretch["last_ts"])
     recent = await _recent_messages(seat, stretch["anchor"], last_ts)
 
