@@ -1748,7 +1748,19 @@ async def get_active_schedules(viewer: str | None = None) -> list[dict]:
         if origin in SEAT_ORIGINS:
             return False
         return viewer in ("aion", "connor")
-    return [s for s in rows if visible(s)]
+
+    def prompt_current(s: dict) -> bool:
+        # 只影响给模型看的列表，不删除数据库记录。过期一天以上的旧 active 项不再每轮占 prompt。
+        dt_text = _parse_dt(str(s.get("trigger_at") or ""))
+        if not dt_text:
+            return True
+        try:
+            dt = datetime.strptime(dt_text, "%Y-%m-%d %H:%M")
+        except ValueError:
+            return True
+        return dt.timestamp() >= time.time() - 24 * 3600
+
+    return [s for s in rows if visible(s) and prompt_current(s)]
 
 
 def build_schedule_prompt(schedules: list[dict]) -> str:
