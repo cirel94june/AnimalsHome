@@ -301,10 +301,12 @@ async def build_ability_block(
 
     if "post_sentinel" not in (excluded_capabilities or set()):
         try:
-            from post_sentinel import build_context as build_profile_context
-            profile_context = await build_profile_context()
+            from post_sentinel import build_context_parts
+            profile_context, profile_live = await build_context_parts()
             if profile_context:
-                parts.append(profile_context)
+                static_parts.append(profile_context)
+            if profile_live:
+                parts.append(profile_live)
         except Exception:
             pass
 
