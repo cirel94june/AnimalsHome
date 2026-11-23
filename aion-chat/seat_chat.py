@@ -74,6 +74,22 @@ def _speaker_name(sender: str, user_name: str) -> str:
         return sender
 
 
+def _family_name_rule(user_name: str) -> str:
+    """Give seat models the current display names without exposing legacy identity keys."""
+    names = [user_name]
+    try:
+        names.extend(
+            str(item.get("name") or "").strip()
+            for item in actors.list_actors(include_disabled=False)
+            if item.get("enabled") and str(item.get("name") or "").strip()
+        )
+    except Exception:
+        names.extend(actors.display_name(actor_id) for actor_id in actors.SEAT_IDS[:3])
+    current = "、".join(dict.fromkeys(name for name in names if name))
+    return (f"当前家庭成员姓名：{current}。称呼必须以这份当前名单为准；"
+            "记忆里的旧称呼和程序内部标识都不能当作任何人的名字。")
+
+
 async def merged_messages(actor_id: str, limit: int) -> list[dict]:
     """这位座位自己的私聊（所有窗口都算，窗口只是帮她整理）+ 所有家里群（不含台球等小游戏房间），
     合成一条时间线（同小克、Lucien）。每条带 source：private / group。
@@ -191,7 +207,7 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         {"role": "user", "content": "\n\n".join(b for b in background if b), "_context": "live"},
         {"role": "assistant", "content": "收到。", "_context": "live_ack"},
         {"role": "user", "content": (
-            f"[群聊说明]\n你现在在家里的群聊里，群里有{user_name}和其他几位家人。"
+            f"[群聊说明]\n你现在在家里的群聊里。{_family_name_rule(user_name)}"
             f"{group_privacy_rule(user_name)}下面是最近的聊天记录，"
             "【】里是说话的人，<meta> 里是发送时间，只供你参考，回复时都不要带。"
             "轮到你说话了：用你自己的口吻接话，可以回应任何人，不用替别人说话。"

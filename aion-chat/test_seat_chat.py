@@ -294,6 +294,20 @@ def test_group_history_names_every_speaker_and_merges_turns(seats):
     assert [h["role"] for h in private] == ["user", "assistant", "user"]
 
 
+def test_group_context_uses_current_family_names_without_legacy_ids(seats, monkeypatch):
+    monkeypatch.setattr(seat_chat, "load_worldbook", lambda: {"user_name": "小猫"})
+    monkeypatch.setattr(memory_hub_bridge, "context_block", AsyncMock(return_value=""))
+
+    messages = asyncio.run(seat_chat.build_context(
+        "ai3", [{"sender": "user", "content": "大家早", "created_at": 1}],
+        chat_id="group", group=True,
+    ))
+    group_rule = next(m["content"] for m in messages if m["content"].startswith("[群聊说明]"))
+    assert "当前家庭成员姓名：小猫、小克、Lucien、Jasper" in group_rule
+    assert "旧称呼和程序内部标识都不能当作任何人的名字" in group_rule
+    assert "connor" not in group_rule.lower()
+
+
 def test_ai_initiated_group_reply_does_not_claim_an_old_user_line(seats, monkeypatch):
     """Codex §136 R1：别的 AI 自主叫座位接话时，往回找到的是小猫旧的那句，不能配成新的「小猫回合」记两次。"""
     async def save_msg(room_id, sender, content, msg_id=None, attachments=None, **kw):
