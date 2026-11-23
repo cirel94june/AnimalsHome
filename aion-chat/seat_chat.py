@@ -212,9 +212,13 @@ async def build_context(actor_id: str, msgs: list[dict], *, context_limit: int =
         import desk_notes
         memory_background.append(desk_notes.fresh_from_her_text(user_name))  # 一天内稳定，别放在秒级状态后面
     live_background.append(location_line())  # 位置会变，跟当前时间一起压到最后
+    memory_text = "\n\n".join(b for b in memory_background if b)
+    if memory_text:
+        messages += [
+            {"role": "user", "content": memory_text, "_context": "memory"},
+            {"role": "assistant", "content": "收到。", "_context": "memory_ack"},
+        ]
     messages += [
-        {"role": "user", "content": "\n\n".join(b for b in memory_background if b), "_context": "memory"},
-        {"role": "assistant", "content": "收到。", "_context": "memory_ack"},
         {"role": "user", "content": "\n\n".join(b for b in live_background if b), "_context": "live"},
         {"role": "assistant", "content": "收到。", "_context": "live_ack"},
         {"role": "user", "content": (
