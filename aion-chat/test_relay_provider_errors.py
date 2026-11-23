@@ -316,7 +316,10 @@ class RelayProviderErrorPassthroughTests(unittest.IsolatedAsyncioTestCase):
                 self.responses = [first, second]
 
             def stream(self, *args, **kwargs):
-                self.calls.append((args, kwargs))
+                recorded_kwargs = dict(kwargs)
+                if isinstance(recorded_kwargs.get("json"), dict):
+                    recorded_kwargs["json"] = dict(recorded_kwargs["json"])
+                self.calls.append((args, recorded_kwargs))
                 return self.responses[len(self.calls) - 1]
 
         clients = []
