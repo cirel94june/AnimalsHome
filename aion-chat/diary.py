@@ -14,6 +14,23 @@ from model_json import extract_json_object
 from ws import manager
 
 
+AUTO_DIARY_MIN_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def auto_diary_due(author: str, *, now: float | None = None,
+                         min_interval_seconds: int = AUTO_DIARY_MIN_INTERVAL_SECONDS) -> bool:
+    """自动日记的轻量限频：距离这个角色上一篇日记至少一个间隔才允许再次调用模型。
+
+    这里只查本地数据库，不调用模型。朋友圈仍由真正写日记时的模型自行决定是否发布。
+    """
+    now = time.time() if now is None else float(now)
+    async with get_db() as db:
+        cur = await db.execute("SELECT MAX(created_at) FROM diary_entries WHERE author=?", (author,))
+        row = await cur.fetchone()
+    last = float(row[0]) if row and row[0] else 0.0
+    return not last or now - last >= max(0, int(min_interval_seconds))
+
+
 def _is_diary_payload(data: Any) -> bool:
     """只接受包含日记字段的顶层对象，避免误把嵌套的 moment 当成完整结果。"""
     return isinstance(data, dict) and "diary" in data
