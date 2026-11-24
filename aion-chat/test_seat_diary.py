@@ -3,6 +3,8 @@
 import asyncio
 import json
 from unittest.mock import AsyncMock
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 import pytest
@@ -55,7 +57,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: True)
     seen = []
     reply = {"text": json.dumps({"diary": {"title": "今天", "content": "她又熬夜了", "mood": "担心"},
-                                 "post_moment": True, "moment": {"content": "长" * 900, "expect_reply": True},
+                                 "post_moment": True, "moment": {"content": "这条旧格式朋友圈不应被日记流程发布", "expect_reply": True},
                                  "givegift": False, "gift": {}}, ensure_ascii=False)}
 
     async def stream(messages, model_key, *a, **k):
@@ -105,8 +107,7 @@ def test_writes_a_diary_in_its_own_voice_after_she_goes_quiet(env):
     assert env.saved() == [("ai3", "她又熬夜了", "seat_digest", 1000.0, 2009.0)]
     assert env.broadcast.await_args.args[0]["author"] == "ai3"
     assert env.anchor() == 2009
-    moment = env.moment.await_args.kwargs
-    assert moment["author"] == "ai3" and len(moment["content"]) == 800 and moment["expect_reply"] is True
+    env.moment.assert_not_called()
     assert env.present.await_args.kwargs == {"sender": "ai3"}
     assert _run() == "skip_too_few"  # 写过的不再写
 
@@ -133,27 +134,30 @@ def test_not_ready_or_reselected_model_writes_nothing(env, monkeypatch):
     assert not env.seen and env.anchor() == 0
 
 
-def test_recent_diary_skips_model_until_six_hours_have_passed(env):
+def test_auto_diary_is_once_per_beijing_calendar_day_not_24h_cooldown(env):
     env.say("s3", "user", 1000, 25)
+    tz = ZoneInfo("Asia/Shanghai")
+    yesterday_late = datetime(2026, 11, 23, 23, 50, tzinfo=tz).timestamp()
+    today_morning = datetime(2026, 11, 24, 8, 0, tzinfo=tz).timestamp()
 
-    async def add_recent_diary():
+    async def add_diary(ts):
         async with aiosqlite.connect(env.path) as conn:
             await conn.execute(
                 "INSERT INTO diary_entries VALUES (?,?,?,?,?,?,?,?,?,?)",
-                ("recent", "ai3", "刚写过", "内容", "", "seat_digest", "ai3", 900, 1024, 99_000),
+                ("recent", "ai3", "昨天", "内容", "", "seat_digest", "ai3", 900, 1024, ts),
             )
             await conn.commit()
-    asyncio.run(add_recent_diary())
+    asyncio.run(add_diary(yesterday_late))
 
-    assert _run(now=99_000 + 5 * 3600 + 59 * 60) == "skip_recent_diary"
-    assert not env.seen and env.anchor() == 0
-    assert _run(now=99_000 + 6 * 3600 + 60) == "written"
-    assert len(env.seen) == 1
+    # 只隔了 8 小时多，但跨自然日：允许今天写。
+    assert _run(now=today_morning) == "written"
+
+    # 同一个北京时间自然日已经有一篇：哪怕又有足够新内容也不写第二篇。
+    env.say("s3", "user", today_morning + 100, 25)
+    assert _run(now=today_morning + 3600) == "skip_recent_diary"
 
 
-def test_moment_switch_off_keeps_the_diary_only(env, monkeypatch):
-    import capabilities
-    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: name != "moment")
+def test_diary_never_publishes_moment_even_if_legacy_payload_contains_one(env):
     env.say("s3", "user", 1000, 25)
     assert _run() == "written"
     assert len(env.saved()) == 1
