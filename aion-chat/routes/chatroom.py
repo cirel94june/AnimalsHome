@@ -2483,7 +2483,8 @@ def _chatroom_debug_payload(
             for m in (history or [])
         ],
         "prompt_count": len(history or []),
-        "usage": usage_meta if usage_meta else None,
+        "usage": ({k: v for k, v in usage_meta.items()
+                   if not k.startswith("_codex_session_")} if usage_meta else None),
         "has_error": has_error,
         "error_text": error_text if has_error else None,
     }
@@ -4953,11 +4954,8 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     # A thread is reusable only after the actual reply was committed unchanged.
-    if usage_meta.get("_codex_session_candidate"):
-        from context_builder import render_merged_timeline
-        rendered = render_merged_timeline([{**msg, "source": "private"}], "connor")
-        codex_chat_session.confirm(usage_meta, msg, rendered[-1] if len(rendered) > 1 else None,
-                                   allowed=not triggered and not has_error and not safety_notice)
+    codex_chat_session.confirm_saved(usage_meta, msg, "private",
+                                     allowed=not triggered and not has_error and not safety_notice)
     await _q.put({"type": "connor_done", "message": msg})
     if not has_error and not safety_notice:
         memory_hub_bridge.schedule_chatroom_capture(
@@ -5367,11 +5365,8 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     # A thread is reusable only after the actual reply was committed unchanged.
-    if usage_meta.get("_codex_session_candidate"):
-        from context_builder import render_merged_timeline
-        rendered = render_merged_timeline([{**connor_msg, "source": "group"}], "connor")
-        codex_chat_session.confirm(usage_meta, connor_msg, rendered[-1] if len(rendered) > 1 else None,
-                                   allowed=not triggered and not has_error and not safety_notice)
+    codex_chat_session.confirm_saved(usage_meta, connor_msg, "group",
+                                     allowed=not triggered and not has_error and not safety_notice)
     await _q.put({"type": "connor_done", "message": connor_msg})
     await _turtle_soup(room_id, "connor", clean_text, _q)
     if not has_error and not safety_notice and not ambient_context and capture_user_turn:

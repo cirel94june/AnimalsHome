@@ -276,6 +276,8 @@ async def stream_codex_app_server(
                 continue
 
             if method == "thread/tokenUsage/updated":
+                if resume_thread_id and params.get("turnId") and params["turnId"] != turn_id:
+                    continue
                 token_usage = params.get("tokenUsage") or {}
                 total = token_usage.get("total")
                 last = token_usage.get("last")
@@ -293,6 +295,10 @@ async def stream_codex_app_server(
                                  if type(v) is int and type(before.get(k)) is int and v >= before[k]}
                         if delta.get("inputTokens", 0) > 0 and (
                             not isinstance(last, dict) or delta["inputTokens"] >= last.get("inputTokens", 0)):
+                            if isinstance(last, dict):
+                                for k, v in last.items():
+                                    if type(v) is int and (k not in delta or delta[k] < v):
+                                        delta[k] = v
                             usage = delta
                         else:
                             usage = last if isinstance(last, dict) else {}

@@ -37,6 +37,18 @@ class SessionTests(unittest.TestCase):
         self.assertIn("new memory",p.prompt);self.assertIn(row("next"),p.prompt)
         self.assertNotIn(row("first"),p.prompt);self.assertNotIn(row("answer"),p.prompt)
         self.assertEqual(p.previous_usage["inputTokens"],100)
+    def test_interleaved_history_before_confirmed_reply_restarts(self):
+        self.first();meta={};s.begin(meta,"a","private",30)
+        self.assertEqual(plan(meta,context(row("first"),row("interleaved"),row("answer"),row("next"))).thread_id,"")
+    def test_non_codex_debug_does_not_leak_internal_state(self):
+        import json
+        from routes.chatroom import _chatroom_debug_payload
+        meta={};s.begin(meta,"a","private",30)
+        s.attach(meta,context(row("secret")))
+        payload=_chatroom_debug_payload(room_id="a",model_key="other",msg_id="x",
+            history=[],digest_result={},usage_meta=meta)
+        self.assertNotIn("_codex_session_",json.dumps(payload))
+        self.assertNotIn("secret",json.dumps(payload))
     def test_edit_trim_or_missing_reply_restarts(self):
         for rows in [(row("edited"),row("answer"),row("next")),
                      (row("answer"),row("next")),
@@ -55,6 +67,20 @@ class SessionTests(unittest.TestCase):
         self.assertIsNone(plan(meta,context(row("first"))))
         meta={};s.begin(meta,"a","private",30)
         self.assertEqual(plan(meta,context(row("first"),row("answer"),row("next"))).thread_id,"")
+    def test_real_renderer_matches_saved_reply(self):
+        from context_builder import render_merged_timeline
+        a={"id":"a","source":"private","sender":"user","content":"hello","created_at":100}
+        saved={"id":"b","room_id":"a","source":"private","sender":"connor","content":"answer",
+               "created_at":101,"attachments":[{"type":"reply_usage"}]}
+        c={"id":"c","source":"private","sender":"user","content":"next","created_at":102}
+        def build(rows,clock):
+            return [m("fox"),m(clock,tag="live")]+render_merged_timeline(rows,"connor")
+        meta={};s.begin(meta,"a","private",30);p=plan(meta,build([a],"today"))
+        s.stage(meta,p,"tid",{"inputTokens":100,"outputTokens":5},"answer")
+        self.assertTrue(s.confirm_saved(meta,saved,"private"))
+        meta={};s.begin(meta,"a","private",30);p=plan(meta,build([a,saved,c],"later"))
+        self.assertEqual(p.thread_id,"tid")
+        self.assertIn("next",p.prompt)
     def test_attachments_fall_back(self):
         self.first();meta={};s.begin(meta,"a","private",30)
         messages=context(row("first"),row("answer"),row("next"))

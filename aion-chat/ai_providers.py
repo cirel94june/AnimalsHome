@@ -2026,6 +2026,8 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
     image_paths = _collect_cli_image_paths(messages)
     prompt = _build_cli_prompt(messages, include_image_refs=False)
     if meta is not None:
+        meta.pop("_codex_session_candidate", None)
+        meta.pop("codex_session_mode", None)
         from cache_request_trace import start
         start(meta, {"model": model, "messages": messages, "transport": "codex_app_server"})
 
@@ -2049,12 +2051,20 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
     try:
         import codex_chat_session
         env = _build_codex_chat_environment()
-        plan = codex_chat_session.prepare(
-            meta, model=model, command=cmd,
-            instruction_revision=_CODEX_COMPANION_INSTRUCTIONS_FILE.read_text(encoding="utf-8"),
-            full_prompt=prompt, live_heading=LIVE_STATE_HEADING)
+        plan = None
+        if meta is not None and "_codex_session_seed" in meta:
+            try:
+                plan = codex_chat_session.prepare(
+                    meta, model=model, command=cmd,
+                    instruction_revision=_CODEX_COMPANION_INSTRUCTIONS_FILE.read_text(encoding="utf-8"),
+                    full_prompt=prompt, live_heading=LIVE_STATE_HEADING)
+            except Exception:
+                meta.pop("_codex_session_seed", None)
+                meta.pop("_codex_session_context", None)
         if image_paths:
             plan = None
+        if meta is not None:
+            meta["codex_session_mode"] = ("resumed" if plan.thread_id else "new") if plan else "ephemeral"
         async with _codex_semaphore():
             while True:
                 chunks = []
@@ -2094,6 +2104,8 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
                         raise
                     # No new turn was sent. Retry the full authoritative prompt once.
                     plan = None
+                    if meta is not None:
+                        meta["codex_session_mode"] = "resume_fallback"
     except FileNotFoundError:
         yield "[CodexCLI错误] 无法启动 Codex CLI 进程"
     except Exception as e:

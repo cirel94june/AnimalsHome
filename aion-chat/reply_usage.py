@@ -91,6 +91,9 @@ def attachments(meta):
             'same_fixed_prefix', 'shared_prefix_messages', 'marked_messages', 'options_id',
         )
         item['cache_debug'] = {key: trace[key] for key in allowed if key in trace}
+    session_mode = (meta or {}).get("codex_session_mode")
+    if session_mode in ("new", "resumed", "ephemeral", "resume_fallback"):
+        item["codex_session_mode"] = session_mode
     sources = (meta or {}).get('usage_sources')
     if isinstance(sources, dict):
         item['usage_sources'] = {

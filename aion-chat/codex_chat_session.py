@@ -141,12 +141,13 @@ def prepare(meta, *, model, command, instruction_revision, full_prompt, live_hea
         return plan
     additions = history[len(old.history):]
     matches = [i for i, m in enumerate(additions) if _reply_row(m) == old.expected_reply]
-    if len(matches) != 1:
+    if matches != [0]:
+        # Interleaved rows would otherwise reorder native assistant history.
         return plan
     # The confirmed previous response is already a native assistant item.
     # Keep every other new transcript row in order; never hide someone else's turn.
     new_rows = [m["content"] for i, m in enumerate(additions) if i != matches[0]]
-    if not new_rows or matches[0] == len(additions)-1:
+    if not new_rows:
         return plan
     update = (
         "【本轮上下文更新】\n此前注入的实时状态和相关记忆是当时的快照；"
@@ -175,6 +176,19 @@ def stage(meta, plan, thread_id, thread_total, reply):
     # Only committed visible text will be confirmed by the room route.
     if reply.strip():
         meta["_codex_session_candidate"] = (plan, thread_id, dict(thread_total), _digest(reply.strip()))
+
+def confirm_saved(meta, saved, kind, *, allowed=True):
+    """Bookkeeping is optional: never interrupt an already committed reply."""
+    if "_codex_session_candidate" not in meta:
+        return False
+    try:
+        from context_builder import render_merged_timeline
+        rendered = render_merged_timeline([{**saved, "source": kind}], "connor")
+        return confirm(meta, saved, rendered[-1] if len(rendered) > 1 else None,
+                       allowed=allowed)
+    except Exception:
+        meta.pop("_codex_session_candidate", None)
+        return False
 
 def confirm(meta, saved, rendered_reply, *, allowed=True):
     candidate = meta.pop("_codex_session_candidate", None)
