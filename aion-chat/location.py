@@ -774,6 +774,20 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
             "wake_reason": "哨兵分析失败，按设置 / 随机建议人选叫人。",
             "wake_confidence": "low",
         }
+    # 位置状态本身就是生活事件：smart 模式下即使哨兵判断“行程已知、无需提醒”，
+    # 也随机叫一位家人注意到小猫出门/回家。安全判断仍由哨兵负责，这里只是生活感。
+    if not call_core and smart:
+        call_core = True
+        core_reason = core_reason or "生活感唤醒：位置状态发生变化，即使行程已知，也让一位家人注意到。"
+        dispatch = {
+            "sentinel_wake_target": "",
+            "final_wake_targets": resolve_sentinel_wake_targets(
+                True, "smart", "", roster_ids=roster_ids, suggested=suggested
+            ),
+            "wake_reason": "位置状态变化的生活感唤醒；不是安全警报。",
+            "wake_confidence": "low",
+        }
+
     wake_targets = dispatch["final_wake_targets"] if call_core else []
 
     print(f"[Location] 哨兵判断: call_core={call_core}, reason={core_reason}")
