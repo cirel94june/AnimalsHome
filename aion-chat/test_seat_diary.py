@@ -133,7 +133,7 @@ def test_not_ready_or_reselected_model_writes_nothing(env, monkeypatch):
     assert not env.seen and env.anchor() == 0
 
 
-def test_recent_diary_skips_model_until_24_hours_have_passed(env):
+def test_recent_diary_skips_model_until_six_hours_have_passed(env):
     env.say("s3", "user", 1000, 25)
 
     async def add_recent_diary():
@@ -145,9 +145,9 @@ def test_recent_diary_skips_model_until_24_hours_have_passed(env):
             await conn.commit()
     asyncio.run(add_recent_diary())
 
-    assert _run(now=100_000) == "skip_recent_diary"
+    assert _run(now=99_000 + 5 * 3600 + 59 * 60) == "skip_recent_diary"
     assert not env.seen and env.anchor() == 0
-    assert _run(now=200_000) == "written"
+    assert _run(now=99_000 + 6 * 3600 + 60) == "written"
     assert len(env.seen) == 1
 
 
