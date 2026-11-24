@@ -77,6 +77,7 @@ def verify_seat_pin(actor: str) -> dict:
 ACTION_DEFS = {
     "rest": "什么都不做，继续休息",
     "private_chat": "主动联系用户说点此刻想说的话",
+    "post_moment": "发一条自己此刻想发的朋友圈",
     "seeky_interaction": "和宠物鲸鱼 Seeky 互动",
     "role_chat": "和另一个家庭成员自然聊聊",
     "billiards_play": "邀请另一位家庭成员打一局休闲台球（算法负责击球，可以边打边聊）",
@@ -97,7 +98,7 @@ ACTION_DEFS = {
 # 座位 3～6 目前能做的事；其余活动按座位核对过再逐个放开（见 docs/功能盘点）
 # 默认关闭：翻相册（原作者设定）、和宠物鲸鱼 Seeky 互动（小猫不要 Seeky）
 DEFAULT_OFF_ACTIONS = {"album_browse", "seeky_interaction"}
-SEAT_ACTIONS = {"rest", "private_chat", "web_roam", "wish_pool", "mcp_outing", "travel", "taobao_roam",
+SEAT_ACTIONS = {"rest", "private_chat", "post_moment", "web_roam", "wish_pool", "mcp_outing", "travel", "taobao_roam",
                 "role_chat", "home_dynamics", "memory_browse", "xhs_roam"}
 
 # 没做成时标题里用的简短说法
@@ -826,7 +827,8 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         + (f"如果选 role_chat，可以在 target 里写想找谁聊的编号（{_partner_hint(actor)}，写等号前的编号），不写就由系统安排。"
            if "role_chat" in enabled else "")
         + "如果 action 是 private_chat 或 role_chat，message 就是本次要实际发送的正式聊天正文："
-        "private_chat 是对用户说，role_chat 是对另一位家庭成员说。"
+        "private_chat 是对用户说，role_chat 是对另一位家庭成员说，post_moment 是全家可见的朋友圈。"
+        "朋友圈不要泄露用户私聊里的身体、私密情感或其他不适合公开的内容。"
         "请直接以你自身人格像平时聊天一样自然完整地表达，由你决定篇幅、段落和表达形式；"
         "可以有符合平时习惯的内心活动，但不要机械套模板，不要写成行动说明，也不要刻意压短。"
         "其他动作的 message 留空。\n"
@@ -864,13 +866,13 @@ def _parse_action_choice(data, enabled) -> dict | None:
         return None
     message = data.get("message")
     message = message.strip() if isinstance(message, str) else ""
-    if action in {"private_chat", "role_chat"} and not message:
+    if action in {"private_chat", "role_chat", "post_moment"} and not message:
         return None
     target = data.get("target")
     return {
         "action": action,
         "reason": str(data.get("reason") or "").strip(),
-        "message": message if action in {"private_chat", "role_chat"} else "",
+        "message": message if action in {"private_chat", "role_chat", "post_moment"} else "",
         "target": target.strip() if action == "role_chat" and isinstance(target, str) else "",
     }
 
@@ -2500,6 +2502,26 @@ async def _run_mcp_outing(actor: str) -> dict:
     return result
 
 
+async def _run_post_moment(actor: str, selected: dict) -> dict:
+    """自主发朋友圈：和日记完全独立。"""
+    from capabilities import is_capability_enabled
+    if not is_capability_enabled("moment"):
+        return {}
+    from diary import publish_ai_moment
+    content = str(selected.get("message") or "").strip()
+    if not content:
+        return {}
+    from routes.moments import MAX_AI_MOMENT_CHARS
+    moment = await publish_ai_moment(
+        author=actor,
+        content=content[:MAX_AI_MOMENT_CHARS],
+        expect_reply=False,
+        source_conv="idle_autonomy",
+        source_msg_id=None,
+    )
+    return {"moment": moment, "shared": bool(moment)}
+
+
 async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int = 0) -> dict:
     if _is_seat(actor):
         pin_seat(actor)  # 这一次活动的身份在选动作之前就固定下来
@@ -2517,6 +2539,8 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
             result = {}
         elif action == "private_chat":
             result = await _run_private_chat(actor, selected)
+        elif action == "post_moment":
+            result = await _run_post_moment(actor, selected)
         elif action == "seeky_interaction":
             result = await _run_seeky_interaction(actor)
         elif action == "role_chat":
@@ -2558,6 +2582,8 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         trace = list(getattr(result, "action_trace", []) or [])
         card = getattr(result, "card", None)
         shared = bool(getattr(result, "message", None))
+        if action == "post_moment" and isinstance(result, dict):
+            shared = bool(result.get("moment"))
         ok = True
         error = ""
     except Exception as exc:
@@ -2573,6 +2599,7 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
     action_titles = {
         "rest": f"{actor_name}觉得暂时没什么想做，继续休息了",
         "private_chat": f"{actor_name}说了一句话",
+        "post_moment": f"{actor_name}发了一条朋友圈",
         "seeky_interaction": f"{actor_name}照顾了 Seeky",
         "role_chat": f"{actor_name}和另一位家庭成员聊了聊",
         "billiards_play": f"{actor_name}邀请另一位家庭成员打台球",
