@@ -4954,7 +4954,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     # A thread is reusable only after the actual reply was committed unchanged.
-    codex_chat_session.confirm_saved(usage_meta, msg, "private",
+    await codex_chat_session.confirm_room_saved(usage_meta, msg, "private",
                                      allowed=not triggered and not has_error and not safety_notice)
     await _q.put({"type": "connor_done", "message": msg})
     if not has_error and not safety_notice:
@@ -5365,7 +5365,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
     # A thread is reusable only after the actual reply was committed unchanged.
-    codex_chat_session.confirm_saved(usage_meta, connor_msg, "group",
+    await codex_chat_session.confirm_room_saved(usage_meta, connor_msg, "group",
                                      allowed=not triggered and not has_error and not safety_notice)
     await _q.put({"type": "connor_done", "message": connor_msg})
     await _turtle_soup(room_id, "connor", clean_text, _q)

@@ -305,7 +305,8 @@ async def build_ability_block(
             from post_sentinel import build_context_parts
             profile_context, profile_live = await build_context_parts()
             if profile_context:
-                static_parts.append(profile_context)
+                # This background profile can change after each chat.
+                (parts if who == "connor" else static_parts).append(profile_context)
             if profile_live:
                 parts.append(profile_live)
         except Exception:

@@ -94,6 +94,11 @@ def attachments(meta):
     session_mode = (meta or {}).get("codex_session_mode")
     if session_mode in ("new", "resumed", "ephemeral", "resume_fallback"):
         item["codex_session_mode"] = session_mode
+    session_reason = (meta or {}).get("codex_session_reason")
+    if session_reason in ("no_confirmed_thread", "fixed_context_changed", "idle_expired",
+                          "turn_limit", "history_changed", "saved_reply_not_next",
+                          "no_new_messages", "context_budget", "validated_continuation"):
+        item["codex_session_reason"] = session_reason
     sources = (meta or {}).get('usage_sources')
     if isinstance(sources, dict):
         item['usage_sources'] = {

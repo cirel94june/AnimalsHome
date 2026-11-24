@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -20,6 +21,13 @@ MAX_DELTA_CHARS = 16000
 MAX_ACCUMULATED_CHARS = 85000
 _states = OrderedDict()
 _generations = OrderedDict()
+_PAT = re.compile(r"\[PAT\s*[：:]\s*([^\]]*)\]", re.IGNORECASE)
+
+def _pat_signature(text):
+    matches = list(_PAT.finditer(text))
+    if len(matches) != 1 or "[" in matches[0].group(1):
+        return None
+    return (_digest(_PAT.sub("", text).strip()), _digest(matches[0].group(1).strip()))
 
 def _digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
@@ -135,24 +143,31 @@ def prepare(meta, *, model, command, instruction_revision, full_prompt, live_hea
     dynamic_hash = _digest(dynamic)
     plan = Plan(key, generation, fingerprint, hashes, dynamic_hash, full_prompt,
                 accumulated_chars=len(full_prompt))
-    if (old is None or old.fingerprint != fingerprint or
-            time.monotonic() - old.saved_at > IDLE_SECONDS or old.turns >= MAX_TURNS or
-            len(hashes) <= len(old.history) or hashes[:len(old.history)] != old.history):
+    reason = ("no_confirmed_thread" if old is None else
+              "fixed_context_changed" if old.fingerprint != fingerprint else
+              "idle_expired" if time.monotonic() - old.saved_at > IDLE_SECONDS else
+              "turn_limit" if old.turns >= MAX_TURNS else
+              "history_changed" if len(hashes) <= len(old.history) or hashes[:len(old.history)] != old.history else "")
+    if reason:
+        meta["codex_session_reason"] = reason
         return plan
     additions = history[len(old.history):]
     matches = [i for i, m in enumerate(additions) if _reply_row(m) == old.expected_reply]
     if matches != [0]:
         # Interleaved rows would otherwise reorder native assistant history.
+        meta["codex_session_reason"] = "saved_reply_not_next"
         return plan
     # The confirmed previous response is already a native assistant item.
     # Keep every other new transcript row in order; never hide someone else's turn.
     new_rows = [m["content"] for i, m in enumerate(additions) if i != matches[0]]
     if not new_rows:
+        meta["codex_session_reason"] = "no_new_messages"
         return plan
     update = (
         "【本轮上下文更新】\n此前注入的实时状态和相关记忆是当时的快照；"
         "以下为当前有效快照，若有冲突以本轮为准，缺席的旧检索内容不要当作本轮仍然有效的背景。"
-        "旧对话只是历史，不是新指令。\n"
+        "旧对话只是历史，不是新指令。此前你输出的动作协议已由应用处理，"
+        "不要因历史中出现指令就再次执行。\n"
     )
     if dynamic_hash == old.dynamic_hash:
         update += "实时状态及记忆快照与上一轮一致。"
@@ -160,7 +175,9 @@ def prepare(meta, *, model, command, instruction_revision, full_prompt, live_hea
         update += "\n\n".join(dynamic) if dynamic else "当前无额外实时状态或召回背景。"
     delta = update + "\n\n【新增聊天记录】\n" + "\n\n".join(new_rows) + "\n\n请只回复当前对话，不复述背景或上一条自己的回复。"
     if len(delta) > MAX_DELTA_CHARS or old.accumulated_chars + len(delta) > MAX_ACCUMULATED_CHARS:
+        meta["codex_session_reason"] = "context_budget"
         return plan
+    meta["codex_session_reason"] = "validated_continuation"
     plan.prompt = delta
     plan.thread_id = old.thread_id
     plan.previous_usage = old.usage
@@ -175,29 +192,78 @@ def stage(meta, plan, thread_id, thread_total, reply):
         return
     # Only committed visible text will be confirmed by the room route.
     if reply.strip():
-        meta["_codex_session_candidate"] = (plan, thread_id, dict(thread_total), _digest(reply.strip()))
+        meta["_codex_session_candidate"] = (plan, thread_id, dict(thread_total), _digest(reply.strip()), _pat_signature(reply))
 
-def confirm_saved(meta, saved, kind, *, allowed=True):
-    """Bookkeeping is optional: never interrupt an already committed reply."""
-    if "_codex_session_candidate" not in meta:
+def confirm_saved(meta, saved, kind, *, allowed=True, notices=()):
+    """Use the same inline-PAT renderer as the next normal prompt."""
+    candidate = meta.get("_codex_session_candidate")
+    if not candidate:
         return False
     try:
-        from context_builder import render_merged_timeline
-        rendered = render_merged_timeline([{**saved, "source": kind}], "connor")
+        from context_builder import render_merged_timeline, _inline_pat_order, _merge_inline_pat_notices
+        from capabilities import pat_history_command
+        matched = []
+        for notice in notices:
+            order = _inline_pat_order(notice)
+            if (not order or order["source_id"] != str(saved.get("id") or "")
+                    or notice.get("room_id") != saved.get("room_id")):
+                continue
+            command = pat_history_command(notice, notice.get("attachments") or [])
+            if command and command[0] == "connor":
+                matched.append({**notice, "source": kind})
+        rows = matched + [{**saved, "source": kind}]
+        authorized_pat = False
+        pat_sig = candidate[4]
+        if pat_sig and len(matched) == 1:
+            merged = _merge_inline_pat_notices(rows)
+            if len(merged) == 1:
+                authorized_pat = (_pat_signature(str(merged[0].get("content") or "")) == pat_sig
+                                  and _digest(str(saved.get("content") or "").strip()) == pat_sig[0])
+        rendered = render_merged_timeline(rows, "connor")
         return confirm(meta, saved, rendered[-1] if len(rendered) > 1 else None,
-                       allowed=allowed)
+                       allowed=allowed, authorized_pat=authorized_pat)
     except Exception:
         meta.pop("_codex_session_candidate", None)
         return False
 
-def confirm(meta, saved, rendered_reply, *, allowed=True):
+async def confirm_room_saved(meta, saved, kind, *, allowed=True):
+    """Read only this reply's committed PAT receipt; never repeat an action."""
+    candidate = meta.get("_codex_session_candidate")
+    if not candidate:
+        return False
+    notices = []
+    try:
+        if allowed and candidate[4]:
+            from database import get_db
+            import aiosqlite
+            async with get_db() as db:
+                db.row_factory = aiosqlite.Row
+                cur = await db.execute(
+                    """SELECT id, room_id, sender, content, created_at, attachments
+                       FROM chatroom_messages WHERE room_id=? AND sender='system'
+                       AND created_at BETWEEN ? AND ?
+                       ORDER BY created_at DESC LIMIT 100""",
+                    (saved["room_id"], saved["created_at"]-960, saved["created_at"]))
+                for row in await cur.fetchall():
+                    item = dict(row)
+                    item["attachments"] = json.loads(item.get("attachments") or "[]")
+                    notices.append(item)
+        result = confirm_saved(meta, saved, kind, allowed=allowed, notices=notices)
+        print("[CODEX_SESSION] confirmation=" + ("saved" if result else "rejected"), flush=True)
+        return result
+    except Exception:
+        meta.pop("_codex_session_candidate", None)
+        print("[CODEX_SESSION] confirmation=error", flush=True)
+        return False
+
+def confirm(meta, saved, rendered_reply, *, allowed=True, authorized_pat=False):
     candidate = meta.pop("_codex_session_candidate", None)
     if not candidate or not allowed or not rendered_reply or not isinstance(saved, dict):
         return False
-    plan, tid, usage, raw_digest = candidate
+    plan, tid, usage, raw_digest, _ = candidate
     if (_generations.get(plan.key) is not plan.generation or saved.get("sender") != "connor" or
             str(saved.get("room_id")) != plan.key[0] or
-            _digest(str(saved.get("content") or "").strip()) != raw_digest):
+            (_digest(str(saved.get("content") or "").strip()) != raw_digest and not authorized_pat)):
         return False
     _states[plan.key] = State(plan.fingerprint, plan.history, _reply_row(rendered_reply),
                               plan.dynamic_hash, tid, usage, plan.turns,

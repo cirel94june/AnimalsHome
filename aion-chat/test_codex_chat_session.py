@@ -81,6 +81,49 @@ class SessionTests(unittest.TestCase):
         meta={};s.begin(meta,"a","private",30);p=plan(meta,build([a,saved,c],"later"))
         self.assertEqual(p.thread_id,"tid")
         self.assertIn("next",p.prompt)
+    def test_confirmed_pat_matches_real_folded_transcript(self):
+        from context_builder import render_merged_timeline
+        a={"id":"a","source":"private","sender":"user","content":"hello","created_at":100}
+        saved={"id":"b","room_id":"a","source":"private","sender":"connor","content":"answer next","created_at":102}
+        event={"id":"pat_x","room_id":"a","source":"private","sender":"system","content":"notice",
+               "created_at":101,"attachments":[{"type":"pat","actor":"connor","text":"摸摸猫"},
+               {"type":"system_model_context"},{"type":"system_notice_order","after_msg_id":"b","inline_offset":6}]}
+        c={"id":"c","source":"private","sender":"user","content":"next question","created_at":103}
+        def build(rows, clock):
+            return [m("fox"),m(clock,tag="live")]+render_merged_timeline(rows,"connor")
+        for notices, expected in [((),False),([event],True)]:
+            meta={};s.begin(meta,"a","private",30);p=plan(meta,build([a],"today"))
+            s.stage(meta,p,"tid",{"inputTokens":100,"outputTokens":5},"answer[PAT:摸摸猫] next")
+            self.assertEqual(s.confirm_saved(meta,saved,"private",notices=notices),expected)
+        meta={};s.begin(meta,"a","private",30)
+        p=plan(meta,build([a,event,saved,c],"later"))
+        self.assertEqual(p.thread_id,"tid")
+        self.assertIn("next question",p.prompt)
+        self.assertNotIn("[PAT:摸摸猫]",p.prompt)
+        self.assertEqual(meta["codex_session_reason"],"validated_continuation")
+    def test_wrong_pat_or_other_changed_text_never_confirms(self):
+        saved={"id":"b","room_id":"a","source":"private","sender":"connor","content":"answer","created_at":102}
+        event={"id":"pat_x","room_id":"a","source":"private","sender":"system","content":"notice",
+               "created_at":101,"attachments":[{"type":"pat","actor":"connor","text":"wrong action"},
+               {"type":"system_model_context"},{"type":"system_notice_order","after_msg_id":"b","inline_offset":6}]}
+        for raw in ("answer[PAT:other action]","answer[PAT:wrong action][WEB_SEARCH:x]"):
+            meta={};s.begin(meta,"a","private",30);p=plan(meta,context(row("first")))
+            s.stage(meta,p,"tid",{"inputTokens":100,"outputTokens":5},raw)
+            self.assertFalse(s.confirm_saved(meta,saved,"private",notices=[event]))
+    def test_live_profile_updates_without_changing_fixed_permissions(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+        import context_builder as cb
+        import post_sentinel
+        with patch.object(cb,"build_capability_prompt_items",AsyncMock(return_value=["fixed ability"])), \
+             patch.object(cb,"is_capability_enabled",return_value=False), \
+             patch.object(cb,"get_device_context_for_prompt",return_value=""), \
+             patch.object(cb,"build_cli_file_storage_text",return_value=""), \
+             patch.object(post_sentinel,"build_context_parts",AsyncMock(side_effect=[("profile A","state A"),("profile B","state B")])):
+            first=asyncio.run(cb.build_ability_block("cat",who="connor"))
+            second=asyncio.run(cb.build_ability_block("cat",who="connor"))
+        self.assertEqual(first.split(cb.LIVE_STATE_HEADING)[0],second.split(cb.LIVE_STATE_HEADING)[0])
+        self.assertIn("profile B",second.split(cb.LIVE_STATE_HEADING)[1])
     def test_attachments_fall_back(self):
         self.first();meta={};s.begin(meta,"a","private",30)
         messages=context(row("first"),row("answer"),row("next"))
