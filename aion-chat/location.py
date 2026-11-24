@@ -778,7 +778,8 @@ async def _notify_sentinel(old_state: str, new_state: str, status: dict, event_d
     # 也随机叫一位家人注意到小猫出门/回家。安全判断仍由哨兵负责，这里只是生活感。
     if not call_core and smart:
         call_core = True
-        core_reason = core_reason or "生活感唤醒：位置状态发生变化，即使行程已知，也让一位家人注意到。"
+        life_reason = "生活感唤醒：位置状态发生变化，即使行程已知，也让一位家人注意到。"
+        core_reason = f"{core_reason}\n{life_reason}" if core_reason else life_reason
         dispatch = {
             "sentinel_wake_target": "",
             "final_wake_targets": resolve_sentinel_wake_targets(
