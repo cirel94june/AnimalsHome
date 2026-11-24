@@ -75,9 +75,6 @@ def _diary_prompt(name: str, user_name: str, context_text: str, hub_day_block: s
         f"{hub_day_block}"
         f"请以{name}的身份、从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
         "日记可以记录你对这段时间的感想，只写值得记录或有感触的事，不用每件事都提起，不要记流水账。语气必须符合你的人设。"
-        "你可以自行决定是否发布一次朋友圈，朋友圈不用每次都发，有想吐槽或者感慨，或者搞笑的事情，或者用朋友圈隔空向别人喊话。"
-        f"涉及和{user_name}的亲密关系、她的身体、她的私人情感的内容只写进日记，不要发到朋友圈。\n"
-        "moment.expect_reply 表示发布朋友圈后是否希望别的角色来评论：true=希望有人回复，false=只发布。\n"
         f"你可以自行决定是否给{user_name}送一份图片小礼物。送礼应是更低概率的特殊事件，只在特殊日子，"
         "或聊天中确实有特别温馨、感动、有意义、值得纪念的内容时才送；不要为了完成任务而送礼。\n"
         "givegift 为 true 时，gift.image_prompt 填写英文生图提示词，gift.message 填写符合你人设、自然真挚的赠言；"
@@ -85,8 +82,6 @@ def _diary_prompt(name: str, user_name: str, context_text: str, hub_day_block: s
         "严格只输出 JSON，不要输出 Markdown，不要解释：\n"
         "{\n"
         '  "diary": {"title": "日记标题", "content": "日记正文", "mood": "此刻心情"},\n'
-        '  "post_moment": false,\n'
-        '  "moment": {"content": "朋友圈内容，post_moment 为 false 时留空", "expect_reply": false},\n'
         '  "givegift": false,\n'
         '  "gift": {"image_prompt": "英文生图提示词，givegift 为 false 时留空", "message": "赠言，givegift 为 false 时留空"}\n'
         "}"
@@ -119,7 +114,7 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
     from ai_providers import CLI_STATUS_PREFIX, stream_ai
     from diary import (
         auto_diary_due, broadcast_diary_entry, build_diary_entry, insert_diary_entry, normalize_diary_payload,
-        parse_diary_payload, publish_ai_moment,
+        parse_diary_payload,
     )
 
     now = now or time.time()
@@ -173,7 +168,7 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
         raw = ""
 
     data = parse_diary_payload(raw) if raw else None
-    diary_entry, moment_entry = normalize_diary_payload(data) if data else ({}, None)
+    diary_entry, _ = normalize_diary_payload(data) if data else ({}, None)
     entry = build_diary_entry(
         author=seat,
         title=diary_entry.get("title", ""),
@@ -200,15 +195,6 @@ async def maybe_write_seat_diary(seat: str, *, now: float | None = None) -> str:
         await db.commit()
     await broadcast_diary_entry(entry)
 
-    from capabilities import is_capability_enabled
-    if moment_entry and moment_entry.get("content") and is_capability_enabled("moment"):
-        from routes.moments import MAX_AI_MOMENT_CHARS
-        await publish_ai_moment(
-            author=seat,
-            content=str(moment_entry.get("content") or "")[:MAX_AI_MOMENT_CHARS],
-            expect_reply=bool(moment_entry.get("expect_reply")),
-            source_conv=f"seat_diary:{seat}",
-        )
     try:
         from gift import send_gift_from_decision
         await send_gift_from_decision(data, sender=seat)
