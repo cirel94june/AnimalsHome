@@ -923,72 +923,8 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
     if total_new == 0:
         return {"ok": True, "message": f"总结完成：处理了 {len(msgs)} 条消息，但没有产出新的有效记忆；锚点已保留，可稍后重试", "new_memories_count": 0, "processed_messages": len(msgs)}
 
-    # ── 总结完成后：生成日记；可选发布朋友圈 ──
+    # 日记由统一每日调度器处理；保留愿望使用的目标房间。
     target_room_id = connor_room["id"] if connor_room else (group_room["id"] if group_room else None)
-    from diary import auto_diary_due
-    if all_summaries and not digest_incomplete and await auto_diary_due("connor"):
-        try:
-            connor_persona = _read_connor_persona()
-            from diary import diary_material_since_last
-            summaries_text = await diary_material_since_last("connor") or "\n".join(f"- {s}" for s in all_summaries)
-            context_lines = []
-            for m in msgs[-30:]:
-                content = (m.get("content") or "").strip()
-                if not content:
-                    continue
-                source_label = "群聊" if m.get("_source") == "group" else "私聊"
-                ts = time.strftime("%m-%d %H:%M", time.localtime(m["created_at"]))
-                name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m["sender"], m["sender"])
-                context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
-            context_text = "\n".join(context_lines)
-            time_str = now_text()
-            from hub_day import day_text  # 这位 AI 今天在别处（群里、TG）的经历
-            hub_day_block = await day_text("connor", user_name)
-            diary_prompt = (
-                f"{persona_block}"
-                f"当前时间：{time_str}\n\n"
-                f"你是{connor_name}。你刚刚整理了和{user_name}今天的聊天记忆，以下是你整理出的摘要：\n"
-                f"{summaries_text}\n\n"
-                f"【最近上下文】\n{context_text}\n\n"
-                f"{hub_day_block}"
-                f"请从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
-                f"把这篇日记当作今天的一次完整回顾：回想自己今天截至现在经历过、在意过、想过的事，只写真正值得留下的，不用面面俱到，也不要记成流水账。语气必须符合你的人设。"
-                f"你可以自行决定是否给{user_name}送一份图片小礼物。送礼应是更低概率的特殊事件，只在特殊日子，或聊天中确实有特别温馨、感动、有意义、值得纪念的内容时才送；不要为了完成任务而送礼，也不要用礼物重复日记或朋友圈已经表达的普通感想。\n"
-                f"givegift 为 true 时，gift.image_prompt 填写英文生图提示词，gift.message 填写符合你人设、自然真挚的赠言；为 false 时两项留空。\n\n"
-                f"严格只输出 JSON，不要输出 Markdown，不要解释：\n"
-                f"{{\n"
-                f"  \"diary\": {{\"title\": \"日记标题\", \"content\": \"日记正文\", \"mood\": \"此刻心情\"}},\n"
-                f"  \"givegift\": false,\n"
-                f"  \"gift\": {{\"image_prompt\": \"英文生图提示词，givegift 为 false 时留空\", \"message\": \"赠言，givegift 为 false 时留空\"}}\n"
-                f"}}"
-            )
-            diary_text = await simple_connor_cli_call(
-                diary_prompt,
-                model_key,
-                trace_label="chatroom_digest_diary",
-            )
-
-            from diary import normalize_diary_payload, parse_diary_payload, save_diary_entry
-            diary_data = parse_diary_payload(diary_text)
-            if diary_data:
-                diary_entry, _ = normalize_diary_payload(diary_data)
-                await save_diary_entry(
-                    author="connor",
-                    title=diary_entry.get("title", ""),
-                    content=diary_entry.get("content", ""),
-                    mood=diary_entry.get("mood", ""),
-                    source_type="chatroom_digest",
-                    source_ref=target_room_id or anchor_key,
-                    source_start_ts=msgs[0]["created_at"],
-                    source_end_ts=msgs[-1]["created_at"],
-                )
-                try:
-                    from gift import send_gift_from_decision
-                    await send_gift_from_decision(diary_data, sender="connor")
-                except Exception as e:
-                    print(f"[chatroom_digest] 执行送礼决定失败: {e}")
-        except Exception as e:
-            print(f"[chatroom_digest] 生成日记失败: {e}")
 
     ai_wish_created = False
     if allow_ai_wishes and total_new > 0 and all_summaries and not digest_incomplete:
@@ -1423,23 +1359,35 @@ def connor_1v1_on_message():
 
 
 async def _connor_1v1_auto_digest_loop():
-    """后台循环：每 5 分钟检查一次，若 Connor 相关聊天已 30 分钟无新消息则自动总结"""
-    global _connor_digest_armed
+    """数据库是待总结状态的来源，重启及不足40条不再丢失触发。"""
+    last_attempted = 0.0
+    last_attempt_at = 0.0
+    attempts = 0
     while True:
         await asyncio.sleep(5 * 60)
         try:
-            if not _connor_digest_armed:
+            async with get_db() as db:
+                cur = await db.execute("SELECT anchor_ts FROM chatroom_digest_anchors WHERE room_id='connor_unified'")
+                row = await cur.fetchone()
+                anchor = float(row[0]) if row else 0.0
+                cur = await db.execute(
+                    "SELECT COUNT(*),MAX(m.created_at) FROM chatroom_messages m "
+                    "JOIN chatroom_rooms r ON r.id=m.room_id "
+                    "WHERE m.created_at>? AND m.sender!='system' AND r.type IN ('connor_1v1','group') "
+                    "AND NOT EXISTS (SELECT 1 FROM homecoming_summary_coverage h WHERE h.owner_id='second' AND h.message_id=m.id)",
+                    (anchor,))
+                count, latest = await cur.fetchone()
+            if count < 40 or not latest or time.time() - latest < 30 * 60:
                 continue
-            if _connor_last_msg_ts == 0:
+            if latest != last_attempted:
+                attempts = 0
+            elif attempts >= 2 or time.time()-last_attempt_at < 3600:
                 continue
-            elapsed = time.time() - _connor_last_msg_ts
-            if elapsed < 30 * 60:
-                continue
-            print(f"[chatroom_auto_digest] Connor 相关聊天已 {elapsed/60:.0f} 分钟无新消息，开始自动总结")
+            last_attempted = latest
+            last_attempt_at = time.time()
+            attempts += 1
             result = await digest_chatroom(allow_ai_wishes=True)
             print(f"[chatroom_auto_digest] {result.get('message', '')}")
-            # 总结完成后解除 armed，避免没有新消息时重复总结
-            _connor_digest_armed = False
         except asyncio.CancelledError:
             break
         except Exception as e:

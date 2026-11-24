@@ -1453,92 +1453,9 @@ async def _do_digest(min_messages: int = 0, allow_ai_wishes: bool = False) -> di
         "moment_published": False,
         "message": "本轮没有新记忆，不生成日记",
     }
-    from diary import auto_diary_due
-    if model_failure_detected:
-        diary_generation["message"] = "记忆总结模型调用失败，本轮已熔断后续模型调用"
-    elif digest_incomplete:
-        diary_generation["message"] = "记忆总结未完整完成，本轮不生成日记"
-    elif total_new > 0 and all_summaries and await auto_diary_due("aion"):
-        try:
-            # 使用本轮已合并排序的新消息，避免把总结产物或旧私聊尾巴重新喂给模型。
-            context_msgs = [
-                {"role": m["role"], "content": m["content"][:300]}
-                for m in new_msgs[-30:]
-                if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
-            ]
-            connor_name = _connor_display_name()
-            context_lines = []
-            for m in new_msgs[-30:]:
-                content = (m.get("content") or "").strip()
-                if not content:
-                    continue
-                ts = datetime.fromtimestamp(m["created_at"]).strftime("%m-%d %H:%M")
-                src = m.get("_source", "private")
-                if src == "group":
-                    name = {"user": user_name, "aion": ai_name, "connor": connor_name, **seat_names()}.get(m.get("sender"), m.get("sender", ""))
-                else:
-                    name = user_name if m.get("role") == "user" else ai_name
-                source_label = "群聊" if src == "group" else "私聊"
-                context_lines.append(f"[{ts}][{source_label}] {name}: {content[:300]}")
-            context_text = "\n".join(context_lines)
-            from diary import diary_material_since_last
-            summaries_text = await diary_material_since_last("aion") or "\n".join(f"- {s}" for s in all_summaries)
-            time_str = now_text()
-            from hub_day import day_text  # 这位 AI 今天在别处（群里、TG）的经历
-            hub_day_block = await day_text("aion", user_name)
-            diary_prompt = (
-                f"{persona_block}"
-                f"当前时间：{time_str}\n\n"
-                f"你是{ai_name}。你刚刚整理了和{user_name}今天的聊天记忆，以下是你整理出的摘要：\n"
-                f"{summaries_text}\n\n"
-                f"【最近上下文】\n{context_text}\n\n"
-                f"{hub_day_block}"
-                f"请从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
-                f"把这篇日记当作今天的一次完整回顾：回想自己今天截至现在经历过、在意过、想过的事，只写真正值得留下的，不用面面俱到，也不要记成流水账。语气必须符合你的人设。"
-                f"你可以自行决定是否给{user_name}送一份图片小礼物。送礼应是更低概率的特殊事件，只在特殊日子，或聊天中确实有特别温馨、感动、有意义、值得纪念的内容时才送；不要为了完成任务而送礼，也不要用礼物重复日记或朋友圈已经表达的普通感想。\n"
-                f"givegift 为 true 时，gift.image_prompt 填写英文生图提示词，gift.message 填写符合你人设、自然真挚的赠言；为 false 时两项留空。\n\n"
-                f"直接输出JSON，不要解释，不要说话，不要输出 Markdown：\n"
-                f"{{\n"
-                f"  \"diary\": {{\"title\": \"日记标题\", \"content\": \"日记正文\", \"mood\": \"此刻心情\"}},\n"
-                f"  \"givegift\": false,\n"
-                f"  \"gift\": {{\"image_prompt\": \"英文生图提示词，givegift 为 false 时留空\", \"message\": \"赠言，givegift 为 false 时留空\"}}\n"
-                f"}}"
-            )
-            diary_messages = context_msgs + [{"role": "user", "content": diary_prompt}]
-            diary_data, diary_generation = await _generate_digest_diary(diary_messages, model_key)
-
-            from diary import normalize_diary_payload, save_diary_entry
-            if diary_data:
-                diary_entry, _ = normalize_diary_payload(diary_data)
-                saved_diary = await save_diary_entry(
-                    author="aion",
-                    title=diary_entry.get("title", ""),
-                    content=diary_entry.get("content", ""),
-                    mood=diary_entry.get("mood", ""),
-                    source_type="memory_digest",
-                    source_ref=conv_id or "",
-                    source_start_ts=new_msgs[0]["created_at"],
-                    source_end_ts=new_msgs[-1]["created_at"],
-                )
-                diary_generation["diary_saved"] = bool(saved_diary)
-                try:
-                    from gift import send_gift_from_decision
-                    await send_gift_from_decision(diary_data, sender="aion")
-                except Exception as e:
-                    print(f"[digest] 执行送礼决定失败: {e}")
-                diary_generation["message"] = "日记已生成"
-        except Exception as e:
-            print(f"[digest] 生成日记失败: {e}")
-            diary_generation = {
-                **diary_generation,
-                "ok": False,
-                "diary_saved": False,
-                "moment_published": False,
-                "message": f"日记保存阶段失败：{type(e).__name__}",
-            }
-    elif total_new > 0 and all_summaries:
-        diary_generation["ok"] = True
-        diary_generation["message"] = "距离上一篇自动日记不足24小时，本轮只整理记忆"
+    # 日记改为独立每日调度；不再阻塞记忆总结后的其他能力。
+    diary_generation["ok"] = bool(total_new > 0 and all_summaries and not model_failure_detected and not digest_incomplete)
+    diary_generation["message"] = "日记由独立每日调度处理"
 
     followup_model_calls_allowed = bool(diary_generation.get("ok"))
 

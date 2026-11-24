@@ -232,8 +232,8 @@ async def lifespan(app: FastAPI):
     memory_hub_jobs_task = asyncio.create_task(memory_hub_jobs.jobs_worker())
     import moments_hub_sync
     moments_hub_task = asyncio.create_task(moments_hub_sync.sync_loop())  # 新朋友圈和评论送进 Hub
-    import seat_diary
-    seat_diary_task = asyncio.create_task(seat_diary.seat_diary_loop())  # 狗蛋等座位写日记
+    import daily_diary
+    seat_diary_task = asyncio.create_task(daily_diary.daily_diary_loop())  # 全家统一日记调度
     import patrol_control
     patrol_resume_task = asyncio.create_task(patrol_control.resume_loop())  # AI 说「巡逻停 3 小时」到点自动恢复
     import garden_wake

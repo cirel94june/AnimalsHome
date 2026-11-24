@@ -743,6 +743,18 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
     ]
     if _is_seat(actor):
         enabled = [key for key in enabled if key in SEAT_ACTIONS]
+    from capabilities import is_capability_enabled
+    if "post_moment" in enabled and not is_capability_enabled("moment"):
+        enabled.remove("post_moment")
+    moment_hint = ""
+    if "post_moment" in enabled:
+        async with get_db() as db:
+            cur = await db.execute("SELECT MAX(created_at) FROM moments WHERE author=?", (actor,))
+            last = (await cur.fetchone())[0]
+        if not last or time.time() - float(last) >= 2 * 3600:
+            moment_hint = ("你也可以在选择其他活动时，顺手分享一条此刻已经有的公开生活感想。"
+                           "有真正想分享的内容才填 moment_content，否则留空；不能泄露私聊、健康或亲密信息，"
+                           "不能把尚未做的活动说成已经完成。它与日记无关，不是必须发。\n")
     if "travel" in enabled:
         import travel
         from memory_hub_jobs import own_model
@@ -826,13 +838,14 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         "reason 请保留你选择它的真实动机。"
         + (f"如果选 role_chat，可以在 target 里写想找谁聊的编号（{_partner_hint(actor)}，写等号前的编号），不写就由系统安排。"
            if "role_chat" in enabled else "")
-        + "如果 action 是 private_chat 或 role_chat，message 就是本次要实际发送的正式聊天正文："
+        + "如果 action 是 private_chat、role_chat 或 post_moment，message 就是本次要实际发送的正文："
         "private_chat 是对用户说，role_chat 是对另一位家庭成员说，post_moment 是全家可见的朋友圈。"
         "朋友圈不要泄露用户私聊里的身体、私密情感或其他不适合公开的内容。"
         "请直接以你自身人格像平时聊天一样自然完整地表达，由你决定篇幅、段落和表达形式；"
         "可以有符合平时习惯的内心活动，但不要机械套模板，不要写成行动说明，也不要刻意压短。"
         "其他动作的 message 留空。\n"
-        '格式：{"action":"上面的key之一","reason":"选择这个动作的理由","message":"聊天动作要实际发送的完整正文，其他动作为空","target":""}'
+        + moment_hint
+        + '格式：{"action":"上面的key之一","reason":"选择这个动作的理由","message":"聊天或发朋友圈时的正文，其他动作为空","target":"","moment_content":"可选的独立公开感想"}'
     )
     # 11-03 小猫：小克总是「觉得没什么想做」，其实是调用失败 / 回的不是 JSON 被兜底成休息。
     # 现在失败或读不懂时再问一次；还不行就如实记成「没醒成」并写下原因，不再假装是他自己想休息
@@ -869,12 +882,16 @@ def _parse_action_choice(data, enabled) -> dict | None:
     if action in {"private_chat", "role_chat", "post_moment"} and not message:
         return None
     target = data.get("target")
-    return {
+    result = {
         "action": action,
         "reason": str(data.get("reason") or "").strip(),
         "message": message if action in {"private_chat", "role_chat", "post_moment"} else "",
         "target": target.strip() if action == "role_chat" and isinstance(target, str) else "",
     }
+    extra = data.get("moment_content")
+    if action != "post_moment" and "post_moment" in enabled and isinstance(extra, str) and extra.strip():
+        result["moment_content"] = extra.strip()
+    return result
 
 
 async def _run_private_chat(actor: str, selected: dict | None = None) -> dict:
@@ -2534,6 +2551,24 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         selected.get("reason", ""),
         metadata={"selected_action": action, "manual": manual, "session_id": session_id},
     )
+    # 顺手分享复用已经发生的自主决策调用，不与日记绑定。
+    extra = selected.get("moment_content")
+    if extra and action != "post_moment":
+        try:
+            cfg = await get_actor_config(actor)
+            async with get_db() as db:
+                cur = await db.execute("SELECT MAX(created_at) FROM moments WHERE author=?", (actor,))
+                last = (await cur.fetchone())[0]
+            if cfg.get("actions", {}).get("post_moment", False) and (not last or time.time()-float(last)>=7200):
+                if _is_seat(actor):
+                    verify_seat_pin(actor)
+                shared_moment = await _run_post_moment(actor, {"message": extra})
+                moment = shared_moment.get("moment")
+                if moment:
+                    await append_idle_event(actor, "post_moment", f"{actor_name}分享了朋友圈",
+                                            _clip(moment["content"]), result_type="moment", result_id=moment["id"])
+        except Exception as exc:
+            log.warning("[autonomy] %s optional Moment failed: %s", actor, type(exc).__name__)
     try:
         if action == "rest":
             result = {}
