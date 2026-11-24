@@ -24,6 +24,7 @@ MAX_STATE_CHARS = 800
 ACTION_IDS = (
     "rest",
     "private_chat",
+    "post_moment",
     "role_chat",
     "billiards_play",
     "home_dynamics",

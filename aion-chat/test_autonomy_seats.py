@@ -60,7 +60,7 @@ def _offered_actions(env, monkeypatch, actor):
 
 def test_seat_only_gets_seat_safe_actions_and_outing_when_possible(env, monkeypatch):
     offered = _offered_actions(env, monkeypatch, "ai3")
-    assert offered == {"rest", "private_chat", "web_roam", "wish_pool", "travel", "taobao_roam",
+    assert offered == {"rest", "private_chat", "post_moment", "web_roam", "wish_pool", "travel", "taobao_roam",
                        "role_chat", "home_dynamics", "memory_browse"}  # 还没有可去的 MCP 地方；小红书没配好不提供
 
     mcp_outings.save_tool({"name": "小论坛", "url": "https://forum.example/mcp", "autonomy": True})
@@ -77,6 +77,21 @@ def test_seat_only_gets_seat_safe_actions_and_outing_when_possible(env, monkeypa
         assert "travel" not in _offered_actions(env, monkeypatch, "ai3")  # 别人正在旅行时不提供
     finally:
         travel.release()
+
+
+def test_post_moment_is_independent_autonomy_action(env, monkeypatch):
+    import diary
+    publish = AsyncMock(return_value={"id": "m1", "content": "今天想发这个"})
+    monkeypatch.setattr(diary, "publish_ai_moment", publish)
+    import capabilities
+    monkeypatch.setattr(capabilities, "is_capability_enabled", lambda name: True)
+
+    result = asyncio.run(autonomy._run_post_moment("ai3", {"message": "今天想发这个"}))
+    assert result["moment"]["id"] == "m1"
+    publish.assert_awaited_once()
+    assert publish.await_args.kwargs["author"] == "ai3"
+    assert publish.await_args.kwargs["source_conv"] == "idle_autonomy"
+
 
 
 def test_disabled_seat_never_wakes(env):

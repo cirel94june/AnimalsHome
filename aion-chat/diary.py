@@ -8,6 +8,8 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from database import get_db
@@ -15,7 +17,7 @@ from model_json import extract_json_object
 from ws import manager
 
 
-AUTO_DIARY_MIN_INTERVAL_SECONDS = int(os.getenv("AUTO_DIARY_MIN_INTERVAL_SECONDS", str(6 * 60 * 60)))
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 
@@ -73,18 +75,21 @@ async def diary_material_since_last(author: str, *, now: float | None = None,
     return "\n".join(lines)
 
 
-async def auto_diary_due(author: str, *, now: float | None = None,
-                         min_interval_seconds: int = AUTO_DIARY_MIN_INTERVAL_SECONDS) -> bool:
-    """自动日记的轻量限频：距离这个角色上一篇日记至少一个间隔才允许再次调用模型。
+async def auto_diary_due(author: str, *, now: float | None = None) -> bool:
+    """按北京时间自然日限频：每个角色每天最多一篇自动日记。
 
-    这里只查本地数据库，不调用模型。朋友圈仍由真正写日记时的模型自行决定是否发布。
+    不按“距离上一篇满多少小时”计算。昨天深夜写过，今天白天仍可写；
+    今天一旦写过，无论几点，都等到下一个自然日再写。
     """
     now = time.time() if now is None else float(now)
+    today = datetime.fromtimestamp(now, BEIJING_TZ).date()
     async with get_db() as db:
         cur = await db.execute("SELECT MAX(created_at) FROM diary_entries WHERE author=?", (author,))
         row = await cur.fetchone()
     last = float(row[0]) if row and row[0] else 0.0
-    return not last or now - last >= max(0, int(min_interval_seconds))
+    if not last:
+        return True
+    return datetime.fromtimestamp(last, BEIJING_TZ).date() < today
 
 
 def _is_diary_payload(data: Any) -> bool:
