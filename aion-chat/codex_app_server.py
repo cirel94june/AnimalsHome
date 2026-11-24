@@ -20,11 +20,17 @@ class CodexAppServerError(RuntimeError):
     """A bounded, user-safe App Server transport or turn failure."""
 
 
+class CodexResumeError(CodexAppServerError):
+    """Resume failed before a new turn was sent; safe to start fresh."""
+
+
 @dataclass(frozen=True)
 class CodexAppServerEvent:
     kind: str
     text: str = ""
     usage: dict | None = None
+    thread_id: str = ""
+    thread_total: dict | None = None
 
 
 def build_codex_app_server_command(
@@ -147,8 +153,11 @@ async def stream_codex_app_server(
     image_paths: list[str] | tuple[str, ...],
     reasoning_summary: str,
     spawn: Callable[..., Awaitable[object]] | None = None,
+    persistent: bool = False,
+    resume_thread_id: str = "",
+    previous_usage: dict | None = None,
 ) -> AsyncIterator[CodexAppServerEvent]:
-    """Start one ephemeral App Server turn and stream normalized events."""
+    """Run a single turn; opt-in persistent threads can resume across processes."""
 
     spawn_process = spawn or asyncio.create_subprocess_exec
     process = await spawn_process(
@@ -170,6 +179,7 @@ async def stream_codex_app_server(
     last_text_flush = time.monotonic()
     final_text = ""
     reasoning_started = False
+    thread_total = None
 
     try:
         await _request(
@@ -187,22 +197,26 @@ async def stream_codex_app_server(
         )
         await _write_json(process.stdin, {"method": "initialized", "params": {}})
 
-        thread_result = await _request(
-            process,
-            2,
-            "thread/start",
-            {
-                "model": model,
-                "cwd": cwd,
-                "approvalPolicy": "never",
-                "sandbox": "read-only",
-                "ephemeral": True,
-            },
-            pending,
-        )
-        thread_id = str((thread_result.get("thread") or {}).get("id") or "")
-        if not thread_id:
-            raise CodexAppServerError("thread/start returned no thread id")
+        thread_params = {"model": model, "cwd": cwd,
+                         "approvalPolicy": "never", "sandbox": "read-only"}
+        if resume_thread_id:
+            try:
+                thread_result = await _request(
+                    process, 2, "thread/resume",
+                    {**thread_params, "threadId": resume_thread_id, "excludeTurns": True}, pending)
+                thread_id = str((thread_result.get("thread") or {}).get("id") or "")
+                if thread_id != resume_thread_id:
+                    raise CodexAppServerError("resumed thread id mismatch")
+            except (CodexAppServerError, EOFError) as error:
+                raise CodexResumeError("Codex thread resume failed before turn") from error
+        else:
+            thread_result = await _request(process, 2, "thread/start",
+                {**thread_params, "ephemeral": not persistent}, pending)
+            thread_id = str((thread_result.get("thread") or {}).get("id") or "")
+            if not thread_id:
+                raise CodexAppServerError("thread/start returned no thread id")
+        # Resume may emit the old thread's notifications before the new turn.
+        pending.clear()
 
         inputs = [{"type": "text", "text": prompt}]
         inputs.extend(
@@ -263,8 +277,28 @@ async def stream_codex_app_server(
 
             if method == "thread/tokenUsage/updated":
                 token_usage = params.get("tokenUsage") or {}
-                usage = token_usage.get("total") or token_usage
-                if isinstance(usage, dict):
+                total = token_usage.get("total")
+                last = token_usage.get("last")
+                if isinstance(total, dict):
+                    thread_total = dict(total)
+                usage = total or token_usage
+                if resume_thread_id:
+                    # The app's existing counters are cumulative within ONE reply,
+                    # not across the lifetime of a resumed thread.
+                    before = previous_usage or {}
+                    if isinstance(total, dict) and before and all(
+                        type(total.get(k)) is int and type(before.get(k)) is int
+                        and total[k] >= before[k] for k in ("inputTokens", "outputTokens")):
+                        delta = {k: v-before[k] for k,v in total.items()
+                                 if type(v) is int and type(before.get(k)) is int and v >= before[k]}
+                        if delta.get("inputTokens", 0) > 0 and (
+                            not isinstance(last, dict) or delta["inputTokens"] >= last.get("inputTokens", 0)):
+                            usage = delta
+                        else:
+                            usage = last if isinstance(last, dict) else {}
+                    else:
+                        usage = last if isinstance(last, dict) else {}
+                if isinstance(usage, dict) and usage:
                     yield CodexAppServerEvent("usage", usage=usage)
                 yield CodexAppServerEvent("activity")
                 continue
@@ -294,7 +328,8 @@ async def stream_codex_app_server(
                     yield CodexAppServerEvent("text_delta", text=text_buffer)
                     text_buffer = ""
                 turn_completed = True
-                yield CodexAppServerEvent("completed")
+                yield CodexAppServerEvent("completed", thread_id=thread_id,
+                                          thread_total=thread_total)
                 break
 
             if method:

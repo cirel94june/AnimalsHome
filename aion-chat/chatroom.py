@@ -283,6 +283,9 @@ async def stream_connor_cli(prompt: str = None, *, messages: list[dict] = None, 
                 messages = [{"role": "system", "content": persona}] + messages
     messages = with_current_device_context(messages)
     codex_model = (MODELS.get("Codex") or {}).get("model", "")
+    if meta is not None:
+        import codex_chat_session
+        codex_chat_session.attach(meta, messages)
     messages = _without_context_tags(_cache_friendly_order(messages))
     if meta is not None:
         from cache_request_trace import bind_route

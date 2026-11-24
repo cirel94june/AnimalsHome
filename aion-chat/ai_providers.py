@@ -17,6 +17,7 @@ import tempfile
 from config import NO_ROUTE_HINT, get_key, MODELS, UPLOADS_DIR, ALBUM_IMAGES_DIR, CODEX_UPLOADS_DIR, SCREENSHOTS_DIR, SETTINGS, get_sentinel_config, DATA_DIR, resolve_model_key, is_model_deprecated, LIVE_STATE_HEADING, CUSTOM_OPENAI_PROVIDER
 from codex_app_server import (
     CodexAppServerEvent,
+    CodexResumeError,
     build_codex_app_server_command,
     stream_codex_app_server,
 )
@@ -2046,36 +2047,53 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
     )
 
     try:
+        import codex_chat_session
         env = _build_codex_chat_environment()
+        plan = codex_chat_session.prepare(
+            meta, model=model, command=cmd,
+            instruction_revision=_CODEX_COMPANION_INSTRUCTIONS_FILE.read_text(encoding="utf-8"),
+            full_prompt=prompt, live_heading=LIVE_STATE_HEADING)
+        if image_paths:
+            plan = None
         async with _codex_semaphore():
-            async for event in own_stream(stream_codex_app_server(
-                cmd,
-                env=env,
-                cwd=_CODEX_WORKSPACE,
-                model=model,
-                prompt=prompt,
-                image_paths=list(image_paths),
-                reasoning_summary=_codex_reasoning_summary(),
-            )):
-                if event.kind == "text_delta" and event.text:
-                    yield event.text
-                elif event.kind == "reasoning_delta" and event.text:
-                    if meta is not None:
-                        current = str(meta.get("reasoning_content") or "")
-                        meta["reasoning_content"] = current + event.text
-                    yield StreamActivity()
-                elif event.kind == "usage":
-                    normalized_usage = _normalize_codex_app_server_usage(event.usage)
-                    _apply_codex_usage_meta(
-                        meta,
-                        normalized_usage,
-                    )
-                    if meta is not None:
-                        from cache_request_trace import observe_usage
-                        observe_usage(meta, meta.get("raw") or normalized_usage)
-                    yield StreamActivity()
-                elif event.kind == "activity":
-                    yield StreamActivity()
+            while True:
+                chunks = []
+                options = {}
+                if plan:
+                    options = {"persistent": True, "resume_thread_id": plan.thread_id,
+                               "previous_usage": plan.previous_usage}
+                try:
+                    async for event in own_stream(stream_codex_app_server(
+                        cmd, env=env, cwd=_CODEX_WORKSPACE, model=model,
+                        prompt=plan.prompt if plan else prompt,
+                        image_paths=list(image_paths),
+                        reasoning_summary=_codex_reasoning_summary(), **options,
+                    )):
+                        if event.kind == "text_delta" and event.text:
+                            chunks.append(event.text)
+                            yield event.text
+                        elif event.kind == "reasoning_delta" and event.text:
+                            if meta is not None:
+                                current = str(meta.get("reasoning_content") or "")
+                                meta["reasoning_content"] = current + event.text
+                            yield StreamActivity()
+                        elif event.kind == "usage":
+                            normalized_usage = _normalize_codex_app_server_usage(event.usage)
+                            _apply_codex_usage_meta(meta, normalized_usage)
+                            if meta is not None:
+                                from cache_request_trace import observe_usage
+                                observe_usage(meta, meta.get("raw") or normalized_usage)
+                            yield StreamActivity()
+                        elif event.kind == "completed" and plan and meta is not None:
+                            codex_chat_session.stage(meta, plan, event.thread_id, event.thread_total, "".join(chunks))
+                        elif event.kind == "activity":
+                            yield StreamActivity()
+                    break
+                except CodexResumeError:
+                    if not plan or not plan.thread_id or chunks:
+                        raise
+                    # No new turn was sent. Retry the full authoritative prompt once.
+                    plan = None
     except FileNotFoundError:
         yield "[CodexCLI错误] 无法启动 Codex CLI 进程"
     except Exception as e:
@@ -2448,6 +2466,18 @@ async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, t
         or (cfg.get("provider") == CUSTOM_OPENAI_PROVIDER and cfg.get("cache_marker", True) is not False)
     ):
         normalized = _cache_friendly_order(normalized)
+    if cfg.get("provider") == "codex_cli" and meta is not None:
+        # Use pre-reorder tags for the continuation planner, but keep wire payload clean.
+        import codex_chat_session
+        original = []
+        for m in messages:
+            nm = dict(m)
+            if nm.get("role") in ("cam_user", "cam_trigger"):
+                nm["role"] = "user"
+            elif nm.get("role") == "cam_log":
+                nm["role"] = "assistant"
+            original.append(nm)
+        codex_chat_session.attach(meta, original)
     normalized = _without_context_tags(normalized)
 
     normalized = filter_audio_attachments_for_model(

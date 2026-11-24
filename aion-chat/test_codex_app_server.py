@@ -226,6 +226,29 @@ class CodexAppServerStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(usage["inputTokens"], 12)
         self.assertEqual(usage["cachedInputTokens"], 3)
 
+    async def test_resumed_turn_usage_is_not_thread_lifetime_total(self):
+        messages = _happy_messages()
+        event = next(m for m in messages if m.get("method") == "thread/tokenUsage/updated")
+        event["params"]["tokenUsage"] = {
+            "total":{"inputTokens":112,"cachedInputTokens":93,"outputTokens":13,
+                     "reasoningOutputTokens":4,"totalTokens":125},
+            "last":{"inputTokens":12,"cachedInputTokens":3,"outputTokens":8,
+                    "reasoningOutputTokens":4,"totalTokens":20},
+        }
+        process = _FakeProcess(messages)
+        async def spawn(*args, **kwargs):
+            return process
+        events = [e async for e in stream_codex_app_server(
+            ["codex"],env={},cwd="workspace",model="model",prompt="delta",
+            image_paths=[],reasoning_summary="auto",spawn=spawn,persistent=True,
+            resume_thread_id="thr_1",previous_usage={"inputTokens":100,"cachedInputTokens":90,
+            "outputTokens":5,"reasoningOutputTokens":0,"totalTokens":105})]
+        self.assertEqual(process.stdin.messages[2]["method"],"thread/resume")
+        self.assertEqual(process.stdin.messages[2]["params"]["threadId"],"thr_1")
+        self.assertEqual([e.usage for e in events if e.kind=="usage"][-1]["cachedInputTokens"],3)
+        self.assertEqual([e.usage for e in events if e.kind=="usage"][-1]["inputTokens"],12)
+        self.assertEqual(events[-1].thread_total["inputTokens"],112)
+
     async def test_failed_turn_raises_protocol_error_and_closes_process(self):
         messages = _happy_messages()[:3] + [
             {
