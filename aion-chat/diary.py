@@ -6,6 +6,7 @@ from generation_control import spawn_generation_task
 
 import asyncio
 import json
+import os
 import time
 from typing import Any, Optional
 
@@ -14,7 +15,7 @@ from model_json import extract_json_object
 from ws import manager
 
 
-AUTO_DIARY_MIN_INTERVAL_SECONDS = 24 * 60 * 60
+AUTO_DIARY_MIN_INTERVAL_SECONDS = int(os.getenv("AUTO_DIARY_MIN_INTERVAL_SECONDS", str(6 * 60 * 60)))
 
 
 
