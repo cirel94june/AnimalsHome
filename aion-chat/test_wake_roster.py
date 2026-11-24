@@ -208,13 +208,42 @@ def test_location_sentinel_failure_uses_the_random_suggestion(location_env):
     assert location_env.wake.await_args.args[0] == ["ai3"]
 
 
-def test_location_no_call_wakes_nobody(location_env):
+def test_location_smart_no_call_still_gets_one_companion_wake(location_env):
     location_env.mode("smart")
-    location_env.sentinel({"monitoringlog": "出门了", "call_core": False, "core_reason": "", "wake_target": "ai3"})
+    location_env.sentinel({"monitoringlog": "出门了", "call_core": False, "core_reason": "行程已知", "wake_target": "ai3"})
+    location_env.run()
+    location_env.core_location.assert_not_called()
+    args = location_env.wake.await_args.args
+    assert args[0] == ["ai3"]
+    assert "生活感唤醒" in args[4]
+    assert location_env.logs[-1]["final_wake_targets"] == ["ai3"]
+    assert location_env.logs[-1]["call_core"] is True
+
+
+def test_fixed_location_mode_still_respects_no_call(location_env):
+    location_env.mode("connor")
+    location_env.sentinel({"monitoringlog": "出门了", "call_core": False, "core_reason": ""})
     location_env.run()
     location_env.core_location.assert_not_called()
     location_env.wake.assert_not_called()
     assert location_env.logs[-1]["final_wake_targets"] == []
+
+
+def test_companion_wake_requires_silence_and_respects_recent_wake():
+    class Rng:
+        def __init__(self, value): self.value = value
+        def random(self): return self.value
+
+    now = 100_000.0
+    assert camera.should_companion_wake(now - 91 * 60, [], rng=Rng(0.1), now=now)
+    assert not camera.should_companion_wake(now - 60 * 60, [], rng=Rng(0.1), now=now)
+    assert not camera.should_companion_wake(
+        now - 3 * 3600,
+        [{"timestamp": now - 30 * 60, "final_wake_targets": ["aion"]}],
+        rng=Rng(0.1),
+        now=now,
+    )
+    assert not camera.should_companion_wake(now - 3 * 3600, [], rng=Rng(0.9), now=now)
 
 
 @pytest.mark.parametrize("asked", [["aion", "connor", "ai3"], ["ai3", "connor", "aion"], ["connor", "ai3", "aion", "ai4"]])

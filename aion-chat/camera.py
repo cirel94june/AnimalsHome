@@ -130,6 +130,30 @@ def suggest_wake_target(roster: list[dict], rng=random, now: float | None = None
     return rng.choices([item["id"] for item in roster], weights=weights, k=1)[0]
 
 
+COMPANION_SILENCE_MIN_SECONDS = 90 * 60
+COMPANION_WAKE_COOLDOWN_SECONDS = 2 * 3600
+COMPANION_WAKE_CHANCE = 0.35
+
+
+def should_companion_wake(last_user_ts: float, recent_logs: list[dict], *, rng=random, now: float | None = None) -> bool:
+    """普通巡逻无异常时的低频生活感唤醒。
+
+    不额外调用模型：只在本轮哨兵已经分析完、原本准备 call_core=false 时使用。
+    90 分钟没聊天才有资格；过去 2 小时已经叫过人就不再叫；其余 35% 概率叫一位。
+    """
+    now = now or time.time()
+    if not last_user_ts or now - last_user_ts < COMPANION_SILENCE_MIN_SECONDS:
+        return False
+    for entry in recent_logs or []:
+        try:
+            ts = float(entry.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        if ts and now - ts <= COMPANION_WAKE_COOLDOWN_SECONDS and (entry.get("final_wake_targets") or []):
+            return False
+    return rng.random() < COMPANION_WAKE_CHANCE
+
+
 def parse_wake_target_ids(value: object, allowed: list[str]) -> list[str]:
     """哨兵写的 wake_target → 名单里的 AI id（按名单顺序、去重）。支持逗号分隔多人；
     兼容旧值 main_ai / second_ai / both / aion / connor；all = 名单里所有人。不在名单里的丢掉。"""
@@ -1685,6 +1709,24 @@ class CameraMonitor:
             device_activity = ""
             inference = ""
             confidence = ""
+
+        if (not call_core
+                and normalize_camera_wake_mode(self.cfg.get("wake_mode", "aion")) == "smart"
+                and should_companion_wake(last_user_ts, recent_logs)):
+            call_core = True
+            core_reason = "生活感唤醒：已经较久没聊天，本轮没有异常，随机让一位家人来看看小猫。"
+            dispatch = {
+                "sentinel_wake_target": "",
+                "final_wake_targets": resolve_sentinel_wake_targets(
+                    True,
+                    "smart",
+                    "",
+                    roster_ids=roster_ids,
+                    suggested=suggested,
+                ),
+                "wake_reason": "长时间没聊天，低概率生活感唤醒；不是安全警报。",
+                "wake_confidence": "low",
+            }
 
         if call_core and patrol_gen is not None and not self.patrol_active(patrol_gen):
             print("[Monitor] 哨兵看完时巡逻已停或已换新一代，这次不叫人")
