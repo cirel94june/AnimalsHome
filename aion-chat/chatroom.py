@@ -953,15 +953,11 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                 f"{hub_day_block}"
                 f"请从你自己的视角写一篇私密日记，不是写给{user_name}看的聊天消息。"
                 f"日记可以记录你对这段记忆的感想，只写值得记录或有感触的事，不用每件事都提起，不要记流水账。语气必须符合你的人设。"
-                f"你可以自行决定是否发布一次朋友圈，朋友圈不用每次都发，有想吐槽或者感慨，或者搞笑的事情，或者用朋友圈隔空向对方喊话。\n"
-                f"moment.expect_reply 表示发布朋友圈后是否希望另一个角色主动评论：true=希望对方回复，false=只发布、不触发回复；请根据朋友圈内容和你当下是否想与对方互动自行决定。\n"
                 f"你可以自行决定是否给{user_name}送一份图片小礼物。送礼应是更低概率的特殊事件，只在特殊日子，或聊天中确实有特别温馨、感动、有意义、值得纪念的内容时才送；不要为了完成任务而送礼，也不要用礼物重复日记或朋友圈已经表达的普通感想。\n"
                 f"givegift 为 true 时，gift.image_prompt 填写英文生图提示词，gift.message 填写符合你人设、自然真挚的赠言；为 false 时两项留空。\n\n"
                 f"严格只输出 JSON，不要输出 Markdown，不要解释：\n"
                 f"{{\n"
                 f"  \"diary\": {{\"title\": \"日记标题\", \"content\": \"日记正文\", \"mood\": \"此刻心情\"}},\n"
-                f"  \"post_moment\": false,\n"
-                f"  \"moment\": {{\"content\": \"朋友圈内容，post_moment 为 false 时留空\", \"expect_reply\": false}},\n"
                 f"  \"givegift\": false,\n"
                 f"  \"gift\": {{\"image_prompt\": \"英文生图提示词，givegift 为 false 时留空\", \"message\": \"赠言，givegift 为 false 时留空\"}}\n"
                 f"}}"
@@ -972,10 +968,10 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                 trace_label="chatroom_digest_diary",
             )
 
-            from diary import normalize_diary_payload, parse_diary_payload, publish_ai_moment, save_diary_entry
+            from diary import normalize_diary_payload, parse_diary_payload, save_diary_entry
             diary_data = parse_diary_payload(diary_text)
             if diary_data:
-                diary_entry, moment_entry = normalize_diary_payload(diary_data)
+                diary_entry, _ = normalize_diary_payload(diary_data)
                 await save_diary_entry(
                     author="connor",
                     title=diary_entry.get("title", ""),
@@ -986,14 +982,6 @@ async def digest_chatroom(room_id: str = None, model_key: str = None, allow_ai_w
                     source_start_ts=msgs[0]["created_at"],
                     source_end_ts=msgs[-1]["created_at"],
                 )
-                if moment_entry and moment_entry.get("content"):
-                    await publish_ai_moment(
-                        author="connor",
-                        content=moment_entry.get("content", ""),
-                        expect_reply=bool(moment_entry.get("expect_reply")),
-                        source_conv=f"chatroom:{target_room_id}" if target_room_id else "chatroom:connor_unified",
-                        source_msg_id=None,
-                    )
                 try:
                     from gift import send_gift_from_decision
                     await send_gift_from_decision(diary_data, sender="connor")
