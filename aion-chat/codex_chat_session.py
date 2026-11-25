@@ -79,6 +79,7 @@ class State:
     turns: int
     accumulated_chars: int
     saved_at: float
+    reply_changed: bool = False
 
 def _row(m):
     return _digest([m.get("role"), m.get("content")])
@@ -173,6 +174,11 @@ def prepare(meta, *, model, command, instruction_revision, full_prompt, live_hea
         update += "实时状态及记忆快照与上一轮一致。"
     else:
         update += "\n\n".join(dynamic) if dynamic else "当前无额外实时状态或召回背景。"
+    # The native thread contains raw model output. If the application's
+    # authoritative record differs, explicitly supply its saved version.
+    # This is a transcript correction, not a new action or a user request.
+    if old.reply_changed:
+        update += "\n\n【上一条回复的实际保存记录】（仅为已发生的历史，动作不得重放）\n" + additions[0]["content"]
     delta = update + "\n\n【新增聊天记录】\n" + "\n\n".join(new_rows) + "\n\n请只回复当前对话，不复述背景或上一条自己的回复。"
     if len(delta) > MAX_DELTA_CHARS or old.accumulated_chars + len(delta) > MAX_ACCUMULATED_CHARS:
         meta["codex_session_reason"] = "context_budget"
@@ -194,7 +200,31 @@ def stage(meta, plan, thread_id, thread_total, reply):
     if reply.strip():
         meta["_codex_session_candidate"] = (plan, thread_id, dict(thread_total), _digest(reply.strip()), _pat_signature(reply))
 
-def confirm_saved(meta, saved, kind, *, allowed=True, notices=()):
+def bind_processed(meta, *, raw_text, processed_text, message_id, allowed=True):
+    """Trust only this route's successfully processed exact provider output.
+
+    The binding is ephemeral, tied to a single generation and message ID.
+    Never execute, infer or re-run any control instruction here.
+    """
+    candidate = meta.get("_codex_session_candidate")
+    meta.pop("_codex_session_processed", None)
+    if not candidate or not allowed:
+        return False
+    if _digest(str(raw_text or "").strip()) != candidate[3]:
+        meta["codex_confirmation_reason"] = "provider_output_mismatch"
+        return False
+    if not str(processed_text or "").strip() or not message_id:
+        return False
+    # Store a digest of the expected pre-broadcast database content and the
+    # deterministic post-broadcast variant. No extra copy of private text.
+    from link_preview import strip_urls_for_message
+    from proactive_companionship import extract_next_chat_decision
+    pre = strip_urls_for_message(processed_text)
+    post = extract_next_chat_decision(pre)[0]
+    meta["_codex_session_processed"] = (str(message_id), _digest(pre), _digest(post))
+    return True
+
+def confirm_saved(meta, saved, kind, *, allowed=True, notices=(), processed_verified=False):
     """Use the same inline-PAT renderer as the next normal prompt."""
     candidate = meta.get("_codex_session_candidate")
     if not candidate:
@@ -220,54 +250,99 @@ def confirm_saved(meta, saved, kind, *, allowed=True, notices=()):
                 authorized_pat = (_pat_signature(str(merged[0].get("content") or "")) == pat_sig
                                   and _digest(str(saved.get("content") or "").strip()) == pat_sig[0])
         rendered = render_merged_timeline(rows, "connor")
+        # A bound, verified commit may differ from raw model output because the
+        # application has consumed controls or normalized whitespace. A PAT
+        # action without its actual receipt still cannot confirm.
+        if processed_verified and pat_sig:
+            if len(matched) != 1:
+                meta["codex_confirmation_reason"] = "pat_receipt_missing"
+                processed_verified = False
+            else:
+                command = pat_history_command(matched[0], matched[0].get("attachments") or [])
+                signature = _pat_signature(command[1]) if command else None
+                if not signature or signature[1] != pat_sig[1]:
+                    meta["codex_confirmation_reason"] = "pat_receipt_mismatch"
+                    processed_verified = False
         return confirm(meta, saved, rendered[-1] if len(rendered) > 1 else None,
-                       allowed=allowed, authorized_pat=authorized_pat)
+                       allowed=allowed, authorized_pat=authorized_pat,
+                       processed_verified=processed_verified)
     except Exception:
         meta.pop("_codex_session_candidate", None)
         return False
 
 async def confirm_room_saved(meta, saved, kind, *, allowed=True):
-    """Read only this reply's committed PAT receipt; never repeat an action."""
+    """Read the committed row AFTER broadcast hooks, plus its own PAT receipt."""
     candidate = meta.get("_codex_session_candidate")
+    binding = meta.pop("_codex_session_processed", None)
     if not candidate:
         return False
     notices = []
     try:
-        if allowed and candidate[4]:
-            from database import get_db
-            import aiosqlite
-            async with get_db() as db:
-                db.row_factory = aiosqlite.Row
+        from database import get_db
+        import aiosqlite
+        if not allowed:
+            meta["codex_confirmation_reason"] = "route_disallowed"
+            meta.pop("_codex_session_candidate", None)
+            return False
+        async with get_db() as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute(
+                """SELECT id, room_id, sender, content, created_at, attachments
+                   FROM chatroom_messages WHERE id=? AND room_id=? AND sender='connor'""",
+                (saved.get("id"), saved.get("room_id")))
+            row = await cur.fetchone()
+            if not row:
+                meta["codex_confirmation_reason"] = "committed_row_missing"
+                meta.pop("_codex_session_candidate", None)
+                return False
+            committed = dict(row)
+            committed["attachments"] = json.loads(committed.get("attachments") or "[]")
+            if binding and (binding[0] != committed["id"] or
+                            _digest(str(committed["content"])) not in binding[1:]):
+                # Another writer or unexpected transformation changed the row.
+                meta["codex_confirmation_reason"] = "committed_row_changed"
+                meta.pop("_codex_session_candidate", None)
+                return False
+            if candidate[4]:
                 cur = await db.execute(
                     """SELECT id, room_id, sender, content, created_at, attachments
                        FROM chatroom_messages WHERE room_id=? AND sender='system'
                        AND created_at BETWEEN ? AND ?
                        ORDER BY created_at DESC LIMIT 100""",
-                    (saved["room_id"], saved["created_at"]-960, saved["created_at"]))
+                    (committed["room_id"], committed["created_at"]-960, committed["created_at"]))
                 for row in await cur.fetchall():
                     item = dict(row)
                     item["attachments"] = json.loads(item.get("attachments") or "[]")
                     notices.append(item)
-        result = confirm_saved(meta, saved, kind, allowed=allowed, notices=notices)
-        print("[CODEX_SESSION] confirmation=" + ("saved" if result else "rejected"), flush=True)
+        # Don't keep image/voice replies in a text continuation.
+        if any(isinstance(a,dict) and a.get("type") == "expressive_voice"
+               for a in committed["attachments"]):
+            allowed = False
+        result = confirm_saved(meta, committed, kind, allowed=allowed,
+                               notices=notices, processed_verified=bool(binding))
+        meta["codex_confirmation_reason"] = ("saved" if result else
+            meta.get("codex_confirmation_reason") or "reply_rejected")
+        print("[CODEX_SESSION] confirmation=" + meta["codex_confirmation_reason"], flush=True)
         return result
     except Exception:
         meta.pop("_codex_session_candidate", None)
+        meta["codex_confirmation_reason"] = "confirmation_error"
         print("[CODEX_SESSION] confirmation=error", flush=True)
         return False
 
-def confirm(meta, saved, rendered_reply, *, allowed=True, authorized_pat=False):
+def confirm(meta, saved, rendered_reply, *, allowed=True, authorized_pat=False, processed_verified=False):
     candidate = meta.pop("_codex_session_candidate", None)
     if not candidate or not allowed or not rendered_reply or not isinstance(saved, dict):
         return False
     plan, tid, usage, raw_digest, _ = candidate
+    changed = _digest(str(saved.get("content") or "").strip()) != raw_digest
     if (_generations.get(plan.key) is not plan.generation or saved.get("sender") != "connor" or
             str(saved.get("room_id")) != plan.key[0] or
-            (_digest(str(saved.get("content") or "").strip()) != raw_digest and not authorized_pat)):
+            (changed and not authorized_pat and not processed_verified)):
         return False
     _states[plan.key] = State(plan.fingerprint, plan.history, _reply_row(rendered_reply),
                               plan.dynamic_hash, tid, usage, plan.turns,
-                              plan.accumulated_chars, time.monotonic())
+                              plan.accumulated_chars, time.monotonic(), changed)
     _states.move_to_end(plan.key)
     _trim(_states)
     return True

@@ -4901,6 +4901,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         return
 
     # 工具指令处理（从文本中剥离并执行，与群聊保持一致）
+    commands_ok = True
     try:
         clean_text, triggered = await _process_chatroom_commands(
             full_text,
@@ -4916,6 +4917,7 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         print(f"[CHATROOM] _process_chatroom_commands 异常: {e}")
         clean_text = _visible_chatroom_text(full_text)
         triggered = {}
+        commands_ok = False
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
@@ -4947,15 +4949,18 @@ async def _generate_connor_reply(room_id, room, msgs, _q, context_limit, *, conn
         clean_text = f"{clean_text}\n\n[{safety_notice}]".strip()
     reply = _rewrite_connor_paths(clean_text)
     saved_imgs = await _extract_and_save_images(reply)
+    continuation_allowed = commands_ok and not triggered and not has_error and not safety_notice
+    codex_chat_session.bind_processed(usage_meta, raw_text=full_text, processed_text=reply,
+                                     message_id=connor_msg_id, allowed=continuation_allowed)
     msg = await _save_msg(
         room_id, "connor", reply, connor_msg_id,
         attachments=saved_imgs + _music_attachments_from_triggered(triggered) + _luckin_attachments_from_triggered(triggered),
         auto_tts=not safety_notice and tts_from_model and not (tts_enabled and tts_connor_voice and clean_text),
         usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
-    # A thread is reusable only after the actual reply was committed unchanged.
+    # Verify the actual DB row after all broadcast hooks have completed.
     await codex_chat_session.confirm_room_saved(usage_meta, msg, "private",
-                                     allowed=not triggered and not has_error and not safety_notice)
+                                     allowed=continuation_allowed)
     await _q.put({"type": "connor_done", "message": msg})
     if not has_error and not safety_notice:
         memory_hub_bridge.schedule_chatroom_capture(
@@ -5311,6 +5316,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         return digest_out
 
     # 工具指令处理
+    commands_ok = True
     try:
         clean_text, triggered = await _process_chatroom_commands(
             full_text,
@@ -5327,6 +5333,7 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         print(f"[CHATROOM] _process_chatroom_commands 异常: {e}")
         clean_text = _visible_chatroom_text(full_text)
         triggered = {}
+        commands_ok = False
 
     clean_text = _normalize_cli_bubble_breaks(clean_text, connor_model_key)
 
@@ -5358,15 +5365,18 @@ async def _reply_connor(room_id, msgs, context_limit, query_text, _q, *, connor_
         clean_text = f"{clean_text}\n\n[{safety_notice}]".strip()
     clean_text = _rewrite_connor_paths(clean_text)
     saved_imgs = await _extract_and_save_images(clean_text)
+    continuation_allowed = commands_ok and not triggered and not has_error and not safety_notice
+    codex_chat_session.bind_processed(usage_meta, raw_text=full_text, processed_text=clean_text,
+                                     message_id=connor_msg_id, allowed=continuation_allowed)
     connor_msg = await _save_msg(
         room_id, "connor", clean_text, connor_msg_id,
         attachments=saved_imgs + _music_attachments_from_triggered(triggered) + _luckin_attachments_from_triggered(triggered) + _toy_attachments_from_triggered(triggered),
         auto_tts=not safety_notice and tts_from_model and not (tts_enabled and tts_voice and clean_text),
         usage_meta=usage_meta, reasoning_content=usage_meta.get("reasoning_content", "").strip(),
     )
-    # A thread is reusable only after the actual reply was committed unchanged.
+    # Verify the actual DB row after all broadcast hooks have completed.
     await codex_chat_session.confirm_room_saved(usage_meta, connor_msg, "group",
-                                     allowed=not triggered and not has_error and not safety_notice)
+                                     allowed=continuation_allowed)
     await _q.put({"type": "connor_done", "message": connor_msg})
     await _turtle_soup(room_id, "connor", clean_text, _q)
     if not has_error and not safety_notice and not ambient_context and capture_user_turn:

@@ -99,7 +99,8 @@ class SessionTests(unittest.TestCase):
         p=plan(meta,build([a,event,saved,c],"later"))
         self.assertEqual(p.thread_id,"tid")
         self.assertIn("next question",p.prompt)
-        self.assertNotIn("[PAT:摸摸猫]",p.prompt)
+        self.assertIn("上一条回复的实际保存记录",p.prompt)
+        self.assertIn("[PAT:摸摸猫]",p.prompt)  # historical receipt, not a new action
         self.assertEqual(meta["codex_session_reason"],"validated_continuation")
     def test_wrong_pat_or_other_changed_text_never_confirms(self):
         saved={"id":"b","room_id":"a","source":"private","sender":"connor","content":"answer","created_at":102}
@@ -124,6 +125,61 @@ class SessionTests(unittest.TestCase):
             second=asyncio.run(cb.build_ability_block("cat",who="connor"))
         self.assertEqual(first.split(cb.LIVE_STATE_HEADING)[0],second.split(cb.LIVE_STATE_HEADING)[0])
         self.assertIn("profile B",second.split(cb.LIVE_STATE_HEADING)[1])
+    def test_real_post_broadcast_receipt_with_next_chat(self):
+        import asyncio, json, sqlite3, tempfile
+        from pathlib import Path
+        from contextlib import asynccontextmanager
+        import aiosqlite, database
+        from context_builder import render_merged_timeline
+        with tempfile.TemporaryDirectory() as d:
+            db=Path(d)/"chat.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute("create table chatroom_messages(id text,room_id text,sender text,content text,created_at real,attachments text)")
+                conn.execute("insert into chatroom_messages values(?,?,?,?,?,?)",("b","a","connor","hello answer",101,"[]"))
+            @asynccontextmanager
+            async def get_test_db():
+                async with aiosqlite.connect(db) as c:
+                    yield c
+            original={"id":"a","source":"group","sender":"user","content":"hello","created_at":100}
+            # _save_msg returns pre-broadcast content. DB holds post-hook content.
+            raw="hello  answer\\n[NEXT_CHAT:NONE]".replace("\\n","\n")
+            saved={"id":"b","room_id":"a","source":"group","sender":"connor","content":"hello answer\n[NEXT_CHAT:NONE]","created_at":101}
+            def build(rows, clock):
+                return [m("fox"),m(clock,tag="live")]+render_merged_timeline(rows,"connor")
+            meta={};s.begin(meta,"a","group",30);p=plan(meta,build([original],"today"))
+            s.stage(meta,p,"tid",{"inputTokens":100,"outputTokens":5},raw)
+            self.assertTrue(s.bind_processed(meta,raw_text=raw,processed_text=raw,message_id="b"))
+            with patch.object(database,"get_db",get_test_db):
+                self.assertTrue(asyncio.run(s.confirm_room_saved(meta,saved,"group")))
+            self.assertEqual(meta["codex_confirmation_reason"],"saved")
+            self.assertTrue(s._states[("a","group")].reply_changed)
+            meta={};s.begin(meta,"a","group",30)
+            actual={**saved,"content":"hello answer"}
+            new={"id":"c","source":"group","sender":"user","content":"next","created_at":102}
+            p=plan(meta,build([original,actual,new],"later"))
+            self.assertEqual(p.thread_id,"tid")
+            self.assertIn("hello answer",p.prompt)
+            self.assertNotIn("[NEXT_CHAT:NONE]",p.prompt)
+    def test_processed_binding_rejects_unrelated_or_edited_reply(self):
+        import asyncio, sqlite3, tempfile
+        from contextlib import asynccontextmanager
+        import aiosqlite, database
+        with tempfile.TemporaryDirectory() as d:
+            db=d+"/test.db"
+            with sqlite3.connect(db) as c:
+                c.execute("create table chatroom_messages(id text,room_id text,sender text,content text,created_at real,attachments text)")
+                c.execute("insert into chatroom_messages values(?,?,?,?,?,?)",("b","a","connor","edited",101,"[]"))
+            @asynccontextmanager
+            async def get_test_db():
+                async with aiosqlite.connect(db) as c: yield c
+            meta={};s.begin(meta,"a","private",30);p=plan(meta,context(row("first")))
+            s.stage(meta,p,"tid",{"inputTokens":100,"outputTokens":5},"raw")
+            self.assertFalse(s.bind_processed(meta,raw_text="another",processed_text="clean",message_id="b"))
+            self.assertTrue(s.bind_processed(meta,raw_text="raw",processed_text="clean",message_id="b"))
+            with patch.object(database,"get_db",get_test_db):
+                self.assertFalse(asyncio.run(s.confirm_room_saved(meta,{"id":"b","room_id":"a"},"private")))
+            self.assertEqual(meta["codex_confirmation_reason"],"committed_row_changed")
+            self.assertFalse(s._states)
     def test_attachments_fall_back(self):
         self.first();meta={};s.begin(meta,"a","private",30)
         messages=context(row("first"),row("answer"),row("next"))
