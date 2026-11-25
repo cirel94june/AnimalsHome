@@ -394,6 +394,42 @@ def _memory_duplicate_of_text(memory: dict, reference: str) -> bool:
     return False
 
 
+def trim_recent_background(surfaced, surfaced_ids, hub_block, digest_result, *, background=False):
+    """Trim only low-priority recent filler with cross-end memory available.
+    Retain relevant recall, open tasks, importance >= .75, unknown
+    provenance/importance, explicit evidence requests. Never modify storage.
+    Release omitted IDs for independent relevant recall.
+    """
+    import os
+    if os.getenv("AIONSHOME_LIGHT_BACKGROUND", "1").lower() in ("0", "false", "off", "no"):
+        return surfaced, surfaced_ids
+    digest = digest_result or {}
+    if (background or not isinstance(hub_block, str) or "[跨端记忆]" not in hub_block
+            or digest.get("is_search_needed") or digest.get("require_detail")):
+        return surfaced, surfaced_ids
+    from memory_hub_bridge import _CONTEXT_HEADER
+    if _CONTEXT_HEADER in hub_block:
+        if not hub_block.split(_CONTEXT_HEADER, 1)[1].strip():
+            return surfaced, surfaced_ids
+    elif not hub_block.split("[跨端记忆]", 1)[1].strip():
+        return surfaced, surfaced_ids
+    keep, removed = [], set()
+    fillers = 0
+    for item in surfaced:
+        priority = item.get("importance")
+        eligible = (item.get("_surfacing_reason") == "recent_fill"
+                    and not item.get("unresolved") and item.get("id")
+                    and type(priority) in (int, float) and 0 <= priority < .75)
+        if eligible:
+            fillers += 1
+            if fillers > 2:
+                removed.add(item["id"])
+                continue
+        keep.append(item)
+    removed.difference_update(item.get("id") for item in keep)
+    return keep, set(surfaced_ids) - removed
+
+
 async def build_memory_blocks(
     query_text: str,
     recent_messages: list[dict] = None,
@@ -516,6 +552,8 @@ async def build_memory_blocks(
             chatroom_mems = results[i]
 
     hub_block = await hub_task if hub_task else ""
+    surfaced, surfaced_ids = trim_recent_background(
+        surfaced, surfaced_ids, hub_block, digest_result, background=memory_hub_background)
     if hub_block and surfaced:
         surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
 

@@ -504,7 +504,7 @@ async def build_surfacing_memories(topic: str = "", keywords: list[str] = None,
         async with get_db() as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
-                "SELECT id, content, type, created_at, source_start_ts, source_end_ts, evidence_summary FROM memories "
+                "SELECT id, content, type, created_at, source_start_ts, source_end_ts, evidence_summary, importance, unresolved FROM memories "
                 "WHERE COALESCE(archive_state,'active')='active' "
                 "AND COALESCE(source_end_ts, source_start_ts, created_at) > ? "
                 "ORDER BY COALESCE(source_end_ts, source_start_ts, created_at) DESC LIMIT ?",
@@ -523,7 +523,9 @@ async def build_surfacing_memories(topic: str = "", keywords: list[str] = None,
                 "source_start_ts": row["source_start_ts"],
                 "source_end_ts": row["source_end_ts"],
                 "evidence_summary": row["evidence_summary"] or "",
-                "unresolved": False,
+                "unresolved": bool(row["unresolved"]),
+                "importance": row["importance"],
+                "_surfacing_reason": "recent_fill",
             })
             result[-1].update(_memory_time_payload(result[-1]))
             surfaced_ids.add(row["id"])

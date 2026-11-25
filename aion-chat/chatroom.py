@@ -569,7 +569,7 @@ async def build_surfacing_chatroom_memories(
         async with get_db() as db:
             db.row_factory = aiosqlite.Row
             cur = await db.execute(
-                "SELECT id, content, scope AS type, created_at, source_start_ts, source_end_ts, evidence_summary FROM chatroom_memories "
+                "SELECT id, content, scope AS type, created_at, source_start_ts, source_end_ts, evidence_summary, importance, unresolved FROM chatroom_memories "
                 "WHERE scope = ? AND COALESCE(archive_state,'active')='active' "
                 "AND COALESCE(source_end_ts, source_start_ts, created_at) > ? "
                 "ORDER BY COALESCE(source_end_ts, source_start_ts, created_at) DESC LIMIT ?",
@@ -588,7 +588,9 @@ async def build_surfacing_chatroom_memories(
                 "source_start_ts": row["source_start_ts"],
                 "source_end_ts": row["source_end_ts"],
                 "evidence_summary": row["evidence_summary"] or "",
-                "unresolved": False,
+                "unresolved": bool(row["unresolved"]),
+                "importance": row["importance"],
+                "_surfacing_reason": "recent_fill",
             }
             item.update(_memory_time_payload(item))
             result.append(item)

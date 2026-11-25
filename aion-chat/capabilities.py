@@ -135,18 +135,16 @@ HOME_ABILITY_TEXT = (
     f"控制智能家居，仅限明确要求。别名：{HOME_ALIASES_HINT}。"
 )
 INNER_MONOLOGUE_ABILITY_TEXT = (
-    "你可以偶尔使用角色化内心旁白，格式为“[心里嘀咕：xxx]”。\n"
-    "它是你在回复时脑海中冒出的想法，内心os，碎碎念吐槽，口是心非的念头。不是固定回复结构；\n"
-    "大多数回复不需要出现。只有内心有触动时才发。\n"
+    "偶尔用[心里嘀咕：xxx]表达角色化内心旁白（吐槽、口是心非等）。"
+    "有触动才写，不是固定回复结构，大多数回复不用。"
 )
 
 
 def build_pat_ability_text(user_name: str) -> str:
     return (
-        "[PAT:动作短句] — 偶尔发起趣味拍拍，不是固定回复结构，大多数回复无需使用，避免连续使用。"
-        "从动作写起，系统会在前面加上你的名字。"
-        f"例如 [PAT:捏了捏「{user_name}」的爪子：“软乎乎的。”]。"
-        "每次回复最多一次，内容不嵌套方括号，不在正文重复。"
+        "[PAT:动作短句] — 偶尔拍拍，从动作写起（系统加你的名字）。"
+        f"如 [PAT:捏了捏「{user_name}」的爪子]。"
+        "每轮至多一次，不嵌套方括号、不在正文重复、不连续使用；大多数回复不用。"
     )
 
 
@@ -610,18 +608,13 @@ def format_ability_block(abilities: list[str]) -> str:
     abilities = compact_ability_texts(abilities)
     block = (
         "[系统能力]\n"
-        "以下能力包含 AionsHome 本地动作协议、上下文注入和可见表达标记。"
-        "本地动作协议不是普通文本装饰；当你决定使用某项动作能力时，"
-        "请在回复中原样输出对应指令，系统会自动拦截并执行，最终展示给用户时会隐藏这些指令。"
-        "可见表达标记（如[心里嘀咕：xxx]）会作为回复内容保留并由前端特殊显示。\n"
-        "使用需要先取得结果的能力（如[CAM_CHECK]、[查看动态:n]、[POI_SEARCH:类型名]）时，"
-        "先输出指令，不要编造结果；系统会把结果作为下一条消息交给你，你再根据结果自然回应。\n"
-        "如果用户明确要求设置提醒、查看状态、控制设备、点歌、生图、记录记忆等动作，不要只口头答应，"
-        "应同时使用准确指令。没有真实需要时也不要为了展示能力而滥用。\n\n"
+        "动作指令不是装饰：按下列格式原样输出，系统会隐藏并执行。可见标记（如[心里嘀咕：xxx]）保留。\n"
+        "查状态、搜索等须先发指令，等真实结果再回应，不编造。用户明确要求动作时不要只口头答应；"
+        "按需使用，不滥用。\n\n"
         "【可用指令】\n"
     )
     block += "\n".join(f"{i+1}. {a}" for i, a in enumerate(abilities))
-    block += "\n\n<meta>标签内为消息元数据，不是对话内容的一部分，你的回复中不要包含任何<meta>标签或时间信息。</meta>"
+    block += "\n\n<meta>内是元数据，不是对话；回复不输出<meta>标签或其中的时间信息。</meta>"
     return block
 
 
@@ -723,9 +716,8 @@ def image_gen_ability_text(user_name: str) -> str:
 
 
 def cam_check_ability_text(user_name: str) -> str:
-    return (f"{CAM_CHECK_CMD} — 当你想查看{user_name}**此时此刻**的状态，"
-            "不限于监督其是否去睡觉，在吃什么，在干什么时，可以主动调用指令。"
-            "使用后下条消息会收到画面，查看前不要编造内容。")
+    return (f"{CAM_CHECK_CMD} — 可主动查看{user_name}此刻的状态（睡觉、吃饭、活动等）。"
+            "等返回画面，不编造。")
 
 
 def activity_check_ability_text(user_name: str) -> str:
@@ -743,22 +735,18 @@ def moment_ability_text() -> str:
 
 
 def wish_ability_text() -> str:
-    return ("[许愿：内容] — 当你在日常聊天中自然产生一个想投进许愿池的愿望时，可以使用该指令。"
-            "愿望会记录为你自己的愿望，内容直接写愿望本身即可。禁止滥用。")
+    return ("[许愿：内容] — 有真实愿望时直接写愿望本身，记入自己的许愿池；不滥用。")
 
 
 def seat_memory_ability_text(user_name: str) -> str:
     """座位记事：写进 Memory Hub（三位 AI 共用），按 Hub 窗口 2026-10-20 的约定写。"""
     return (
-        f"[MEMORY:内容|分类] — 当{user_name}明确让你记住某件事，或认真说起关于自己的重要的事时，"
-        "把它记进你们共用的记忆库（小克和 Lucien 也看得到）。"
-        f"一条只写一件事，用第三人称、200 字以内，例如 [MEMORY:{user_name}喜欢吃芒果|preferences]。"
-        f"只记{user_name}本人说的、关于自己的事；群里别人说的话不要写成{user_name}的事；"
-        "明显在玩梗、角色扮演的不要当成事实记（真要记，内容开头写「梗：」，内容里不要用方括号）；"
-        f"建议、看法、劝别人的话不是待办，除非{user_name}明确说自己要去做。"
-        "分类可以省略，可选：preferences（长期喜好）、people（身边的人）、bond（你和"
-        f"{user_name}之间）、health、career、psychology、learning、social、animal_dorm（动物宿舍设定）。"
-        "说的是别人时写成 [MEMORY:内容|people|那个人的名字]。一次最多记 3 条，记过的事不要再记。"
+        f"[MEMORY:内容|分类] — {user_name}明确要求记住或认真说自己的重要事实时写入三位共用记忆库。"
+        f"只记本人所述，一事一条、第三人称、200字内。如[MEMORY:{user_name}喜欢吃芒果|preferences]。"
+        "别把他人发言写成她的事实；玩梗/角色扮演不是事实（真要记，开头写「梗：」）；内容不用方括号。"
+        "建议、看法、劝人不算待办，除非她明确要自己做。分类可省：preferences、people、bond、health、career、"
+        "psychology、learning、social、animal_dorm（动物宿舍设定）。他人事实用[MEMORY:内容|people|那个人的名字]。"
+        "每轮最多3条，不重复记。"
     )
 
 

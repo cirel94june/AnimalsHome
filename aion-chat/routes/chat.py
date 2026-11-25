@@ -102,7 +102,7 @@ _SYSTEM_MSG_CONTEXT_KEYWORDS = ('查看了监控', '搜索了', '点歌', '点�
 from context_builder import (
     fetch_merged_timeline, render_merged_timeline, build_health_summary,
     build_ability_block, WISH_CMD_PATTERN, _build_recall_query, strip_tool_commands,
-    _memory_duplicate_of_text,
+    _memory_duplicate_of_text, trim_recent_background,
     BAND_VIBRATE_CMD_PATTERN,
 )
 from music import search_songs, get_audio_url
@@ -1452,6 +1452,7 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
     if health_text:
         live_block += health_text
     hub_block = await hub_task
+    surfaced, surfaced_ids = trim_recent_background(surfaced, surfaced_ids, hub_block, digest_result)
     if hub_block and surfaced:
         surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
     memory_parts = [hub_block] if hub_block else []
@@ -2156,6 +2157,7 @@ async def send_message(conv_id: str, body: MsgCreate):
         if health_text:
             live_block += health_text
         hub_block = await hub_task
+        surfaced, surfaced_ids = trim_recent_background(surfaced, surfaced_ids, hub_block, digest_result)
         if hub_block and surfaced:
             surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
         memory_parts = [hub_block] if hub_block else []
@@ -3820,6 +3822,7 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
         if health_text:
             live_block += health_text
         hub_block = await hub_task
+        surfaced, surfaced_ids = trim_recent_background(surfaced, surfaced_ids, hub_block, digest_result)
         if hub_block and surfaced:
             surfaced = [m for m in surfaced if not _memory_duplicate_of_text(m, hub_block)]
         memory_parts = [hub_block] if hub_block else []
