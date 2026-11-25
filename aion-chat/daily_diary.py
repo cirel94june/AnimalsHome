@@ -10,6 +10,7 @@ log = logging.getLogger("daily_diary")
 TZ = ZoneInfo("Asia/Shanghai")
 CHECK_SECONDS = 600
 QUIET_SECONDS = 1800
+REVIEW_EVENING_HOUR = 18
 FALLBACK_HOUR = 21
 RETRY_SECONDS = 3600
 MAX_ATTEMPTS = 2
@@ -26,7 +27,10 @@ def day_bounds(now):
 def eligible(now, latest_user, has_activity):
     quiet = not latest_user or now - latest_user >= QUIET_SECONDS
     hour = datetime.fromtimestamp(now, TZ).hour
-    return (has_activity and quiet) or (hour >= FALLBACK_HOUR and (quiet or hour >= 23))
+    # A daily retrospective is not a morning check-in. Use a flexible
+    # evening window, not a 24-hour cooldown measured from yesterday's entry.
+    return (hour >= REVIEW_EVENING_HOUR and has_activity and quiet) or (
+        hour >= FALLBACK_HOUR and (quiet or hour >= 23))
 
 
 def get_db():
@@ -91,31 +95,50 @@ async def _activity(actor, now):
     return float(last_user or 0), active
 
 
+def balanced_lines(lines, limit):
+    """Keep both ends and distributed middle samples, never cut a line."""
+    if len("\n".join(lines)) <= limit:
+        return list(lines)
+    if not lines:
+        return []
+    # Try evenly spaced samples, keeping earliest and latest in this bucket.
+    for n in range(len(lines)-1, 1, -1):
+        chosen = [lines[round(i*(len(lines)-1)/(n-1))] for i in range(n)]
+        if len("\n".join(chosen)) <= limit:
+            return chosen
+    return [lines[-1][:limit]]
+
+
 async def _materials(actor, now, user_name):
     from context_builder import fetch_merged_timeline
     from autonomy import _actor_label
     from hub_day import fetch_day, format_day
     day, start, _ = day_bounds(now)
-    # Sample different parts of the day, not just the latest conversation.
-    rows, seen = [], set()
+    # Independent budgets for morning, afternoon and evening. Previously
+    # truncating one chronological string could silently remove the evening.
+    seen = set()
     span = max(1, now-start)
-    for i in range(3):
-        for row in await fetch_merged_timeline(actor, 16, since_ts=start+span*i/3,
-                                               until_ts=min(now,start+span*(i+1)/3)):
-            key = (row.get("source"),row.get("id"))
-            if key not in seen:
-                seen.add(key)
-                rows.append(row)
     def clip(s,n):
         return " ".join(str(s or "").split())[:n]
     def stamp(ts):
         return datetime.fromtimestamp(float(ts),TZ).strftime("%H:%M")
     lines = []
-    for row in rows:
-        msg = clip(row.get("content"),220)
-        if msg:
-            sender = row.get("sender") or "system"
-            lines.append(f"[{stamp(row['created_at'])}][{row.get('source','')}] {_actor_label(actor if sender == 'assistant' else sender)}: {msg}")
+    for i in range(3):
+        bucket = []
+        lower = start + span*i/3
+        upper = min(now,start+span*(i+1)/3)
+        for row in await fetch_merged_timeline(actor, 16, since_ts=lower, until_ts=upper):
+            key = (row.get("source"),row.get("id"))
+            if key in seen:
+                continue
+            seen.add(key)
+            msg = clip(row.get("content"),220)
+            if msg:
+                sender = row.get("sender") or "system"
+                bucket.append(f"[{stamp(row['created_at'])}][{row.get('source','')}] {_actor_label(actor if sender == 'assistant' else sender)}: {msg}")
+        if bucket:
+            lines.append(f"【{stamp(lower)}—{stamp(upper)}】")
+            lines.extend(balanced_lines(bucket, 2600))
     async with get_db() as db:
         cur = await db.execute("SELECT created_at,title,detail FROM idle_events WHERE actor=? AND created_at>=? "
                                "AND created_at<=? ORDER BY created_at DESC LIMIT 12",(actor,start,now))
@@ -184,8 +207,11 @@ async def maybe_write(actor, *, now=None):
         messages.append({"role":"user","content":(
             f"北京时间 {day} {datetime.fromtimestamp(now,TZ):%H:%M}。你是{name}。"
             "请写今天截至现在的一篇私人日记，回顾整天自己真实经历和想法，而不是聊天回复。"
+            "先通读所有时间段、自己在家里和别处的经历及活动，再挑真正想记的事情；"
+            "如果早、中、晚都有值得记的事，不要只围绕最后一次或清晨的一次聊天写。"
+            "写自己的感受、变化和没做完的念头，不必每段平均分配，也不必凑满。"
             "材料少就坦诚写安静的一天或真实感受，不要补造事件、用户状态、其他人的私聊。"
-            "不要写朋友圈，不要流水账，不必照抄材料。保留自己的人设和语气。"
+            "这是私人回顾，不负责发朋友圈，不要流水账，不必照抄材料。保留自己的人设和语气。"
             "仅在特别值得纪念的事情发生时才考虑送图片小礼物，通常不送。"
             "严格只输出 JSON：{\"diary\":{\"title\":\"标题\",\"content\":\"正文\",\"mood\":\"心情\"},"
             "\"givegift\":false,\"gift\":{\"image_prompt\":\"\",\"message\":\"\"}}\n\n"

@@ -21,12 +21,23 @@ class DailyDiaryTest(unittest.IsolatedAsyncioTestCase):
         self.p.stop()
         self.tmp.cleanup()
     def test_policy(self):
-        self.assertTrue(d.eligible(self.now,self.now-1801,True))
+        self.assertFalse(d.eligible(self.now,self.now-1801,True))
+        self.assertFalse(d.eligible(self.now-8*3600,self.now-8*3600-1801,True))
+        evening = self.now+4*3600
+        self.assertTrue(d.eligible(evening,evening-1801,True))
+        self.assertFalse(d.eligible(evening,evening-60,True))
         self.assertFalse(d.eligible(self.now,self.now-60,True))
         self.assertFalse(d.eligible(self.now,0,False))
         self.assertTrue(d.eligible(self.now+7*3600,0,False))
         self.assertFalse(d.eligible(self.now+7*3600,self.now+7*3600-60,True))
         self.assertTrue(d.eligible(self.now+9*3600,self.now+9*3600-60,True))
+    def test_balanced_bucket_keeps_early_and_late_rows(self):
+        lines=[f"row {i} " + "字"*220 for i in range(16)]
+        chosen=d.balanced_lines(lines,2600)
+        self.assertEqual(chosen[0],lines[0])
+        self.assertEqual(chosen[-1],lines[-1])
+        self.assertLessEqual(len("\n".join(chosen)),2600)
+
     async def test_same_budget_all_actors(self):
         for a in ("aion","connor","ai3"):
             self.assertTrue(await d._claim(a,self.now))

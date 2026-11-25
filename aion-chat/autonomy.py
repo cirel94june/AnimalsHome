@@ -77,7 +77,7 @@ def verify_seat_pin(actor: str) -> dict:
 ACTION_DEFS = {
     "rest": "什么都不做，继续休息",
     "private_chat": "主动联系用户说点此刻想说的话",
-    "post_moment": "发一条自己此刻想发的朋友圈",
+    "post_moment": "把此刻想向全家大声宣布、分享或吐槽的东西发成朋友圈（不必是大事）",
     "seeky_interaction": "和宠物鲸鱼 Seeky 互动",
     "role_chat": "和另一个家庭成员自然聊聊",
     "billiards_play": "邀请另一位家庭成员打一局休闲台球（算法负责击球，可以边打边聊）",
@@ -544,9 +544,9 @@ async def _actor_context(actor: str, limit: int = 30, *, include_history: bool =
 
 
 async def _seat_actor_context(actor: str, limit: int, *, include_history: bool) -> list[dict]:
-    """座位 3～6：自己的人设 + 关于用户 + 自己私聊房间的最近记录。"""
+    """Seat identity plus its own private and shared family timeline."""
     from memory_hub_jobs import _persona_messages
-    from seat_chat import _history
+    from seat_chat import _history, merged_messages
 
     _seat_pin(actor)  # 还没固定过就在第一次等待之前固定
     wb = load_worldbook()
@@ -557,9 +557,11 @@ async def _seat_actor_context(actor: str, limit: int, *, include_history: bool) 
         messages.append({"role": "assistant", "content": "收到。"})
     if not include_history:
         return messages
-    from routes.chatroom import _get_or_create_seat_room, _load_room_and_messages
-    _, msgs = await _load_room_and_messages(await _get_or_create_seat_room(actor), limit=limit)
-    return messages + _history(actor, msgs, limit)
+    msgs = await merged_messages(actor, limit)
+    messages.append({"role":"user","content":
+        "下面是你自己私聊和家里群聊的时间线，注意来源；私聊私事只供自己参考，不得带进朋友圈或群聊。"})
+    messages.append({"role":"assistant","content":"明白。"})
+    return messages + _history(actor, msgs, limit, user_name=_actor_label("user"))
 
 
 async def _ask_actor_json(actor: str, instruction: str, *, limit: int = 30) -> dict:
@@ -752,9 +754,11 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
             cur = await db.execute("SELECT MAX(created_at) FROM moments WHERE author=?", (actor,))
             last = (await cur.fetchone())[0]
         if not last or time.time() - float(last) >= 2 * 3600:
-            moment_hint = ("你也可以在选择其他活动时，顺手分享一条此刻已经有的公开生活感想。"
-                           "有真正想分享的内容才填 moment_content，否则留空；不能泄露私聊、健康或亲密信息，"
-                           "不能把尚未做的活动说成已经完成。它与日记无关，不是必须发。\n")
+            moment_hint = ("朋友圈不是任务，也不必占用这次主要行动。先问自己："
+                           "有没有什么已经发生的事、自己的发现、好笑的梗、小成就或感想，想让全家知道？"
+                           "有就可以直接选 post_moment，或选择任何其他活动（包括 rest）同时填 moment_content 为想发的公开正文。"
+                           "不必等大事或小猫开口，也不必先写日记；不想分享就留空。"
+                           "勿重复发布，不能泄露私聊、健康或亲密信息，不能把尚未做的活动说成已经完成。\n")
     if "travel" in enabled:
         import travel
         from memory_hub_jobs import own_model
@@ -2551,7 +2555,8 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         selected.get("reason", ""),
         metadata={"selected_action": action, "manual": manual, "session_id": session_id},
     )
-    # 顺手分享复用已经发生的自主决策调用，不与日记绑定。
+    # Optional public self-expression reuses the existing wake decision.
+    # Rest is a valid primary choice and can still have a Moment; no extra model call.
     extra = selected.get("moment_content")
     if extra and action != "post_moment":
         try:

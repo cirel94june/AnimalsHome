@@ -134,10 +134,16 @@ def test_seat_messages_and_context_use_seat_room(env, monkeypatch):
     asyncio.run(autonomy._save_private_message("ai3", "我回来了", force_private=True))
     assert saved.await_args.args[:3] == ("room-ai3", "ai3", "我回来了")
 
-    monkeypatch.setattr(chatroom_routes, "_load_room_and_messages", AsyncMock(return_value=({}, [
-        {"sender": "user", "content": "在吗", "created_at": 1}, {"sender": "ai3", "content": "在", "created_at": 2}])))
+    import seat_chat
+    merged=AsyncMock(return_value=[
+        {"sender":"aion","content":"家里公开的玩笑","created_at":1,"source":"group"},
+        {"sender":"user","content":"在吗","created_at":2,"source":"private"},
+        {"sender":"ai3","content":"在","created_at":3,"source":"private"}])
+    monkeypatch.setattr(seat_chat,"merged_messages",merged)
     monkeypatch.setattr(autonomy, "load_worldbook", lambda: {"user_persona": "喜欢猫"})
     messages = asyncio.run(autonomy._actor_context("ai3", 30))
     joined = "\n".join(m["content"] for m in messages)
     assert "Jasper" in joined and "喜欢猫" in joined and messages[-1] == {"role": "assistant", "content": "在"}
+    assert "家里公开的玩笑" in joined and "私聊私事只供自己参考" in joined
+    merged.assert_awaited_once_with("ai3",30)
     assert autonomy._actor_label("ai3") == "Jasper"
