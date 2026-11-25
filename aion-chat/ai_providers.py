@@ -2073,9 +2073,13 @@ async def call_codex_cli(messages: list, model: str, meta: dict | None = None,
                     options = {"persistent": True, "resume_thread_id": plan.thread_id,
                                "previous_usage": plan.previous_usage}
                 try:
+                    actual_prompt = plan.prompt if plan else prompt
+                    if meta is not None:
+                        meta["codex_prompt_chars"] = len(actual_prompt)
+                        meta["codex_prompt_bytes"] = len(actual_prompt.encode("utf-8", errors="replace"))
                     async for event in own_stream(stream_codex_app_server(
                         cmd, env=env, cwd=_CODEX_WORKSPACE, model=model,
-                        prompt=plan.prompt if plan else prompt,
+                        prompt=actual_prompt,
                         image_paths=list(image_paths),
                         reasoning_summary=_codex_reasoning_summary(), **options,
                     )):
@@ -2471,6 +2475,9 @@ async def _stream_ai(messages: list, model_key: str, meta: dict | None = None, t
             meta, provider=provider_name, model=cfg.get("model", model_key),
             route_identity=route_identity,
         )
+    if meta is not None:
+        from cache_request_trace import record_context_sections
+        record_context_sections(meta, normalized)
     # 开着缓存的中转站线路：把会变的背景挪到聊天记录之后（中转站不认标记退回纯文本时也保持这个顺序，
     # 对自动前缀缓存同样有利）。其他线路顺序不变。内部标签一律去掉再往下传
     if (

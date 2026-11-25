@@ -91,6 +91,22 @@ def attachments(meta):
             'same_fixed_prefix', 'shared_prefix_messages', 'marked_messages', 'options_id',
         )
         item['cache_debug'] = {key: trace[key] for key in allowed if key in trace}
+    sections = (meta or {}).get("_context_sections")
+    if isinstance(sections, dict):
+        from cache_request_trace import CONTEXT_SECTIONS
+        clean_sections = {}
+        for key in CONTEXT_SECTIONS:
+            value = sections.get(key)
+            if isinstance(value, dict):
+                chars, size = _number(value.get("chars")), _number(value.get("bytes"))
+                if chars is not None and size is not None:
+                    clean_sections[key] = {"chars": chars, "bytes": size}
+        if clean_sections:
+            item["context_sections"] = clean_sections
+    for key in ("codex_prompt_chars", "codex_prompt_bytes"):
+        value = _number((meta or {}).get(key))
+        if value is not None:
+            item[key] = value
     session_mode = (meta or {}).get("codex_session_mode")
     if session_mode in ("new", "resumed", "ephemeral", "resume_fallback"):
         item["codex_session_mode"] = session_mode

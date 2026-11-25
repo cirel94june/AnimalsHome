@@ -30,6 +30,80 @@ def _id(value):
     return hashlib.sha256(_SALT + _encoded(value)).hexdigest()[:20]
 
 
+CONTEXT_SECTIONS = ("persona", "user_profile", "abilities", "memory", "live",
+                    "history", "other")
+
+
+def context_sections(messages, live_heading):
+    """Measure pre-provider text by constructor category, never retain text.
+    
+    These are exact text character/UTF-8 byte counts, NOT token counts;
+    provider wrappers, images, tool schemas and native thread history are excluded.
+    Unknown formats stay in 'other'.
+    """
+    counts = {key: {"chars": 0, "bytes": 0} for key in CONTEXT_SECTIONS}
+    in_history = False
+    previous = "other"
+    def add(key, text):
+        counts[key]["chars"] += len(text)
+        counts[key]["bytes"] += len(text.encode("utf-8", errors="replace"))
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            value = content
+        elif isinstance(content, list):
+            value = "".join(p["text"] for p in content if isinstance(p, dict)
+                            and isinstance(p.get("text"), str))
+        else:
+            value = ""
+        tag = m.get("_context")
+        if tag == "history" or value.startswith(("[历史记录说明]", "[聊天记录说明]")):
+            in_history = True
+        if tag in ("memory", "memory_ack"):
+            key = "memory"
+        elif tag in ("live", "live_ack"):
+            key = "live"
+        elif tag in ("abilities", "persona", "user_profile"):
+            key = tag
+        elif in_history:
+            key = "history"
+        elif value.startswith(("[系统设定 - 你的角色设定]", "[你的角色设定]")) or (
+                value.startswith("[系统设定 - ") and value.split("\n", 1)[0].endswith("人设]")):
+            key = "persona"
+        elif value.startswith("[") and value.split("\n", 1)[0].endswith("信息]"):
+            key = "user_profile"
+        elif m.get("role") == "system":
+            # Arbitrary system messages need not be persona.
+            key = "other"
+        elif m.get("role") == "assistant" and previous in ("persona", "user_profile", "abilities"):
+            key = previous
+        else:
+            key = "other"
+        if key == "abilities" and live_heading and live_heading in value:
+            cut = value.index(live_heading)
+            add("abilities", value[:cut])
+            add("live", value[cut:])
+        else:
+            add(key, value)
+        previous = key
+    return counts
+
+
+def record_context_sections(meta, messages):
+    if meta is None:
+        return
+    meta.pop("_context_sections", None)
+    meta.pop("codex_prompt_chars", None)
+    meta.pop("codex_prompt_bytes", None)
+    try:
+        from config import LIVE_STATE_HEADING
+        meta["_context_sections"] = context_sections(messages, LIVE_STATE_HEADING)
+    except Exception:
+        pass
+
+
 def payload_shape(payload):
     """Called after all transforms/fallbacks, on the payload actually accepted by HTTP."""
     messages = payload.get('messages') or []
