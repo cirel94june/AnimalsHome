@@ -524,9 +524,9 @@ _COMPACT_ABILITY_TEXT = {
     "image_gen": "[SELFIE:英文提示词] / [DRAW:英文提示词] — 自拍或生图。",
     "activity": "[查看动态:n] — 查看过去 n×10 分钟设备动态（n=1~12）。",
     "poi": "[POI_SEARCH:类型或关键词] — 搜当前位置附近真实地点。",
-    "outing": "[出门:地方名:想做什么] — 去已接好的外部地方逛一趟；需要地点/规则时拉开抽屉。",
+    "outing": "[出门:地方名:想做什么] — 自己想逛或用户请你去时使用；实际出门才说去过，外部发帖公开。地点/规则不清时先用[ABILITY_HELP:outing]。",
     "desk_note": "[NOTE:内容] — 在桌面便笺留一句话。",
-    "memory_search": "[MEMORY_SEARCH:查询|选项] — 当前预加载记忆不够时，搜索自己的历史记忆。",
+    "memory_search": "[MEMORY_SEARCH:查询|选项] — 记忆不足时搜自己的历史；最多5条互补查询，选项可省（relevant/latest/earliest/date=日期/range=开始..结束/detail/history/open=来源ID）。等证据再答，可自然先应一句，勿在闲聊中滥搜。",
     "app_supervision": "[APP_LOCK/APP_TEMP_UNLOCK/APP_UNLOCK/COME_HOME/LOOK_AT_ME/DEVICE_*] — 手机应用监管与唤回；使用前拉开抽屉看完整参数。",
 }
 
@@ -554,6 +554,8 @@ def compact_ability_texts(abilities: list[str]) -> list[str]:
                 seen_help = True
             else:
                 out.append(_COMPACT_ABILITY_TEXT[key])
+                if key == "outing":
+                    seen_help = True
         else:
             out.append(text)
     if seen_help:
@@ -793,6 +795,19 @@ def wechat_message_ability_text(user_name: str) -> str:
     )
 
 
+def schedule_ability_texts(*, monitor: bool, seat: bool = False) -> list[str]:
+    """One compact shared protocol, including the distinct seat permissions."""
+    items = [
+        "[ALARM:YYYY-MM-DDTHH:MM|内容] — ISO时间，到点你发消息提醒她；手机不会响铃，说“到点我来叫你”，不要说手机闹钟已设。",
+        "[REMINDER:YYYY-MM-DD|内容] — 日程提醒（不响铃），合适时自然提起。",
+        "[SCHEDULE_DEL:日程id] — 删除" + ("自己设的" if seat else "指定") + "日程/闹铃/监督" + ("，不能删别人的。" if seat else "。"),
+    ]
+    if monitor:
+        items.append("[Monitor:YYYY-MM-DDTHH:MM|内容] — 到点系统截图给你，再按画面自然回应；写清楚要看什么，用ISO时间。"
+                     + ("" if seat else "也可用于主动问候；修改时同轮先[SCHEDULE_DEL:旧日程id]再[Monitor:新时间|新内容]。"))
+    return items
+
+
 def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
     """座位 3～6 已经接好的聊天内能力（第二批）：点歌、联网搜索、自拍 / 画画、许愿。按各自开关给。"""
     texts = []
@@ -846,16 +861,7 @@ def seat_ability_texts(user_name: str, actor: str = "") -> list[str]:
         if memory_hub_bridge.can_remember(actor):
             texts.append(seat_memory_ability_text(user_name))
     if is_capability_enabled("schedule"):
-        texts.extend([
-            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 到点系统叫你来提醒用户（你发一条消息给她）。这不是手机闹钟，她的手机不会响铃；跟她说的时候别说「闹钟设好了」，说「到点我来叫你」。日期时间用ISO格式。",
-            "[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。",
-            "[SCHEDULE_DEL:日程id] — 删除你自己设的日程/闹铃（别人设的删不了）。",
-        ])
-        if is_capability_enabled("cam_check"):
-            texts.append(
-                f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督。到时间后系统自动截取摄像头画面发给你，"
-                f"你可以看看{user_name}的状态再自然地回应。内容写清楚想看什么（比如「看她有没有在学习」）。"
-            )
+        texts.extend(schedule_ability_texts(monitor=is_capability_enabled("cam_check"), seat=True))
     return compact_ability_texts(texts)
 
 
@@ -897,18 +903,7 @@ async def build_capability_prompt_items(
         (abilities if live_state_out is None else live_state_out).append(patrol_control.ability_text(user_name))
 
     if is_capability_enabled("schedule"):
-        abilities.extend([
-            "[ALARM:YYYY-MM-DDTHH:MM|内容] — 到点系统叫你来提醒用户（你发一条消息给她）。这不是手机闹钟，她的手机不会响铃；跟她说的时候别说「闹钟设好了」，说「到点我来叫你」。日期时间用ISO格式。",
-            "[REMINDER:YYYY-MM-DD|内容] — 设置日程提醒（不闹铃），你在合适时机自然提起即可。",
-            (
-                f"[Monitor:YYYY-MM-DDTHH:MM|内容] — 设置定时监督查看。到时间后系统自动截取摄像头画面发送给你，"
-                f"你可以查看{user_name}的状态。例如检查{user_name}是否去运动了、是否关灯睡觉了、"
-                "是否在好好工作等，状态是否好，身体是否有一样等。日期时间用ISO格式。"
-                "也可以当做下一次主动发送消息来使用，根据对话内容可以随时设定。鼓励积极使用该能力，不限于主动问候，表达思念。"
-            ),
-            "[SCHEDULE_DEL:日程id] — 删除指定日程/闹铃/定时监控。",
-            "修改已有定时监督时，可以在同一回复中先使用 [SCHEDULE_DEL:旧日程id]，再使用 [Monitor:新时间|新内容]。",
-        ])
+        abilities.extend(schedule_ability_texts(monitor=True))
 
     if is_capability_enabled("app_supervision"):
         from app_supervision_ai import build_app_supervision_ability_text

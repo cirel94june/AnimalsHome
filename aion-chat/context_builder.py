@@ -586,11 +586,21 @@ async def build_memory_blocks(
             recalled = [r for r in main_candidates if r["score"] >= 0.45 and r["id"] not in surfaced_ids][:5]
         # 聊天室记忆合并
         if chatroom_mems:
-            seen_content = {m["content"][:100] for m in recalled}
+            # The same local memory can surface as background and also be
+            # returned by topical retrieval. Avoid sending that identical row
+            # twice in ordinary chat, but keep evidence-mode recall intact.
+            # Do not compare the first 100 characters: distinct events may
+            # have identical openings.
+            evidence_needed = is_search_needed or digest_result.get("require_detail")
+            seen = {(m.get("id"), m.get("content")) for m in recalled if m.get("id")}
+            background_rows = {(m.get("id"), m.get("content")) for m in surfaced if m.get("id")}
             for m in chatroom_mems:
-                if m.get("content", "")[:100] not in seen_content:
-                    recalled.append(m)
-                    seen_content.add(m["content"][:100])
+                key = (m.get("id"), m.get("content"))
+                if m.get("id") and (key in seen or (not evidence_needed and key in background_rows)):
+                    continue
+                recalled.append(m)
+                if m.get("id"):
+                    seen.add(key)
             recalled = recalled[:max_recalled_memories]
 
     if hub_block and recalled:
