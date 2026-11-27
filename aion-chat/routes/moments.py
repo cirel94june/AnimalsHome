@@ -425,6 +425,20 @@ def _build_moment_reply_messages(
     return messages
 
 
+def _moment_context_limits(moment, target_comment_id):
+    """Lightweight optional peer browsing, not user-directed conversation.
+
+    Keep full context for direct comments, user posts, and disabled mode.
+    The post, its comments, attachments, persona, privacy rules and Hub
+    relevant recall are unaffected.
+    """
+    import os
+    light = os.getenv("AIONSHOME_LIGHT_PEER_MOMENTS", "1").lower() not in ("0", "false", "off", "no")
+    if light and target_comment_id is None and moment.get("author") in ("aion", "connor", *SEAT_AUTHORS):
+        return 12, 3
+    return 30, 5
+
+
 async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str = None):
     """让指定的 AI 角色回复朋友圈或评论"""
     moment = await _get_moment_with_comments(moment_id)
@@ -442,8 +456,9 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
         except seat_chat.SeatNotReady:
             return
         pinned = model_snapshot(seat_model_key)
-    context_msgs = await _get_recent_context_messages(who, limit=30)
-    recent_memories = await _get_recent_memories(who, limit=5, query=str(moment.get("content") or ""))
+    history_limit, memory_limit = _moment_context_limits(moment, target_comment_id)
+    context_msgs = await _get_recent_context_messages(who, limit=history_limit)
+    recent_memories = await _get_recent_memories(who, limit=memory_limit, query=str(moment.get("content") or ""))
 
     # 构建 messages
     messages = _build_moment_reply_messages(
