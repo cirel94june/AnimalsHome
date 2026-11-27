@@ -300,6 +300,7 @@ def _idle_event_timeline_title(row, actor: str, shown_diary_ids: set[str], shown
             return None
     if action not in (
         "home_dynamics",
+        "hub_handoff_saved",
         "memory_browse",
         "memory_browse_result",
         "private_chat",

@@ -967,6 +967,14 @@ def _stable_window(results: list[dict], limit: int, key: tuple) -> list[dict]:
     if len(window) < min(limit, len(results)):
         # 起点没了，或删除 / 编辑重发后从起点算不够 limit 条：删回最近 limit 条、换新起点
         window = results[-limit:]
+    # Bound only the extra cache-padding rows, not the configured base
+    # history. Whole rows only; preserve the current turn and evidence paths.
+    import os
+    if os.getenv("AIONSHOME_LIGHT_HISTORY_PADDING", "1").lower() not in ("0", "false", "off", "no"):
+        costs = [len(str(m.get("content") or "")) + 64 for m in window]
+        if len(window) > limit and sum(costs) > 6500:
+            # Reset in one batch rather than sliding the cache head every turn.
+            window = window[-limit:]
     if window:
         _WINDOW_STARTS[key] = _message_key(window[0])
         import cache_window_hints

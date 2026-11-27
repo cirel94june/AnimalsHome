@@ -241,6 +241,16 @@ async def write_handoff(actor: str, session_ts: float, *, now: float | None = No
         _mark_handoff(actor, retry_at=now + HANDOFF_RETRY_SECONDS)
         return f"failed:{str(error)[:200]}"
     _mark_handoff(actor, done_ts=session_ts)
+    # Only announce a confirmed save, never the private text. Timeline failure
+    # must not turn a successful Hub write into a retry or duplicate card.
+    try:
+        from autonomy import append_idle_event
+        import actors
+        await append_idle_event(actor, "hub_handoff_saved",
+                                f"{actors.display_name(actor)}整理并保存了私聊交接卡",
+                                "已保存到 Memory Hub（仅记录成功状态，不公开正文）")
+    except Exception as error:
+        log.warning("[MemoryHub] handoff timeline notice failed: %s", type(error).__name__)
     return "saved"
 
 

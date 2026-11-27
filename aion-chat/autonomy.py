@@ -81,7 +81,7 @@ ACTION_DEFS = {
     "seeky_interaction": "和宠物鲸鱼 Seeky 互动",
     "role_chat": "和另一个家庭成员自然聊聊",
     "billiards_play": "邀请另一位家庭成员打一局休闲台球（算法负责击球，可以边打边聊）",
-    "home_dynamics": "查看近期家庭动态",
+    "home_dynamics": "随意看看近期家庭动态，有想回应的再行动，也可以只看不说",
     "memory_browse": "按需翻看一段旧记忆",
     "album_browse": "翻看家庭相册（随机两张未看过的照片）",
     "web_roam": "上网冲浪搜索感兴趣的内容",
@@ -342,6 +342,7 @@ def _idle_event_home_title(row, shown_diary_ids: set[str], shown_moment_ids: set
             return None
     if action not in (
         "home_dynamics",
+        "hub_handoff_saved",
         "memory_browse",
         "memory_browse_result",
         "private_chat",
@@ -1963,21 +1964,20 @@ async def _run_home_dynamics(actor: str) -> dict:
     result = await _ask_actor_json(actor, (
         "[查看近期家庭动态]\n"
         "下面是近6小时的家庭时间轴，包括朋友圈、日记、礼物和空闲行为。"
-        "看完后你必须选择并执行一个行动，不能静默。"
-        "可选行动：reply_moment（回复某条朋友圈）、group_tease（在群聊里调侃另一个角色）、"
-        "private_message（私聊用户一条消息）、write_diary（写一篇短日记）。只返回 JSON。\n\n"
+        "可以只是浏览，不需要交作业，不要求发言或写日记。有真实想法才行动。"
+        "可选行动：read_only（看看就好）、reply_moment（回复某条朋友圈）、group_tease（在群聊里调侃另一个角色）、"
+        "private_message（私聊用户一条消息）。正式日记由每日回顾独立处理。只返回 JSON。\n\n"
         f"{text}\n\n"
         "如果选择 reply_moment，target_index 必须指向一条朋友圈，且不要回复你自己的朋友圈。\n"
         "如果选择 group_tease，target_index 可以指向触发你吐槽的动态，并填写 group_message。\n"
         "如果选择 private_message，填写 private_message。\n"
-        "如果选择 write_diary，填写 diary_title、diary_content 和 diary_mood。\n\n"
-        '格式：{"after_read_action":"reply_moment/group_tease/private_message/write_diary",'
-        '"target_index":1,"group_message":"","private_message":"","diary_title":"","diary_content":"","diary_mood":"",'
-        '"reason":"一句话理由"}'
+        "如果只想看看，选 read_only。不要公开私人日记或交接卡内容。\n\n"
+        '格式：{"after_read_action":"read_only/reply_moment/group_tease/private_message",'
+        '"target_index":1,"group_message":"","private_message":"","reason":"一句话理由"}'
     ))
     action = str(result.get("after_read_action") or "").strip()
-    if action not in {"reply_moment", "group_tease", "private_message", "write_diary"}:
-        action = "write_diary"
+    if action not in {"reply_moment", "group_tease", "private_message", "read_only"}:
+        action = "read_only"
     event = await append_idle_event(
         actor, "home_dynamics", f"{actor_name}查看了近期家庭动态",
         _clip(str(result.get("reason") or text), 300),
@@ -1996,15 +1996,13 @@ async def _run_home_dynamics(actor: str) -> dict:
                     result_type="moment_comment", result_id=comment["id"],
                 )
                 return {"event": event, "comment": comment}
-        diary = await _write_home_dynamics_diary(actor, result, text)
-        return {"event": event, "diary": diary}
+        return {"event": event}
 
     if action == "group_tease":
         teased = await _run_home_group_tease(actor, result, items, text)
         if teased:
             return {"event": event, "group_tease": teased}
-        diary = await _write_home_dynamics_diary(actor, result, text)
-        return {"event": event, "diary": diary}
+        return {"event": event}
 
     if action == "private_message":
         msg = await _save_private_message(actor, str(result.get("private_message") or "").strip())
@@ -2014,11 +2012,9 @@ async def _run_home_dynamics(actor: str) -> dict:
                 _clip(msg.get("content") or ""), result_type="message", result_id=msg["id"],
             )
             return {"event": event, "message": msg}
-        diary = await _write_home_dynamics_diary(actor, result, text)
-        return {"event": event, "diary": diary}
+        return {"event": event}
 
-    diary = await _write_home_dynamics_diary(actor, result, text)
-    return {"event": event, "diary": diary}
+    return {"event": event}
 
 
 async def _run_xhs_roam(actor: str) -> dict:
