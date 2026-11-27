@@ -534,7 +534,8 @@ async def _chatroom_sys_msg(room_id: str, text: str, _q: asyncio.Queue, after_ms
         )
         await db.commit()
     msg = {"id": msg_id, "room_id": room_id, "sender": "system", "content": text, "created_at": now, "attachments": order_atts}
-    await _q.put({"type": "system_msg", "message": msg})
+    if _q is not None:
+        await _q.put({"type": "system_msg", "message": msg})
     await broadcast_synced(manager, {"type": "chatroom_msg_created", "data": msg})
     return msg
 
@@ -1139,7 +1140,7 @@ async def _process_chatroom_commands(
     moment_matches = MOMENT_CMD_PATTERN.findall(full_text)
     if moment_matches:
         full_text = MOMENT_CMD_PATTERN.sub("", full_text)
-        for mt_content, mt_reply in moment_matches[:1]:  # 每条回复最多 1 条（IB 限额）
+        for mt_content, mt_reply in moment_matches[:1] if is_capability_enabled("moment") else []:  # 每条回复最多 1 条
             mt_content = mt_content.strip()[:800]
             if mt_content:
                 try:
@@ -1161,6 +1162,9 @@ async def _process_chatroom_commands(
                     }}
                     await _q.put(mt_data)
                     await broadcast_synced(ws_manager, mt_data)
+                    from moment_feed import notify_family
+                    await notify_family(author, room_id=room_id, msg_id=msg_id, queue=_q)
+                    triggered["moment"] = True
                     if expect:
                         from routes.moments import _trigger_ai_replies
                         spawn_generation_task(_trigger_ai_replies(mt_id, exclude_author=author))
@@ -4517,7 +4521,8 @@ async def _process_seat_commands(full_text: str, room_id: str, actor_id: str, ms
                 "created_at": mt_now, "comments": [], "reactions": []}}
             await _q.put(mt_data)
             await broadcast_synced(ws_manager, mt_data)
-            await _chatroom_sys_msg(room_id, f"📷 {label}发了一条朋友圈", _q, after_msg_id=msg_id)
+            from moment_feed import notify_family
+            await notify_family(actor_id, room_id=room_id, msg_id=msg_id, queue=_q)
             triggered["moment"] = True
             if expect:
                 from routes.moments import _trigger_ai_replies

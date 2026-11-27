@@ -24,11 +24,15 @@ def db(tmp_path, monkeypatch):
             await conn.execute("CREATE TABLE moment_reactions (id TEXT PRIMARY KEY, moment_id TEXT, author TEXT, type TEXT, "
                                "created_at REAL, UNIQUE(moment_id, author))")
             await conn.execute("INSERT INTO moments (id, author, content, created_at) VALUES ('mu', 'user', '今天下雨了', 1)")
+            await conn.execute("CREATE TABLE chatroom_rooms(id TEXT PRIMARY KEY,type TEXT,updated_at REAL)")
+            await conn.execute("INSERT INTO chatroom_rooms VALUES ('g1','group',1)")
             await conn.commit()
     asyncio.run(setup())
     connect = lambda: aiosqlite.connect(path)  # noqa: E731
     monkeypatch.setattr(moments, "get_db", connect)
     monkeypatch.setattr(chatroom_routes, "get_db", connect)
+    import moment_feed
+    monkeypatch.setattr(moment_feed,"get_db",connect)
     monkeypatch.setattr(moments, "broadcast_synced", AsyncMock())
     monkeypatch.setattr(chatroom_routes, "broadcast_synced", AsyncMock())
     monkeypatch.setattr(seat_chat.actors, "display_name", lambda a: {"ai3": "狗蛋"}.get(a, a))

@@ -324,6 +324,8 @@ async def publish_ai_moment(
         "reactions": [],
     }
     await manager.broadcast({"type": "moment_new", "data": moment_data})
+    from moment_feed import notify_family
+    await notify_family(author)
     if expect_reply:
         from routes.moments import _trigger_ai_replies
         spawn_generation_task(_trigger_ai_replies(moment_id, exclude_author=author))

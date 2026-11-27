@@ -1721,6 +1721,8 @@ async def edit_resend_message(msg_id: str, body: MsgEditResend):
                         }}
                         await _q.put(mt_data)
                         await manager.broadcast(mt_data)
+                        from moment_feed import notify_family
+                        await notify_family("aion")
                         if expect:
                             from routes.moments import _trigger_ai_replies
                             spawn_generation_task(_trigger_ai_replies(mt_id, exclude_author="aion"))
@@ -2443,6 +2445,8 @@ async def send_message(conv_id: str, body: MsgCreate):
                         }}
                         await _q.put(mt_data)
                         await manager.broadcast(mt_data)
+                        from moment_feed import notify_family
+                        await notify_family("aion")
                         if expect:
                             from routes.moments import _trigger_ai_replies
                             spawn_generation_task(_trigger_ai_replies(mt_id, exclude_author="aion"))
@@ -4118,6 +4122,8 @@ async def regenerate_message(conv_id: str, context_limit: int = 30, whisper_mode
                         }}
                         await _q.put(mt_data)
                         await manager.broadcast(mt_data)
+                        from moment_feed import notify_family
+                        await notify_family("aion")
                         if expect:
                             from routes.moments import _trigger_ai_replies
                             spawn_generation_task(_trigger_ai_replies(mt_id, exclude_author="aion"))

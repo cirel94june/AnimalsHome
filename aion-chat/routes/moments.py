@@ -417,9 +417,9 @@ def _build_moment_reply_messages(
         else:
             messages.append({"role": "user", "content": (
                 f"[任务] {moment_author}发了一条朋友圈。"
-                f"请你作为{my_name}，对这条朋友圈写一条简短自然的评论。"
-                f"可以是感想、调侃、鼓励、吐槽等，符合你的性格。"
-                f"直接输出评论内容，不要加任何前缀标记。"
+                f"作为{my_name}，你自己决定想不想回应。感想、调侃、鼓励、吐槽都可以，不必客套。"
+                "没话想说就只输出 [PASS]；只想点赞就输出 [LIKE]；想评论就输出自然评论正文。"
+                "既想点赞又想评论就在正文前加 [LIKE]。邀请不是必须回复的任务。"
             )})
 
     return messages
@@ -508,11 +508,17 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
         return
 
     expect_chat_decision = target_comment_id is None and moment.get("author") == "user"
+    optional_peer = target_comment_id is None and moment.get("author") != "user"
+    chosen_like = False
+    if optional_peer:
+        full_text, chosen_like = _peer_reaction(full_text)
     comment_text, send_chat_message, chat_message = _parse_moment_reply_result(
         full_text,
         expect_chat_decision=expect_chat_decision,
     )
     if not comment_text:
+        if optional_peer and chosen_like:
+            await _like_moment(who,moment_id)
         return
     comment_text = comment_text[:MAX_AI_COMMENT_CHARS]
 
@@ -546,22 +552,10 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
         except Exception as e:
             print(f"[moments] 朋友圈聊天续话发送失败 ({who}): {e}")
 
-    # 随机决定是否点赞（70% 概率点赞）
-    if random.random() < 0.7:
-        react_id = f"mr_{time.time_ns()}_{who}"
-        try:
-            async with get_db() as db:
-                await db.execute(
-                    "INSERT OR REPLACE INTO moment_reactions (id, moment_id, author, type, created_at) "
-                    "VALUES (?,?,?,?,?)",
-                    (react_id, moment_id, who, "like", now),
-                )
-                await db.commit()
-            await broadcast_synced(ws_manager, {"type": "moment_reaction", "data": {
-                "id": react_id, "moment_id": moment_id, "author": who, "type": "like", "created_at": now,
-            }})
-        except Exception:
-            pass
+    # Peer top-level likes are chosen, not randomly assigned. Preserve
+    # the existing user-post/direct-comment behaviour.
+    if chosen_like if optional_peer else random.random() < 0.7:
+        await _like_moment(who,moment_id)
 
     print(f"[moments] {who} 回复了朋友圈 {moment_id}: {comment_text[:50]}")
 
@@ -571,6 +565,31 @@ async def _ai_reply_to_moment(who: str, moment_id: str, target_comment_id: str =
     if target_comment_id is None and author not in (None, "", "user", who) and author in _ai_authors():
         spawn_generation_task(_ai_reply_to_moment(author, moment_id, comment_id))
     return comment_data
+
+
+def _peer_reaction(raw):
+    text = str(raw or "").strip()
+    if text.upper() == "[PASS]":
+        return "",False
+    if text.upper().startswith("[LIKE]"):
+        return text[6:].strip(),True
+    return text,False
+
+
+async def _like_moment(who,moment_id):
+    now=time.time()
+    rid=f"mr_{time.time_ns()}_{who}"
+    try:
+        async with get_db() as db:
+            cur=await db.execute("""INSERT OR IGNORE INTO moment_reactions(id,moment_id,author,type,created_at)
+                SELECT ?,?,?,'like',? WHERE EXISTS(SELECT 1 FROM moments WHERE id=?)""",
+                (rid,moment_id,who,now,moment_id))
+            await db.commit()
+        if cur.rowcount:
+            await broadcast_synced(ws_manager,{"type":"moment_reaction","data":{
+                "id":rid,"moment_id":moment_id,"author":who,"type":"like","created_at":now}})
+    except Exception as exc:
+        print(f"[moments] like failed: {type(exc).__name__}")
 
 
 async def _trigger_ai_replies(moment_id: str, exclude_author: str = None):

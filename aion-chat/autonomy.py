@@ -748,6 +748,14 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
     from capabilities import is_capability_enabled
     if "post_moment" in enabled and not is_capability_enabled("moment"):
         enabled.remove("post_moment")
+    feed, feed_hint = [], ""
+    if is_capability_enabled("moment"):
+        try:
+            from moment_feed import load_feed, prompt_for
+            feed = await load_feed(actor)
+            feed_hint = prompt_for(feed,_actor_label)
+        except Exception as exc:
+            log.warning("[autonomy] optional Moment feed unavailable: %s",type(exc).__name__)
     moment_hint = ""
     if "post_moment" in enabled:
         async with get_db() as db:
@@ -850,6 +858,7 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
         "其他动作的 message 留空。\n"
         + moment_hint
         + '格式：{"action":"上面的key之一","reason":"选择这个动作的理由","message":"聊天或发朋友圈时的正文，其他动作为空","target":"","moment_content":"可选的独立公开感想"}'
+        + feed_hint
     )
     # 11-03 小猫：小克总是「觉得没什么想做」，其实是调用失败 / 回的不是 JSON 被兜底成休息。
     # 现在失败或读不懂时再问一次；还不行就如实记成「没醒成」并写下原因，不再假装是他自己想休息
@@ -863,6 +872,11 @@ async def _select_action(actor: str, *, manual: bool = False, idle_minutes: int 
             continue
         choice = _parse_action_choice(data, enabled)
         if choice is not None:
+            if feed:
+                from moment_feed import select_reviews
+                reviews = select_reviews(feed,data)
+                if reviews is not None:
+                    choice["_moment_feed_reviews"] = reviews
             return choice
         problem = "模型回的内容读不懂（不是要求的格式，或选了不能做的事）"
         log.warning("[autonomy] %s 选择行动第 %s 次回的内容读不懂", actor, attempt + 1)
@@ -2555,6 +2569,14 @@ async def _run_actor_once(actor: str, *, manual: bool = False, idle_minutes: int
         selected.get("reason", ""),
         metadata={"selected_action": action, "manual": manual, "session_id": session_id},
     )
+    if "_moment_feed_reviews" in selected:
+        try:
+            if _is_seat(actor):
+                verify_seat_pin(actor)
+            from moment_feed import apply_reviews
+            await apply_reviews(actor,selected["_moment_feed_reviews"])
+        except Exception as exc:
+            log.warning("[autonomy] %s Moment browsing failed: %s",actor,type(exc).__name__)
     # Optional public self-expression reuses the existing wake decision.
     # Rest is a valid primary choice and can still have a Moment; no extra model call.
     extra = selected.get("moment_content")
