@@ -29,7 +29,7 @@ def db(tmp_path,monkeypatch):
     monkeypatch.setattr(f,"get_db",lambda:aiosqlite.connect(path))
     monkeypatch.setattr(m,"get_db",lambda:aiosqlite.connect(path))
     monkeypatch.setattr("capabilities.is_capability_enabled",lambda k:True)
-    monkeypatch.setattr("actors.get_actor",lambda a:{"enabled":True})
+    monkeypatch.setattr("actors.get_actor",lambda a:{"enabled":True,"id":a,"name":a})
     monkeypatch.setattr("sync_events.broadcast_synced",AsyncMock())
     return path
 
@@ -77,3 +77,26 @@ def test_peer_reaction_optional():
     assert m._peer_reaction("[LIKE]")==("",True)
     assert m._peer_reaction("[LIKE] 真棒")==("真棒",True)
     assert m._peer_reaction("哈哈")==("哈哈",False)
+
+
+def test_wake_includes_feed_and_applies_chosen_comment_without_extra_call(db,monkeypatch):
+    import autonomy
+    async def run():
+        cfg={"actions":{"rest":True}}
+        monkeypatch.setattr(autonomy,"get_actor_config",AsyncMock(return_value=cfg))
+        monkeypatch.setattr(autonomy,"recent_niche_index",AsyncMock(return_value=[]))
+        monkeypatch.setattr(autonomy,"_recent_choices_hint",AsyncMock(return_value=""))
+        monkeypatch.setattr(autonomy,"append_idle_event",AsyncMock(return_value={"id":"e"}))
+        ask=AsyncMock(return_value={"action":"rest","reason":"休息",
+            "moment_reactions":[{"id":"x","like":True,"comment":"这也太好笑了"}]})
+        monkeypatch.setattr(autonomy,"_ask_actor_json",ask)
+        result=await autonomy._run_actor_once("aion")
+        assert result["action"]=="rest"
+        ask.assert_awaited_once()
+        assert "public joke" in ask.await_args.args[1]
+        assert "moment_reactions" in ask.await_args.args[1]
+        async with aiosqlite.connect(db) as c:
+            assert await (await c.execute("SELECT author,content FROM moment_comments")).fetchall()==[("aion","这也太好笑了")]
+            assert await (await c.execute("SELECT author,type FROM moment_reactions")).fetchall()==[("aion","like")]
+        assert await f.load_feed("aion")==[]
+    asyncio.run(run())
